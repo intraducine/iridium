@@ -28,7 +28,7 @@ targets:
         CLANG_ENABLE_OBJC_ARC: YES
         GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "WINE_IOS=1"]
         HEADER_SEARCH_PATHS:
-          - /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64/Headers
+          - $(SRCROOT)/.build/media-sdk/GStreamer.xcframework/ios-arm64/Headers
           - $(SRCROOT)/../../../testrepos/Madeira/app/Madeira
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/FEXCore/include
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/FEXHeaderUtils
@@ -42,7 +42,7 @@ targets:
           - $(SRCROOT)/../../../testrepos/Madeira/FEX
         OTHER_LDFLAGS: ["$(inherited)", "-lc++", "-lz", "-lsqlite3", "-liconv", "-lresolv"]
         LIBRARY_SEARCH_PATHS:
-          - /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64
+          - $(SRCROOT)/.build/media-sdk/GStreamer.xcframework/ios-arm64
           - $(SRCROOT)/.build/media
           - $(SRCROOT)/../../../testrepos/Madeira/app/Madeira
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/FEXCore/Source
@@ -65,7 +65,7 @@ targets:
       - sdk: CoreAudio.framework
       - sdk: SystemConfiguration.framework
       - sdk: AssetsLibrary.framework
-      - framework: /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a
+      - framework: .build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a
         embed: false
       - framework: .build/media/libntdll_media.a
         embed: false

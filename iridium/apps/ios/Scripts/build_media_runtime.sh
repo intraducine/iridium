@@ -4,7 +4,7 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 madeira=$(CDPATH= cd -- "$root/../../../testrepos/Madeira" && pwd)
 wine="$madeira/wine"
 out="$root/.build/media"
-gst=${IRIDIUM_GSTREAMER_SDK:-/tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64}
+gst=${IRIDIUM_GSTREAMER_SDK:-"$root/.build/media-sdk/GStreamer.xcframework/ios-arm64"}
 sdk=$(xcrun --sdk iphoneos --show-sdk-path)
 mkdir -p "$out"
 for name in unixlib wg_muxer wg_allocator wg_transform wg_media_type wg_format wg_parser; do
@@ -45,14 +45,14 @@ xcrun ar -r "$out/libntdll_media.a" "$out/virtual.o" "$out/unixlib.o" "$out/wg_"
 echo "Built media-enabled Wine native archive; original archive preserved."
 pe="$root/.build/wine-media"
 mkdir -p "$pe" "$root/MediaRuntime"
-export PATH="/opt/homebrew/opt/bison/bin:$madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+export PATH="$(brew --prefix bison)/bin:$madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
 if [ ! -f "$pe/Makefile" ]; then
   (cd "$pe" && "$wine/configure" --enable-win64 --enable-archs=arm64ec \
     --without-x --without-freetype --without-gstreamer --enable-winegstreamer)
 fi
-make -C "$pe" -j8 dlls/winegstreamer/arm64ec-windows/winegstreamer.dll dlls/msvproc/arm64ec-windows/msvproc.dll
-make -C "$pe" -j8 dlls/xaudio2_7/arm64ec-windows/xaudio2_7.dll
-make -C "$pe" -j8 dlls/d3dx9_42/arm64ec-windows/d3dx9_42.dll dlls/d3dcompiler_42/arm64ec-windows/d3dcompiler_42.dll
+make -C "$pe" -j"${JOBS:-2}" dlls/winegstreamer/arm64ec-windows/winegstreamer.dll dlls/msvproc/arm64ec-windows/msvproc.dll
+make -C "$pe" -j"${JOBS:-2}" dlls/xaudio2_7/arm64ec-windows/xaudio2_7.dll
+make -C "$pe" -j"${JOBS:-2}" dlls/d3dx9_42/arm64ec-windows/d3dx9_42.dll dlls/d3dcompiler_42/arm64ec-windows/d3dcompiler_42.dll
 cp "$wine/libs/faudio/LICENSE" "$root/MediaRuntime/FAudio-LICENSE.txt"
 for name in winegstreamer msvproc xaudio2_7 d3dx9_42 d3dcompiler_42; do
   cp "$pe/dlls/$name/arm64ec-windows/$name.dll" "$root/MediaRuntime/$name.dll"

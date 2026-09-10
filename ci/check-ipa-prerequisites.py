@@ -39,6 +39,10 @@ REQUIRED = {
         "iridium/apps/ios/MediaRuntime/winegstreamer.dll",
         "iridium/apps/ios/ControllerRuntime/arm64ec/xinput.dll",
     ],
+    "legacy graphics frameworks (source preparation unresolved)": [
+        "Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework/libEGL",
+        "Amethyst-iOS/Natives/resources/Frameworks/libGLESv2.framework/libGLESv2",
+    ],
     "StikJIT framework": [
         "iridium/apps/ios/BuiltinJIT/Vendor/StikJIT.xcframework/ios-arm64/StikJIT.framework/StikJIT",
     ],

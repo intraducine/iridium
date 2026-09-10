@@ -24,11 +24,14 @@ jobs:
           lfs: false
       - name: Check source privacy
         run: python3 check-public-source.py
+      - name: Install native build tools
+        run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen
+      - name: Prepare native runtime libraries
+        run: bash ci/prepare-native-runtime.sh
       - name: Check full-runtime build readiness
         run: python3 ci/check-ipa-prerequisites.py
       - name: Generate Xcode project
         run: |
-          brew install xcodegen
           xcodegen generate --spec iridium/apps/ios/stikjit.yml
       - name: Build without signing
         run: |

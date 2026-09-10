@@ -14,7 +14,7 @@ env = dict(os.environ)
 env['PATH'] = str(madeira / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin') + ':' + env['PATH']
 obj = 'dlls/mfreadwrite/arm64ec-windows/reader.o'
 dll = 'dlls/mfreadwrite/arm64ec-windows/mfreadwrite.dll'
-subprocess.run(['make', '-j8', dll], cwd=pe, env=env, check=True)
+subprocess.run(['make', '-j' + env.get('JOBS', '2'), dll], cwd=pe, env=env, check=True)
 s = source.read_text()
 start = s.index('static HRESULT source_reader_create_sample_allocator_attributes(')
 end = s.index('\nstatic HRESULT source_reader_setup_sample_allocator(', start)
@@ -35,5 +35,5 @@ args = shlex.split(command.replace('\\\n', ' '))
 assert args[0] == 'arm64ec-w64-mingw32-clang' and args.count(str(source)) == 1
 args[args.index(str(source))] = str(out)
 subprocess.run(args, cwd=pe, env=env, check=True)
-subprocess.run(['make', '-j8', dll], cwd=pe, env=env, check=True)
+subprocess.run(['make', '-j' + env.get('JOBS', '2'), dll], cwd=pe, env=env, check=True)
 (root / 'MediaRuntime/mfreadwrite.dll').write_bytes((pe/dll).read_bytes())

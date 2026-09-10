@@ -44,3 +44,11 @@ Local modified source paths included in this snapshot:
 - `src/airconv/shaders/air_tessellation.metal`
 
 Generated artifacts, personal paths, device identifiers, and local captures were excluded or sanitized where applicable.
+
+## Manual build preparation (2026-09-10)
+
+- Native dependency downloads are locked in `ci/runtime-inputs.json`. Source archives retain upstream notices.
+- The downloaded LLVM 15 source receives Madeira's documented `Darwin|iOS` linker selection patch in `ci/prepare-native-runtime.sh`; the unchanged archive digest and exact patch are recorded in the repository.
+- Madeira's GMP/Nettle/GnuTLS and FreeType build helpers accept a compiler job limit. The ntdll helper now stops on a compile failure rather than reusing stale objects.
+- Iridium media SDK paths are checkout-local. Media compiler jobs honor the same limit. No runtime behavior or signing identity is changed.
+- Build-tool and SDK downloads are not committed or distributed by this source change. Complete component source and license inventories remain required before a binary release.

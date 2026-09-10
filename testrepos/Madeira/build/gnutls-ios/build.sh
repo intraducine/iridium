@@ -42,7 +42,7 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
 
 HOST=aarch64-apple-darwin
-JOBS=$(sysctl -n hw.ncpu)
+JOBS=${JOBS:-$(sysctl -n hw.ncpu)}
 
 mkdir -p "$OBJ_DIR" "$PREFIX"
 

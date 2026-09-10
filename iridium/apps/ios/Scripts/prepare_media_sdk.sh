@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
-cache=/tmp/iridium-media-sdk
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cache="$root/.build/media-sdk"
 mkdir -p "$cache"
 archive="$cache/gstreamer.tar.xz"
 if [ ! -f "$archive" ]; then

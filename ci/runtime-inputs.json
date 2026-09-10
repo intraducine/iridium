@@ -1,0 +1,47 @@
+[
+  {
+    "name": "gmp",
+    "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+    "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+    "destination": "testrepos/Madeira/build/gnutls-ios/src/gmp-6.3.0.tar.xz",
+    "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"
+  },
+  {
+    "name": "nettle",
+    "url": "https://ftp.gnu.org/gnu/nettle/nettle-3.10.1.tar.gz",
+    "sha256": "b0fcdd7fc0cdea6e80dcf1dd85ba794af0d5b4a57e26397eee3bc193272d9132",
+    "destination": "testrepos/Madeira/build/gnutls-ios/src/nettle-3.10.1.tar.gz",
+    "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"
+  },
+  {
+    "name": "gnutls",
+    "url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.9.tar.xz",
+    "sha256": "69e113d802d1670c4d5ac1b99040b1f2d5c7c05daec5003813c049b5184820ed",
+    "destination": "testrepos/Madeira/build/gnutls-ios/src/gnutls-3.8.9.tar.xz",
+    "license": "LGPL-2.1-or-later; see bundled component notices"
+  },
+  {
+    "name": "freetype",
+    "url": "https://codeload.github.com/freetype/freetype/tar.gz/42608f77f20749dd6ddc9e0536788eaad70ea4b5",
+    "sha256": "68ce87bb59ea209eb7350f41a94a27519ce16b37011b475a1e62d4abee154b66",
+    "destination": "testrepos/Madeira/research/freetype",
+    "archive_root": "freetype-42608f77f20749dd6ddc9e0536788eaad70ea4b5",
+    "license": "FTL OR GPL-2.0-only"
+  },
+  {
+    "name": "llvm",
+    "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.7/llvm-project-15.0.7.src.tar.xz",
+    "sha256": "8b5fcb24b4128cf04df1b0b9410ce8b1a729cb3c544e6da885d234280dedeac6",
+    "destination": "testrepos/Madeira/toolchains/llvm-project",
+    "archive_root": "llvm-project-15.0.7.src",
+    "license": "Apache-2.0 WITH LLVM-exception; see component notices"
+  },
+  {
+    "name": "llvm-mingw",
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-macos-universal.tar.xz",
+    "sha256": "bd85a3975723815cef28dbbd2ca2cb0c926f6b348a12a0453f39f7af273cb3f7",
+    "destination": "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal",
+    "archive_root": "llvm-mingw-20260421-ucrt-macos-universal",
+    "license": "Build tool; retain bundled licenses and target runtime notices"
+  }
+]
