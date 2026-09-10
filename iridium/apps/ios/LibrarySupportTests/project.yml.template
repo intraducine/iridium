@@ -1,0 +1,59 @@
+name: LibraryPreview
+packages:
+  Iridium:
+    path: __REPOSITORY__
+targets:
+  LibraryPreview:
+    type: application
+    platform: iOS
+    deploymentTarget: '18.0'
+    sources:
+      - path: __REPOSITORY__/apps/ios/LibrarySupportTests/Preview.swift
+      - path: __REPOSITORY__/apps/ios/Iridium/LibraryArtwork.swift
+      - path: __REPOSITORY__/apps/ios/Iridium/LibraryController.swift
+      - path: __REPOSITORY__/apps/ios/Iridium/Views/LibraryAppearanceEditor.swift
+      - path: __REPOSITORY__/apps/ios/Iridium/Views/LibraryShelf.swift
+    dependencies:
+      - package: Iridium
+        product: IridiumCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.library-preview
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        SWIFT_VERSION: '5.10'
+  ArtworkTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: '18.0'
+    sources:
+      - path: __REPOSITORY__/apps/ios/LibrarySupportTests/ArtworkTests.swift
+    dependencies:
+      - target: LibraryPreview
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.artwork-tests
+  LibraryUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '18.0'
+    sources:
+      - path: __REPOSITORY__/apps/ios/LibrarySupportTests/LibraryUITests.swift
+    dependencies:
+      - target: LibraryPreview
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.library-uitests
+schemes:
+  LibraryPreview:
+    build:
+      targets:
+        LibraryPreview: all
+    test:
+      debugEnabled: false
+      targets:
+        - ArtworkTests
+        - LibraryUITests

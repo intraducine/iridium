@@ -1,0 +1,69 @@
+# Build directories
+build-*/
+compile_commands.json
+*.o
+*.so
+*.dll
+*.dylib
+*.a
+*.la
+*.lo
+*.irpm
+
+# Object files
+*.o
+*.obj
+*.elf
+
+# Libraries
+*.lib
+*.dylib
+
+# Config cache
+*.cache
+config.cache
+config.log
+config.status
+Makefile
+Makefile.in
+
+# Stamp files
+stamp-h*
+*.stamp
+
+# Generated files
+*.gen
+*.def
+*.spec
+iridium/ios/build.log
+iridium/ios/build/
+iridium/ios/test-tools/**/*.o
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Backup files
+*.bak
+*.orig
+*.rej
+
+# Patch files
+*.patch
+*.diff
+
+# Archives
+*.tar
+*.gz
+*.bz2
+*.xz
+*.zip

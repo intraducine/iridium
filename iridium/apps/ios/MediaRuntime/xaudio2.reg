@@ -1,0 +1,15 @@
+[Software\\Classes\\CLSID\\{5a508685-a254-4fba-9b82-9a24b00306af}\\InprocServer32]
+@="xaudio2_7.dll"
+"ThreadingModel"="Both"
+
+[Software\\Classes\\CLSID\\{db05ea35-0329-4d4b-a53a-6dead03d3852}\\InprocServer32]
+@="xaudio2_7.dll"
+"ThreadingModel"="Both"
+
+[Software\\Classes\\CLSID\\{cac1105f-619b-4d04-831a-44e1cbf12d57}\\InprocServer32]
+@="xaudio2_7.dll"
+"ThreadingModel"="Both"
+
+[Software\\Classes\\CLSID\\{6a93130e-1d53-41d1-a9cf-e758800bb179}\\InprocServer32]
+@="xaudio2_7.dll"
+"ThreadingModel"="Both"

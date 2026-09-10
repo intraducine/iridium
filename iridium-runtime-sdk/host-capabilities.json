@@ -1,0 +1,38 @@
+{
+  "deviceCapabilityClass": null,
+  "deviceTier": null,
+  "jitStatus": "ready",
+  "launchReady": true,
+  "launchStatus": "ready",
+  "launchStatusSummary": "Runtime ready.",
+  "jitSessionKind": "debugger-backed",
+  "jitFailureStage": null,
+  "allocatorBackend": "none",
+  "jitToolRecommendation": "none",
+  "jitToolBootstrapRequired": false,
+  "jitToolBootstrapKind": null,
+  "jitToolBootstrapSummary": null,
+  "jitSummary": "Runtime ready.",
+  "exceptionPortsActive": false,
+  "presentationReadiness": {
+    "ready": false,
+    "status": "presentationServiceMissing",
+    "statusSummary": "Runtime host has no active playable session bound to a live render service."
+  },
+  "inputReadiness": {
+    "ready": false,
+    "status": "inputBridgeMissing",
+    "statusSummary": "Runtime host has no active playable session bound to a live input service."
+  },
+  "audioReadiness": {
+    "ready": false,
+    "status": "audioBridgeMissing",
+    "statusSummary": "Runtime host has no active playable session bound to a live audio service."
+  },
+  "measuredAt": 799318470.552194,
+  "runtimeHostVersion": "0.1.0-dev",
+  "supportedArchitectures": ["x64"],
+  "supportedGraphicsAPIs": ["opengl"],
+  "translatorPresent": true,
+  "translatorReady": true
+}

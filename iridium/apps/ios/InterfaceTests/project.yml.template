@@ -1,0 +1,83 @@
+name: InterfacePreview
+packages:
+  Iridium:
+    path: __REPOSITORY__
+targets:
+  InterfacePreview:
+    type: application
+    platform: iOS
+    deploymentTarget: '18.0'
+    sources:
+      - path: __REPOSITORY__/apps/ios/Iridium
+        excludes: [IridiumApp.swift, Info.plist, Iridium.entitlements, LaunchScreen.storyboard]
+      - path: __REPOSITORY__/apps/ios/MadeiraSupport/MadeiraPlayerPresentation.swift
+      - path: __REPOSITORY__/apps/ios/InterfaceTests/Preview.swift
+      - path: __REPOSITORY__/apps/ios/InterfaceTests/UnavailableWine.c
+    dependencies:
+      - package: Iridium
+        product: IridiumCore
+      - package: Iridium
+        product: IridiumRuntime
+      - package: Iridium
+        product: IridiumProfiles
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.interface-preview
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        SWIFT_VERSION: '5.10'
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) INTERFACE_PREVIEW'
+        LIBRARY_SEARCH_PATHS:
+          - $(inherited)
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/artifacts
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Tools/CommonTools
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Common
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Common/cpp-optparse
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/FEXCore/Source
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/fmt
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/xxhash/cmake_unofficial
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/rpmalloc
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/tiny-json
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/cephes
+          - __REPOSITORY__/../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/SoftFloat-3e
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lc++
+          - -Wl,-no_warn_duplicate_libraries
+          - -liridium-fex-ios-embedded
+          - -lCommonTools
+          - -lCommon
+          - -lcpp-optparse
+          - -lFEXCore
+          - -lFEXCore_Base
+          - -lJemallocLibs
+          - -lfmt
+          - -lxxhash
+          - -lrpmalloc
+          - -ltiny-json
+          - -lcephes_128bit
+          - -lsoftfloat_3e
+
+  LibraryUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '18.0'
+    sources:
+      - path: __REPOSITORY__/apps/ios/InterfaceTests/InterfaceTests.swift
+    dependencies:
+      - target: InterfacePreview
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.library-uitests
+schemes:
+  InterfacePreview:
+    build:
+      targets:
+        InterfacePreview: all
+    test:
+      debugEnabled: false
+      targets:
+        - LibraryUITests

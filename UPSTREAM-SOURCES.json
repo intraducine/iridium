@@ -1,0 +1,27 @@
+{
+  "snapshots": [
+    {
+      "path": "testrepos/Madeira",
+      "upstream": "https://github.com/willfaust/Madeira",
+      "base_revision": "97e2ce26e6dc9e4a38976f3b5deb9272d64558eb"
+    },
+    {
+      "path": "testrepos/Madeira/FEX",
+      "upstream": "https://github.com/willfaust/FEX",
+      "base_revision": "053c385ecc9090702e4959a1d96752ea918a6110"
+    },
+    {
+      "path": "testrepos/Madeira/wine",
+      "upstream": "https://github.com/willfaust/wine",
+      "base_revision": "7817e220384e895651f868ba4d97affcf21b3816"
+    },
+    {
+      "path": "testrepos/Madeira/research/dxmt",
+      "upstream": "https://github.com/willfaust/dxmt",
+      "base_revision": "b4b89f0a5a1752da3982a7b6c5575506024bf253"
+    }
+  ],
+  "privacy_modified_files": [
+    "testrepos/Madeira/scripts/deploy-thumper.sh"
+  ]
+}

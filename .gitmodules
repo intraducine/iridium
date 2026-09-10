@@ -1,0 +1,102 @@
+[submodule "dependency-0"]
+	path = iridium-fex-ios/External/Catch2
+	url = https://github.com/catchorg/Catch2.git
+[submodule "dependency-1"]
+	path = iridium-fex-ios/External/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "dependency-2"]
+	path = iridium-fex-ios/External/drm-headers
+	url = https://github.com/FEX-Emu/drm-headers.git
+[submodule "dependency-3"]
+	path = iridium-fex-ios/External/fex-gcc-target-tests-bins
+	url = https://github.com/FEX-Emu/fex-gcc-target-tests-bins.git
+[submodule "dependency-4"]
+	path = iridium-fex-ios/External/fex-gvisor-tests-bins
+	url = https://github.com/FEX-Emu/fex-gvisor-tests-bins.git
+[submodule "dependency-5"]
+	path = iridium-fex-ios/External/fex-posixtest-bins
+	url = https://github.com/FEX-Emu/fex-posixtest-bins.git
+[submodule "dependency-6"]
+	path = iridium-fex-ios/External/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "dependency-7"]
+	path = iridium-fex-ios/External/jemalloc_glibc
+	url = https://github.com/FEX-Emu/jemalloc.git
+[submodule "dependency-8"]
+	path = iridium-fex-ios/External/range-v3
+	url = https://github.com/ericniebler/range-v3.git
+[submodule "dependency-9"]
+	path = iridium-fex-ios/External/rpmalloc
+	url = https://github.com/FEX-Emu/rpmalloc.git
+[submodule "dependency-10"]
+	path = iridium-fex-ios/External/tracy
+	url = https://github.com/wolfpld/tracy
+[submodule "dependency-11"]
+	path = iridium-fex-ios/External/unordered_dense
+	url = https://github.com/martinus/unordered_dense.git
+[submodule "dependency-12"]
+	path = iridium-fex-ios/External/vixl
+	url = https://github.com/FEX-Emu/vixl.git
+[submodule "dependency-13"]
+	path = iridium-fex-ios/External/xxhash
+	url = https://github.com/Cyan4973/xxHash.git
+[submodule "dependency-14"]
+	path = iridium-fex-ios/External/zydis
+	url = https://github.com/zyantific/zydis.git
+[submodule "dependency-15"]
+	path = iridium-fex-ios/Source/Common/cpp-optparse
+	url = https://github.com/Sonicadvance1/cpp-optparse
+[submodule "dependency-16"]
+	path = testrepos/Madeira/FEX/External/Catch2
+	url = https://github.com/catchorg/Catch2.git
+[submodule "dependency-17"]
+	path = testrepos/Madeira/FEX/External/Vulkan-Headers
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "dependency-18"]
+	path = testrepos/Madeira/FEX/External/drm-headers
+	url = https://github.com/FEX-Emu/drm-headers.git
+[submodule "dependency-19"]
+	path = testrepos/Madeira/FEX/External/fex-gcc-target-tests-bins
+	url = https://github.com/FEX-Emu/fex-gcc-target-tests-bins.git
+[submodule "dependency-20"]
+	path = testrepos/Madeira/FEX/External/fex-gvisor-tests-bins
+	url = https://github.com/FEX-Emu/fex-gvisor-tests-bins.git
+[submodule "dependency-21"]
+	path = testrepos/Madeira/FEX/External/fex-posixtest-bins
+	url = https://github.com/FEX-Emu/fex-posixtest-bins.git
+[submodule "dependency-22"]
+	path = testrepos/Madeira/FEX/External/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "dependency-23"]
+	path = testrepos/Madeira/FEX/External/jemalloc_glibc
+	url = https://github.com/FEX-Emu/jemalloc.git
+[submodule "dependency-24"]
+	path = testrepos/Madeira/FEX/External/range-v3
+	url = https://github.com/ericniebler/range-v3.git
+[submodule "dependency-25"]
+	path = testrepos/Madeira/FEX/External/rpmalloc
+	url = https://github.com/willfaust/rpmalloc.git
+[submodule "dependency-26"]
+	path = testrepos/Madeira/FEX/External/tracy
+	url = https://github.com/wolfpld/tracy
+[submodule "dependency-27"]
+	path = testrepos/Madeira/FEX/External/unordered_dense
+	url = https://github.com/martinus/unordered_dense.git
+[submodule "dependency-28"]
+	path = testrepos/Madeira/FEX/External/vixl
+	url = https://github.com/FEX-Emu/vixl.git
+[submodule "dependency-29"]
+	path = testrepos/Madeira/FEX/External/xxhash
+	url = https://github.com/Cyan4973/xxHash.git
+[submodule "dependency-30"]
+	path = testrepos/Madeira/FEX/External/zydis
+	url = https://github.com/zyantific/zydis.git
+[submodule "dependency-31"]
+	path = testrepos/Madeira/FEX/Source/Common/cpp-optparse
+	url = https://github.com/Sonicadvance1/cpp-optparse
+[submodule "dependency-32"]
+	path = testrepos/Madeira/research/dxmt/external/nvapi
+	url = https://github.com/NVIDIA/nvapi.git
+[submodule "dependency-33"]
+	path = testrepos/Madeira/research/dxmt/include/native/directx
+	url = https://github.com/misyltoad/mingw-directx-headers

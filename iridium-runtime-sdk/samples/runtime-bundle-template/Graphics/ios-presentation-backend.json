@@ -1,0 +1,11 @@
+{
+  "backend": "wineios.drv",
+  "frameTransport": "shared-host-framebuffer",
+  "graphicsAPI": "opengl",
+  "presentable": true,
+  "requires": [
+    "wineios.drv",
+    "opengl32-unix",
+    "egl"
+  ]
+}

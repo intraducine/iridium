@@ -1,0 +1,12 @@
+# Local outputs and sensitive signing material
+.DS_Store
+.build/
+DerivedData/
+*.ipa
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.xcarchive/
+xcuserdata/
+__pycache__/

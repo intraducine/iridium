@@ -1,0 +1,169 @@
+name: Iridium
+options:
+  bundleIdPrefix: com.iridium
+packages:
+  IridiumPackage:
+    path: ../..
+  AltKit:
+    url: https://github.com/rileytestut/AltKit.git
+    from: 0.0.2
+configs:
+  Debug: debug
+  Release: release
+targets:
+  Iridium:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Iridium
+    preBuildScripts:
+      - name: Prepare Embedded Translator
+        basedOnDependencyAnalysis: false
+        script: sh "${SRCROOT}/Scripts/prepare_embedded_translator.sh"
+        inputFiles:
+          - $(SRCROOT)/Scripts/prepare_embedded_translator.sh
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/prepare_embedded_translator.stamp
+      - name: Prepare Embedded Wine Server
+        basedOnDependencyAnalysis: false
+        script: sh "${SRCROOT}/Scripts/prepare_embedded_wineserver.sh"
+        inputFiles:
+          - $(SRCROOT)/Scripts/prepare_embedded_wineserver.sh
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/prepare_embedded_wineserver.stamp
+    info:
+      path: Iridium/Info.plist
+      properties:
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "57"
+        LSRequiresIPhoneOS: true
+        LSApplicationQueriesSchemes:
+          - stikjit
+          - stikdebug
+          - livecontainer2
+          - apple-magnifier
+          - sidestore
+        IridiumBundledRuntimeRoot: BundledRuntime/iridium-runtime-base
+        LSSupportsOpeningDocumentsInPlace: true
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSBonjourServices:
+          - _altserver._tcp
+        NSLocalNetworkUsageDescription: Iridium uses the local network to communicate with AltServer and local JIT helpers.
+        UIFileSharingEnabled: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium
+        PRODUCT_NAME: Iridium
+        SWIFT_VERSION: 5.10
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]:
+          - $(inherited)
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/artifacts
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/Source/Tools/CommonTools
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/Source/Common
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/Source/Common/cpp-optparse
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/FEXCore/Source
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/fmt
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/xxhash/cmake_unofficial
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/rpmalloc
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/tiny-json
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/cephes
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphoneos/External/SoftFloat-3e
+          - $(SRCROOT)/../../../iridium-wine-ios/build-iridium-ios/wine-build-iphoneos/artifacts
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]:
+          - $(inherited)
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/artifacts
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Tools/CommonTools
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Common
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/Source/Common/cpp-optparse
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/FEXCore/Source
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/fmt
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/xxhash/cmake_unofficial
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/rpmalloc
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/tiny-json
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/cephes
+          - $(SRCROOT)/../../../iridium-fex-ios/build-iridium-ios-iphonesimulator/External/SoftFloat-3e
+          - $(SRCROOT)/../../../iridium-wine-ios/build-iridium-ios/wine-build-iphonesimulator/artifacts
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lc++
+          - -Wl,-no_warn_duplicate_libraries
+          - -liridium-fex-ios-embedded
+          - -lCommonTools
+          - -lCommon
+          - -lcpp-optparse
+          - -lFEXCore
+          - -lFEXCore_Base
+          - -lJemallocLibs
+          - -lfmt
+          - -lxxhash
+          - -lrpmalloc
+          - -ltiny-json
+          - -lcephes_128bit
+          - -lsoftfloat_3e
+          - -liridium-wineserver-ios
+    dependencies:
+      - package: AltKit
+        product: AltKit
+      - package: IridiumPackage
+        product: IridiumCore
+      - package: IridiumPackage
+        product: IridiumRuntime
+      - package: IridiumPackage
+        product: IridiumProfiles
+    postBuildScripts:
+      - name: Stage Runtime Userland
+        script: sh "${SRCROOT}/Scripts/stage_runtime_userland.sh"
+        inputFiles:
+          - $(SRCROOT)/Scripts/stage_runtime_userland.sh
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/manifest.json
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Runtime/runtime-host.bin
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Translator/x64-jit.bin
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Userland/wine-userland.tar.zst
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Graphics/vkd3d-stack.json
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Graphics/ios-presentation-backend.json
+          - $(SRCROOT)/../../../iridium-runtime-sdk/build/iridium-runtime-base/Metadata/direct-launch.json
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/BundledRuntime/iridium-runtime-base
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/IridiumWineUserland
+aggregateTargets:
+  IridiumFinalized:
+    targets:
+      - Iridium
+    buildScripts:
+      - name: Finalize Iridium App Bundle
+        basedOnDependencyAnalysis: false
+        script: sh "${SRCROOT}/Scripts/finalize_iridium_app.sh"
+schemes:
+  Iridium:
+    build:
+      targets:
+        Iridium: all
+        IridiumFinalized: all
+    run:
+      executable: Iridium
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - package: IridiumPackage/IridiumCoreTests
+        - package: IridiumPackage/IridiumRuntimeTests
+        - package: IridiumPackage/IridiumProfilesTests
+        - package: IridiumPackage/IridiumAppSupportTests

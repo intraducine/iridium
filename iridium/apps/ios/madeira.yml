@@ -1,0 +1,126 @@
+include:
+  - project.yml
+name: IridiumMadeira
+targets:
+  MadeiraNative:
+    type: framework
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MediaSupport/MediaRuntime.c
+      - path: ../../../testrepos/Madeira/app/Madeira
+        includes:
+          - JITAllocator.c
+          - WineServerBridge.m
+          - WineProcessBridge.m
+          - IOSDisplayShim.m
+          - PrefixExtractor.c
+          - wine_stubs.c
+          - Winios/Winios.m
+      - path: MadeiraSupport/MadeiraNative.h
+        headerVisibility: public
+      - path: MadeiraSupport/NativePool.c
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.madeira-runtime
+        GENERATE_INFOPLIST_FILE: YES
+        CLANG_CXX_LANGUAGE_STANDARD: c++20
+        CLANG_ENABLE_OBJC_ARC: YES
+        GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "WINE_IOS=1"]
+        HEADER_SEARCH_PATHS:
+          - /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64/Headers
+          - $(SRCROOT)/../../../testrepos/Madeira/app/Madeira
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/FEXCore/include
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/FEXHeaderUtils
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/CodeEmitter
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/External/fmt/include
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/External/range-v3/include
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/External/unordered_dense/include
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/include
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/FEXCore/Source
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX
+        OTHER_LDFLAGS: ["$(inherited)", "-lc++", "-lz", "-lsqlite3", "-liconv", "-lresolv"]
+        LIBRARY_SEARCH_PATHS:
+          - /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64
+          - $(SRCROOT)/.build/media
+          - $(SRCROOT)/../../../testrepos/Madeira/app/Madeira
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/FEXCore/Source
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/fmt
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/cephes
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/xxhash/cmake_unofficial
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/SoftFloat-3e
+    dependencies:
+      - sdk: UIKit.framework
+      - sdk: Metal.framework
+      - sdk: MetalFX.framework
+      - sdk: QuartzCore.framework
+      - sdk: IOKit.framework
+      - sdk: AudioToolbox.framework
+      - sdk: AVFoundation.framework
+      - sdk: VideoToolbox.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreVideo.framework
+      - sdk: Accelerate.framework
+      - sdk: CoreAudio.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: AssetsLibrary.framework
+      - framework: /tmp/iridium-media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a
+        embed: false
+      - framework: .build/media/libntdll_media.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libwineserver.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libwin32u_unix.a
+        embed: false
+      - framework: .build/media/libdxmt_media.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libgnutls.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libhogweed.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libnettle.a
+        embed: false
+      - framework: ../../../testrepos/Madeira/app/Madeira/libgmp.a
+        embed: false
+  Iridium:
+    sources:
+      - path: MediaRuntime
+        type: folder
+        buildPhase: resources
+      - path: ControllerRuntime
+        type: folder
+        buildPhase: resources
+      - path: MadeiraSupport/Notices
+        type: folder
+        buildPhase: resources
+      - path: MadeiraSupport
+        includes: ["*.swift"]
+      - path: ../../../testrepos/Madeira/app/Madeira
+        includes: [StikJITHelper.swift, LogStore.swift, LogTail.swift, LogPattern.swift]
+      - path: ../../../testrepos/Madeira/app/Madeira/aarch64-windows
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/arm64ec-windows
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/nls
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/legal
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/prefix-template.tar.gz
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/madeira-jit.js
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/cacert.pem
+        buildPhase: resources
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME]
+        SWIFT_OBJC_BRIDGING_HEADER: MadeiraSupport/IridiumMadeira-Bridging-Header.h
+        CODE_SIGN_ENTITLEMENTS: MadeiraSupport/Madeira.entitlements
+    dependencies:
+      - target: MadeiraNative
+        embed: true

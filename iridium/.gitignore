@@ -1,0 +1,18 @@
+.DS_Store
+.build
+.swiftpm
+DerivedData
+build
+xcuserdata
+*.xcworkspace
+!apps/ios/Iridium.xcodeproj/project.xcworkspace
+*.xcuserstate
+apps/ios/Iridium.xcodeproj
+.vscode
+build-device-ptinterp/
+packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime/iridium-runtime-base/Userland/extracted/
+codedb.snapshot
+# Isolated built-in JIT experiment outputs
+.build-stikjit-*.log
+apps/ios/IridiumStikJIT.xcodeproj/
+local-diagnostics/

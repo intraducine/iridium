@@ -1,0 +1,27 @@
+# Build directories
+build/
+.build/
+build-*/
+
+# Swift Package Manager
+.swiftpm/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Generated config
+host-capabilities.json
+
+# Backup files
+*.bak
+*.orig

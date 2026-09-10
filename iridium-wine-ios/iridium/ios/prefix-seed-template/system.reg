@@ -1,0 +1,7 @@
+WINE REGISTRY Version 2
+;; All keys relative to \Registry\Machine
+
+#arch=win64
+
+[System\\CurrentControlSet\\Control\\Video\\{00000000-0000-0000-0000-000000000000}\\0000]
+"GraphicsDriver"="wineios.drv"

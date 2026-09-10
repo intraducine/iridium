@@ -1,0 +1,71 @@
+FROM debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    autoconf \
+    bison \
+    build-essential \
+    ca-certificates \
+    ccache \
+    clang \
+    curl \
+    flex \
+    g++-mingw-w64-x86-64 \
+    gcc-mingw-w64-x86-64 \
+    gettext \
+    jq \
+    libasound2-dev \
+    libasound2-plugins \
+    libavcodec-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libcapi20-dev \
+    libcups2-dev \
+    libdbus-1-dev \
+    libegl1-mesa-dev \
+    libfontconfig-dev \
+    libfreetype-dev \
+    libgl1-mesa-dev \
+    libgnutls28-dev \
+    libgphoto2-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer1.0-dev \
+    libice-dev \
+    libkrb5-dev \
+    libpcap-dev \
+    libpcsclite-dev \
+    libpulse-dev \
+    libsane-dev \
+    libsdl2-dev \
+    libswresample-dev \
+    libswscale-dev \
+    libudev-dev \
+    libusb-1.0-0-dev \
+    libv4l-dev \
+    libvulkan-dev \
+    libwayland-dev \
+    libx11-dev \
+    libxcomposite-dev \
+    libxcursor-dev \
+    libxext-dev \
+    libxi-dev \
+    libxinerama-dev \
+    libxkbcommon-dev \
+    libxkbregistry-dev \
+    libxrandr-dev \
+    libxrender-dev \
+    libxxf86vm-dev \
+    linux-libc-dev \
+    lld \
+    llvm \
+    ocl-icd-opencl-dev \
+    perl \
+    pkg-config \
+    samba-dev \
+    unixodbc-dev \
+    x11proto-dev \
+    zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work

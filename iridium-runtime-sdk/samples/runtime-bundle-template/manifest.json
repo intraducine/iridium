@@ -1,0 +1,22 @@
+{
+  "descriptor": {
+    "cpuTranslation": "x64ToARM64JIT",
+    "exposesDesktopShell": false,
+    "graphicsStack": "metalOpenGLFallback",
+    "identifier": "iridium-runtime-base",
+    "name": "Iridium Runtime Base"
+  },
+  "id": "iridium-runtime-base",
+  "minimumDeviceTier": "tier1",
+  "name": "Iridium Runtime Base",
+  "supportMetadata": {
+    "engineFamily": "wine-derived",
+    "launchMode": "direct-executable-only",
+    "runtimeHostContractVersion": "1",
+    "supportedArchitectures": "x64",
+    "supportedGraphicsAPIs": "opengl",
+    "translatorBackend": "fex-derived"
+  },
+  "supportsDirectGameLaunch": true,
+  "version": "0.0.0-sdk-template"
+}

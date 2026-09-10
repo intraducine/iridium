@@ -1,0 +1,4 @@
+-std=c++17
+-I./include
+-I../../dlls/wineios.drv
+-I../../dlls/winecoreaudio.drv

@@ -1,0 +1,13 @@
+{
+  "blockedEntryPoints": [
+    "explorer.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "steam.exe"
+  ],
+  "directLaunchOnly": true,
+  "supportsArchitectures": [
+    "x64"
+  ]
+}
+

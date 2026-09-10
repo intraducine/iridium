@@ -1,0 +1,10 @@
+{
+  "graphicsStack": "metalOpenGLFallback",
+  "notes": [
+    "Internal-only first milestone",
+    "OpenGL only"
+  ],
+  "supportedGraphicsAPIs": [
+    "opengl"
+  ]
+}

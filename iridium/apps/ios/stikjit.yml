@@ -1,0 +1,62 @@
+include:
+  - madeira.yml
+name: IridiumStikJIT
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+targets:
+  MadeiraNative:
+    deploymentTarget: "27.0"
+  Iridium:
+    deploymentTarget: "27.0"
+    sources:
+      - path: BuiltinJIT/Host
+        excludes: [Bridging.h]
+      - path: BuiltinJIT/Shared
+      - path: BuiltinJIT/StikJITNotices
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        IRIDIUM_JIT_REUSE_RUNTIME: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: BuiltinJIT/Host/Bridging.h
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME, BUILTIN_STIKJIT]
+    dependencies:
+      - sdk: Security.framework
+      - target: IridiumJITHelper
+        embed: true
+  IridiumJITHelper:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - path: BuiltinJIT/Helper
+      - path: BuiltinJIT/Shared
+      - path: BuiltinJIT/StikJITNotices
+        type: folder
+        buildPhase: resources
+    info:
+      path: BuiltinJIT/Helper/Info.plist
+      properties:
+        CFBundleDisplayName: Iridium JIT Helper
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "57"
+        NSExtension:
+          NSExtensionAttributes:
+            NSExtensionActivationRule: FALSEPREDICATE
+          NSExtensionPointIdentifier: com.apple.ar.viewer
+          NSExtensionPrincipalClass: JITRequestHandler
+        XPCService:
+          ServiceType: Application
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: software.iridium.jit-helper
+        SWIFT_VERSION: "5.10"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        APPLICATION_EXTENSION_API_ONLY: YES
+        ENABLE_DEBUG_DYLIB: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - framework: BuiltinJIT/Vendor/StikJIT.xcframework
+        embed: true
