@@ -1,0 +1,49 @@
+name: Build unsigned IPA
+run-name: Manual unsigned IPA · ${{ github.ref_name }}
+"on":
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 300
+    env:
+      CODE_SIGNING_ALLOWED: "NO"
+      CODE_SIGNING_REQUIRED: "NO"
+      CODE_SIGN_IDENTITY: ""
+      DEVELOPMENT_TEAM: ""
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Check source privacy
+        run: python3 check-public-source.py
+      - name: Check full-runtime build readiness
+        run: python3 ci/check-ipa-prerequisites.py
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec iridium/apps/ios/stikjit.yml
+      - name: Build without signing
+        run: |
+          xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
+            -scheme Iridium -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath .build/unsigned-ipa \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            EXPANDED_CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= build
+      - name: Prepare and audit unsigned package
+        run: python3 ci/package-unsigned-ipa.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/ipa-output
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Iridium-unsigned-${{ github.sha }}
+          path: .build/ipa-output/*
+          if-no-files-found: error
+          retention-days: 7

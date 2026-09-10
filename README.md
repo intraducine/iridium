@@ -18,7 +18,7 @@ Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own lic
 
 Clone this repository. Optional external dependencies are pinned in the root `.gitmodules` and `DEPENDENCIES.json`; use `git submodule update --init --recursive` when preparing them. Some optional upstream test dependencies contain binaries; they are not stored in this repository.
 
-The existing build scripts are included, but currently depend on locally staged runtime and media libraries. A clean-runner IPA build is not verified yet. See [the Actions plan](docs/actions-ipa.md). Historical documents under the component directories may describe older runtime states.
+The existing build scripts are included, but currently depend on locally staged runtime and media libraries. A clean-runner IPA build is not verified yet. The [manual-only IPA workflow](docs/actions-ipa.md) currently stops at its prerequisite check; it does not yet produce an IPA. Historical documents under the component directories may describe older runtime states.
 
 ## Privacy and contributions
 

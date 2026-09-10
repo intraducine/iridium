@@ -1,6 +1,14 @@
-# Unsigned IPA build plan
+# Manual unsigned IPA workflow
 
-No app build has been run for this source release. The enabled Actions workflow checks source privacy and file sizes only.
+The workflow is available at **Actions → Build unsigned IPA → Run workflow**. Select the branch, then start the run. Its only trigger is `workflow_dispatch`: commits, pull requests, tags, and schedules cannot start an IPA build. The separate source privacy workflow still runs automatically.
+
+**Current limitation:** this source snapshot does not yet have a complete clean-runner runtime preparation step. A manual run currently stops at `Check full-runtime build readiness`; it will not produce an IPA. Missing inputs include legacy host/userland staging, native libraries, Windows modules, the media/input binaries, and StikJIT. The StikJIT transitive source notice also remains unresolved. Adding a trigger does not solve those dependencies.
+
+The Xcode and unsigned packaging steps are wired after that check, but have not been run. Do not upload local artifacts or signing files to bypass it. The remaining work below must be completed before the workflow is usable end to end.
+
+No IPA workflow was dispatched while adding it. Static trigger checks and synthetic package rejection tests were run without compiling an app. Run them with `python3 -B -m unittest discover -s ci -p 'test_*.py'`.
+
+The package step rejects certificates, provisioning profiles, private-key text, device identifiers, missing helper executables, and escaping symlinks. It strips existing vendor code signatures in a temporary staging copy and checks each native executable before creating the IPA. It never imports a keychain or accesses signing credentials.
 
 ## Runner and cost
 
