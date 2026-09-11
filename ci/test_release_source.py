@@ -1,4 +1,6 @@
+import hashlib
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 import tarfile
 import unittest
@@ -27,3 +29,17 @@ class SourceTests(unittest.TestCase):
                 source.source_tree(tree, out)
             with self.assertRaises(ValueError):
                 source.source_tree(root / 'missing', out)
+
+    def test_only_exact_public_fixture_bytes_are_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            tree = root / 'source'
+            fixture = tree / 'vendor/openssl/test/identity.p12'
+            fixture.parent.mkdir(parents=True)
+            fixture.write_bytes(b'public test fixture')
+            pins = {str(fixture.relative_to(tree)): hashlib.sha256(fixture.read_bytes()).hexdigest()}
+            with patch.object(source, 'PUBLIC_TEST_FIXTURES', pins):
+                source.source_tree(tree, root / 'source.tar.gz')
+                fixture.write_bytes(b'different signing data')
+                with self.assertRaises(ValueError):
+                    source.source_tree(tree, root / 'source.tar.gz')

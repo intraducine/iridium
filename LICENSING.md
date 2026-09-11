@@ -42,3 +42,10 @@ This covers the pinned toolchain source inputs, not a completed link audit.
 The final audit must still match the linked target libraries to these inputs,
 retain notices with the binary distribution, and review libraries supplied by
 other compilers (including the Homebrew MinGW compiler used for x86 helpers).
+
+The vendored OpenSSL 0.10.76 source includes five public certificate/key test
+fixtures. The collector permits only their verified upstream bytes, pinned by
+SHA-256 in `ci/collect-release-source.py`. These are upstream test data, not
+maintainer signing credentials. Changed files, unlisted signing files and
+symlinks remain rejected. The fixture pins were checked against the crate
+archive digest recorded in idevice's Cargo.lock.

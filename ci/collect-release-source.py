@@ -12,6 +12,14 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / '.build/corresponding-source'
 
+# Public test fixtures from openssl 0.10.76 (Cargo.lock checksum verified).
+# Exact byte hashes permit upstream test data, never maintainer signing material.
+PUBLIC_TEST_FIXTURES = {'vendor/openssl/test/cms.p12': 'd33fc5edd6b9caa672e7570b869135235bb2583580a273f6e88c6a6c68fd5a8a',
+ 'vendor/openssl/test/identity.p12': 'aceeb3e5516471bd5af9a44bbeffc9559c4f228f67c677d29f36a4b368e2779f',
+ 'vendor/openssl/test/intermediate-ca.key': 'a5f3d331af87c1305843e235841e494a0669a95d3824a6c766d09371f62c3bab',
+ 'vendor/openssl/test/keystore-empty-chain.p12': 'bbea280f6fe10556d7470df7072ef0e4ee3997e2c0b3666197f423430c0e6b61',
+ 'vendor/openssl/test/root-ca.key': 'b37cf88614980c38e43c4329cdf7162bae48cc8af1fafd54db2fe0d17e458e1d'}
+
 
 def git_snapshot(repo, output):
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
@@ -33,7 +41,9 @@ def source_tree(source, output):
             for name in sorted(names + [d for d in dirs if (Path(directory) / d).is_symlink()]):
                 path = Path(directory) / name
                 if path.suffix.lower() in {'.p12', '.pfx', '.mobileprovision', '.key'}:
-                    raise ValueError('Signing material in source input')
+                    expected = PUBLIC_TEST_FIXTURES.get(str(path.relative_to(source)))
+                    if path.is_symlink() or expected != hashlib.sha256(path.read_bytes()).hexdigest():
+                        raise ValueError('Signing material in source input')
                 if path.suffix.lower() in {'.a', '.dylib', '.dll', '.exe'}:
                     continue
                 if path.is_symlink():
