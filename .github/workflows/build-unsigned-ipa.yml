@@ -3,6 +3,10 @@ run-name: Manual unsigned IPA · ${{ github.ref_name }}
 "on":
   workflow_dispatch:
     inputs:
+      media_only:
+        description: Test only the media SDK; do not compile the runtime or app
+        type: boolean
+        default: false
       linux_runtime_run_id:
         description: 'Optional successful Linux producer run on main; source equivalence is checked'
         required: false
@@ -16,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   linux-userland:
-    if: ${{ inputs.linux_runtime_run_id == '' }}
+    if: ${{ !inputs.media_only && inputs.linux_runtime_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
@@ -38,9 +42,39 @@ jobs:
           path: .build/linux-transfer/
           if-no-files-found: error
           retention-days: 1
+  media:
+    runs-on: xcode-27
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Check source privacy
+        run: python3 check-public-source.py
+      - name: Install media build tools
+        run: brew install cmake ninja bison flex pkgconf meson zstd
+      - name: Fetch verified Cerbero source
+        run: python3 ci/fetch-runtime-inputs.py --only cerbero-source
+      - name: Build media SDK and matching source
+        run: bash ci/prepare-media-sdk.sh
+      - name: Package media transfer
+        run: |
+          mkdir -p .build/media-transfer
+          tar -czf .build/media-transfer/media-sdk.tar.gz -C iridium/apps/ios/.build media-sdk
+          cp .build/corresponding-source/cerbero-1.28.6.tar.xz .build/media-transfer/
+          git rev-parse HEAD > .build/media-transfer/source-revision.txt
+          cd .build/media-transfer
+          shasum -a 256 media-sdk.tar.gz cerbero-1.28.6.tar.xz > SHA256SUMS
+      - name: Retain media SDK and source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: media-sdk-with-source
+          path: .build/media-transfer/
+          if-no-files-found: error
+          retention-days: 7
   build:
-    needs: linux-userland
-    if: ${{ !cancelled() && (needs.linux-userland.result == 'success' || (inputs.linux_runtime_run_id != '' && needs.linux-userland.result == 'skipped')) }}
+    needs: [linux-userland, media]
+    if: ${{ !cancelled() && !inputs.media_only && needs.media.result == 'success' && (needs.linux-userland.result == 'success' || (inputs.linux_runtime_run_id != '' && needs.linux-userland.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -69,6 +103,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 ci/verify-linux-reuse.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: media-sdk-with-source
+          path: .build/media-transfer
+      - name: Restore verified media SDK
+        run: python3 ci/restore-media-sdk.py
       - name: Prepare native runtime libraries
         run: bash ci/prepare-native-runtime.sh
       - name: Build Windows modules and clean prefix

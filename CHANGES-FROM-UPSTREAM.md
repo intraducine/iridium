@@ -74,3 +74,4 @@ Restored tracked legacy Wine Makefile.in templates omitted from the initial publ
 Also restored nine fork-specific templates and required text .spec/.in inputs from the existing local source. No compiled outputs or game data are included.
 
 Restored the remaining legacy Wine .spec export definitions and removed their incorrect ignore rule after the next clean build identified an implicit MODULE dependency. Source checks now cover implicit module export definitions, not only explicitly listed sources.
+- Cerbero 1.28.6: select C++14 for the gperf 3.1 host-tool recipe. Its legacy `register` declarations fail with the newer compiler's C++17 default. The exact recipe patch is retained in `ci/patches/cerbero-gperf-cxx14.patch`; codec language settings are unchanged.

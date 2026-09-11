@@ -77,8 +77,11 @@ def fetch(root, entry):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", action="store_true", help="List inputs without downloading or changing files")
-    args = parser.parse_args()
     entries = json.loads((ROOT / "ci/runtime-inputs.json").read_text())
+    parser.add_argument("--only", choices=[entry["name"] for entry in entries])
+    args = parser.parse_args()
+    if args.only:
+        entries = [entry for entry in entries if entry["name"] == args.only]
     for entry in entries:
         destination(ROOT, entry)
         if args.plan:
