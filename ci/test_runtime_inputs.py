@@ -33,19 +33,19 @@ class RuntimeInputTests(unittest.TestCase):
             (root / 'ci').mkdir()
             script = root / 'ci/compile-windows-modules.sh'
             script.write_text((ROOT / 'ci/compile-windows-modules.sh').read_text())
-            tools = root / 'tools'
+            tools = root / 'bin'
             tools.mkdir()
             for name, body in {
-                'brew': 'echo /usr/local',
+                'brew': 'echo "$MOCK_PREFIX"',
                 'cmake': 'printf "%s\\n" "$@" >> "$CAPTURE"; exit 17',
             }.items():
                 tool = tools / name
                 tool.write_text('#!/bin/sh\n' + body + '\n')
                 tool.chmod(0o755)
             capture = root / 'args'
-            env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], CAPTURE=str(capture))
+            env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], CAPTURE=str(capture), MOCK_PREFIX=str(root))
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
-            self.assertEqual(result.returncode, 17)
+            self.assertEqual(result.returncode, 17, result.stderr.decode())
             args = capture.read_text().splitlines()
             for language in ('C', 'CXX', 'ASM'):
                 self.assertIn(f'-DCMAKE_{language}_FLAGS=-DFEX_IOS_HOST', args)

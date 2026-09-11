@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,32 @@ reuse = components.reuse
 
 
 class CompiledComponentsTests(unittest.TestCase):
+    def test_toolchain_ignores_metal_mount_but_checks_version(self):
+        def fingerprint(version, mount):
+            def output(command, **kwargs):
+                if 'metal' in command:
+                    return f'Apple metal version {version}\nTarget: air64\nInstalledDir: {mount}\n'
+                return 'fixed tool version'
+            with patch.object(components.prepared.subprocess, 'check_output', side_effect=output), \
+                 patch.object(components.prepared.inputs, 'digest', return_value='fixed input'):
+                return components.prepared.toolchain()
+        self.assertEqual(fingerprint('32023.921', '/mount/first'),
+                         fingerprint('32023.921', '/mount/second'))
+        self.assertNotEqual(fingerprint('32023.921', '/mount/first'),
+                            fingerprint('32024.0', '/mount/first'))
+
+    def test_legacy_migration_requires_every_other_input_to_match(self):
+        old = ['xcode 27', 'sdk 27', 'metal 1\nInstalledDir: /old', 'swift 1', 'media digest']
+        expected = hashlib.sha256('\n'.join(old).encode()).hexdigest()
+        current = list(old)
+        current[2] = 'metal 1\nInstalledDir: /new'
+        with patch.object(components.prepared, 'LEGACY_METAL_MOUNTS', {expected: '/old'}):
+            self.assertEqual(components.prepared.fingerprint(current), expected)
+            for index in range(len(current)):
+                changed = list(current)
+                changed[index] += '\nchanged'
+                self.assertNotEqual(components.prepared.fingerprint(changed), expected)
+
     def test_round_trip_preserves_executable_and_rejects_corruption(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -77,7 +77,33 @@ def toolchain():
     record[-1] = '\n'.join(sorted(record[-1].splitlines()))
     record.append(inputs.digest(ROOT / '.build/media-transfer/media-sdk.tar.gz'))
     record.append(inputs.digest(ROOT / '.build/linux-transfer/wine-userland.tar.zst'))
-    return hashlib.sha256('\n'.join(record).encode()).hexdigest()
+    return fingerprint(record)
+
+
+# Run 34650568812 retained native and Wine before failing in Windows compilation.
+# Reconstruct its old hash with ONLY the random Metal mount replaced. Reuse is
+# allowed only if every other tool version and input digest matches that hash.
+LEGACY_METAL_MOUNTS = {
+    'e0cc2593b08c5647be9351b79a2fca0d75b5a728f502fa251c5fb1420b412291':
+        '/private/var/run/com.apple.security.cryptexd/mnt/'
+        'com.apple.MobileAsset.MetalToolchain-v27.1.5252.6.uJXdU9/'
+        'Metal.xctoolchain/usr/metal/current/bin',
+}
+
+
+def fingerprint(record):
+    def digest(parts):
+        return hashlib.sha256('\n'.join(parts).encode()).hexdigest()
+    for expected, mount in LEGACY_METAL_MOUNTS.items():
+        legacy = list(record)
+        legacy[2] = '\n'.join('InstalledDir: ' + mount if line.startswith('InstalledDir:') else line
+                              for line in legacy[2].splitlines())
+        if digest(legacy) == expected:
+            return expected
+    stable = list(record)
+    stable[2] = '\n'.join(line for line in stable[2].splitlines()
+                          if not line.startswith('InstalledDir:'))
+    return digest(stable)
 
 
 def select():
