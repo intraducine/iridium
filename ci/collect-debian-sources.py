@@ -2,6 +2,7 @@
 """Run inside the Wine builder: collect source for each staged Debian library."""
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,6 +12,17 @@ import sys
 def digest(path):
     with path.open('rb') as file:
         return hashlib.file_digest(file, 'sha256').hexdigest()
+
+
+def package_owner(output, candidate):
+    owners = set()
+    for line in output.splitlines():
+        owner, separator, path = line.partition(': ')
+        if separator and path == candidate and re.fullmatch(r'[a-z0-9][a-z0-9+.-]+(?::[a-z0-9-]+)?', owner):
+            owners.add(owner)
+    if len(owners) > 1:
+        raise ValueError(f'Ambiguous Debian owner: {candidate}')
+    return next(iter(owners), None)
 
 
 def collect(install, output, system=Path("/")):
@@ -29,8 +41,9 @@ def collect(install, output, system=Path("/")):
         for candidate in dict.fromkeys([str(guest), str(guest.resolve())]):
             found = subprocess.run(['dpkg-query', '-S', candidate], text=True, capture_output=True)
             if found.returncode == 0:
-                result = found.stdout.splitlines()[0].split(': ', 1)[0]
-                break
+                result = package_owner(found.stdout, candidate)
+                if result:
+                    break
         if not result or ',' in result:
             raise ValueError(f'Cannot establish Debian owner: {relative}')
         source, version = subprocess.check_output(
