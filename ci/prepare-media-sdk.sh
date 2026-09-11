@@ -19,8 +19,8 @@ with host_config.open('x') as config:
     config.write('min_osx_sdk_version = ' + repr(platform.mac_ver()[0]) + '\n')
 PY
 cd "$CERBERO"
-git apply --check "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
-git apply "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
+git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
+git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bootstrap --assume-yes --jobs "$JOBS"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
