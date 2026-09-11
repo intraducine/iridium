@@ -79,7 +79,8 @@ jobs:
             -destination 'generic/platform=iOS' -derivedDataPath .build/unsigned-ipa \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
-            EXPANDED_CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= build
+            EXPANDED_CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
+            CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" build
       - name: Prepare and audit unsigned package
         run: python3 ci/package-unsigned-ipa.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/ipa-output
       - name: Upload unsigned IPA

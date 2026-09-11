@@ -10,6 +10,10 @@ other documented public contracts require a major version. Additive behavior
 uses a minor version; compatible fixes use a patch. Never reuse a released tag
 or replace a published artifact silently.
 
+The first release has the maintainer-approved tag `v0.1`, mapped to app
+version `0.1.0` and description `docs/releases/0.1.0.md`. This is a specific
+tag spelling exception; later releases use the full three-part tag.
+
 The maintainer chooses the release version. Do not infer it from the number of
 commits. Set the app's marketing version to the numeric release core and record
 the unique CI build number separately. Prerelease status belongs in the tag and
