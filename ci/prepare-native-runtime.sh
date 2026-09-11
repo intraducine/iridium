@@ -119,7 +119,7 @@ mkdir -p "$ROOT/iridium-wine-ios/build-iridium-ios/wine-build"
 zsh "$ROOT/iridium-wine-ios/iridium/ios/build_install_root.sh" \
     --platform device --embedded-server-only --jobs "$JOBS"
 
-bash "$ROOT/ci/prepare-media-sdk.sh"
+test -s "$ROOT/iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a"
 sh "$ROOT/iridium/apps/ios/Scripts/build_media_runtime.sh"
 sh "$ROOT/iridium/apps/ios/Scripts/build_controller_runtime.sh"
 

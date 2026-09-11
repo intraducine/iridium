@@ -1,0 +1,11 @@
+diff --git a/recipes/build-tools/gperf.recipe b/recipes/build-tools/gperf.recipe
+--- a/recipes/build-tools/gperf.recipe
++++ b/recipes/build-tools/gperf.recipe
+@@ -10,6 +10,7 @@ class Recipe(recipe.Recipe):
+     url = 'gnu://.tar.gz'
+     tarball_checksum = '588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2'
+     btype = BuildType.MESON
++    meson_options = {'cpp_std': 'c++14'}
+ 
+     patches = [
+ 	    'gperf/0000-workaround-implicit-function-declaration-warnings.patch',

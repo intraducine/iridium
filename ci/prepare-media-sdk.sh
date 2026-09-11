@@ -19,10 +19,15 @@ with host_config.open('x') as config:
     config.write('min_osx_sdk_version = ' + repr(platform.mac_ver()[0]) + '\n')
 PY
 cd "$CERBERO"
+git apply --check "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
+git apply "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bootstrap --assume-yes --jobs "$JOBS"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     package gstreamer-1.0 --artifact=xcframework --jobs "$JOBS"
+# The package artifact is a framework input, not the final XCFramework.
+python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
+    xcframework gstreamer-1.0 --source gstreamer-1.0-1.28.6-ios-arm64.xcframework.tar.xz
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bundle-source gstreamer-1.0 --offline
 mkdir -p "$ROOT/.build/corresponding-source"
@@ -31,7 +36,7 @@ python3 - "$CERBERO" "$ROOT/iridium/apps/ios/.build/media-sdk" <<'PY'
 from pathlib import Path
 import sys, tarfile
 source, output = map(Path, sys.argv[1:])
-archives = list(source.glob('gstreamer-1.0-1.28.6-ios-arm64.xcframework.tar.xz'))
+archives = list(source.glob('gstreamer-1.28.6-xcframework.tar.xz'))
 if len(archives) != 1:
     raise SystemExit('Expected the Cerbero 1.28.6 iOS ARM64 XCFramework package')
 if output.exists():
