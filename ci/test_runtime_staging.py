@@ -69,7 +69,18 @@ class RuntimeStagingTests(unittest.TestCase):
             for folder, name in [('nls', 'l_intl.nls'), ('fonts', 'test.ttf')]:
                 (build / folder).mkdir()
                 (build / folder / name).write_bytes(b'resource')
-            windows.stage(build, app)
+            source = root / 'source'
+            (source / 'fonts').mkdir(parents=True)
+            (source / 'fonts/test.ttf').write_bytes(b'source fallback')
+            (source / 'fonts/source.ttf').write_bytes(b'source only')
+            windows.stage(build, app, source)
+            self.assertEqual((app / 'fonts/test.ttf').read_bytes(), b'resource')
+            self.assertEqual((app / 'fonts/source.ttf').read_bytes(), b'source only')
+            (build / 'fonts/test.ttf').unlink()
+            windows.stage(build, app, source)
+            self.assertEqual((app / 'fonts/test.ttf').read_bytes(), b'source fallback')
+            with self.assertRaisesRegex(ValueError, 'fonts'):
+                windows.stage(build, app)
             for arch in windows.MACHINES:
                 windows.check_pe(app / f'{arch}-windows/ntdll.dll', arch)
             self.assertTrue((app / 'arm64ec-windows/vcruntime140_1.dll').exists())

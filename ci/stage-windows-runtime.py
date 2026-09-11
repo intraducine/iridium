@@ -58,7 +58,7 @@ def check_pe(path, architecture):
         raise ValueError(f'Wrong PE architecture: {path.name} ({architecture})')
 
 
-def stage(build, app):
+def stage(build, app, source=None):
     seen = {}
     for architecture in MACHINES:
         (app / f'{architecture}-windows').mkdir(parents=True, exist_ok=True)
@@ -82,11 +82,13 @@ def stage(build, app):
     for architecture in MACHINES:
         check_pe(app / f'{architecture}-windows/ntdll.dll', architecture)
     for folder, suffix in [('nls', '*.nls'), ('fonts', '*.ttf')]:
-        files = list((build / folder).glob(suffix))
+        # Wine ships prebuilt TTFs in source; generated fonts take precedence.
+        files = {p.name: p for p in (source / folder).glob(suffix)} if source and folder == 'fonts' else {}
+        files.update({p.name: p for p in (build / folder).glob(suffix)})
         if not files:
             raise ValueError(f'Wine build did not produce {folder}')
         (app / folder).mkdir(exist_ok=True)
-        for path in files:
+        for path in files.values():
             shutil.copyfile(path, app / folder / path.name)
 
 
@@ -101,9 +103,9 @@ def check(app):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        raise SystemExit('usage: stage-windows-runtime.py BUILD APP | --check APP')
-    if sys.argv[1] == '--check':
+    if len(sys.argv) == 3 and sys.argv[1] == '--check':
         check(Path(sys.argv[2]))
+    elif len(sys.argv) == 4:
+        stage(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
     else:
-        stage(Path(sys.argv[1]), Path(sys.argv[2]))
+        raise SystemExit('usage: stage-windows-runtime.py BUILD APP SOURCE | --check APP')
