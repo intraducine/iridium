@@ -32,6 +32,7 @@ Upstream: https://github.com/willfaust/wine
 Base revision: `7817e220384e895651f868ba4d97affcf21b3816`
 
 Local modified source paths included in this snapshot:
+- `dlls/ntdll/loader.c`: restrict the JIT alias lifecycle diagnostic to ARM64EC, where its helper is defined; preserve the ARM64EC diagnostic.
 - `dlls/win32u/dibdrv/bitblt.c`: restrict iOS source-bitmap debug hooks to `WINE_IOS` builds so desktop Wine links without iOS app symbols.
 
 Generated artifacts, personal paths, device identifiers, and local captures were excluded or sanitized where applicable.

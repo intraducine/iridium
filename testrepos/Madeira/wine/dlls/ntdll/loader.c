@@ -4120,6 +4120,8 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
  * inventing one would manufacture false positives.  Deduped per (module,
  * slot) so one persistent zero cannot flood the cap.
  */
+/* The JIT alias helper is implemented only by signal_arm64ec.c. */
+#ifdef __arm64ec__
 static void iat_life_sweep( const char *when )
 {
     extern void *xlate_ios_jit( void *ptr );
@@ -4210,6 +4212,8 @@ static void iat_life_sweep( const char *when )
              sweeps, when, n_mod, n_slot, n_pool, n_pezero, n_poolzero );
 }
 
+#endif /* __arm64ec__ */
+
 NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_flags,
                                              const UNICODE_STRING *libname, HMODULE* hModule)
 {
@@ -4250,6 +4254,8 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_fl
             LdrUnloadDll(wm->ldr.DllBase);
             wm = NULL;
         }
+
+#ifdef __arm64ec__
         else
         {
             char tag[64];
@@ -4260,6 +4266,7 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_fl
             tag[k] = 0;
             iat_life_sweep( tag );   /* ml701 [iat-life] stage 2 */
         }
+#endif
     }
     if (wm) *hModule = wm->ldr.DllBase;
 

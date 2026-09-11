@@ -23,3 +23,15 @@ class WineIOSHooksTests(unittest.TestCase):
                                     capture_output=True, check=True).stdout
             for hook in hooks:
                 self.assertEqual(hook in result, ios, hook)
+
+    @unittest.skipUnless(shutil.which("cc"), "C preprocessor required")
+    def test_loader_jit_alias_calls_only_exist_in_arm64ec_build(self):
+        source = (ROOT / "testrepos/Madeira/wine/dlls/ntdll/loader.c").read_text()
+        source = "\n".join(line for line in source.splitlines()
+                           if not line.lstrip().startswith("#include"))
+        for arch in ("__aarch64__", "__x86_64__", "__i386__", "__arm64ec__"):
+            result = subprocess.run(
+                ["cc", "-E", "-P", "-undef", "-D" + arch, "-x", "c", "-"],
+                input=source, text=True, capture_output=True, check=True).stdout
+            for hook in ("xlate_ios_jit", "iat_life_sweep"):
+                self.assertEqual(hook in result, arch == "__arm64ec__", (arch, hook))
