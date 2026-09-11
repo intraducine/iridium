@@ -4,10 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="$ROOT/iridium-runtime-sdk"
 INPUT="$ROOT/.build/linux-transfer"
 cd "$INPUT"
-shasum -a 256 -c SHA256SUMS
-[ "$(cat source-revision.txt)" = "$(git -C "$ROOT" rev-parse HEAD)" ] || {
-    echo 'Linux userland came from a different source revision' >&2; exit 1;
-}
+python3 "$ROOT/ci/verify-linux-reuse.py"
 # Preserve the SDK's existing host-binary build, including its FEXCore check.
 bash "$SDK/scripts/build_runtime_bundle.sh" \
     --bundle-version "ci-$(git -C "$ROOT" rev-parse --short=12 HEAD)" \

@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import plistlib
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -20,7 +21,7 @@ class ManualBuildTests(unittest.TestCase):
     def test_manual_trigger_and_no_signing_secrets(self):
         text = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
         trigger = text.split('"on":\n', 1)[1].split('permissions:', 1)[0]
-        self.assertEqual(trigger.strip(), "workflow_dispatch:")
+        self.assertEqual(re.findall(r'^  ([a-z_]+):', trigger, re.M), ['workflow_dispatch'])
         self.assertNotIn("secrets.", text)
         self.assertNotIn("allowProvisioningUpdates", text)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", text)
