@@ -2,13 +2,21 @@ name: Build unsigned IPA
 run-name: Manual unsigned IPA · ${{ github.ref_name }}
 "on":
   workflow_dispatch:
+    inputs:
+      linux_runtime_run_id:
+        description: 'Optional successful Linux producer run on main; source equivalence is checked'
+        required: false
+        type: string
+        default: ''
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: unsigned-ipa-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   linux-userland:
+    if: ${{ inputs.linux_runtime_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
@@ -32,6 +40,7 @@ jobs:
           retention-days: 1
   build:
     needs: linux-userland
+    if: ${{ !cancelled() && (needs.linux-userland.result == 'success' || (inputs.linux_runtime_run_id != '' && needs.linux-userland.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -39,6 +48,7 @@ jobs:
       CODE_SIGNING_REQUIRED: "NO"
       CODE_SIGN_IDENTITY: ""
       DEVELOPMENT_TEAM: ""
+      LINUX_RUNTIME_RUN_ID: ${{ inputs.linux_runtime_run_id }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -53,6 +63,12 @@ jobs:
         with:
           name: linux-runtime-with-source
           path: .build/linux-transfer
+          run-id: ${{ inputs.linux_runtime_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify Linux artifact provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/verify-linux-reuse.py
       - name: Prepare native runtime libraries
         run: bash ci/prepare-native-runtime.sh
       - name: Build Windows modules and clean prefix
@@ -62,11 +78,22 @@ jobs:
       - name: Build StikJIT and idevice from source
         run: bash ci/prepare-stikjit.sh
       - name: Prepare legacy runtime bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash ci/prepare-legacy-bundle.sh
       - name: Collect exact repository and dependency source
         run: |
           python3 ci/collect-release-source.py repository
           python3 ci/collect-release-source.py package
+      - name: Retain source archive for release audit
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Iridium-source-audit-${{ github.sha }}
+          path: |
+            .build/ipa-output/Iridium-corresponding-source.tar.gz
+            .build/ipa-output/SOURCE-SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
       - name: Check full-runtime build readiness
         run: python3 ci/check-ipa-prerequisites.py
       - name: Generate Xcode project

@@ -66,3 +66,12 @@ sources, non-Git ANGLE inputs, resolved codec/crate license terms, and any
 missing generated inputs must be checked against an actual build. The existing
 publication gate stays closed. No source archive or IPA was built or uploaded
 while adding this collector; only synthetic source-archive tests ran.
+
+A later manual run may supply `linux_runtime_run_id` to reuse a completed Linux
+artifact. CI requires a successful Linux producer job from this repository's
+manual main-branch workflow, the recorded source commit, unchanged Wine and
+Linux preparation/source-collection inputs, and matching archive checksums.
+This avoids recompiling unchanged Linux code for macOS-only fixes; it does not
+claim bit-for-bit reproducibility. Expired artifacts require a fresh build.
+The source-audit artifact is retained before the IPA publication gate, so the
+matching source can be reviewed even when that gate blocks the binary.
