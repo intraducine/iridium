@@ -28,3 +28,17 @@ AGPL permits commercial use and forks. It requires source sharing under its term
 ANGLE is built from Google ANGLE commit `6024e9c05548480c3b2ea42836a112509a549a95`, whose BSD-style license is copied by the build recipe. Its dependencies retain separate licenses. The Cerbero recipe uses revision `59548269f4fd0f701818f0bafdb102959ec81e65`; Cerbero source headers grant LGPL-2.0-or-later, while individual codecs and libraries retain their own terms. A source-built SDK is not by itself a complete distribution audit.
 
 The Linux recipe collects exact Debian source-package versions and copyright files for copied libraries. A future IPA must include a matching complete source archive and notices for all target dependencies. `ci/binary-release-blockers.json` lists the remaining work. These records permit source preparation to be reviewed; they do not declare a binary release compliant.
+
+## Windows compiler runtime sources
+
+The pinned llvm-mingw 20260421 toolchain uses LLVM 22.1.4 and mingw-w64
+`b2b5e53e9d9be406e60ebc152a9cf161b87d4e12`, as specified in its build scripts
+at `81fba99f8a388b07b2c14be0e4e17af6bd9d59a4`. The source collector includes
+these complete source archives and the toolchain build scripts, each with a
+verified digest. Their component notices remain inside the archives. LLVM 15,
+used separately by the native graphics component, is also retained.
+
+This covers the pinned toolchain source inputs, not a completed link audit.
+The final audit must still match the linked target libraries to these inputs,
+retain notices with the binary distribution, and review libraries supplied by
+other compilers (including the Homebrew MinGW compiler used for x86 helpers).
