@@ -25,3 +25,9 @@ The existing build scripts are included, but currently depend on locally staged 
 Run `python3 check-public-source.py` before contributing. You can pass private strings as arguments for a targeted local scan; do not add those strings to public workflows. This scan does not guarantee anonymity.
 
 Do not commit signing certificates, private keys, provisioning profiles, pairing records, personal device logs, build outputs, or game assets. Required upstream author credits remain intact.
+
+## Project standards
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for implementation, review, validation,
+privacy, and dependency rules. Follow [the release policy](docs/releasing.md)
+and its fixed description template for every release. Builds remain manual.

@@ -17,5 +17,7 @@ jobs:
           lfs: false
       - name: Reject private material and oversized files
         run: python3 check-public-source.py
+      - name: Check repository standards
+        run: python3 ci/check-standards.py
       - name: Check manual build safeguards
         run: python3 -B -m unittest discover -s ci -p 'test_*.py'
