@@ -26,3 +26,17 @@ class StandardsTests(unittest.TestCase):
         self.assertTrue(standards.workflow_errors('on: pull_request_target'))
         self.assertTrue(standards.workflow_errors('token: ${{ secrets.TOKEN }}'))
         self.assertEqual(standards.workflow_errors('- uses: actions/checkout@' + 'a' * 40), [])
+
+    def test_missing_wine_templates_fail_before_build(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for component in ('iridium-wine-ios', 'testrepos/Madeira/wine'):
+                directory = root / component
+                directory.mkdir(parents=True)
+                (directory / 'configure').write_text('wine_fn_config_makefile dlls/example enable_example\n')
+            self.assertEqual(len(standards.check(root)), 2)
+            for component in ('iridium-wine-ios', 'testrepos/Madeira/wine'):
+                target = root / component / 'dlls/example/Makefile.in'
+                target.parent.mkdir(parents=True)
+                target.write_text('MODULE = example.dll\n')
+            self.assertEqual(standards.check(root), [])
