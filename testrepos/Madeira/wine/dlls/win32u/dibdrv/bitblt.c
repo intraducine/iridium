@@ -1007,6 +1007,7 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
      * independently of the QR it surrounds — a per-draw-op destination
      * error. dst->visrect is that destination. Logging src alongside it
      * shows whether the offset is introduced here or arrives already wrong. */
+#ifdef WINE_IOS
     /* ml514: arm the source-bitmap watch on Chromium's full-window paint.
      * `bits->ptr` is the buffer Chromium composited into and hands us — the
      * one that already carries the displaced panel. Watching it names the
@@ -1070,6 +1071,7 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                                               (dst->visrect.bottom - dst->visrect.top)) );
         }
     }
+#endif
 
     if (dst && src && dst->visrect.right - dst->visrect.left >= 24)
     {
