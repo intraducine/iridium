@@ -85,6 +85,11 @@ def collect(kind):
     elif kind == 'jit':
         for name in ('StikJIT', 'idevice'):
             source_tree(ROOT / '.build/runtime-sources' / name, OUT / (name + '.tar.gz'))
+        rust = Path(os.environ['IRIDIUM_RUST_SYSROOT'])
+        source_tree(rust / 'lib/rustlib/src/rust', OUT / 'rust-standard-library.tar.gz')
+        source_tree(rust / 'share/doc/rust/licenses', OUT / 'rust-license-texts.tar.gz')
+        shutil.copyfile(rust / 'share/doc/rust/COPYRIGHT-library.html',
+                        OUT / 'rust-standard-library-COPYRIGHT.html')
     elif kind == 'angle':
         source = ROOT / '.build/runtime-sources/angle'
         revisions = {}
@@ -100,7 +105,9 @@ def collect(kind):
     elif kind == 'package':
         required = ['iridium.tar.gz', 'repository-revisions.json', 'angle-revisions.json',
                     'StikJIT.tar.gz', 'idevice.tar.gz', 'cerbero-1.28.6.tar.xz',
-                    'idevice-dependencies.json', 'idevice-ios-dependencies.txt']
+                    'idevice-dependencies.json', 'idevice-ios-dependencies.txt',
+                    'rust-standard-library.tar.gz', 'rust-license-texts.tar.gz',
+                    'rust-standard-library-COPYRIGHT.html', 'rust-toolchain.txt']
         for name in required:
             if not (OUT / name).is_file() or not (OUT / name).stat().st_size:
                 raise ValueError('Missing corresponding source: ' + name)

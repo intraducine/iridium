@@ -55,3 +55,9 @@ were found. This is a lockfile-wide source check, not the resolved iOS link audi
 The source package also requires Cargo's license inventory and the iOS
 `idevice-ffi` dependency tree (normal and build dependencies, excluding tests).
 These records accompany the vendored sources for the final target review.
+
+Rust's standard-library source is collected from the `rust-src` component of
+the pinned toolchain. Its library copyright inventory, license texts and
+`rustc -vV` version/commit record are retained beside the crate sources. Missing
+source or notice files stop collection. The compiler itself remains a build
+tool; the linked standard-library source is part of the release audit.
