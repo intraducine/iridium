@@ -71,7 +71,7 @@ jobs:
           name: linux-runtime-with-source
           path: .build/linux-transfer/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
   media:
     needs: asset-plan
     if: ${{ needs.asset-plan.outputs.media_run_id == '' }}
@@ -148,59 +148,194 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 ci/restore-media-sdk.py
-      - name: Select prepared native dependencies
-        id: native
+      - name: Prepare source inputs and compiler tools
+        run: bash ci/prepare-runtime-inputs.sh
+      - name: Fingerprint compiler tools
+        run: python3 ci/compiled-components.py toolchain
+      - name: Select native compilation
+        id: compiled_native
         env:
           GH_TOKEN: ${{ github.token }}
           REUSE_ASSETS: ${{ inputs.reuse_assets }}
-        run: python3 ci/prepared-runtime.py select
-      - name: Download prepared native dependencies
-        if: steps.native.outputs.run_id != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        run: python3 ci/compiled-components.py select native
+      - name: Download native compilation
+        if: steps.compiled_native.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: ${{ steps.native.outputs.artifact }}
-          path: .build/native-transfer
-          run-id: ${{ steps.native.outputs.run_id }}
+          name: ${{ steps.compiled_native.outputs.artifact }}
+          path: .build/native-compiled-transfer
+          run-id: ${{ steps.compiled_native.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Restore prepared native dependencies
-        if: steps.native.outputs.run_id != ''
+      - name: Restore native compilation
+        if: steps.compiled_native.outputs.run_id != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 ci/prepared-runtime.py restore
-      - name: Prepare native runtime libraries
-        if: steps.native.outputs.run_id == ''
+          COMPONENT_RUN_ID: ${{ steps.compiled_native.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore native
+      - name: Compile native
+        if: steps.compiled_native.outputs.run_id == ''
         run: bash ci/prepare-native-runtime.sh
-      - name: Build Windows modules and clean prefix
-        if: steps.native.outputs.run_id == ''
-        run: bash ci/prepare-windows-runtime.sh
-      - name: Build legacy graphics frameworks
-        if: steps.native.outputs.run_id == ''
-        run: bash ci/prepare-graphics.sh
-      - name: Build StikJIT and idevice from source
-        if: steps.native.outputs.run_id == ''
-        run: bash ci/prepare-stikjit.sh
-      - name: Prepare legacy runtime bundle
-        if: steps.native.outputs.run_id == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash ci/prepare-legacy-bundle.sh
-      - name: Package prepared runtime and source
-        if: steps.native.outputs.run_id == ''
-        run: |
-          python3 ci/collect-release-source.py repository
-          python3 ci/prepared-runtime.py package
-      - name: Retain prepared runtime and source
-        if: steps.native.outputs.run_id == ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Save native compilation
+        if: steps.compiled_native.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package native
+      - name: Retain native compilation
+        if: steps.compiled_native.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ${{ steps.native.outputs.artifact }}
-          path: .build/native-transfer/
+          name: ${{ steps.compiled_native.outputs.artifact }}
+          path: .build/native-compiled-transfer/
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Select wine compilation
+        id: compiled_wine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select wine
+      - name: Download wine compilation
+        if: steps.compiled_wine.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ steps.compiled_wine.outputs.artifact }}
+          path: .build/wine-compiled-transfer
+          run-id: ${{ steps.compiled_wine.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore wine compilation
+        if: steps.compiled_wine.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_wine.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore wine
+      - name: Compile wine
+        if: steps.compiled_wine.outputs.run_id == ''
+        run: bash ci/compile-wine.sh
+      - name: Save wine compilation
+        if: steps.compiled_wine.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package wine
+      - name: Retain wine compilation
+        if: steps.compiled_wine.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.compiled_wine.outputs.artifact }}
+          path: .build/wine-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Select windows compilation
+        id: compiled_windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select windows
+      - name: Download windows compilation
+        if: steps.compiled_windows.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ steps.compiled_windows.outputs.artifact }}
+          path: .build/windows-compiled-transfer
+          run-id: ${{ steps.compiled_windows.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore windows compilation
+        if: steps.compiled_windows.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_windows.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore windows
+      - name: Compile windows
+        if: steps.compiled_windows.outputs.run_id == ''
+        run: bash ci/compile-windows-modules.sh
+      - name: Save windows compilation
+        if: steps.compiled_windows.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package windows
+      - name: Retain windows compilation
+        if: steps.compiled_windows.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.compiled_windows.outputs.artifact }}
+          path: .build/windows-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Stage Windows modules and clean prefix
+        run: bash ci/prepare-windows-runtime.sh
+      - name: Select graphics compilation
+        id: compiled_graphics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select graphics
+      - name: Download graphics compilation
+        if: steps.compiled_graphics.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ steps.compiled_graphics.outputs.artifact }}
+          path: .build/graphics-compiled-transfer
+          run-id: ${{ steps.compiled_graphics.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore graphics compilation
+        if: steps.compiled_graphics.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_graphics.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore graphics
+      - name: Compile graphics
+        if: steps.compiled_graphics.outputs.run_id == ''
+        run: bash ci/prepare-graphics.sh
+      - name: Save graphics compilation
+        if: steps.compiled_graphics.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package graphics
+      - name: Retain graphics compilation
+        if: steps.compiled_graphics.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.compiled_graphics.outputs.artifact }}
+          path: .build/graphics-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Select jit compilation
+        id: compiled_jit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select jit
+      - name: Download jit compilation
+        if: steps.compiled_jit.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ steps.compiled_jit.outputs.artifact }}
+          path: .build/jit-compiled-transfer
+          run-id: ${{ steps.compiled_jit.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore jit compilation
+        if: steps.compiled_jit.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_jit.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore jit
+      - name: Compile jit
+        if: steps.compiled_jit.outputs.run_id == ''
+        run: bash ci/prepare-stikjit.sh
+      - name: Save jit compilation
+        if: steps.compiled_jit.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package jit
+      - name: Retain jit compilation
+        if: steps.compiled_jit.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.compiled_jit.outputs.artifact }}
+          path: .build/jit-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Prepare legacy runtime bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash ci/prepare-legacy-bundle.sh
       - name: Collect exact repository and dependency source
         run: |
-          python3 ci/collect-release-source.py checkout
+          python3 ci/collect-release-source.py repository
           python3 ci/collect-release-source.py package
       - name: Retain source archive for release audit
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -21,6 +21,20 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/MadeiraSupport/xinput.c', 'iridium/apps/ios/MadeiraSupport/xinput.def',
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
+COMPONENT_INPUTS = {
+    'native': tuple(p for p in NATIVE_INPUTS if p != 'ci') +
+              ('ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh'),
+    'wine': ('testrepos/Madeira/wine', 'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh',
+             'ci/prepare-runtime-inputs.sh', 'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
+    'windows': ('testrepos/Madeira/FEX', 'testrepos/Madeira/research/dxmt',
+                'testrepos/Madeira/wine', 'ci/compile-windows-modules.sh',
+                'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
+                'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
+    'graphics': ('ci/prepare-graphics.sh', 'ci/collect-release-source.py'),
+    'jit': ('ci/prepare-stikjit.sh', 'ci/collect-release-source.py',
+            'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
+}
+
 SPEC = importlib.util.spec_from_file_location('linux_reuse', ROOT / 'ci/verify-linux-reuse.py')
 linux = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(linux)
@@ -35,6 +49,17 @@ def git(root, *args):
 
 
 def producer_job(text, stage):
+    if stage in COMPONENT_INPUTS:
+        # Compare the compiler step, not later packaging or checkpoint plumbing.
+        match = re.search(r'^      - name: Compile ' + stage + r'\n.*?(?=^      - |\Z)', text, re.M | re.S)
+        if not match:
+            raise ValueError('Missing compiler step: ' + stage)
+        inherited = ''.join(m.group(0) for m in re.finditer(
+            r'^(?:env|defaults):.*?(?=^[^ \n]|\Z)', text, re.M | re.S))
+        job = re.search(r'^  build:\n(.*?)(?=^    steps:)', text, re.M | re.S)
+        header = job[1] if job else ''
+        return inherited + header + '\n'.join(line for line in match[0].splitlines()
+                                      if not line.startswith('        if:'))
     stage = 'build' if stage == 'native-runtime' else stage
     match = re.search(r'^  ' + re.escape(stage) + r':\n(.*?)(?=^  [\w-]+:|\Z)', text, re.M | re.S)
     if not match:
@@ -58,9 +83,9 @@ def validate(run, jobs, stage, branch):
           or run.get('head_repository', {}).get('full_name') != REPO
           or not any(
               (j.get('name') == 'build' and any(
-                  step.get('name') == 'Retain prepared runtime and source'
+                  step.get('name') == ('Retain ' + stage + ' compilation' if stage in COMPONENT_INPUTS else 'Retain prepared runtime and source')
                   and step.get('conclusion') == 'success' for step in j.get('steps', [])))
-              if stage == 'native-runtime' else
+              if stage == 'native-runtime' or stage in COMPONENT_INPUTS else
               (j.get('name') == stage and j.get('conclusion') == 'success')
               for j in jobs)):
         raise ValueError('Producer must have completed its artifact stage on main or this branch')
@@ -70,7 +95,9 @@ def validate(run, jobs, stage, branch):
 def compatible(root, revision, stage):
     subprocess.run(['git', '-C', str(root), 'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
     paths = {'media': MEDIA_INPUTS, 'native-runtime': NATIVE_INPUTS,
-             'linux-userland': linux.INPUTS + ('check-public-source.py',)}[stage]
+             'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
+    if stage in COMPONENT_INPUTS:
+        paths += ('ci/compiled-components.py',)
     for path in paths:
         # ls-tree returns an empty result for absent inputs, so old producers
         # without newly required scripts are invalidated without a Git error.
@@ -81,11 +108,11 @@ def compatible(root, revision, stage):
 
 
 def artifact_name(stage):
-    if stage == 'native-runtime':
+    if stage == 'native-runtime' or stage in COMPONENT_INPUTS:
         key = os.environ.get('NATIVE_TOOLCHAIN', '')
         if not re.fullmatch('[0-9a-f]{64}', key):
             raise ValueError('Missing native toolchain fingerprint')
-        return 'native-runtime-with-source-' + key
+        return ('compiled-' + stage + '-' if stage in COMPONENT_INPUTS else 'native-runtime-with-source-') + key
     return 'media-sdk-with-source' if stage == 'media' else 'linux-runtime-with-source'
 
 
@@ -107,6 +134,29 @@ def select(root, stage, branch, explicit=''):
     if explicit:
         verify_producer(root, explicit, stage, branch)
         return explicit
+    if stage in COMPONENT_INPUTS:
+        # Search retained artifacts, not only the last few runs. A compiler may
+        # remain unchanged through many packaging attempts during its lifetime.
+        page = 1
+        checked = set()
+        while True:
+            result = api('actions/artifacts?name=' + artifact_name(stage) + '&per_page=100&page=' + str(page))
+            for artifact in result['artifacts']:
+                run = artifact.get('workflow_run', {})
+                run_id = str(run.get('id', ''))
+                if (artifact.get('expired') or not run_id or run_id in checked
+                        or run_id == os.environ.get('GITHUB_RUN_ID')
+                        or run.get('head_branch') not in ('main', branch)):
+                    continue
+                checked.add(run_id)
+                try:
+                    verify_producer(root, run_id, stage, branch)
+                    return run_id
+                except ValueError as error:
+                    print(f'Skip {stage} run {run_id}: {error}')
+            if page * 100 >= result['total_count']:
+                return ''
+            page += 1
     runs = api('actions/workflows/build-unsigned-ipa.yml/runs?event=workflow_dispatch&per_page=30')['workflow_runs']
     for run in runs:
         if str(run['id']) == os.environ.get('GITHUB_RUN_ID'):

@@ -91,63 +91,35 @@ results and the remaining full-build checks. Compiler probes cannot guarantee
 that every dependency compiles or that the final app links.
 
 
-## Reusing verified build assets
+## Reuse completed compiler stages
 
-Manual builds default to `reuse_assets=true`. A short planning job searches the
-latest 30 manual runs for matching, retained media and Linux producer artifacts.
-The whole earlier workflow need not have succeeded, but the actual producer job
-must have succeeded and its artifact must still exist. Both stages may come from main
-or the branch being built. Other branches and forks are rejected.
+Successful runtime compiler stages are saved separately: native libraries,
+Wine, Windows modules (FEX and DXMT), ANGLE graphics, and StikJIT/idevice.
+Wine is uploaded before Windows staging. Windows modules are uploaded before
+prefix creation. A later packaging failure does not discard these outputs.
 
-Reuse compares Git object IDs for stage inputs and the producer workflow job,
-including runner, commands, action revisions, and inherited environment/defaults.
-Only scheduling conditions are excluded. Changes to UI code do not invalidate
-media. Recipe, pinned dependency, patch, compiler-check, app deployment config,
-or producer-command changes do. Runner labels and install commands are compared;
-floating hosted-image and Homebrew updates are not bit-for-bit toolchain pins.
-Turn reuse off when a fresh compiler/image build is needed.
+Each artifact expires after seven days. A run that reuses one does not upload
+another copy or extend its lifetime. Missing or expired artifacts trigger a
+fresh component build. The previous combined native-runtime package is no
+longer uploaded, avoiding another copy of the same compiled libraries.
+Media and Linux artifacts also use seven-day retention.
 
-The existing Linux run override and new `media_run_id` override are verified by
-the same selection rules. Invalid explicit overrides stop the run; automatic
-misses trigger fresh builds. API failures stop planning rather than accepting
-unverified output. Expired artifacts also require a new producer build.
+Reuse requires a successful upload step from a manual build in this repository
+on main or the current branch. Source inputs and the compiler recipe must match.
+The tool fingerprint includes Xcode, SDK, Swift, host OS, architecture, installed
+Homebrew versions, media/Linux input digests, and the workspace location.
+Archives carry the producer revision and a SHA-256 checksum. Restoration checks
+both before extraction, limits paths to the component's output roots, and
+preserves executable permissions. Object files are omitted. Configured Wine
+outputs and import libraries remain because DXMT and prefix creation need them.
 
-The consumer downloads both binary and corresponding source, rechecks producer
-provenance, and checks archive hashes before unpacking. Media manifests must
-cover exactly the SDK and source archive. The original source revision stays
-with the artifact; reuse does not relabel it as newly compiled source.
+A packaging-only edit does not invalidate Wine compilation. Changes to shared
+build tools or dependency sources can invalidate more than one component.
+Pinned downloads and source checkouts are prepared on every run without
+compiling them. Source collection and the release-license gate remain required.
+The application is still built and audited by the final stages.
 
-The macOS job also selects a prepared runtime after installing its build tools.
-This package contains native Wine/FEX, Windows modules, the clean prefix, media
-wrappers, controller modules, ANGLE, StikJIT/idevice, and the legacy runtime host
-and bundle. Final app compilation and the source/license gate still run.
-
-Native reuse compares its source trees and preparation scripts, the complete
-build job, Xcode/Swift/iPhone SDK versions, macOS build, architecture, installed
-Homebrew versions, and the exact restored media SDK and Linux archive hashes.
-App-only Swift UI edits can reuse the package. Changes to dependency source,
-project settings, recipes, or any of these toolchain inputs require a new build.
-The broad source checks deliberately favor an extra build over stale output.
-
-The first build must finish all dependency stages and upload their package.
-Later manual runs find it automatically with `reuse_assets=true`; no run number
-is needed. Native artifacts are retained for seven days and searched within the
-latest 30 manual runs on main or the current branch. Only a successful
-`Retain prepared runtime and source` step qualifies. A later app build failure
-or license-gate failure does not discard that completed dependency work.
-Reusing runs do not upload duplicate native packages.
-
-Transfers include only final resources, link archives, needed headers, and
-corresponding source, not compiler working directories or Apple SDKs. Restore
-checks provenance, toolchain, archive checksum, member paths, and existing files
-before copying. It rejects links and unexpected paths. The final source package
-keeps `native-producer-iridium.tar.gz` and `native-producer-revisions.json` beside
-the current app source. The restored runtime bundle retains its producer version.
-
-Set `reuse_assets=false` and leave explicit media/Linux overrides empty to build
-all dependencies fresh. Tool setup, downloads, verification, source packaging,
-and app compilation still take time. No 30-second CI target is promised.
-
-Local transfer, rejection, and workflow tests cover this path. A cold GitHub run
-and a subsequent reuse run still need to validate the real native artifacts and
-measure the time saved. The source/license publication gate remains unchanged.
+Set `reuse_assets=false` and leave explicit media/Linux overrides empty for a
+fresh build. Local tests cover completed-stage reuse after a later failure,
+expired/missing selection, checksum failure, executable permissions, and
+packaging edits versus compiler edits. Real CI restoration is still pending.

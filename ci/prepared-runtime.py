@@ -67,6 +67,7 @@ def toolchain():
     # Do not reuse a framework compiled with a different Swift compiler/SDK.
     commands = [
         ['xcodebuild', '-version'], ['xcrun', '--sdk', 'iphoneos', '--show-sdk-build-version'],
+        ['xcrun', '--sdk', 'iphoneos', 'metal', '--version'],
         ['xcrun', 'swiftc', '--version'], ['sw_vers', '-buildVersion'], ['uname', '-m'],
         ['brew', 'list', '--versions'],
     ]

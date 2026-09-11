@@ -144,8 +144,9 @@ class PreparedRuntimeTests(unittest.TestCase):
 
     def test_reuse_skips_only_dependency_compilation(self):
         workflow = (prepared.ROOT / prepared.reuse.WORKFLOW).read_text()
-        self.assertEqual(workflow.count("if: steps.native.outputs.run_id == ''"), 7)
-        self.assertLess(workflow.index('Retain prepared runtime and source'),
-                        workflow.index('Check full-runtime build readiness'))
-        self.assertIn('python3 ci/collect-release-source.py checkout', workflow)
+        for component in ('native', 'wine', 'windows', 'graphics', 'jit'):
+            self.assertLess(workflow.index('Retain ' + component + ' compilation'),
+                            workflow.index('Check full-runtime build readiness'))
+        self.assertNotIn('Retain prepared runtime and source', workflow)
+        self.assertIn('python3 ci/collect-release-source.py repository', workflow)
         self.assertIn('run: bash ci/prepare-legacy-bundle.sh', workflow)
