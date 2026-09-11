@@ -28,7 +28,10 @@ cp "$IDEVICE/ffi/idevice.h" "$STIK/idevice/idevice.h"
 # Preserve the exact crate/source license inventory for the eventual release audit.
 (cd "$IDEVICE" && cargo +"$RUST" metadata --locked --offline --format-version=1) | \
     python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps([{k:p.get(k) for k in ("name","version","license","license_file","source")} for p in d["packages"]],indent=2))' \
-    > "$SOURCE/idevice-dependencies.json"
+    > "$ROOT/.build/corresponding-source/idevice-dependencies.json"
+(cd "$IDEVICE" && cargo +"$RUST" tree --locked --offline -p idevice-ffi \
+    --target aarch64-apple-ios --edges normal,build --prefix none --format '{p} {l}') \
+    > "$ROOT/.build/corresponding-source/idevice-ios-dependencies.txt"
 xcodegen generate --spec "$STIK/project.yml"
 xcodebuild archive -project "$STIK/StikJIT.xcodeproj" -scheme StikJIT \
     -destination 'generic/platform=iOS' -archivePath "$ROOT/.build/StikJIT" \

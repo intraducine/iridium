@@ -12,13 +12,16 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / '.build/corresponding-source'
 
-# Public test fixtures from openssl 0.10.76 (Cargo.lock checksum verified).
+# Public fixtures from openssl 0.10.76, tokio-rustls 0.26.4 and untrusted 0.9.0.
+# Every crate archive was verified against the pinned Cargo.lock checksum.
 # Exact byte hashes permit upstream test data, never maintainer signing material.
 PUBLIC_TEST_FIXTURES = {'vendor/openssl/test/cms.p12': 'd33fc5edd6b9caa672e7570b869135235bb2583580a273f6e88c6a6c68fd5a8a',
  'vendor/openssl/test/identity.p12': 'aceeb3e5516471bd5af9a44bbeffc9559c4f228f67c677d29f36a4b368e2779f',
  'vendor/openssl/test/intermediate-ca.key': 'a5f3d331af87c1305843e235841e494a0669a95d3824a6c766d09371f62c3bab',
  'vendor/openssl/test/keystore-empty-chain.p12': 'bbea280f6fe10556d7470df7072ef0e4ee3997e2c0b3666197f423430c0e6b61',
- 'vendor/openssl/test/root-ca.key': 'b37cf88614980c38e43c4329cdf7162bae48cc8af1fafd54db2fe0d17e458e1d'}
+ 'vendor/openssl/test/root-ca.key': 'b37cf88614980c38e43c4329cdf7162bae48cc8af1fafd54db2fe0d17e458e1d',
+ 'vendor/tokio-rustls/tests/certs/end.key': '5137467345dd24a91915c17cac20e66f6ac83cd8e0a0ca7aece5eb26e20ad739',
+ 'vendor/untrusted/mk/llvm-snapshot.gpg.key': '88c1936349db1b7798b92cb62fe7d69e0b676b7900f4cb120c1c8ad5ac6b93d6'}
 
 
 def git_snapshot(repo, output):
@@ -96,7 +99,8 @@ def collect(kind):
         (OUT / 'angle-revisions.json').write_text(json.dumps(revisions, indent=2) + '\n')
     elif kind == 'package':
         required = ['iridium.tar.gz', 'repository-revisions.json', 'angle-revisions.json',
-                    'StikJIT.tar.gz', 'idevice.tar.gz', 'cerbero-1.28.6.tar.xz']
+                    'StikJIT.tar.gz', 'idevice.tar.gz', 'cerbero-1.28.6.tar.xz',
+                    'idevice-dependencies.json', 'idevice-ios-dependencies.txt']
         for name in required:
             if not (OUT / name).is_file() or not (OUT / name).stat().st_size:
                 raise ValueError('Missing corresponding source: ' + name)

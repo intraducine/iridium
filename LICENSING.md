@@ -43,9 +43,15 @@ The final audit must still match the linked target libraries to these inputs,
 retain notices with the binary distribution, and review libraries supplied by
 other compilers (including the Homebrew MinGW compiler used for x86 helpers).
 
-The vendored OpenSSL 0.10.76 source includes five public certificate/key test
-fixtures. The collector permits only their verified upstream bytes, pinned by
+The vendored OpenSSL 0.10.76, tokio-rustls 0.26.4 and untrusted 0.9.0 sources
+include seven public certificate/key test or verification files. The collector permits only their verified upstream bytes, pinned by
 SHA-256 in `ci/collect-release-source.py`. These are upstream test data, not
 maintainer signing credentials. Changed files, unlisted signing files and
 symlinks remain rejected. The fixture pins were checked against the crate
-archive digest recorded in idevice's Cargo.lock.
+archive digests recorded in idevice's Cargo.lock. All 359 registry crate archives
+were checksum-verified and scanned for these file types; no other exceptions
+were found. This is a lockfile-wide source check, not the resolved iOS link audit.
+
+The source package also requires Cargo's license inventory and the iOS
+`idevice-ffi` dependency tree (normal and build dependencies, excluding tests).
+These records accompany the vendored sources for the final target review.
