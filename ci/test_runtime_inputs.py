@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import subprocess
 from pathlib import Path
 import tarfile
 import tempfile
@@ -24,6 +26,30 @@ class RuntimeInputTests(unittest.TestCase):
         positions = [workflow.index('ci/' + stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn('/tmp/iridium-media-sdk', (ROOT / 'iridium/apps/ios/madeira.yml').read_text())
+
+    def test_windows_compile_enables_ios_for_all_languages(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'ci').mkdir()
+            script = root / 'ci/compile-windows-modules.sh'
+            script.write_text((ROOT / 'ci/compile-windows-modules.sh').read_text())
+            tools = root / 'tools'
+            tools.mkdir()
+            for name, body in {
+                'brew': 'echo /usr/local',
+                'cmake': 'printf "%s\\n" "$@" >> "$CAPTURE"; exit 17',
+            }.items():
+                tool = tools / name
+                tool.write_text('#!/bin/sh\n' + body + '\n')
+                tool.chmod(0o755)
+            capture = root / 'args'
+            env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], CAPTURE=str(capture))
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 17)
+            args = capture.read_text().splitlines()
+            for language in ('C', 'CXX', 'ASM'):
+                self.assertIn(f'-DCMAKE_{language}_FLAGS=-DFEX_IOS_HOST', args)
+            self.assertIn('-DFEX_IOS_HOST_BUILD=ON', args)
 
     def test_digest_failure_and_unsafe_archive_leave_no_output(self):
         with tempfile.TemporaryDirectory() as temp:
