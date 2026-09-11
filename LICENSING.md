@@ -19,7 +19,7 @@ This release distributes source, not an IPA. The supplied licenses and attributi
 
 An IPA release needs the corresponding source for the exact binary, build scripts, required license notices, and clear source-download instructions beside the IPA. Keep that source available, including any modified dependencies. A moving upstream branch URL is not a replacement for exact corresponding source.
 
-CI now replaces StikJIT's opaque idevice archive with a pinned source build. Its script provenance and resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
+CI now replaces StikJIT's opaque idevice archive with a pinned source build. The script comparison and AGPL notice are recorded in StikJITNotices/SOURCES.md. Resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
 
 AGPL permits commercial use and forks. It requires source sharing under its terms, including the network-interaction requirement for modified versions where applicable. It does not require unrelated games merely run by the runtime to become AGPL.
 

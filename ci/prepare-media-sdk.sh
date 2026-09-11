@@ -16,6 +16,10 @@ python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bootstrap --assume-yes --jobs "$JOBS"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     package gstreamer-1.0 --artifact=xcframework --jobs "$JOBS"
+python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
+    bundle-source gstreamer-1.0 --offline
+mkdir -p "$ROOT/.build/corresponding-source"
+cp dist/cerbero-1.28.6.tar.xz "$ROOT/.build/corresponding-source/"
 python3 - "$CERBERO" "$ROOT/iridium/apps/ios/.build/media-sdk" <<'PY'
 from pathlib import Path
 import sys, tarfile

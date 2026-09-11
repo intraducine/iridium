@@ -60,3 +60,9 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 - The legacy Wine Linux builder enables Debian source repositories and includes Python for exact dependency-source collection.
 - StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision; compatibility remains untested.
 - Explicit unresolved source/license items keep IPA publication blocked. No local compilation or manual IPA workflow was run.
+
+## Corresponding-source collection (2026-09-10)
+
+- Recorded the exact StikDebug script comparison and retained its AGPL text: legacy.js is identical; universal.js changes only the default logging level.
+- Added source collection at build stages, using Cerbero's existing bundle-source command and Git archives. The collector excludes prebuilt JIT archives and rejects signing files or escaping source links.
+- Added matching-source packaging and a source checksum beside the future unsigned IPA. Resolved dependency license and correspondence audits remain required before upload.

@@ -63,6 +63,10 @@ jobs:
         run: bash ci/prepare-stikjit.sh
       - name: Prepare legacy runtime bundle
         run: bash ci/prepare-legacy-bundle.sh
+      - name: Collect exact repository and dependency source
+        run: |
+          python3 ci/collect-release-source.py repository
+          python3 ci/collect-release-source.py package
       - name: Check full-runtime build readiness
         run: python3 ci/check-ipa-prerequisites.py
       - name: Generate Xcode project

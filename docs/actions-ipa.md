@@ -2,7 +2,7 @@
 
 The workflow is available at **Actions → Build unsigned IPA → Run workflow**. Select the branch, then start the run. Its only trigger is `workflow_dispatch`: commits, pull requests, tags, and schedules cannot start an IPA build. The separate source privacy workflow still runs automatically.
 
-**Status:** the remaining runtime build recipes are now scripted. They have not been compiled on a clean runner. IPA output remains blocked by the explicit source/license audit items in `ci/binary-release-blockers.json`. Do not start a full run expecting an installable package yet.
+**Status:** the remaining runtime build recipes are now scripted. They have not been compiled on a clean runner. The StikJIT script provenance is now documented. IPA output remains blocked by the remaining dependency/source audit items in `ci/binary-release-blockers.json`. Do not start a full run expecting an installable package yet.
 
 The manual workflow has two stages:
 
@@ -50,3 +50,19 @@ Sources:
 - https://docs.github.com/en/actions/reference/runners/github-hosted-runners
 - https://github.com/actions/runner-images/issues/14404
 - https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github
+
+## Matching-source collection
+
+The manual workflow now collects source before its publication gate. It captures
+Iridium's exact Git revision, initialized gitlinks and their changes, verified
+native source archives, ANGLE Git dependencies, StikJIT without its opaque FFI
+archive, and idevice with vendored Cargo dependencies. Cerbero's own
+`bundle-source gstreamer-1.0 --offline` includes its recipes and dependency sources.
+The Linux source packages join these in `Iridium-corresponding-source.tar.gz`,
+with `SOURCE-SHA256SUMS`, in the same output directory as the future IPA.
+
+This collection is not yet a completed correspondence audit. Compiler runtime
+sources, non-Git ANGLE inputs, resolved codec/crate license terms, and any
+missing generated inputs must be checked against an actual build. The existing
+publication gate stays closed. No source archive or IPA was built or uploaded
+while adding this collector; only synthetic source-archive tests ran.

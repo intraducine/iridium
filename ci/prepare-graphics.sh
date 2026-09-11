@@ -36,6 +36,7 @@ target_os = ["ios"]
 CONFIG
 gclient sync --no-history --shallow
 gclient revinfo --actual > "$ROOT/.build/runtime-sources/angle-revisions.txt"
+python3 "$ROOT/ci/collect-release-source.py" angle
 gn gen out/iridium-ios --args='target_os="ios" target_cpu="arm64" target_environment="device" use_system_xcode=true ios_enable_code_signing=false ios_deployment_target="18.0" is_debug=false is_component_build=false angle_build_all=false angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false angle_enable_null=false symbol_level=0'
 ninja -C out/iridium-ios -j "$JOBS" libEGL libGLESv2
 DEST="$ROOT/Amethyst-iOS/Natives/resources/Frameworks"

@@ -18,6 +18,7 @@ rm "$STIK/idevice/libidevice_ffi.a"
 rustup toolchain install "$RUST" --profile minimal --target aarch64-apple-ios --component rust-src
 mkdir -p "$IDEVICE/.cargo"
 (cd "$IDEVICE" && cargo +"$RUST" vendor --locked vendor > .cargo/config.toml)
+python3 "$ROOT/ci/collect-release-source.py" jit
 # Vendor emits a relative directory; do not place machine-specific source paths
 # into the corresponding-source archive.
 (cd "$IDEVICE" && cargo +"$RUST" build --release --locked --offline \

@@ -17,10 +17,17 @@ Madeira JIT script: https://github.com/willfaust/Madeira
 License: GPL-3.0-or-later. Iridium adds an attach failure guard and one helper
 readiness notification. The corresponding script is included in this tree.
 
-StikJIT legacy.js matches the script in StikDebug commit
-94bc9e8cf3b41f32f125f046abf33d913f4e1b2d (AGPL-3.0 license text).
-The separate provenance/license record for its universal.js variant remains
-unresolved. Do not infer permission from an unrelated root license.
+Both scripts were compared with StikDebug commit
+94bc9e8cf3b41f32f125f046abf33d913f4e1b2d:
+- legacy.js is identical (Git blob 090544ca89b04122ec442d1cb05f3a01c6fd7263).
+- universal.js differs only in `let logLevel = LOG_VERBOSE;` changing to
+  `let logLevel = LOG_INFO;`. The StikJIT blob is
+  9bca8f63642c18d5af4bb3e39af845ea0a112804; the StikDebug blob is
+  26cf98d3a8a5bb1b2888836b9ce9207cb9b244d9.
+
+Retain StikDebug-AGPL-3.0.txt for these derived scripts. StikJIT's MPL
+framework notice does not replace the scripts' AGPL notice. No script
+behavior was changed by this publication record.
 
 Exact archive digests are in ci/runtime-inputs.json. Build steps are in
 ci/prepare-stikjit.sh. Binary distribution stays blocked by
