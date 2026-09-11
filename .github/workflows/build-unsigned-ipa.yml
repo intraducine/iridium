@@ -55,6 +55,8 @@ jobs:
         run: brew install cmake ninja bison flex pkgconf meson zstd
       - name: Fetch verified Cerbero source
         run: python3 ci/fetch-runtime-inputs.py --only cerbero-source
+      - name: Check resolved host and iPhone compilers
+        run: bash ci/prepare-media-sdk.sh --preflight
       - name: Build media SDK and matching source
         run: bash ci/prepare-media-sdk.sh
       - name: Package media transfer

@@ -75,3 +75,17 @@ This avoids recompiling unchanged Linux code for macOS-only fixes; it does not
 claim bit-for-bit reproducibility. Expired artifacts require a fresh build.
 The source-audit artifact is retained before the IPA publication gate, so the
 matching source can be reviewed even when that gate blocks the binary.
+
+
+## Compiler checks before media compilation
+
+After fetching Cerbero, run `bash ci/prepare-media-sdk.sh --preflight` with
+Xcode 27 selected. This does not bootstrap or compile the full SDK. It tests
+Cerbero's resolved Mac and iPhone C++ compiler/linker settings, verifies the
+ARM64 target, and checks the gperf recipe patch. Media libraries inherit the
+application's explicit iOS minimum; host tools use the runner's macOS version.
+The normal media command runs the same checks before bootstrap.
+
+See [the build preflight review](build-preflight-2026-09-11.md) for measured
+results and the remaining full-build checks. Compiler probes cannot guarantee
+that every dependency compiles or that the final app links.

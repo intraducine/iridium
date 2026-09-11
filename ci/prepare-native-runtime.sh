@@ -22,8 +22,11 @@ fi
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || {
     echo 'Requires an Apple Silicon macOS runner with Xcode 27.' >&2; exit 1;
 }
-for tool in python3 cmake ninja brew xcrun xcodebuild git; do command -v "$tool" >/dev/null; done
+for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do command -v "$tool" >/dev/null; done
 export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+# Resolve the separately installed Metal compiler before LLVM/FEX compilation.
+xcodebuild -downloadComponent MetalToolchain
+xcrun --sdk iphoneos metal --version
 python3 "$ROOT/ci/fetch-runtime-inputs.py"
 
 # Use exact gitlink commits. Do not fetch binary test corpora or unrelated modules.
@@ -96,7 +99,6 @@ for component in wineserver ntdll-unix win32u-unix; do
     bash "$MADEIRA/build/$component/build.sh"
 done
 
-xcodebuild -downloadComponent MetalToolchain
 SHADERS="$MADEIRA/build/dxmt-ios/shader-headers"
 mkdir -p "$SHADERS"
 for name in air_msad air_samplepos air_tessellation; do

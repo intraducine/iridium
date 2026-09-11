@@ -68,3 +68,24 @@ class MediaTransferTests(unittest.TestCase):
         self.assertIn('--only cerbero-source', workflow)
         self.assertIn('name: media-sdk-with-source', workflow)
         self.assertNotIn('prepare-media-sdk.sh', (ROOT / 'ci/prepare-native-runtime.sh').read_text())
+
+    def test_media_config_tracks_app_target_and_preserves_user_config(self):
+        script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()
+        setup = script.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / 'app.yml'
+            app.write_text('    IPHONEOS_DEPLOYMENT_TARGET: "26.0"\n')
+            config = root / 'ci.cbc'
+            argv = ['-', str(config), str(root / 'build'), '2', str(app)]
+            with patch('sys.argv', argv), patch('pathlib.Path.home', return_value=root):
+                exec(compile(setup, 'media-config', 'exec'), {})
+                values = {}
+                exec(config.read_text(), values)
+                self.assertEqual(values['ios_min_version'], '26.0')
+                exec(compile(setup, 'media-config', 'exec'), {})
+                host = root / '.cerbero/cerbero.cbc'
+                host.write_text('# existing user configuration\n')
+                with self.assertRaises(SystemExit):
+                    exec(compile(setup, 'media-config', 'exec'), {})
+                self.assertEqual(host.read_text(), '# existing user configuration\n')
