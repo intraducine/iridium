@@ -8,6 +8,22 @@ JOBS="${IRIDIUM_BUILD_JOBS:-2}"
 case "$JOBS" in ''|*[!0-9]*|0) echo 'Invalid compiler job count' >&2; exit 2;; esac
 export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$M/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
 
+# Combined Wine builds put dual-architecture archives under aarch64-windows.
+# DXMT expects per-architecture directories. Keep its ARM64EC lookup compatible
+# with those outputs without changing the archives or rebuilding Wine.
+for entry in libs/winecrt0 dlls/ntdll dlls/dbghelp; do
+    library="lib${entry##*/}.a"
+    base="$M/wine/build-macos/$entry"
+    test -s "$base/aarch64-windows/$library" || {
+        echo "Missing Wine link input: $entry/aarch64-windows/$library" >&2
+        exit 1
+    }
+    mkdir -p "$base/arm64ec-windows"
+    if [ ! -e "$base/arm64ec-windows/$library" ]; then
+        ln -s "../aarch64-windows/$library" "$base/arm64ec-windows/$library"
+    fi
+done
+
 # The ARM64EC FEX DLL is the translator used by x64 games, not the native
 # FEX static archive linked into the application.
 cmake -S "$M/FEX" -B "$M/FEX/build-arm64ec" -G Ninja \

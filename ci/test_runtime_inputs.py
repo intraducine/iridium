@@ -42,6 +42,11 @@ class RuntimeInputTests(unittest.TestCase):
                 tool = tools / name
                 tool.write_text('#!/bin/sh\n' + body + '\n')
                 tool.chmod(0o755)
+            wine = root / 'testrepos/Madeira/wine/build-macos'
+            for entry in ('libs/winecrt0', 'dlls/ntdll', 'dlls/dbghelp'):
+                archive = wine / entry / 'aarch64-windows' / ('lib' + Path(entry).name + '.a')
+                archive.parent.mkdir(parents=True)
+                archive.write_bytes(b'archive fixture')
             capture = root / 'args'
             env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'], CAPTURE=str(capture), MOCK_PREFIX=str(root))
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
@@ -50,6 +55,15 @@ class RuntimeInputTests(unittest.TestCase):
             for language in ('C', 'CXX', 'ASM'):
                 self.assertIn(f'-DCMAKE_{language}_FLAGS=-DFEX_IOS_HOST', args)
             self.assertIn('-DFEX_IOS_HOST_BUILD=ON', args)
+            for entry in ('libs/winecrt0', 'dlls/ntdll', 'dlls/dbghelp'):
+                archive = wine / entry / 'arm64ec-windows' / ('lib' + Path(entry).name + '.a')
+                self.assertEqual(archive.read_bytes(), b'archive fixture')
+                self.assertTrue(archive.is_symlink())
+            (wine / 'libs/winecrt0/aarch64-windows/libwinecrt0.a').unlink()
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(b'Missing Wine link input', result.stderr)
+
 
     def test_digest_failure_and_unsafe_archive_leave_no_output(self):
         with tempfile.TemporaryDirectory() as temp:
