@@ -14,6 +14,17 @@ debian = load('debian_sources', 'collect-debian-sources.py')
 
 
 class RuntimeStagingTests(unittest.TestCase):
+    def test_debian_owner_ignores_diversions_and_rejects_ambiguity(self):
+        path = '/lib64/ld-linux-x86-64.so.2'
+        output = (f'diversion by libc6 from: {path}\n'
+                  'diversion by libc6 to: /lib64/ld-linux-x86-64.so.2.usr-is-merged\n'
+                  f'libc6:amd64: {path}\n')
+        self.assertEqual(debian.package_owner(output, path), 'libc6:amd64')
+        self.assertIsNone(debian.package_owner(output, '/unowned'))
+        self.assertIsNone(debian.package_owner(f'diversion by libc6 from: {path}', path))
+        with self.assertRaises(ValueError):
+            debian.package_owner(output + f'other:amd64: {path}\n', path)
+
     def test_pe_machine_check(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'module.dll'
