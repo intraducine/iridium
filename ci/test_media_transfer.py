@@ -63,8 +63,8 @@ class MediaTransferTests(unittest.TestCase):
 
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('needs: [linux-userland, media]', workflow)
-        self.assertIn("!inputs.media_only && needs.media.result == 'success'", workflow)
+        self.assertIn('needs: [asset-plan, linux-userland, media]', workflow)
+        self.assertIn("needs.media.result == 'success'", workflow)
         self.assertIn('--only cerbero-source', workflow)
         self.assertIn('name: media-sdk-with-source', workflow)
         self.assertNotIn('prepare-media-sdk.sh', (ROOT / 'ci/prepare-native-runtime.sh').read_text())
@@ -89,3 +89,17 @@ class MediaTransferTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     exec(compile(setup, 'media-config', 'exec'), {})
                 self.assertEqual(host.read_text(), '# existing user configuration\n')
+
+    def test_checksum_list_cannot_omit_source_or_reference_other_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            transfer = root / '.build/media-transfer'
+            transfer.mkdir(parents=True)
+            (transfer / 'source-revision.txt').write_text('a' * 40)
+            for manifest in ('', '0' * 64 + '  media-sdk.tar.gz\n',
+                             '0' * 64 + '  ../outside\n',
+                             ('0' * 64 + '  media-sdk.tar.gz\n') * 2):
+                (transfer / 'SHA256SUMS').write_text(manifest)
+                with patch.object(media.subprocess, 'check_output', return_value='a' * 40):
+                    with self.assertRaises(ValueError):
+                        media.restore(root)

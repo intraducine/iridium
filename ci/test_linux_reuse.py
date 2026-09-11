@@ -18,3 +18,13 @@ class LinuxReuseTests(unittest.TestCase):
                 reuse.validate_run(dict(run, **{key: value}), jobs, revision)
         with self.assertRaises(ValueError):
             reuse.validate_run(run, [{'name': 'linux-userland', 'conclusion': 'failure'}], revision)
+
+    def test_current_branch_manual_producer_is_accepted(self):
+        revision = 'a' * 40
+        run = {'event': 'workflow_dispatch', 'head_branch': 'feature', 'head_sha': revision,
+               'path': '.github/workflows/build-unsigned-ipa.yml',
+               'head_repository': {'full_name': 'intraducine/iridium'}}
+        jobs = [{'name': 'linux-userland', 'conclusion': 'success'}]
+        reuse.validate_run(run, jobs, revision, 'feature')
+        with self.assertRaises(ValueError):
+            reuse.validate_run(run, jobs, revision, 'different-branch')

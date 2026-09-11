@@ -69,7 +69,7 @@ while adding this collector; only synthetic source-archive tests ran.
 
 A later manual run may supply `linux_runtime_run_id` to reuse a completed Linux
 artifact. CI requires a successful Linux producer job from this repository's
-manual main-branch workflow, the recorded source commit, unchanged Wine and
+manual workflow on main or the current branch, the recorded source commit, unchanged Wine and
 Linux preparation/source-collection inputs, and matching archive checksums.
 This avoids recompiling unchanged Linux code for macOS-only fixes; it does not
 claim bit-for-bit reproducibility. Expired artifacts require a fresh build.
@@ -89,3 +89,35 @@ The normal media command runs the same checks before bootstrap.
 See [the build preflight review](build-preflight-2026-09-11.md) for measured
 results and the remaining full-build checks. Compiler probes cannot guarantee
 that every dependency compiles or that the final app links.
+
+
+## Reusing verified build assets
+
+Manual builds default to `reuse_assets=true`. A short planning job searches the
+latest 30 manual runs for matching, retained media and Linux producer artifacts.
+The whole earlier workflow need not have succeeded, but the actual producer job
+must have succeeded and its artifact must still exist. Both stages may come from main
+or the branch being built. Other branches and forks are rejected.
+
+Reuse compares Git object IDs for stage inputs and the producer workflow job,
+including runner, commands, action revisions, and inherited environment/defaults.
+Only scheduling conditions are excluded. Changes to UI code do not invalidate
+media. Recipe, pinned dependency, patch, compiler-check, app deployment config,
+or producer-command changes do. Runner labels and install commands are compared;
+floating hosted-image and Homebrew updates are not bit-for-bit toolchain pins.
+Turn reuse off when a fresh compiler/image build is needed.
+
+The existing Linux run override and new `media_run_id` override are verified by
+the same selection rules. Invalid explicit overrides stop the run; automatic
+misses trigger fresh builds. API failures stop planning rather than accepting
+unverified output. Expired artifacts also require a new producer build.
+
+The consumer downloads both binary and corresponding source, rechecks producer
+provenance, and checks archive hashes before unpacking. Media manifests must
+cover exactly the SDK and source archive. The original source revision stays
+with the artifact; reuse does not relabel it as newly compiled source.
+
+This reuses the two existing transferable stages: media and Linux userland.
+Native Wine/FEX, graphics and JIT currently have no independently verified
+transfer artifacts and still compile in the main build job. The source/license
+publication gate stays closed until its separate audit is complete.

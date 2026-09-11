@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reuse only a successful main-branch build with unchanged Linux source inputs."""
+"""Reuse only a successful manual build on main or the current branch with unchanged Linux source inputs."""
 from pathlib import Path
 import json
 import os
@@ -10,12 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ('iridium-wine-ios', 'ci/prepare-linux-runtime.sh', 'ci/collect-debian-sources.py')
 
 
-def validate_run(run, jobs, revision):
-    if (run.get('event') != 'workflow_dispatch' or run.get('head_branch') != 'main'
+def validate_run(run, jobs, revision, branch="main"):
+    if (run.get('event') != 'workflow_dispatch' or run.get('head_branch') not in ('main', branch)
         or run.get('head_sha') != revision
         or run.get('path') != '.github/workflows/build-unsigned-ipa.yml'
         or run.get('head_repository', {}).get('full_name') != 'intraducine/iridium'):
-        raise ValueError('Linux artifact must come from this repository manual main-branch workflow')
+        raise ValueError('Linux artifact must come from this repository manual workflow on main or this branch')
     if not any(j.get('name') == 'linux-userland' and j.get('conclusion') == 'success' for j in jobs):
         raise ValueError('Linux producer job did not succeed')
 
@@ -31,7 +31,8 @@ def verify(root, run_id):
             raise ValueError('Invalid producer run ID')
         def api(suffix):
             return json.loads(subprocess.check_output(['gh', 'api', 'repos/intraducine/iridium/actions/runs/' + run_id + suffix], text=True))
-        validate_run(api(''), api('/jobs?per_page=100')['jobs'], revision)
+        branch = os.environ.get('GITHUB_REF_NAME') or git('branch', '--show-current')
+        validate_run(api(''), api('/jobs?per_page=100')['jobs'], revision, branch)
         subprocess.run(['git', '-C', str(root), 'fetch', '--depth=1', 'origin', revision], check=True)
         for path in INPUTS:
             if git('rev-parse', revision + ':' + path) != git('rev-parse', 'HEAD:' + path):
