@@ -8,8 +8,15 @@ JOBS="${IRIDIUM_BUILD_JOBS:-2}"
 case "$JOBS" in ''|*[!0-9]*|0) echo 'Invalid compiler job count' >&2; exit 2;; esac
 python3 - "$CONFIG" "$ROOT/.build/cerbero-home" "$JOBS" <<'PY'
 from pathlib import Path
+import platform
 import sys
 Path(sys.argv[1]).write_text('home_dir = ' + repr(sys.argv[2]) + '\nnum_of_cpus = ' + sys.argv[3] + '\n')
+# Cerbero loads this for its separate host-tools configuration too. These
+# tools run only on the build host; the iPhone deployment target is unchanged.
+host_config = Path.home() / '.cerbero' / 'cerbero.cbc'
+host_config.parent.mkdir(exist_ok=True)
+with host_config.open('x') as config:
+    config.write('min_osx_sdk_version = ' + repr(platform.mac_ver()[0]) + '\n')
 PY
 cd "$CERBERO"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
