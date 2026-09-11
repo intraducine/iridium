@@ -70,3 +70,27 @@ Do not remove that gate merely to get a green run.
    is not implemented; do not substitute an unverified local SDK.
 5. Keep compile success, license audit, package verification and physical-device
    results separate. None establishes the others.
+
+## Follow-up: run 34593935375
+
+The compiler preflight passed. The media build then failed in applemedia's
+legacy iosassetsrc header: AssetsLibrary APIs are obsoleted for iOS 26 and later.
+The earlier C++ probes and focused vvdec build did not cover this Objective-C
+plugin. This was a gap in the initial validation.
+
+The patch uses Meson's Objective-C compiler check for the actual target. It
+includes iosassetsrc and its registration only when AssetsLibrary is usable.
+AVFoundation and VideoToolbox remain enabled. Source guards and the Meson source
+list use the same feature definition.
+
+Validation: the pinned gst-plugins-bad 1.28.6 tarball digest matches the Cerbero
+recipe. The source patch applies using Cerbero's git-am mechanism. The actual
+Meson compiler check passes for an iOS 17 minimum and rejects the removed API
+for iOS 27, with assertions on the resulting source list. Run it with:
+
+```sh
+python3 ci/check-applemedia-api.py /path/to/patched/gst-plugins-bad-1.28.6
+```
+
+This check needs Meson, Ninja, and Xcode with an iOS 26+ SDK. Full applemedia
+compilation and complete media packaging still require the next manual run.

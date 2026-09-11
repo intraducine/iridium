@@ -1,0 +1,76 @@
+--- a/recipes/gst-plugins-bad-1.0.recipe
++++ b/recipes/gst-plugins-bad-1.0.recipe
+@@ -4,6 +4,7 @@
+ class Recipe(custom.GStreamer):
+     name = 'gst-plugins-bad-1.0'
+     btype = BuildType.MESON
++    patches = ['gst-plugins-bad-1.0/0001-check-assets-library-availability.patch']
+     # License path/location is different in tarball vs. monorepo
+     if custom.GStreamer.stype == SourceType.TARBALL:
+       licenses = [{License.LGPLv2Plus: None, License.BSD_3_Clause: ['ext/sctp/usrsctp/LICENSE.md']}]
+diff --git a/recipes/gst-plugins-bad-1.0/0001-check-assets-library-availability.patch b/recipes/gst-plugins-bad-1.0/0001-check-assets-library-availability.patch
+new file mode 100644
+--- /dev/null
++++ b/recipes/gst-plugins-bad-1.0/0001-check-assets-library-availability.patch
+@@ -0,0 +1,61 @@
++From acc4e5ff8b940e0aa02a9b6443365652f749f196 Mon Sep 17 00:00:00 2001
++From: Iridium Contributor <contributor@example.invalid>
++Date: Fri, 11 Sep 2026 08:06:33 -0400
++Subject: [PATCH] Build the legacy photo source only when AssetsLibrary is
++ usable
++
++---
++ sys/applemedia/meson.build | 14 ++++++++++----
++ sys/applemedia/plugin.m    |  4 ++--
++ 2 files changed, 12 insertions(+), 6 deletions(-)
++
++diff --git a/sys/applemedia/meson.build b/sys/applemedia/meson.build
++index 1743b1a..0eaecbc 100644
++--- a/sys/applemedia/meson.build
+++++ b/sys/applemedia/meson.build
++@@ -123,11 +123,17 @@ if subsystem == 'macos'
++   applemedia_frameworks += [cocoa_dep, applemedia_opengl_dep, iosurface_dep]
++ else
++   applemedia_sources += ios_sources
+++  ios_media_dep = dependency('appleframeworks', modules : ['Foundation'], required : applemedia_option)
++   if subsystem.startswith('ios')
++-    applemedia_sources += ios_deprecated_sources
++-    ios_media_dep = dependency('appleframeworks', modules : ['Foundation', 'AssetsLibrary'], required : applemedia_option)
++-  else
++-    ios_media_dep = dependency('appleframeworks', modules : ['Foundation'], required : applemedia_option)
+++    assets_dep = dependency('appleframeworks', modules : ['Foundation', 'AssetsLibrary'], required : false)
+++    if assets_dep.found() and objc.compiles('''
+++        #import <AssetsLibrary/AssetsLibrary.h>
+++        int main(void) { ALAssetsLibrary *library = 0; return library != 0; }
+++        ''', dependencies : assets_dep, name : 'usable AssetsLibrary API')
+++      applemedia_sources += ios_deprecated_sources
+++      applemedia_frameworks += [assets_dep]
+++      applemedia_args += ['-DHAVE_IOS_ASSETS_LIBRARY']
+++    endif
++   endif
++   iosurface_dep = dependency('IOSurface', required : applemedia_option)
++   applemedia_frameworks += [ios_media_dep, iosurface_dep]
++diff --git a/sys/applemedia/plugin.m b/sys/applemedia/plugin.m
++index 38908c5..7cbb3cb 100644
++--- a/sys/applemedia/plugin.m
+++++ b/sys/applemedia/plugin.m
++@@ -25,7 +25,7 @@
++ #include <Foundation/Foundation.h>
++ #include "corevideomemory.h"
++
++-#if TARGET_OS_IOS
+++#if TARGET_OS_IOS && defined(HAVE_IOS_ASSETS_LIBRARY)
++ #include "iosassetsrc.h"
++ #endif
++
++@@ -68,7 +68,7 @@
++   gst_ios_gl_memory_init ();
++ #endif
++
++-#if TARGET_OS_IOS
+++#if TARGET_OS_IOS && defined(HAVE_IOS_ASSETS_LIBRARY)
++   res |= GST_ELEMENT_REGISTER (iosassetsrc, plugin);
++ #endif
++
++-- 
++2.50.1 (Apple Git-155)

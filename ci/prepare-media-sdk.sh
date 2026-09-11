@@ -31,9 +31,11 @@ else:
 PY
 python3 "$ROOT/ci/check-media-toolchain.py" "$CERBERO" "$CONFIG"
 git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
+git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-assets-library.patch"
 [ "${1:-}" != --preflight ] || exit 0
 cd "$CERBERO"
 git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
+git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-assets-library.patch"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bootstrap --assume-yes --jobs "$JOBS"
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
