@@ -25,7 +25,6 @@ config.cache
 config.log
 config.status
 Makefile
-Makefile.in
 
 # Stamp files
 stamp-h*

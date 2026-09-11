@@ -66,3 +66,9 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 - Recorded the exact StikDebug script comparison and retained its AGPL text: legacy.js is identical; universal.js changes only the default logging level.
 - Added source collection at build stages, using Cerbero's existing bundle-source command and Git archives. The collector excludes prebuilt JIT archives and rejects signing files or escaping source links.
 - Added matching-source packaging and a source checksum beside the future unsigned IPA. Resolved dependency license and correspondence audits remain required before upload.
+
+## Wine source completeness (2026-09-10)
+
+Restored tracked legacy Wine Makefile.in templates omitted from the initial public snapshot. Compared against Wine 11.4 commit `cc893ef9cb17b994bfd1f1a1f7355be55e615623`; existing fork modifications in nine templates are preserved. These are source build descriptions, not generated Makefiles. Removed the incorrect Makefile.in ignore rule. Source checks now verify that every configured Wine subdirectory has its template.
+
+Also restored nine fork-specific templates and required text .spec/.in inputs from the existing local source. No compiled outputs or game data are included.

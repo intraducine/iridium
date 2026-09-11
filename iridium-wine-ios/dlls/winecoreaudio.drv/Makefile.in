@@ -1,0 +1,7 @@
+UNIXLIB   = winecoreaudio.so
+UNIX_LIBS = $(COREAUDIO_LIBS)
+
+SOURCES = \
+	coreaudio.c \
+	coremidi.c \
+	iridium_ios_audio.c

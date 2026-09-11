@@ -60,6 +60,14 @@ def check(root):
     for path in sorted((root / 'docs/releases').glob('*.md')):
         if path.name != 'TEMPLATE.md':
             errors.extend(str(path.relative_to(root)) + ': ' + e for e in release_errors(path))
+    for component in ('iridium-wine-ios', 'testrepos/Madeira/wine'):
+        configure = root / component / 'configure'
+        if not configure.is_file():
+            errors.append(component + ': missing configure script')
+            continue
+        for directory in re.findall(r'^wine_fn_config_makefile ([^ \n]+) ', configure.read_text(), re.M):
+            if not (root / component / directory / 'Makefile.in').is_file():
+                errors.append(component + ': missing tracked source template ' + directory + '/Makefile.in')
     return errors
 
 
