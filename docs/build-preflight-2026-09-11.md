@@ -94,3 +94,16 @@ python3 ci/check-applemedia-api.py /path/to/patched/gst-plugins-bad-1.28.6
 
 This check needs Meson, Ninja, and Xcode with an iOS 26+ SDK. Full applemedia
 compilation and complete media packaging still require the next manual run.
+
+## Follow-up: run 34597470104
+
+The full media compile and XCFramework assembly passed. The subsequent
+corresponding-source bundle failed because Homebrew Python 3.14 had no
+setuptools. This packaging dependency was missing from the earlier preflight.
+
+Media preparation now creates an isolated Python environment with setuptools
+80.9.0, runs Cerbero's real sdist command on a small supplied source directory,
+and checks that the resulting archive preserves that source. This happens
+before bootstrap. The final bundle-source command uses the same interpreter.
+No source/license gate is removed. This does not yet verify the full source
+bundle with every compiled dependency.

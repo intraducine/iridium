@@ -29,6 +29,11 @@ else:
     with host_config.open('x') as config:
         config.write(expected)
 PY
+# Source packaging uses setuptools, which Homebrew Python does not include.
+PACKAGING_PYTHON="$ROOT/.build/media-packaging/bin/python3"
+python3 -m venv "$ROOT/.build/media-packaging"
+"$PACKAGING_PYTHON" -m pip install --disable-pip-version-check 'setuptools==80.9.0'
+"$PACKAGING_PYTHON" "$ROOT/ci/check-media-source-package.py" "$CERBERO"
 python3 "$ROOT/ci/check-media-toolchain.py" "$CERBERO" "$CONFIG"
 git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
 git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-assets-library.patch"
@@ -43,7 +48,7 @@ python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
 # The package artifact is a framework input, not the final XCFramework.
 python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     xcframework gstreamer-1.0 --source gstreamer-1.0-1.28.6-ios-arm64.xcframework.tar.xz
-python3 cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
+"$PACKAGING_PYTHON" cerbero-uninstalled -c config/cross-ios-arm64.cbc -c "$CONFIG" \
     bundle-source gstreamer-1.0 --offline
 mkdir -p "$ROOT/.build/corresponding-source"
 cp dist/cerbero-1.28.6.tar.xz "$ROOT/.build/corresponding-source/"
