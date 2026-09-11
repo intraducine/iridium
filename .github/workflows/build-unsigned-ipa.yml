@@ -4,7 +4,7 @@ run-name: Manual unsigned IPA · ${{ github.ref_name }}
   workflow_dispatch:
     inputs:
       reuse_assets:
-        description: Reuse matching retained media and Linux artifacts
+        description: Reuse matching retained runtime and media artifacts
         type: boolean
         default: true
       media_run_id:
@@ -148,21 +148,59 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 ci/restore-media-sdk.py
+      - name: Select prepared native dependencies
+        id: native
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/prepared-runtime.py select
+      - name: Download prepared native dependencies
+        if: steps.native.outputs.run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ steps.native.outputs.artifact }}
+          path: .build/native-transfer
+          run-id: ${{ steps.native.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore prepared native dependencies
+        if: steps.native.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/prepared-runtime.py restore
       - name: Prepare native runtime libraries
+        if: steps.native.outputs.run_id == ''
         run: bash ci/prepare-native-runtime.sh
       - name: Build Windows modules and clean prefix
+        if: steps.native.outputs.run_id == ''
         run: bash ci/prepare-windows-runtime.sh
       - name: Build legacy graphics frameworks
+        if: steps.native.outputs.run_id == ''
         run: bash ci/prepare-graphics.sh
       - name: Build StikJIT and idevice from source
+        if: steps.native.outputs.run_id == ''
         run: bash ci/prepare-stikjit.sh
       - name: Prepare legacy runtime bundle
+        if: steps.native.outputs.run_id == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash ci/prepare-legacy-bundle.sh
-      - name: Collect exact repository and dependency source
+      - name: Package prepared runtime and source
+        if: steps.native.outputs.run_id == ''
         run: |
           python3 ci/collect-release-source.py repository
+          python3 ci/prepared-runtime.py package
+      - name: Retain prepared runtime and source
+        if: steps.native.outputs.run_id == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.native.outputs.artifact }}
+          path: .build/native-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Collect exact repository and dependency source
+        run: |
+          python3 ci/collect-release-source.py checkout
           python3 ci/collect-release-source.py package
       - name: Retain source archive for release audit
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

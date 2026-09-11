@@ -57,7 +57,7 @@ def source_tree(source, output):
 
 def collect(kind):
     OUT.mkdir(parents=True, exist_ok=True)
-    if kind == 'repository':
+    if kind in {'repository', 'checkout'}:
         revisions = {'repository': git_snapshot(ROOT, OUT / 'iridium.tar.gz')}
         records = subprocess.check_output(['git', 'ls-files', '--stage', '-z'], cwd=ROOT).decode().split('\0')
         for record in records:
@@ -73,6 +73,8 @@ def collect(kind):
                 raise ValueError('Submodule revision differs from the lock: ' + name)
             revisions[name] = actual
         (OUT / 'repository-revisions.json').write_text(json.dumps(revisions, indent=2) + '\n')
+        if kind == 'checkout':
+            return  # Dependency sources came from the verified native producer.
         for item in json.loads((ROOT / 'ci/runtime-inputs.json').read_text()):
             if item['name'] in {'stikjit-source', 'idevice-source', 'cerbero-source'} or 'llvm-mingw' in item['name']:
                 continue

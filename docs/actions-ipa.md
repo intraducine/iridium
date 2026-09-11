@@ -117,7 +117,37 @@ provenance, and checks archive hashes before unpacking. Media manifests must
 cover exactly the SDK and source archive. The original source revision stays
 with the artifact; reuse does not relabel it as newly compiled source.
 
-This reuses the two existing transferable stages: media and Linux userland.
-Native Wine/FEX, graphics and JIT currently have no independently verified
-transfer artifacts and still compile in the main build job. The source/license
-publication gate stays closed until its separate audit is complete.
+The macOS job also selects a prepared runtime after installing its build tools.
+This package contains native Wine/FEX, Windows modules, the clean prefix, media
+wrappers, controller modules, ANGLE, StikJIT/idevice, and the legacy runtime host
+and bundle. Final app compilation and the source/license gate still run.
+
+Native reuse compares its source trees and preparation scripts, the complete
+build job, Xcode/Swift/iPhone SDK versions, macOS build, architecture, installed
+Homebrew versions, and the exact restored media SDK and Linux archive hashes.
+App-only Swift UI edits can reuse the package. Changes to dependency source,
+project settings, recipes, or any of these toolchain inputs require a new build.
+The broad source checks deliberately favor an extra build over stale output.
+
+The first build must finish all dependency stages and upload their package.
+Later manual runs find it automatically with `reuse_assets=true`; no run number
+is needed. Native artifacts are retained for seven days and searched within the
+latest 30 manual runs on main or the current branch. Only a successful
+`Retain prepared runtime and source` step qualifies. A later app build failure
+or license-gate failure does not discard that completed dependency work.
+Reusing runs do not upload duplicate native packages.
+
+Transfers include only final resources, link archives, needed headers, and
+corresponding source, not compiler working directories or Apple SDKs. Restore
+checks provenance, toolchain, archive checksum, member paths, and existing files
+before copying. It rejects links and unexpected paths. The final source package
+keeps `native-producer-iridium.tar.gz` and `native-producer-revisions.json` beside
+the current app source. The restored runtime bundle retains its producer version.
+
+Set `reuse_assets=false` and leave explicit media/Linux overrides empty to build
+all dependencies fresh. Tool setup, downloads, verification, source packaging,
+and app compilation still take time. No 30-second CI target is promised.
+
+Local transfer, rejection, and workflow tests cover this path. A cold GitHub run
+and a subsequent reuse run still need to validate the real native artifacts and
+measure the time saved. The source/license publication gate remains unchanged.
