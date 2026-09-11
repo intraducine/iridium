@@ -39,4 +39,5 @@ class StandardsTests(unittest.TestCase):
                 target = root / component / 'dlls/example/Makefile.in'
                 target.parent.mkdir(parents=True)
                 target.write_text('MODULE = example.dll\n')
+                (target.parent / 'example.spec').write_text('')
             self.assertEqual(standards.check(root), [])

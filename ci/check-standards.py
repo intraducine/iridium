@@ -68,6 +68,19 @@ def check(root):
         for directory in re.findall(r'^wine_fn_config_makefile ([^ \n]+) ', configure.read_text(), re.M):
             if not (root / component / directory / 'Makefile.in').is_file():
                 errors.append(component + ': missing tracked source template ' + directory + '/Makefile.in')
+                continue
+            template = root / component / directory / 'Makefile.in'
+            module = re.search(r'^MODULE\s*=\s*(\S+)', template.read_text(), re.M)
+            if module:
+                name = module[1]
+                stem = name[:-4] if name.endswith('.dll') else name
+                spec = template.parent / (stem + '.spec')
+                # Wine export definitions are implicit inputs for MODULE targets.
+                # Match makedep: data-only modules, native subsystems, and drivers
+                # may omit exports.
+                optional = name.endswith(('.drv', '.exe')) or any(flag in template.read_text() for flag in ('-Wb,--data-only', '-Wl,--subsystem,native', '-mconsole', '-mwindows'))
+                if not spec.exists() and not optional:
+                    errors.append(component + ': missing module exports ' + str(spec.relative_to(root / component)))
     return errors
 
 

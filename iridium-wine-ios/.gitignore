@@ -33,7 +33,6 @@ stamp-h*
 # Generated files
 *.gen
 *.def
-*.spec
 iridium/ios/build.log
 iridium/ios/build/
 iridium/ios/test-tools/**/*.o
