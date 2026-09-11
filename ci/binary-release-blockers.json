@@ -1,0 +1,6 @@
+[
+  "StikJIT universal.js: establish its separate upstream license/provenance; the MPL root notice alone does not resolve upstream README exceptions.",
+  "Collect and review the resolved idevice Cargo dependency licenses and exact vendored source after the source build.",
+  "Collect ANGLE and Cerbero dependency sources, notices, patches and generated build inputs for the selected target. Review codec and compiler-runtime terms.",
+  "Package and audit matching corresponding source beside the IPA, including Debian source packages, initialized gitlinks and local dependency patches. Binary upload remains blocked until this exists."
+]

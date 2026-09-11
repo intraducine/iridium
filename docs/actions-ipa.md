@@ -2,25 +2,30 @@
 
 The workflow is available at **Actions → Build unsigned IPA → Run workflow**. Select the branch, then start the run. Its only trigger is `workflow_dispatch`: commits, pull requests, tags, and schedules cannot start an IPA build. The separate source privacy workflow still runs automatically.
 
-**Current limitation:** native preparation is now scripted, but full IPA preparation is not complete. A manual run first builds the native libraries and media/input components, then checks the remaining inputs. It still cannot produce an IPA from a clean checkout. Windows runtime modules, the clean prefix, the legacy Linux userland/host bundle, and the legacy graphics frameworks remain missing. StikJIT transitive source records remain unresolved.
+**Status:** the remaining runtime build recipes are now scripted. They have not been compiled on a clean runner. IPA output remains blocked by the explicit source/license audit items in `ci/binary-release-blockers.json`. Do not start a full run expecting an installable package yet.
 
-`ci/prepare-native-runtime.sh` uses this repository's existing build helpers. It downloads SHA-256-locked GMP, Nettle, GnuTLS, FreeType, LLVM 15, and the llvm-mingw compiler. Git dependencies use the committed gitlink revisions, without binary test corpora. It builds the LLVM host table generator, iOS LLVM libraries, Madeira FEX and Wine native archives, DXMT Metal shader headers and combined archive, legacy FEX/Wine native archives, and media/controller libraries. The GStreamer SDK remains an official digest-checked **prebuilt** input; its component source/notice inventory is still needed before binary distribution. This is not a claim of a fully source-built or bit-for-bit reproducible IPA.
+The manual workflow has two stages:
 
-The native script expects a fresh Apple Silicon macOS checkout, Python 3.12 or newer, and Xcode 27. Source extraction refuses existing destination directories. Downloads stay in `.build/runtime-downloads`; the media SDK stays inside the iOS project's `.build/media-sdk`. Existing developer files and global temporary SDK directories are not reused. `IRIDIUM_BUILD_JOBS` defaults to two to limit parallel compiler memory use. Homebrew build tools are runner-provided, not version-locked by this change.
+- Linux builds the legacy Wine userland. It identifies copied Debian libraries, downloads their exact source-package versions, and transfers the userland together with source and copyright notices. Unknown package ownership or unavailable source fails the job.
+- Apple Silicon macOS builds the native libraries, Wine Windows modules for both architectures, ARM64EC FEX, DXMT, a fresh temporary prefix, ANGLE frameworks, source-built GStreamer, and StikJIT with source-built idevice. It then packages the legacy runtime. The source/license gate runs before the application build and IPA upload.
 
-Inspect the sequence without downloading, compiling, or modifying files:
+`ci/runtime-inputs.json` locks archive URLs and SHA-256 values. FEX git dependencies use committed gitlinks. ANGLE and depot_tools use exact commits in `ci/prepare-graphics.sh`; ANGLE's DEPS selects its dependencies. The original graphics binary reported ANGLE revision `6024e9c05548`; building that revision does not establish that it includes every modification used by the old binary.
+
+CI does not link the opaque idevice archive bundled in StikJIT. It removes that fetched archive and rebuilds idevice revision `7a1cca397a79589e177de163d888ba761a137ce5` with Rust 1.98.1 and locked Cargo dependencies. This replacement needs compile and device validation. CI also uses Cerbero 1.28.6 to build the iPhone GStreamer slice from source. The optional older prebuilt-SDK helper is not used by this workflow.
+
+The scripts expect a fresh checkout, Python 3.12 or newer, and Xcode 27. Compiler parallelism defaults to two. Downloads and generated files stay in the checkout. Prefix preparation only sanitizes a newly marked temporary prefix; it never edits user saves. Homebrew tools and the Debian image are not fully version-locked. These recipes do not establish bit-for-bit reproducibility.
+
+Inspect native inputs without downloads or compilation:
 
 ```sh
 python3 ci/fetch-runtime-inputs.py --plan
 bash ci/prepare-native-runtime.sh --plan
+python3 -B -m unittest discover -s ci -p 'test_*.py'
 ```
 
-The legacy post-build stage also requires `Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework` and `libGLESv2.framework`. That source/build chain is not in this monorepo. Their absence is now reported before Xcode. Do not upload local copies to bypass it; establish their exact source, build recipe, and notices first.
+Static checks and synthetic tests cover download rejection, prefix sanitization, PE architecture checks, unknown Debian library ownership, manual-only triggers, and unsigned-package rejection. They do not prove that the runtime compiles or works on an iPhone. No IPA workflow was dispatched for this change.
 
-The Xcode and unsigned packaging steps remain after the readiness check. No new app or runtime compilation has been run to verify these recipes. Do not treat static checks as a successful runtime build.
-No IPA workflow was dispatched while adding it. Static trigger checks and synthetic package rejection tests were run without compiling an app. Run them with `python3 -B -m unittest discover -s ci -p 'test_*.py'`.
-
-The package step rejects certificates, provisioning profiles, private-key text, device identifiers, missing helper executables, and escaping symlinks. It strips existing vendor code signatures in a temporary staging copy and checks each native executable before creating the IPA. It never imports a keychain or accesses signing credentials.
+The package step rejects certificates, provisioning profiles, private-key text, device identifiers, missing helper executables, and escaping symlinks. It removes vendor signatures only in a staging copy and verifies native files before producing an IPA. It never imports a keychain or accesses signing credentials.
 
 ## Runner and cost
 
@@ -30,7 +35,7 @@ Store source in Git without LFS. Use short-lived Actions artifacts for test IPAs
 
 ## Required preparation
 
-1. Make the runtime, media SDK, ARM64EC modules, FEX, DXMT, and crypto-library stages build from pinned sources on a clean runner. The native stages are scripted; Windows modules, prefix generation, legacy packaging, and external graphics still need clean-runner preparation.
+1. Make the runtime, media SDK, ARM64EC modules, FEX, DXMT, and crypto-library stages build from pinned sources on a clean runner. The stages are scripted but need clean-runner validation.
 2. Retain local modifications and complete source/license records for every dependency. Resolve the StikJIT transitive-source note before distributing its binary.
 3. Run source checks on pull requests with read-only permissions and no secrets. Build artifacts only from reviewed code. Do not use pull_request_target to execute pull-request code.
 4. Run Xcode with `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM=`. Do not pass `-allowProvisioningUpdates`, import a keychain, or use Apple account credentials.

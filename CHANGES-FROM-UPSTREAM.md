@@ -52,3 +52,11 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 - Madeira's GMP/Nettle/GnuTLS and FreeType build helpers accept a compiler job limit. The ntdll helper now stops on a compile failure rather than reusing stale objects.
 - Iridium media SDK paths are checkout-local. Media compiler jobs honor the same limit. No runtime behavior or signing identity is changed.
 - Build-tool and SDK downloads are not committed or distributed by this source change. Complete component source and license inventories remain required before a binary release.
+
+## Remaining runtime recipes (2026-09-10)
+
+- Added CI recipes for Wine PE modules, ARM64EC FEX, DXMT, ANGLE, source-built GStreamer, source-built idevice/StikJIT, and the legacy userland bundle. No application runtime behavior was changed.
+- Madeira prefix generation now uses a marked temporary directory, fails on wineboot failure, waits for its server, and removes host links and registry identities before archiving.
+- The legacy Wine Linux builder enables Debian source repositories and includes Python for exact dependency-source collection.
+- StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision; compatibility remains untested.
+- Explicit unresolved source/license items keep IPA publication blocked. No local compilation or manual IPA workflow was run.

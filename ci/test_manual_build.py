@@ -31,6 +31,18 @@ class ManualBuildTests(unittest.TestCase):
             findings = prerequisites.blockers(Path(tmp))
             self.assertTrue(any("runtime" in item for item in findings))
             self.assertTrue(any("StikJIT" in item for item in findings))
+            root = Path(tmp)
+            for paths in prerequisites.REQUIRED.values():
+                for path in paths:
+                    target = root / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(b"fixture")
+            record = root / "ci/binary-release-blockers.json"
+            record.parent.mkdir(parents=True)
+            record.write_text('["unresolved source"]')
+            self.assertEqual(prerequisites.blockers(root), ["Source/license audit: unresolved source"])
+            record.write_text('{}')
+            self.assertTrue(prerequisites.blockers(root))
 
     def test_reject_signing_files_keys_and_external_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -2,6 +2,7 @@
 """Fail before Xcode when the current source snapshot cannot build a full IPA."""
 from pathlib import Path
 import sys
+import json
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {
@@ -39,7 +40,7 @@ REQUIRED = {
         "iridium/apps/ios/MediaRuntime/winegstreamer.dll",
         "iridium/apps/ios/ControllerRuntime/arm64ec/xinput.dll",
     ],
-    "legacy graphics frameworks (source preparation unresolved)": [
+    "legacy graphics frameworks": [
         "Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework/libEGL",
         "Amethyst-iOS/Natives/resources/Frameworks/libGLESv2.framework/libGLESv2",
     ],
@@ -54,9 +55,14 @@ def blockers(root):
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
             result.append(f"{group}: {len(missing)} required file(s) missing")
-    notices = root / "iridium/apps/ios/BuiltinJIT/StikJITNotices/SOURCES.md"
-    if not notices.is_file() or "must be established before external distribution" in notices.read_text():
-        result.append("StikJIT: exact transitive source revision and notices are not established")
+    record = root / "ci/binary-release-blockers.json"
+    try:
+        pending = json.loads(record.read_text())
+        if not isinstance(pending, list) or not all(isinstance(item, str) and item for item in pending):
+            raise ValueError("invalid blocker record")
+        result.extend("Source/license audit: " + item for item in pending)
+    except (OSError, ValueError):
+        result.append("StikJIT and dependency source/license audit record is missing or invalid")
     return result
 
 if __name__ == "__main__":

@@ -43,5 +43,29 @@
     "destination": "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal",
     "archive_root": "llvm-mingw-20260421-ucrt-macos-universal",
     "license": "Build tool; retain bundled licenses and target runtime notices"
+  },
+  {
+    "name": "stikjit-source",
+    "url": "https://codeload.github.com/StikDebug/StikJIT/tar.gz/640fac91de403fdb85a3778aa0bbb7f30737b74c",
+    "sha256": "5005eac0f1bed92f559eb073f8fb711300d26b549ea439b0b5697b2f41606c88",
+    "destination": ".build/runtime-sources/StikJIT",
+    "archive_root": "StikJIT-640fac91de403fdb85a3778aa0bbb7f30737b74c",
+    "license": "MPL-2.0; bundled scripts retain their original licenses"
+  },
+  {
+    "name": "idevice-source",
+    "url": "https://codeload.github.com/jkcoxson/idevice/tar.gz/7a1cca397a79589e177de163d888ba761a137ce5",
+    "sha256": "08a5b9479b77c107d5ecbeeef9132307d7da5b6e4d09f92279f7421f68ea75a3",
+    "destination": ".build/runtime-sources/idevice",
+    "archive_root": "idevice-7a1cca397a79589e177de163d888ba761a137ce5",
+    "license": "MIT; Cargo dependencies retain individual notices"
+  },
+  {
+    "name": "cerbero-source",
+    "url": "https://codeload.github.com/GStreamer/cerbero/tar.gz/59548269f4fd0f701818f0bafdb102959ec81e65",
+    "sha256": "1874c5ed8b67612ca0370e5a8c7b25420ed98f0176425aa427eb1461293a82d3",
+    "destination": ".build/runtime-sources/cerbero",
+    "archive_root": "cerbero-59548269f4fd0f701818f0bafdb102959ec81e65",
+    "license": "LGPL-2.0-or-later for Cerbero; recipe dependencies retain their own notices"
   }
 ]

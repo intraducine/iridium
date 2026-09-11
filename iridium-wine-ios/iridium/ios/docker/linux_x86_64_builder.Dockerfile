@@ -2,7 +2,9 @@ FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Source packages must be available for the exact installed runtime libraries.
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     bison \
     build-essential \
@@ -62,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ocl-icd-opencl-dev \
     perl \
     pkg-config \
+    python3 \
     samba-dev \
     unixodbc-dev \
     x11proto-dev \

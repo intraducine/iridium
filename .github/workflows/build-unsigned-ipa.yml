@@ -8,7 +8,30 @@ concurrency:
   group: unsigned-ipa-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  linux-userland:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Check source privacy
+        run: python3 check-public-source.py
+      - name: Install Linux packaging tools
+        run: sudo apt-get update && sudo apt-get install -y zsh zstd llvm
+      - name: Build Linux userland and collect its sources
+        run: bash ci/prepare-linux-runtime.sh
+      - name: Transfer userland with matching source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-runtime-with-source
+          path: .build/linux-transfer/
+          if-no-files-found: error
+          retention-days: 1
   build:
+    needs: linux-userland
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -25,9 +48,21 @@ jobs:
       - name: Check source privacy
         run: python3 check-public-source.py
       - name: Install native build tools
-        run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen
+        run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen meson zstd
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-runtime-with-source
+          path: .build/linux-transfer
       - name: Prepare native runtime libraries
         run: bash ci/prepare-native-runtime.sh
+      - name: Build Windows modules and clean prefix
+        run: bash ci/prepare-windows-runtime.sh
+      - name: Build legacy graphics frameworks
+        run: bash ci/prepare-graphics.sh
+      - name: Build StikJIT and idevice from source
+        run: bash ci/prepare-stikjit.sh
+      - name: Prepare legacy runtime bundle
+        run: bash ci/prepare-legacy-bundle.sh
       - name: Check full-runtime build readiness
         run: python3 ci/check-ipa-prerequisites.py
       - name: Generate Xcode project

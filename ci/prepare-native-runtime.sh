@@ -15,7 +15,7 @@ if [ "${1:-}" = --plan ]; then
       'Wine generated headers -> Wine iOS native archives' \
       'Metal shader headers -> DXMT iOS combined archive' \
       'Legacy FEX and embedded Wine server archives' \
-      'Pinned media SDK -> media and controller libraries'
+      'Source-built media SDK -> media and controller libraries'
     exit 0
 fi
 [ "$#" -eq 0 ] || { echo "Usage: $0 [--plan]" >&2; exit 2; }
@@ -89,7 +89,7 @@ cmake --build "$MADEIRA/FEX/build-ios" --parallel "$JOBS" \
 mkdir -p "$MADEIRA/wine/build-macos"
 (
     cd "$MADEIRA/wine/build-macos"
-    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --without-x --without-freetype
+    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --without-x --without-freetype --disable-tests
     make -j"$JOBS" include/all tools/winebuild/winebuild
 )
 for component in wineserver ntdll-unix win32u-unix; do
@@ -109,10 +109,17 @@ xcrun --sdk iphoneos libtool -static -o "$APP/libdxmt_combined.a" \
     "$MADEIRA/build/dxmt-ios/obj/"*.o "$IOS/lib/"*.a
 
 bash "$ROOT/iridium-fex-ios/iridium/ios/build_embedded_translator.sh" --platform device --jobs "$JOBS"
+# The iOS Wine configure step needs host-built Wine tools first.
+mkdir -p "$ROOT/iridium-wine-ios/build-iridium-ios/wine-build"
+(
+    cd "$ROOT/iridium-wine-ios/build-iridium-ios/wine-build"
+    ../../configure --enable-win64 --without-x --without-freetype --disable-tests
+    make -j"$JOBS" include/all tools/winebuild/all tools/widl/all tools/wrc/all tools/winegcc/all
+)
 zsh "$ROOT/iridium-wine-ios/iridium/ios/build_install_root.sh" \
     --platform device --embedded-server-only --jobs "$JOBS"
 
-sh "$ROOT/iridium/apps/ios/Scripts/prepare_media_sdk.sh"
+bash "$ROOT/ci/prepare-media-sdk.sh"
 sh "$ROOT/iridium/apps/ios/Scripts/build_media_runtime.sh"
 sh "$ROOT/iridium/apps/ios/Scripts/build_controller_runtime.sh"
 
