@@ -59,11 +59,40 @@ class RuntimeInputTests(unittest.TestCase):
                 archive = wine / entry / 'arm64ec-windows' / ('lib' + Path(entry).name + '.a')
                 self.assertEqual(archive.read_bytes(), b'archive fixture')
                 self.assertTrue(archive.is_symlink())
+            # Let configuration/build finish and exercise the real DLL handoff.
+            (tools / 'cmake').write_text('#!/bin/sh\nexit 0\n')
+            fex = root / 'testrepos/Madeira/FEX/build-arm64ec'
+            (fex / 'Bin').mkdir(parents=True)
+            (fex / 'Source/Windows/ARM64EC').mkdir(parents=True)
+            dll = fex / 'Bin/libarm64ecfex.dll'
+            dll.write_bytes(b'compiled DLL')
+            dxmt = root / 'testrepos/Madeira/research/dxmt'
+            dxmt.mkdir(parents=True)
+            (dxmt / 'build-arm64ec-win.txt').write_text('fixture')
+            (tools / 'meson').write_text('#!/bin/sh\nexit 17\n')
+            (tools / 'meson').chmod(0o755)
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 17, result.stderr.decode())
+            self.assertEqual((fex / 'Source/Windows/ARM64EC/libarm64ecfex.dll').read_bytes(), b'compiled DLL')
+            dll.unlink()
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 1)
             (wine / 'libs/winecrt0/aarch64-windows/libwinecrt0.a').unlink()
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
             self.assertEqual(result.returncode, 1)
             self.assertIn(b'Missing Wine link input', result.stderr)
 
+
+    def test_wineboot_wrapper_preserves_executable_path_and_arguments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            launcher = root / 'wine launcher'
+            launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            launcher.chmod(0o755)
+            env = dict(os.environ, WINE=str(launcher), WINEBOOT_PE=str(root / 'wine boot.exe'))
+            result = subprocess.run(['sh', str(ROOT / 'ci/wineboot-from-build.sh'), '--init'],
+                                    env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), [env['WINEBOOT_PE'], '--init'])
 
     def test_digest_failure_and_unsafe_archive_leave_no_output(self):
         with tempfile.TemporaryDirectory() as temp:

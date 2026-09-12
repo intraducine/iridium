@@ -37,6 +37,12 @@ cmake -S "$M/FEX" -B "$M/FEX/build-arm64ec" -G Ninja \
     -DENABLE_ZYDIS=OFF -DBUILD_TESTING=OFF -DBUILD_FEXCONFIG=OFF \
     -DBUILD_THUNKS=OFF -DBUILD_FEX_LINUX_TESTS=OFF
 cmake --build "$M/FEX/build-arm64ec" --target arm64ecfex --parallel "$JOBS"
+# FEX places runtime targets in Bin. Preserve the DLL in the component's
+# transfer directory before the successful compiler stage is retained.
+test -s "$M/FEX/build-arm64ec/Bin/libarm64ecfex.dll"
+cp "$M/FEX/build-arm64ec/Bin/libarm64ecfex.dll" \
+    "$M/FEX/build-arm64ec/Source/Windows/ARM64EC/libarm64ecfex.dll"
+
 
 # Build the four DXMT PE modules for each Wine architecture. Meson's
 # GLOBAL_SOURCE_ROOT is DXMT, while the pinned compiler lives at Madeira root.
@@ -60,3 +66,20 @@ PY
         -Denable_tests=false -Denable_nvapi=false -Denable_nvngx=false
     meson compile -C "$build" -j "$JOBS"
 done
+
+# Validate the files consumed by staging before retaining this component.
+python3 - "$ROOT" <<'PY_CHECK'
+import importlib.util
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('stage', root / 'ci/stage-windows-runtime.py')
+stage = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stage)
+madeira = root / 'testrepos/Madeira'
+stage.check_pe(madeira / 'FEX/build-arm64ec/Source/Windows/ARM64EC/libarm64ecfex.dll', 'arm64ec')
+for arch in stage.MACHINES:
+    for module in ('d3d11/d3d11', 'dxgi/dxgi', 'winemetal/winemetal', 'd3d10/d3d10core'):
+        stage.check_pe(madeira / f'research/dxmt/build-{arch}-ci/src/{module}.dll', arch)
+print('Verified FEX and all eight DXMT outputs before retention')
+PY_CHECK

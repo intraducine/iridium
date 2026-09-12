@@ -17,7 +17,8 @@ for arch in arm64ec aarch64; do
 done
 
 WINE="$M/wine/build-macos/tools/wine/wine" \
-WINEBOOT="$M/wine/build-macos/programs/wineboot/wineboot" \
+WINEBOOT="$ROOT/ci/wineboot-from-build.sh" \
+WINEBOOT_PE="$M/wine/build-macos/programs/wineboot/aarch64-windows/wineboot.exe" \
 WINESERVER="$M/wine/build-macos/server/wineserver" \
     bash "$M/scripts/build-prefix-snapshot.sh"
 python3 "$ROOT/ci/stage-windows-runtime.py" --check "$APP"
