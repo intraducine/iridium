@@ -1,8 +1,16 @@
 name: Build unsigned IPA
-run-name: Manual unsigned IPA · ${{ github.ref_name }}
+run-name: Manual unsigned IPA · ${{ github.ref_name }} · ${{ inputs.dispatch_id }}
 "on":
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: Required full commit SHA to build
+        required: true
+        type: string
+      dispatch_id:
+        description: Optional identifier supplied by ci/dispatch-build.py
+        required: false
+        type: string
       reuse_assets:
         description: Reuse matching retained runtime and media artifacts
         type: boolean
@@ -40,6 +48,10 @@ jobs:
         with:
           persist-credentials: false
           submodules: false
+      - name: Verify requested commit before building
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 ci/dispatch-build.py --check
       - name: Select unchanged build assets
         id: select
         env:

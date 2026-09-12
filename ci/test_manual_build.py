@@ -14,6 +14,8 @@ def load(name, filename):
     spec.loader.exec_module(module)
     return module
 
+dispatch = load("dispatch_build", "dispatch-build.py")
+
 packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
 
@@ -26,6 +28,29 @@ class ManualBuildTests(unittest.TestCase):
         self.assertNotIn("allowProvisioningUpdates", text)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", text)
         self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("xcodebuild -project"))
+
+    def test_dispatch_checks_and_cancels_only_its_own_run(self):
+        import json
+        expected = "a" * 40
+        for actual in (expected, "b" * 40):
+            run = {"id": 123, "display_title": "build · token", "head_sha": actual,
+                   "html_url": "https://github.com/intraducine/iridium/actions/runs/123"}
+            unrelated = dict(run, id=456, display_title="build · other")
+            with patch.object(dispatch.uuid, "uuid4") as token, patch.object(dispatch, "gh") as gh:
+                token.return_value.hex = "token"
+                gh.side_effect = ["", json.dumps({"workflow_runs": [unrelated, run]}), ""]
+                if actual == expected:
+                    self.assertEqual(dispatch.dispatch("main", expected), run["html_url"])
+                    self.assertEqual(gh.call_count, 2)
+                else:
+                    with self.assertRaises(ValueError):
+                        dispatch.dispatch("main", expected)
+                    self.assertEqual(gh.call_args.args[-1], "repos/intraducine/iridium/actions/runs/123/cancel")
+        for invalid in ("", "a" * 7, "z" * 40):
+            with self.assertRaises(ValueError):
+                dispatch.check_commit(invalid, invalid)
+        workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
+        self.assertLess(workflow.index("ci/dispatch-build.py --check"), workflow.index("ci/reuse-build-assets.py"))
 
     def test_missing_runtime_and_license_records_block_build(self):
         with tempfile.TemporaryDirectory() as tmp:
