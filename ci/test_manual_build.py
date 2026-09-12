@@ -68,7 +68,12 @@ class ManualBuildTests(unittest.TestCase):
             target = Path(tmp) / "build/config/compiler/BUILD.gn"
             target.parent.mkdir(parents=True)
             target.write_text('config("compiler") {\n  cflags = []\n  cflags_cc = []\n}\n')
+            header = Path(tmp) / "third_party/libc++/src/include/__random/clamp_to_integral.h"
+            header.parent.mkdir(parents=True)
+            header.write_text('::nextafter(static_cast<_RealT>(__max_val), INFINITY)')
             subprocess.run([sys.executable, "-c", patch_code], cwd=tmp, check=True)
+            self.assertIn('numeric_limits<float>::infinity()', header.read_text())
+            self.assertNotIn('INFINITY', header.read_text())
             self.assertIn('if (is_ios)', target.read_text())
             self.assertIn('cflags += [ "-Wno-error=unknown-attributes" ]', target.read_text())
             compiler = shutil.which("clang")

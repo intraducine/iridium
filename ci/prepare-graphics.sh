@@ -51,6 +51,12 @@ start = text.index(anchor)
 position = text.index('  cflags = []', start) + len('  cflags = []')
 text = text[:position] + '\n  if (is_ios) {\n    cflags += [ "-Wno-error=unknown-attributes" ]\n  }' + text[position:]
 path.write_text(text)
+# Use the same float infinity without depending on SDK math macros.
+path = Path("third_party/libc++/src/include/__random/clamp_to_integral.h")
+text = path.read_text()
+old = '::nextafter(static_cast<_RealT>(__max_val), INFINITY)'
+assert text.count(old) == 1, "libc++ clamp implementation changed"
+path.write_text(text.replace(old, '::nextafter(static_cast<_RealT>(__max_val), numeric_limits<float>::infinity())'))
 PATCH
 python3 "$ROOT/ci/collect-release-source.py" angle
 gn gen out/iridium-ios --args='target_os="ios" target_cpu="arm64" target_environment="device" use_system_xcode=true ios_enable_code_signing=false ios_deployment_target="18.0" is_debug=false is_component_build=false angle_build_all=false angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false angle_enable_null=false symbol_level=0'
