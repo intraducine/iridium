@@ -36,6 +36,10 @@ class RuntimeInputTests(unittest.TestCase):
             self.skipTest('Cargo is not installed')
         script = (ROOT / 'ci/prepare-stikjit.sh').read_text()
         code = script.split("<<'WORKSPACE'\n", 1)[1].split('\nWORKSPACE', 1)[0]
+        self.assertIn('--sync vendor/plist_ffi/Cargo.toml vendor', script)
+        self.assertNotIn('--no-deps', script)
+        self.assertLess(script.index('--sync vendor/plist_ffi/Cargo.toml'), script.index('metadata --offline --locked --all-features'))
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest = root / 'Cargo.toml'

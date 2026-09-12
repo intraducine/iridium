@@ -29,8 +29,12 @@ path.write_text(text.replace('[workspace]\n', '[workspace]\nexclude = ["vendor"]
 WORKSPACE
 mkdir -p "$IDEVICE/.cargo"
 (cd "$IDEVICE" && cargo +"$RUST" vendor --locked vendor > .cargo/config.toml)
+# plist_ffi's cbindgen build invokes metadata using the crate's published lockfile.
+# Vendor that graph too, preserving both sets of locked versions and checksums.
+(cd "$IDEVICE" && cargo +"$RUST" vendor --locked \
+    --sync vendor/plist_ffi/Cargo.toml vendor > .cargo/config.toml)
 # Fail before compilation if the nested Cargo invocation cannot resolve its package.
-(cd "$IDEVICE" && cargo +"$RUST" metadata --offline --no-deps --format-version=1 \
+(cd "$IDEVICE" && cargo +"$RUST" metadata --offline --locked --all-features --format-version=1 \
     --manifest-path vendor/plist_ffi/Cargo.toml > /dev/null)
 IRIDIUM_RUST_SYSROOT="$(rustc +"$RUST" --print sysroot)" \
     python3 "$ROOT/ci/collect-release-source.py" jit

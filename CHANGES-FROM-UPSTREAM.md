@@ -98,3 +98,7 @@ The CI recipe excludes its generated `vendor` directory from the idevice workspa
 so vendored build scripts can invoke Cargo independently. Vendored crate manifests
 and checksums are unchanged. The modified workspace manifest is included in the
 corresponding-source archive.
+
+The vendoring step also synchronizes plist_ffi's published lockfile because its
+header generator resolves dependencies independently. Both locked graphs remain
+unchanged. Full offline metadata resolution is checked before JIT compilation.
