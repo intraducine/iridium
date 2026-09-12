@@ -63,7 +63,7 @@ class MediaTransferTests(unittest.TestCase):
 
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('needs: [asset-plan, linux-userland, media]', workflow)
+        self.assertIn('needs: [asset-plan, linux-userland, media, prefix]', workflow)
         self.assertIn("needs.media.result == 'success'", workflow)
         self.assertIn('--only cerbero-source', workflow)
         self.assertIn('name: media-sdk-with-source', workflow)

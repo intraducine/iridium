@@ -14,6 +14,8 @@ MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/check-media-toolchain.py', 'ci/check-media-source-package.py',
                 'ci/runtime-inputs.json', 'ci/patches', 'iridium/apps/ios/stikjit.yml',
                 'check-public-source.py')
+PREFIX_INPUTS = ('testrepos/Madeira/wine', 'testrepos/Madeira/scripts/build-prefix-snapshot.sh',
+                 'ci/prepare-prefix.sh', 'ci/sanitize-prefix.py', 'ci/wineboot-from-build.sh')
 NATIVE_INPUTS = MEDIA_INPUTS + (
     'ci', 'testrepos/Madeira', 'iridium-fex-ios', 'iridium-wine-ios', 'iridium-runtime-sdk',
     'iridium/apps/ios/Scripts', 'iridium/apps/ios/MediaSupport',
@@ -57,7 +59,8 @@ def producer_job(text, stage):
         inherited = ''.join(m.group(0) for m in re.finditer(
             r'^(?:env|defaults):.*?(?=^[^ \n]|\Z)', text, re.M | re.S))
         job = re.search(r'^  build:\n(.*?)(?=^    steps:)', text, re.M | re.S)
-        header = job[1] if job else ''
+        header = '\n'.join(line for line in job[1].splitlines()
+                           if not line.startswith(('    needs:', '    if:'))) if job else ''
         return inherited + header + '\n'.join(line for line in match[0].splitlines()
                                       if not line.startswith('        if:'))
     stage = 'build' if stage == 'native-runtime' else stage
@@ -95,7 +98,7 @@ def validate(run, jobs, stage, branch):
 def compatible(root, revision, stage):
     subprocess.run(['git', '-C', str(root), 'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
     paths = {'media': MEDIA_INPUTS, 'native-runtime': NATIVE_INPUTS,
-             'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
+             'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:
         paths += ('ci/compiled-components.py',)
     for path in paths:
@@ -113,6 +116,8 @@ def artifact_name(stage):
         if not re.fullmatch('[0-9a-f]{64}', key):
             raise ValueError('Missing native toolchain fingerprint')
         return ('compiled-' + stage + '-' if stage in COMPONENT_INPUTS else 'native-runtime-with-source-') + key
+    if stage == 'prefix':
+        return 'wine-prefix'
     return 'media-sdk-with-source' if stage == 'media' else 'linux-runtime-with-source'
 
 
@@ -175,9 +180,9 @@ if __name__ == '__main__':
     branch = os.environ.get('GITHUB_REF_NAME') or git(ROOT, 'branch', '--show-current')
     reuse = os.environ.get('REUSE_ASSETS', 'true') == 'true'
     values = {}
-    for stage, key in [('media', 'media_run_id'), ('linux-userland', 'linux_run_id')]:
+    for stage, key in [('media', 'media_run_id'), ('linux-userland', 'linux_run_id'), ('prefix', 'prefix_run_id')]:
         explicit = os.environ.get(key.upper(), '')
-        if stage == 'linux-userland' and os.environ.get('MEDIA_ONLY') == 'true':
+        if stage in ('linux-userland', 'prefix') and os.environ.get('MEDIA_ONLY') == 'true':
             values[key] = ''
         else:
             values[key] = select(ROOT, stage, branch, explicit) if reuse or explicit else ''

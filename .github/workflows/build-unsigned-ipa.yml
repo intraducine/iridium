@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      prefix_run_id: ${{ steps.select.outputs.prefix_run_id }}
       media_run_id: ${{ steps.select.outputs.media_run_id }}
       linux_run_id: ${{ steps.select.outputs.linux_run_id }}
     steps:
@@ -106,9 +107,28 @@ jobs:
           path: .build/media-transfer/
           if-no-files-found: error
           retention-days: 7
+  prefix:
+    needs: asset-plan
+    if: ${{ !inputs.media_only && needs.asset-plan.outputs.prefix_run_id == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Install prefix build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - name: Build and initialize prefix
+        run: bash ci/prepare-prefix.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wine-prefix
+          path: .build/prefix-transfer/
+          if-no-files-found: error
+          retention-days: 7
   build:
-    needs: [asset-plan, linux-userland, media]
-    if: ${{ !cancelled() && !inputs.media_only && needs.asset-plan.result == 'success' && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
+    needs: [asset-plan, linux-userland, media, prefix]
+    if: ${{ !cancelled() && !inputs.media_only && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -257,6 +277,17 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: wine-prefix
+          path: .build/prefix-transfer
+          run-id: ${{ needs.asset-plan.outputs.prefix_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify prefix producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX_RUN_ID: ${{ needs.asset-plan.outputs.prefix_run_id || github.run_id }}
+        run: python3 ci/verify-prefix.py
       - name: Stage Windows modules and clean prefix
         run: bash ci/prepare-windows-runtime.sh
       - name: Select graphics compilation

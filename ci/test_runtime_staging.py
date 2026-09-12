@@ -1,4 +1,6 @@
 import io
+import hashlib
+import tarfile
 import json
 from pathlib import Path
 import struct
@@ -10,6 +12,7 @@ from test_manual_build import ROOT, load
 
 windows = load('windows_stage', 'stage-windows-runtime.py')
 prefixes = load('prefix_stage', 'sanitize-prefix.py')
+prefix_transfer = load('prefix_transfer', 'verify-prefix.py')
 debian = load('debian_sources', 'collect-debian-sources.py')
 
 
@@ -90,6 +93,30 @@ class RuntimeStagingTests(unittest.TestCase):
             broken.write_bytes(image(0xaa64, True)[:600])
             with self.assertRaises(ValueError):
                 windows.pe_architectures(broken)
+
+    def test_prefix_transfer_checks_revision_checksum_and_members(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'source-revision.txt').write_text('revision')
+            def archive(extra=None):
+                with tarfile.open(root / 'prefix-template.tar.gz', 'w:gz') as tar:
+                    for name in ['prefix/system.reg', 'prefix/user.reg', 'prefix/userdef.reg'] + ([extra] if extra else []):
+                        item = tarfile.TarInfo(name)
+                        item.size = 1
+                        tar.addfile(item, io.BytesIO(b'x'))
+                (root / 'SHA256SUMS').write_text(''.join(
+                    hashlib.sha256((root / name).read_bytes()).hexdigest() + '  ' + name + '\n'
+                    for name in ['prefix-template.tar.gz', 'source-revision.txt']))
+            archive()
+            prefix_transfer.check_files(root, 'revision')
+            with self.assertRaisesRegex(ValueError, 'revision'):
+                prefix_transfer.check_files(root, 'different')
+            (root / 'prefix-template.tar.gz').write_bytes(b'corrupt')
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                prefix_transfer.check_files(root, 'revision')
+            archive('../outside')
+            with self.assertRaisesRegex(ValueError, 'path'):
+                prefix_transfer.check_files(root, 'revision')
 
     def test_prefix_never_follows_host_links_and_requires_marker(self):
         with tempfile.TemporaryDirectory() as temp:

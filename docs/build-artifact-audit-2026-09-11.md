@@ -39,3 +39,24 @@ Local checks: 39 CI tests, repository standards, shell syntax, whitespace, and a
 clean-source privacy scan. Tests exercise the FEX output handoff, a missing DLL,
 Wineboot argument forwarding, source-font staging, and packaging-only Wine reuse.
 No device or gameplay claim follows from these checks.
+
+## Prefix follow-up
+
+Run `34660532239` saved the complete Windows artifact, then macOS killed the
+host Wine loader during prefix initialization. Local tests reproduced the kill.
+Removing the loader's small PAGEZERO made it start but prevented allocation of
+Windows shared user data. This matches the ARM64 macOS restriction described by
+Wine's maintainer:
+https://list.winehq.org/hyperkitty/list/wine-devel@list.winehq.org/thread/CKG5CEN2BE5VRXZ7O7NX4YUSBH3247WH/
+
+CI now initializes a win64 prefix on Linux with the same Madeira Wine source.
+The existing sanitization/stripping script produces the template; macOS only
+stages it. A separate seven-day artifact records the source revision and checksums.
+Reuse checks the producer job, Wine source, recipe and workflow. Transfer checks
+reject changed checksums, unsafe archive paths and missing registry files.
+No signing credentials or system security changes are needed.
+
+The five existing compiler workflow fingerprints remain equal after this change;
+Windows, Wine and native outputs remain eligible for reuse. Forty local tests
+pass. The Linux prefix stage needs its first runner test, and prefix behavior on
+iPhone still needs device verification. Docker was unavailable locally.
