@@ -58,6 +58,29 @@ class ManualBuildTests(unittest.TestCase):
         self.assertLess(script.index('"$DEPOT/ensure_bootstrap"'), script.index('"$DEPOT/python-bin/python3" --version'))
         self.assertLess(script.index('"$DEPOT/python-bin/python3" --version'), script.index('gclient sync'))
 
+    def test_graphics_sdk_warning_patch_and_other_errors(self):
+        import shutil
+        import subprocess
+        import sys
+        script = (ROOT / "ci/prepare-graphics.sh").read_text()
+        patch_code = script.split("python3 - <<'PATCH'\n", 1)[1].split("\nPATCH", 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "build/config/compiler/BUILD.gn"
+            target.parent.mkdir(parents=True)
+            target.write_text('config("compiler") {\n  cflags = []\n  cflags_cc = []\n}\n')
+            subprocess.run([sys.executable, "-c", patch_code], cwd=tmp, check=True)
+            self.assertIn('if (is_ios)', target.read_text())
+            self.assertIn('cflags += [ "-Wno-error=unknown-attributes" ]', target.read_text())
+            compiler = shutil.which("clang")
+            if compiler:
+                args = [compiler, "-x", "c", "-fsyntax-only", "-Wall", "-Werror", "-Wno-error=unknown-attributes", "-"]
+                result = subprocess.run(args, input='__attribute__((iridium_unknown_test_attribute)) void f(void);', text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("unknown attribute", result.stderr)
+                result = subprocess.run(args, input='int f(void) { int unused; return 0; }', text=True, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+        self.assertLess(script.index("\nPATCH\n"), script.index('collect-release-source.py'))
+
     def test_missing_runtime_and_license_records_block_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             findings = prerequisites.blockers(Path(tmp))
