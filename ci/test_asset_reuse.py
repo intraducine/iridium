@@ -19,6 +19,36 @@ class AssetReuseTests(unittest.TestCase):
         for stage in ('jit', 'graphics'):
             self.assertNotIn('ci/collect-release-source.py', reuse.COMPONENT_INPUTS[stage])
 
+    def test_native_reuses_app_link_edits_but_rejects_compiler_edits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            workflow = root / reuse.WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text('jobs:\n  build:\n    runs-on: xcode-27\n    steps:\n      - name: Compile native\n        run: build\n')
+            recipe = root / 'ci/prepare-media-sdk.sh'
+            recipe.parent.mkdir(parents=True)
+            recipe.write_text('compile media')
+            app = root / 'iridium/apps/ios/madeira.yml'
+            app.parent.mkdir(parents=True)
+            app.write_text('app frameworks')
+            def commit():
+                git('add', '.'); git('commit', '-qm', 'fixture')
+            commit()
+            original = git('rev-parse', 'HEAD')
+            app.write_text('different app frameworks')
+            commit()
+            reuse.compatible(root, original, 'native')
+            recipe.write_text('different compiler flags')
+            commit()
+            with self.assertRaisesRegex(ValueError, 'producer input'):
+                reuse.compatible(root, original, 'native')
+
     def test_manual_producer_trust_and_success(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature',
                'head_sha': 'a' * 40, 'path': reuse.WORKFLOW,
