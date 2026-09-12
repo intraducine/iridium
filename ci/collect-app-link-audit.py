@@ -19,14 +19,27 @@ def inventory(app):
         if path.is_symlink() or not path.is_file():
             continue
         with path.open('rb') as stream:
-            if stream.read(4) not in packager.MACHO:
+            magic = stream.read(4)
+            if magic in packager.MACHO:
+                kind = 'Mach-O'
+            elif magic == b'\x7fELF':
+                kind = 'ELF'
+            elif magic[:2] == b'MZ':
+                stream.seek(60)
+                offset = stream.read(4)
+                kind = 'DOS'
+                if len(offset) == 4:
+                    stream.seek(int.from_bytes(offset, 'little'))
+                    if stream.read(4) == b'PE\0\0':
+                        kind = 'PE'
+            else:
                 continue
             stream.seek(0)
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-        linked = subprocess.check_output(['xcrun', 'otool', '-L', str(path)], text=True)
+        linked = subprocess.check_output(['xcrun', 'otool', '-L', str(path)], text=True) if kind == 'Mach-O' else None
         records.append({'path': str(path.relative_to(app)), 'sha256': digest,
-                        'bytes': path.stat().st_size,
-                        'linked_libraries': linked.replace(str(app), 'Iridium.app').splitlines()[1:]})
+                        'bytes': path.stat().st_size, 'format': kind,
+                        'linked_libraries': linked.replace(str(app), 'Iridium.app').splitlines()[1:] if linked is not None else None})
     return records
 
 

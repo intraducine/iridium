@@ -58,6 +58,21 @@ class ManualBuildTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     app_audit.inventory(app)
 
+    def test_inventory_includes_windows_linux_and_dos(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp)
+            (app / 'linux.so').write_bytes(b'\x7fELF' + bytes(64))
+            pe = b'MZ' + bytes(58) + (64).to_bytes(4, 'little') + b'PE\0\0'
+            binary = app / 'windows.dll'
+            binary.write_bytes(pe)
+            with patch.object(app_audit.packager, 'check_payload'), patch.object(app_audit.subprocess, 'check_output') as tool:
+                records = app_audit.inventory(app)
+                self.assertEqual([r['format'] for r in records], ['ELF', 'PE'])
+                self.assertTrue(all(r['linked_libraries'] is None for r in records))
+                tool.assert_not_called()
+                binary.write_bytes(pe[:-1])
+                self.assertEqual(app_audit.inventory(app)[1]['format'], 'DOS')
+
     def test_public_fixture_exception_requires_exact_bytes(self):
         import hashlib
         import json
