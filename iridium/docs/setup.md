@@ -152,4 +152,4 @@ The repo is no longer just a thin scaffold:
 - `../iridium-fex-ios` and `../iridium-wine-ios` own the source forks for the iOS engine port.
 - The FEX iOS bridge now has a real in-process ELF guest loader: PT_LOAD mapping, relocations, amd64 System V process image, and FEXCore ExecuteThread() dispatch. Embedded host tests pass.
 
-The active blockers are now beyond the local structural readiness gate: broader Wine-grade syscall/signal/exception/process/thread behavior, full runtime TLS/thread setup, and physical-device proof of one launched Windows executable. See [Phase 2 Completion Audit](phase-2-completion-audit.md) for the current evidence checklist and the remaining Phase 2C exit criteria.
+The active blockers are now beyond the local structural readiness gate: broader Wine-grade syscall/signal/exception/process/thread behavior, full runtime TLS/thread setup, and physical-device proof of one launched Windows executable. Use the [manual validation runbook](manual-validation-runbook.md) to verify first-frame, input and audio behavior on a physical device.

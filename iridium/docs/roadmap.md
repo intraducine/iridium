@@ -62,7 +62,7 @@ Status:
 
 Status:
 - Active target. Substantial execution infrastructure landed: the FEX iOS bridge now has a real in-process ELF guest loader (PT_LOAD mapping, permissions, BSS, relocation processing), an amd64 System V initial process image (argc/argv/envp/auxv), and a wired FEXCore execution path (context creation → InitCore → CreateThread → ExecuteThread). Embedded host tests pass. JIT detection and anti-crash launch gating are now stable enough to report truthful runtime state on device. The remaining work is no longer a single “runtime not ready” bucket, so Phase 2C is split into explicit tracks below.
-- Completion audit: see [Phase 2 Completion Audit](phase-2-completion-audit.md). The audit confirms that local structural readiness is in place, but Phase 2C is not complete without physical-device first-frame/input/audio proof.
+- Validate first-frame, input and audio behavior on a physical device using the [manual validation runbook](manual-validation-runbook.md). Local structural tests do not establish playability.
 
 #### Phase 2C.1: Truthful bootstrap and launch gating
 

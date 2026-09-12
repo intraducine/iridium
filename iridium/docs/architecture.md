@@ -123,3 +123,11 @@ flowchart LR
 - Fleet telemetry aggregation and analytics beyond the current local runtime telemetry snapshot path.
 
 Those decisions remain deferred, but the app/store/runtime seams now exist and are exercised by tests so the repo can harden them without re-architecting the app shell. The current physical-device blocker is now specific and explicit: local launch/playability readiness can be derived from real registered services, but a physical iPhone still must prove that the Wine/FEX path renders a first frame, receives input, initializes audio, and remains in a running session without development-only readiness overrides.
+
+## Runtime contract maintenance
+
+Use `RuntimeEnvironmentKey` for Swift runtime environment keys and
+`iridium_runtime_host_contract.hpp` for native host keys. Add new keys to their
+owning contract before using them at call sites or in tests. Preserve public
+Swift package products, C headers, runtime bundle layout and the bridge ABI.
+Limit changes to upstream Wine and FEX code to those needed by the integration.

@@ -461,7 +461,7 @@ Every one of those must be solved in code, not worked around with development-on
 
 The structural portion of this document has finished serving its purpose only when **all** of the following are true without requiring access to a physical device or simulator:
 
-This structural ending condition is narrower than the roadmap Phase 2C exit gate. Even after this plan is structurally complete, Phase 2C still requires the separate physical-device first-frame/input/audio proof recorded in `docs/phase-2-completion-audit.md`.
+This structural ending condition is narrower than the roadmap Phase 2C exit gate. Even after this plan is structurally complete, Phase 2C still requires the separate physical-device first-frame/input/audio proof specified in the [manual validation runbook](manual-validation-runbook.md).
 
 1. The codebase contains all required runtime-playability components in the intended repos:
    - an iOS runtime host service registration and active-session registry in `iridium-runtime-sdk`

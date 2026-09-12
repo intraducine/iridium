@@ -86,9 +86,12 @@ ARM64 target, and checks the gperf recipe patch. Media libraries inherit the
 application's explicit iOS minimum; host tools use the runner's macOS version.
 The normal media command runs the same checks before bootstrap.
 
-See [the build preflight review](build-preflight-2026-09-11.md) for measured
-results and the remaining full-build checks. Compiler probes cannot guarantee
-that every dependency compiles or that the final app links.
+Compiler probes do not establish that every dependency compiles or that the final
+app links. Require complete SDK and corresponding-source artifacts before release.
+Use the same isolated Python environment for source-package checks and final source
+packaging. Check target-specific Objective-C APIs as well as C++ compiler settings.
+Preserve existing developer configuration. Keep the source/license release gate
+closed until its recorded requirements are met.
 
 
 ## Reuse completed compiler stages

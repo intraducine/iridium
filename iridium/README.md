@@ -35,7 +35,6 @@ iridium/
 - [Architecture](docs/architecture.md)
 - [Implementation context](docs/implementation-context.md)
 - [Manual validation runbook](docs/manual-validation-runbook.md)
-- [Workspace audit](docs/workspace-audit.md)
 - [Legacy device-tier metadata](docs/device-tiers.md)
 - [Setup](docs/setup.md)
 - [Roadmap](docs/roadmap.md)
