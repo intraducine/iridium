@@ -106,3 +106,13 @@ The headers come from the same slice. To test library replacement:
 This procedure is a release verification requirement, not a completed test.
 The media probe confirms a link only; it does not replace the complete app
 rebuild, final binary review or device playback check.
+
+## Verify a modified GMP library
+
+Run `python3 ci/dispatch-build.py --verify-lgpl-relink` to request a separate
+unsigned app build with modified GMP. The test checks the supplied GMP source
+checksum, rebuilds it with a marker in `mpn_add_n`, and checks for that marker
+in the linked MadeiraNative framework. It restores the original archive before
+packaging. Results are retained in `lgpl-relink.json` with the app audit files.
+The test covers GMP source replacement and app linking, not device execution
+or replacement of every other LGPL library.

@@ -58,6 +58,15 @@ class ManualBuildTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     app_audit.inventory(app)
 
+    def test_lgpl_patch_rejects_unexpected_source(self):
+        relink = load('lgpl_relink', 'check-lgpl-relink.py')
+        with self.assertRaises(ValueError):
+            relink.modify('different source')
+        signature = 'mpn_add_n (mp_ptr rp, mp_srcptr up, mp_srcptr vp, mp_size_t n)\n{'
+        patched = relink.modify(signature + '\n}\n' + signature + '\n}')
+        self.assertEqual(patched.count(relink.MARKER), 2)
+        self.assertEqual(patched.count('(void) proof[0];'), 2)
+
     def test_inventory_includes_windows_linux_and_dos(self):
         with tempfile.TemporaryDirectory() as temp:
             app = Path(temp)

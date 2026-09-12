@@ -20,6 +20,10 @@ run-name: Manual unsigned IPA · ${{ github.ref_name }} · ${{ inputs.dispatch_i
         required: false
         type: string
         default: ''
+      verify_lgpl_relink:
+        description: Rebuild modified GMP and relink a separate audit app
+        type: boolean
+        default: false
       media_only:
         description: Test only the media SDK; do not compile the runtime or app
         type: boolean
@@ -413,6 +417,9 @@ jobs:
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" build
       - name: Record app binaries for final audit
         run: python3 ci/collect-app-link-audit.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/app-link-audit/binaries.json
+      - name: Verify modified LGPL library relinking
+        if: inputs.verify_lgpl_relink
+        run: python3 ci/check-lgpl-relink.py
       - name: Retain app link maps for final audit
         if: always() && steps.app_build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -420,7 +427,7 @@ jobs:
           name: Iridium-link-audit-${{ github.sha }}
           path: |
             .build/unsigned-ipa/**/*LinkMap*.txt
-            .build/app-link-audit/binaries.json
+            .build/app-link-audit/*.json
           if-no-files-found: error
           retention-days: 7
       - name: Check final binary audit before packaging
