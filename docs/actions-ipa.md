@@ -168,3 +168,10 @@ The headers come from the same slice. To test library replacement:
 This procedure is a release verification requirement, not a completed test.
 The media probe confirms a link only; it does not replace the complete app
 rebuild, final binary review or device playback check.
+
+
+CI extracts the verified Linux userland archive into the canonical bundle's
+`Userland/extracted` directory after copying the SwiftPM resource. The iOS
+resource-stage script uses that tree and retains its loader, driver and graphics
+checks. Extraction rejects unsafe archive paths and never replaces an existing
+destination. The SwiftPM copy does not receive a duplicate extracted tree.
