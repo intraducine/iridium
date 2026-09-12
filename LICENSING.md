@@ -15,19 +15,19 @@ GPLv3 and AGPLv3 section 13 permit combining the covered components under their 
 
 ## Source publication and binary releases
 
-This release distributes source, not an IPA. The supplied licenses and attribution files must remain with redistributed copies. Modification information is recorded in CHANGES-FROM-UPSTREAM.md.
+Keep the supplied licenses and attribution files with redistributed copies. Modification information is recorded in CHANGES-FROM-UPSTREAM.md.
 
 An IPA release needs the corresponding source for the exact binary, build scripts, required license notices, and clear source-download instructions beside the IPA. Keep that source available, including any modified dependencies. A moving upstream branch URL is not a replacement for exact corresponding source.
 
-CI now replaces StikJIT's opaque idevice archive with a pinned source build. The script comparison and AGPL notice are recorded in StikJITNotices/SOURCES.md. Resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
+CI replaces StikJIT's opaque idevice archive with a pinned source build. The script comparison and AGPL notice are recorded in StikJITNotices/SOURCES.md. Resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
 
 AGPL permits commercial use and forks. It requires source sharing under its terms, including the network-interaction requirement for modified versions where applicable. It does not require unrelated games merely run by the runtime to become AGPL.
 
-## New source-build recipes
+## Source-build recipes
 
 ANGLE is built from Google ANGLE commit `6024e9c05548480c3b2ea42836a112509a549a95`, whose BSD-style license is copied by the build recipe. Its dependencies retain separate licenses. The Cerbero recipe uses revision `59548269f4fd0f701818f0bafdb102959ec81e65`; Cerbero source headers grant LGPL-2.0-or-later, while individual codecs and libraries retain their own terms. A source-built SDK is not by itself a complete distribution audit.
 
-The Linux recipe collects exact Debian source-package versions and copyright files for copied libraries. A future IPA must include a matching complete source archive and notices for all target dependencies. `ci/binary-release-blockers.json` lists the remaining work. These records permit source preparation to be reviewed; they do not declare a binary release compliant.
+The Linux recipe collects exact Debian source-package versions and copyright files for copied libraries. An IPA must include a matching complete source archive and notices for all target dependencies. Build requirements are recorded in `ci/binary-release-blockers.json`; final binary audit requirements are in `ci/binary-package-blockers.json`.
 
 ## Windows compiler runtime sources
 
@@ -92,7 +92,7 @@ with [LunarG's release record](https://www.lunarg.com/lunarg-releases-vulkan-sdk
 The retained GStreamer MoltenVK object matches the SDK's iPhone object byte for
 byte (SHA-256 `52a9140c04f2366e83b6693ae3e612dcb84a0412534495776efb16530b6403a8`).
 The SDK's VERSIONS.txt identifies commit
-`bf097edc74ec3b6dfafdcd5a38d3ce14b11952d6`. Source collection now includes
+`bf097edc74ec3b6dfafdcd5a38d3ce14b11952d6`. Source collection includes
 that commit and its pinned external sources, with archive digests in
 `ci/moltenvk-source-inputs.json`. Their upstream notices accompany the app in
 `MadeiraSupport/Notices/MoltenVK`. These sources supplement the installer image;

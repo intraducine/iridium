@@ -2,7 +2,7 @@
 
 An experimental iPhone and iPad Windows-game runtime, with a native game library and touch, keyboard, mouse, and controller integration. Compatibility varies by game and device.
 
-This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. It is a source release. No IPA, game files, signing credentials, or prebuilt runtime bundle is included.
+This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Game files must be supplied by the user.
 
 | Directory | Purpose |
 | --- | --- |
@@ -18,7 +18,7 @@ Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own lic
 
 Clone this repository. Optional external dependencies are pinned in the root `.gitmodules` and `DEPENDENCIES.json`; use `git submodule update --init --recursive` when preparing them. Some optional upstream test dependencies contain binaries; they are not stored in this repository.
 
-The existing build scripts are included, but currently depend on locally staged runtime and media libraries. A clean-runner IPA build is not verified yet. The [manual-only IPA workflow](docs/actions-ipa.md) currently stops at its prerequisite check; it does not yet produce an IPA. Historical documents under the component directories may describe older runtime states.
+The [manual IPA workflow](docs/actions-ipa.md) builds runtime dependencies and the app, with source and license checks before packaging. IPA packaging requires the final binary and source audits to pass. Start with the [product guide](iridium/docs/product-experience.md) for app navigation and the build guide for development setup.
 
 ## Privacy and contributions
 
