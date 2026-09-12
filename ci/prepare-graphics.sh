@@ -8,6 +8,27 @@ ANGLE_REV=6024e9c05548480c3b2ea42836a112509a549a95
 DEPOT_REV=6794dd02d7ba80c074d2ff0d294a32b9c5dc0112
 JOBS="${IRIDIUM_BUILD_JOBS:-2}"
 case "$JOBS" in ''|*[!0-9]*|0) echo 'Invalid compiler job count' >&2; exit 2;; esac
+# Probe the SDK interfaces that failed before fetching or compiling dependencies.
+CLANG_BASE="$(dirname "$(dirname "$(xcrun --find clang)")")"
+CLANG_VERSION="$(basename "$(xcrun clang -print-resource-dir)")"
+SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+xcrun --sdk iphoneos clang++ -target arm64-apple-ios18.0 -isysroot "$SDK" \
+    -std=c++20 -Werror -fsyntax-only -x objective-c++ - <<'PROBE'
+#include <cmath>
+#include <random>
+#include <os/log.h>
+#import <Metal/Metal.h>
+void probe() {
+    float values[] = {INFINITY, NAN};
+    std::mt19937 generator(1);
+    std::uniform_real_distribution<float> distribution;
+    os_log(OS_LOG_DEFAULT, "%f", distribution(generator) + values[0]);
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    (void)device;
+}
+PROBE
+if [ "${1:-}" = --preflight ]; then exit 0; fi
+[ "$#" = 0 ] || { echo 'Usage: prepare-graphics.sh [--preflight]' >&2; exit 2; }
 # Fail instead of replacing a developer's existing checkout.
 for target in "$SOURCE" "$DEPOT"; do
     [ ! -e "$target" ] || { echo "Existing source directory: $target" >&2; exit 1; }
@@ -21,6 +42,9 @@ git -C "$DEPOT" fetch --depth 1 https://chromium.googlesource.com/chromium/tools
 git -C "$DEPOT" checkout --detach FETCH_HEAD
 export DEPOT_TOOLS_UPDATE=0
 export PATH="$DEPOT:$PATH"
+# Updates stay disabled; bootstrap the pinned checkout explicitly for GN.
+"$DEPOT/ensure_bootstrap"
+"$DEPOT/python-bin/python3" --version
 cd "$SOURCE"
 cat > .gclient <<'CONFIG'
 solutions = [{
@@ -37,8 +61,11 @@ CONFIG
 gclient sync --no-history --shallow
 gclient revinfo --actual > "$ROOT/.build/runtime-sources/angle-revisions.txt"
 python3 "$ROOT/ci/collect-release-source.py" angle
-gn gen out/iridium-ios --args='target_os="ios" target_cpu="arm64" target_environment="device" use_system_xcode=true ios_enable_code_signing=false ios_deployment_target="18.0" is_debug=false is_component_build=false angle_build_all=false angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false angle_enable_null=false symbol_level=0'
+# Use Xcode as one toolchain. Keep upstream warnings visible with newer Clang.
+gn gen out/iridium-ios --args="target_os=\"ios\" target_cpu=\"arm64\" target_environment=\"device\" use_system_xcode=true ios_enable_code_signing=false ios_deployment_target=\"18.0\" is_debug=false is_component_build=false angle_build_all=false angle_enable_metal=true angle_enable_gl=false angle_enable_vulkan=false angle_enable_null=false symbol_level=0 clang_base_path=\"$CLANG_BASE\" clang_version=\"$CLANG_VERSION\" clang_use_chrome_plugins=false use_custom_libcxx=false use_lld=false angle_enable_wgpu=false treat_warnings_as_errors=false"
+python3 "$ROOT/ci/verify-graphics.py" plan "$SOURCE/out/iridium-ios"
 ninja -C out/iridium-ios -j "$JOBS" libEGL libGLESv2
+python3 "$ROOT/ci/verify-graphics.py" binaries "$SOURCE/out/iridium-ios"
 DEST="$ROOT/Amethyst-iOS/Natives/resources/Frameworks"
 mkdir -p "$DEST"
 for name in libEGL libGLESv2; do

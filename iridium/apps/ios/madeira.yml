@@ -61,6 +61,9 @@ targets:
       - sdk: VideoToolbox.framework
       - sdk: CoreMedia.framework
       - sdk: CoreVideo.framework
+      - sdk: CoreGraphics.framework
+      - sdk: IOSurface.framework
+      - sdk: OpenGLES.framework
       - sdk: Accelerate.framework
       - sdk: CoreAudio.framework
       - sdk: SystemConfiguration.framework

@@ -32,7 +32,8 @@ Upstream: https://github.com/willfaust/wine
 Base revision: `7817e220384e895651f868ba4d97affcf21b3816`
 
 Local modified source paths included in this snapshot:
-- No tracked source changes.
+- `dlls/ntdll/loader.c`: restrict the JIT alias lifecycle diagnostic to ARM64EC, where its helper is defined; preserve the ARM64EC diagnostic.
+- `dlls/win32u/dibdrv/bitblt.c`: restrict iOS source-bitmap debug hooks to `WINE_IOS` builds so desktop Wine links without iOS app symbols.
 
 Generated artifacts, personal paths, device identifiers, and local captures were excluded or sanitized where applicable.
 
@@ -75,3 +76,48 @@ Also restored nine fork-specific templates and required text .spec/.in inputs fr
 
 Restored the remaining legacy Wine .spec export definitions and removed their incorrect ignore rule after the next clean build identified an implicit MODULE dependency. Source checks now cover implicit module export definitions, not only explicitly listed sources.
 - Cerbero 1.28.6: select C++14 for the gperf 3.1 host-tool recipe. Its legacy `register` declarations fail with the newer compiler's C++17 default. The exact recipe patch is retained in `ci/patches/cerbero-gperf-cxx14.patch`; codec language settings are unchanged.
+- Cerbero source packaging includes a MANIFEST.in patch to retain recipes, nested patches, configuration, package definitions, tools and the launcher. This changes the source archive, not codec compilation.
+
+- GStreamer 1.28.6 applemedia: test whether the selected target can use
+  AssetsLibrary before compiling and registering iosassetsrc. Keep AVFoundation
+  and VideoToolbox elements enabled. The Cerbero recipe and source patch are
+  retained in `ci/patches/cerbero-assets-library.patch` and included by the
+  existing Cerbero source-bundle mechanism.
+
+### ANGLE build configuration for Xcode 27
+
+The CI recipe uses the selected Xcode compiler, compiler runtime, C++ library,
+linker and archive tools. It builds only the Metal backend, with WebGPU disabled.
+Upstream diagnostics remain visible but do not become errors under a newer
+compiler. The former unknown-attribute suppression and libc++ infinity patch
+are removed; ANGLE and its dependency source files remain unchanged.
+The graphics source archive includes the separately pinned bootstrap depot_tools.
+
+### idevice Cargo workspace
+
+The CI recipe excludes its generated `vendor` directory from the idevice workspace
+so vendored build scripts can invoke Cargo independently. Vendored crate manifests
+and checksums are unchanged. The modified workspace manifest is included in the
+corresponding-source archive.
+
+The vendoring step also synchronizes plist_ffi's published lockfile because its
+header generator resolves dependencies independently. Both locked graphs remain
+unchanged. Full offline metadata resolution is checked before JIT compilation.
+
+### Media source collection
+
+Release packaging collects the exact SDK MoltenVK source and its pinned external
+sources without rebuilding the retained library. Upstream license texts are
+copied unchanged into the app notices. Cerbero's source distribution gains a
+manifest for its recipes, patches, configuration, package definitions and tools.
+
+Rust standard-library source collection now includes registry dependencies from
+each toolchain's library lockfile. Original crate archives and notices remain
+unchanged; the collector checks Cargo's recorded SHA-256 digests before packaging.
+
+
+StikJIT's Swift 6.4 textual interfaces receive a targeted nested-type separator
+correction after compilation or restoration: `StikJIT::StikJIT::` becomes
+`StikJIT::StikJIT.`. The module selector remains intact. The binary is unchanged.
+CI imports a staging copy without its serialized Swift modules to verify the
+textual interface before attempting the app build.

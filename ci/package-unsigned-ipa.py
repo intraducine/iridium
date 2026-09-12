@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Package only a complete, unsigned app. Never access a signing keychain."""
 import hashlib
+import json
 import plistlib
 from pathlib import Path
 import re
@@ -21,6 +22,9 @@ def executable_path(bundle, info):
 
 
 def check_payload(app):
+    # Exact reviewed binaries only. Any changed byte requires another review.
+    public_fixtures = {entry["sha256"] for entry in json.loads(
+        Path(__file__).with_name("public-key-fixture-binaries.json").read_text())}
     for path in app.rglob("*"):
         if path.is_symlink():
             if not path.resolve().is_relative_to(app.resolve()):
@@ -31,7 +35,8 @@ def check_payload(app):
             raise ValueError("App contains signing material; do not upload it")
         data = path.read_bytes()
         if re.search(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", data):
-            raise ValueError("App contains private key material")
+            if hashlib.sha256(data).hexdigest() not in public_fixtures:
+                raise ValueError(f"App contains unreviewed private key material: {path.relative_to(app)}")
         if re.search(rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b", data):
             raise ValueError("App contains a physical device identifier")
     info = plistlib.loads((app / "Info.plist").read_bytes())

@@ -49,26 +49,32 @@ REQUIRED = {
     ],
 }
 
-def blockers(root):
+def blockers(root, package=False):
     result = []
     for group, paths in REQUIRED.items():
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
             result.append(f"{group}: {len(missing)} required file(s) missing")
-    record = root / "ci/binary-release-blockers.json"
-    try:
-        pending = json.loads(record.read_text())
-        if not isinstance(pending, list) or not all(isinstance(item, str) and item for item in pending):
-            raise ValueError("invalid blocker record")
-        result.extend("Source/license audit: " + item for item in pending)
-    except (OSError, ValueError):
-        result.append("StikJIT and dependency source/license audit record is missing or invalid")
+    records = ['binary-release-blockers.json']
+    if package:
+        records.append('binary-package-blockers.json')
+    for name in records:
+        try:
+            pending = json.loads((root / 'ci' / name).read_text())
+            if not isinstance(pending, list) or not all(isinstance(item, str) and item for item in pending):
+                raise ValueError('invalid blocker record')
+            result.extend('Source/license audit: ' + item for item in pending)
+        except (OSError, ValueError):
+            result.append('Source/license audit record is missing or invalid: ' + name)
     return result
 
 if __name__ == "__main__":
-    problems = blockers(ROOT)
+    if sys.argv[1:] not in ([], ['--package']):
+        raise SystemExit('Usage: check-ipa-prerequisites.py [--package]')
+    problems = blockers(ROOT, package=bool(sys.argv[1:]))
     if problems:
-        print("Unsigned IPA build is not ready. No app was built or uploaded.")
+        print("Unsigned IPA packaging is blocked." if sys.argv[1:] else
+              "Unsigned IPA build is not ready. No app was built or uploaded.")
         for problem in problems:
             print(f"- {problem}")
         print("See docs/actions-ipa.md. Do not upload local binaries or signing files to bypass this check.")

@@ -216,3 +216,16 @@ Reject the build immediately if any run:
 - launches after the runtime host reported launch support as unavailable
 - loses install resume state
 - fails without a structured persisted reason
+
+## Diagnose missing frames
+
+Record the app build and active runtime path. Trace the same session through
+launch preparation, guest graphics initialization, frame production and player
+presentation. Use the last completed step and the first missing step to locate
+the fault before changing launch arguments or rendering code. A running status
+or an open player screen does not prove that a game rendered a frame.
+
+Confirm visible frames, input that changes game state, audible output, save
+persistence and shutdown on the physical device. Readiness flags must describe
+the active session without development-only overrides. Keep local structural
+tests separate from these device results.

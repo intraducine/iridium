@@ -55,7 +55,8 @@ class MediaTransferTests(unittest.TestCase):
             recipe.write_text(original)
             script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()
             command = next(line for line in script.splitlines()
-                           if line.startswith('git ') and '--check' not in line)
+                           if line.startswith('git ') and '--check' not in line
+                           and 'cerbero-gperf-cxx14.patch' in line)
             command = command.replace('$ROOT', str(root)).replace(
                 str(root / 'ci/patches/cerbero-gperf-cxx14.patch'), str(patch_file))
             subprocess.run(['bash', '-c', command], cwd=recipe.parents[2], check=True)
@@ -63,8 +64,43 @@ class MediaTransferTests(unittest.TestCase):
 
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('needs: [linux-userland, media]', workflow)
-        self.assertIn("!inputs.media_only && needs.media.result == 'success'", workflow)
+        self.assertIn('needs: [asset-plan, linux-userland, media, prefix]', workflow)
+        self.assertIn("needs.media.result == 'success'", workflow)
         self.assertIn('--only cerbero-source', workflow)
         self.assertIn('name: media-sdk-with-source', workflow)
         self.assertNotIn('prepare-media-sdk.sh', (ROOT / 'ci/prepare-native-runtime.sh').read_text())
+
+    def test_media_config_tracks_app_target_and_preserves_user_config(self):
+        script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()
+        setup = script.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / 'app.yml'
+            app.write_text('    IPHONEOS_DEPLOYMENT_TARGET: "26.0"\n')
+            config = root / 'ci.cbc'
+            argv = ['-', str(config), str(root / 'build'), '2', str(app)]
+            with patch('sys.argv', argv), patch('pathlib.Path.home', return_value=root):
+                exec(compile(setup, 'media-config', 'exec'), {})
+                values = {}
+                exec(config.read_text(), values)
+                self.assertEqual(values['ios_min_version'], '26.0')
+                exec(compile(setup, 'media-config', 'exec'), {})
+                host = root / '.cerbero/cerbero.cbc'
+                host.write_text('# existing user configuration\n')
+                with self.assertRaises(SystemExit):
+                    exec(compile(setup, 'media-config', 'exec'), {})
+                self.assertEqual(host.read_text(), '# existing user configuration\n')
+
+    def test_checksum_list_cannot_omit_source_or_reference_other_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            transfer = root / '.build/media-transfer'
+            transfer.mkdir(parents=True)
+            (transfer / 'source-revision.txt').write_text('a' * 40)
+            for manifest in ('', '0' * 64 + '  media-sdk.tar.gz\n',
+                             '0' * 64 + '  ../outside\n',
+                             ('0' * 64 + '  media-sdk.tar.gz\n') * 2):
+                (transfer / 'SHA256SUMS').write_text(manifest)
+                with patch.object(media.subprocess, 'check_output', return_value='a' * 40):
+                    with self.assertRaises(ValueError):
+                        media.restore(root)

@@ -1,14 +1,35 @@
 name: Build unsigned IPA
-run-name: Manual unsigned IPA · ${{ github.ref_name }}
+run-name: Manual unsigned IPA · ${{ github.ref_name }} · ${{ inputs.dispatch_id }}
 "on":
   workflow_dispatch:
     inputs:
+      expected_sha:
+        description: Required full commit SHA to build
+        required: true
+        type: string
+      dispatch_id:
+        description: Optional identifier supplied by ci/dispatch-build.py
+        required: false
+        type: string
+      reuse_assets:
+        description: Reuse matching retained runtime and media artifacts
+        type: boolean
+        default: true
+      media_run_id:
+        description: Optional media producer run; reject mismatched inputs
+        required: false
+        type: string
+        default: ''
+      verify_lgpl_relink:
+        description: Rebuild modified GMP and relink a separate audit app
+        type: boolean
+        default: false
       media_only:
         description: Test only the media SDK; do not compile the runtime or app
         type: boolean
         default: false
       linux_runtime_run_id:
-        description: 'Optional successful Linux producer run on main; source equivalence is checked'
+        description: 'Optional Linux producer on main or this branch; source equivalence is checked'
         required: false
         type: string
         default: ''
@@ -19,12 +40,38 @@ concurrency:
   group: unsigned-ipa-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  asset-plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      prefix_run_id: ${{ steps.select.outputs.prefix_run_id }}
+      media_run_id: ${{ steps.select.outputs.media_run_id }}
+      linux_run_id: ${{ steps.select.outputs.linux_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Verify requested commit before building
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 ci/dispatch-build.py --check
+      - name: Select unchanged build assets
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+          MEDIA_ONLY: ${{ inputs.media_only }}
+          MEDIA_RUN_ID: ${{ inputs.media_run_id }}
+          LINUX_RUN_ID: ${{ inputs.linux_runtime_run_id }}
+        run: python3 ci/reuse-build-assets.py
   linux-userland:
-    if: ${{ !inputs.media_only && inputs.linux_runtime_run_id == '' }}
+    needs: asset-plan
+    if: ${{ !inputs.media_only && needs.asset-plan.outputs.linux_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           submodules: false
@@ -36,17 +83,19 @@ jobs:
       - name: Build Linux userland and collect its sources
         run: bash ci/prepare-linux-runtime.sh
       - name: Transfer userland with matching source
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-runtime-with-source
           path: .build/linux-transfer/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
   media:
+    needs: asset-plan
+    if: ${{ needs.asset-plan.outputs.media_run_id == '' }}
     runs-on: xcode-27
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Check source privacy
@@ -55,6 +104,8 @@ jobs:
         run: brew install cmake ninja bison flex pkgconf meson zstd
       - name: Fetch verified Cerbero source
         run: python3 ci/fetch-runtime-inputs.py --only cerbero-source
+      - name: Check resolved host and iPhone compilers
+        run: bash ci/prepare-media-sdk.sh --preflight
       - name: Build media SDK and matching source
         run: bash ci/prepare-media-sdk.sh
       - name: Package media transfer
@@ -66,15 +117,34 @@ jobs:
           cd .build/media-transfer
           shasum -a 256 media-sdk.tar.gz cerbero-1.28.6.tar.xz > SHA256SUMS
       - name: Retain media SDK and source
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: media-sdk-with-source
           path: .build/media-transfer/
           if-no-files-found: error
           retention-days: 7
+  prefix:
+    needs: asset-plan
+    if: ${{ !inputs.media_only && needs.asset-plan.outputs.prefix_run_id == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install prefix build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential flex bison gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - name: Build and initialize prefix
+        run: bash ci/prepare-prefix.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wine-prefix
+          path: .build/prefix-transfer/
+          if-no-files-found: error
+          retention-days: 7
   build:
-    needs: [linux-userland, media]
-    if: ${{ !cancelled() && !inputs.media_only && needs.media.result == 'success' && (needs.linux-userland.result == 'success' || (inputs.linux_runtime_run_id != '' && needs.linux-userland.result == 'skipped')) }}
+    needs: [asset-plan, linux-userland, media, prefix]
+    if: ${{ !cancelled() && !inputs.media_only && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -82,41 +152,236 @@ jobs:
       CODE_SIGNING_REQUIRED: "NO"
       CODE_SIGN_IDENTITY: ""
       DEVELOPMENT_TEAM: ""
-      LINUX_RUNTIME_RUN_ID: ${{ inputs.linux_runtime_run_id }}
+      LINUX_RUNTIME_RUN_ID: ${{ needs.asset-plan.outputs.linux_run_id }}
+      MEDIA_RUN_ID: ${{ needs.asset-plan.outputs.media_run_id }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           submodules: false
           lfs: false
       - name: Check source privacy
         run: python3 check-public-source.py
+      - name: Check graphics SDK interfaces
+        run: bash ci/prepare-graphics.sh --preflight
       - name: Install native build tools
         run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen meson zstd
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linux-runtime-with-source
           path: .build/linux-transfer
-          run-id: ${{ inputs.linux_runtime_run_id || github.run_id }}
+          run-id: ${{ needs.asset-plan.outputs.linux_run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Verify Linux artifact provenance
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 ci/verify-linux-reuse.py
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: media-sdk-with-source
           path: .build/media-transfer
+          run-id: ${{ needs.asset-plan.outputs.media_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Restore verified media SDK
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 ci/restore-media-sdk.py
-      - name: Prepare native runtime libraries
+      - name: Check selected media plugin link
+        run: python3 ci/check-media-link.py iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a
+      - name: Prepare source inputs and compiler tools
+        run: bash ci/prepare-runtime-inputs.sh
+      - name: Fingerprint compiler tools
+        run: python3 ci/compiled-components.py toolchain
+      - name: Select native compilation
+        id: compiled_native
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select native
+      - name: Download native compilation
+        if: steps.compiled_native.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.compiled_native.outputs.artifact }}
+          path: .build/native-compiled-transfer
+          run-id: ${{ steps.compiled_native.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore native compilation
+        if: steps.compiled_native.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_native.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore native
+      - name: Compile native
+        if: steps.compiled_native.outputs.run_id == ''
         run: bash ci/prepare-native-runtime.sh
-      - name: Build Windows modules and clean prefix
+      - name: Save native compilation
+        if: steps.compiled_native.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package native
+      - name: Retain native compilation
+        if: steps.compiled_native.outputs.run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_native.outputs.artifact }}
+          path: .build/native-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Select wine compilation
+        id: compiled_wine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select wine
+      - name: Download wine compilation
+        if: steps.compiled_wine.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.compiled_wine.outputs.artifact }}
+          path: .build/wine-compiled-transfer
+          run-id: ${{ steps.compiled_wine.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore wine compilation
+        if: steps.compiled_wine.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_wine.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore wine
+      - name: Compile wine
+        if: steps.compiled_wine.outputs.run_id == ''
+        run: bash ci/compile-wine.sh
+      - name: Save wine compilation
+        if: steps.compiled_wine.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package wine
+      - name: Retain wine compilation
+        if: steps.compiled_wine.outputs.run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_wine.outputs.artifact }}
+          path: .build/wine-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Select windows compilation
+        id: compiled_windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select windows
+      - name: Download windows compilation
+        if: steps.compiled_windows.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.compiled_windows.outputs.artifact }}
+          path: .build/windows-compiled-transfer
+          run-id: ${{ steps.compiled_windows.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore windows compilation
+        if: steps.compiled_windows.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_windows.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore windows
+      - name: Compile windows
+        if: steps.compiled_windows.outputs.run_id == ''
+        run: bash ci/compile-windows-modules.sh
+      - name: Save windows compilation
+        if: steps.compiled_windows.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package windows
+      - name: Retain windows compilation
+        if: steps.compiled_windows.outputs.run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_windows.outputs.artifact }}
+          path: .build/windows-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wine-prefix
+          path: .build/prefix-transfer
+          run-id: ${{ needs.asset-plan.outputs.prefix_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify prefix producer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFIX_RUN_ID: ${{ needs.asset-plan.outputs.prefix_run_id || github.run_id }}
+        run: python3 ci/verify-prefix.py
+      - name: Stage Windows modules and clean prefix
         run: bash ci/prepare-windows-runtime.sh
-      - name: Build legacy graphics frameworks
+      - name: Select graphics compilation
+        id: compiled_graphics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select graphics
+      - name: Download graphics compilation
+        if: steps.compiled_graphics.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.compiled_graphics.outputs.artifact }}
+          path: .build/graphics-compiled-transfer
+          run-id: ${{ steps.compiled_graphics.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore graphics compilation
+        if: steps.compiled_graphics.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_graphics.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore graphics
+      - name: Compile graphics
+        if: steps.compiled_graphics.outputs.run_id == ''
         run: bash ci/prepare-graphics.sh
-      - name: Build StikJIT and idevice from source
+      - name: Save graphics compilation
+        if: steps.compiled_graphics.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package graphics
+      - name: Retain graphics compilation
+        if: steps.compiled_graphics.outputs.run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_graphics.outputs.artifact }}
+          path: .build/graphics-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Select jit compilation
+        id: compiled_jit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/compiled-components.py select jit
+      - name: Download jit compilation
+        if: steps.compiled_jit.outputs.run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ steps.compiled_jit.outputs.artifact }}
+          path: .build/jit-compiled-transfer
+          run-id: ${{ steps.compiled_jit.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Restore jit compilation
+        if: steps.compiled_jit.outputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT_RUN_ID: ${{ steps.compiled_jit.outputs.run_id }}
+        run: python3 ci/compiled-components.py restore jit
+      - name: Compile jit
+        if: steps.compiled_jit.outputs.run_id == ''
         run: bash ci/prepare-stikjit.sh
+      - name: Save jit compilation
+        if: steps.compiled_jit.outputs.run_id == ''
+        run: python3 ci/compiled-components.py package jit
+      - name: Retain jit compilation
+        if: steps.compiled_jit.outputs.run_id == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_jit.outputs.artifact }}
+          path: .build/jit-compiled-transfer/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Prepare and check StikJIT textual interface
+        run: python3 ci/prepare-stikjit-interface.py
       - name: Prepare legacy runtime bundle
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,7 +391,7 @@ jobs:
           python3 ci/collect-release-source.py repository
           python3 ci/collect-release-source.py package
       - name: Retain source archive for release audit
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-source-audit-${{ github.sha }}
           path: |
@@ -140,6 +405,7 @@ jobs:
         run: |
           xcodegen generate --spec iridium/apps/ios/stikjit.yml
       - name: Build without signing
+        id: app_build
         run: |
           xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
             -scheme Iridium -configuration Release \
@@ -147,11 +413,29 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
             EXPANDED_CODE_SIGN_IDENTITY= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
+            LD_GENERATE_MAP_FILE=YES \
             CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" build
+      - name: Record app binaries for final audit
+        run: python3 ci/collect-app-link-audit.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/app-link-audit/binaries.json
+      - name: Verify modified LGPL library relinking
+        if: inputs.verify_lgpl_relink
+        run: python3 ci/check-lgpl-relink.py
+      - name: Retain app link maps for final audit
+        if: always() && steps.app_build.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Iridium-link-audit-${{ github.sha }}
+          path: |
+            .build/unsigned-ipa/**/*LinkMap*.txt
+            .build/app-link-audit/*.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Check final binary audit before packaging
+        run: python3 ci/check-ipa-prerequisites.py --package
       - name: Prepare and audit unsigned package
         run: python3 ci/package-unsigned-ipa.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/ipa-output
       - name: Upload unsigned IPA
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-unsigned-${{ github.sha }}
           path: .build/ipa-output/*

@@ -10,3 +10,8 @@ Do not build, install, sign, tag, or publish without authorization for that acti
 Keep Actions builds manual. Never access or upload personal signing material.
 Report exactly what was tested and what remains blocked; do not equate a build
 with device compatibility. Use docs/releasing.md for every release description.
+
+Keep temporary audit reports, investigation notes, and build logs out of commits
+unless the user explicitly asks to commit them. Share findings in the conversation
+or keep temporary reports outside the repository. Preserve lasting build rules,
+license obligations, and release requirements in the existing project documentation.

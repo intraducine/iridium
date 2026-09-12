@@ -22,22 +22,8 @@ fi
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || {
     echo 'Requires an Apple Silicon macOS runner with Xcode 27.' >&2; exit 1;
 }
-for tool in python3 cmake ninja brew xcrun xcodebuild git; do command -v "$tool" >/dev/null; done
+for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do command -v "$tool" >/dev/null; done
 export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
-python3 "$ROOT/ci/fetch-runtime-inputs.py"
-
-# Use exact gitlink commits. Do not fetch binary test corpora or unrelated modules.
-cd "$ROOT"
-modules=()
-for fork in iridium-fex-ios testrepos/Madeira/FEX; do
-    for module in fmt range-v3 rpmalloc unordered_dense vixl xxhash; do
-        modules+=("$fork/External/$module")
-    done
-    modules+=("$fork/Source/Common/cpp-optparse")
-done
-modules+=(testrepos/Madeira/research/dxmt/include/native/directx)
-git submodule update --init --depth 1 -- "${modules[@]}"
-
 bash "$MADEIRA/build/gnutls-ios/build.sh"
 bash "$MADEIRA/build/freetype-ios/build.sh"
 for name in gnutls hogweed nettle gmp; do
@@ -96,7 +82,6 @@ for component in wineserver ntdll-unix win32u-unix; do
     bash "$MADEIRA/build/$component/build.sh"
 done
 
-xcodebuild -downloadComponent MetalToolchain
 SHADERS="$MADEIRA/build/dxmt-ios/shader-headers"
 mkdir -p "$SHADERS"
 for name in air_msad air_samplepos air_tessellation; do

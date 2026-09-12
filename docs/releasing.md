@@ -45,7 +45,8 @@ Do not use a placeholder command as proof that publication happened.
 ## Release sequence
 
 1. Select an exact source commit after review and green source checks. Review
-   outstanding issues and `ci/binary-release-blockers.json`; never clear entries
+   outstanding issues, `ci/binary-release-blockers.json` (build readiness), and
+   `ci/binary-package-blockers.json` (final binary review); never clear entries
    just to make CI green. Record the evidence that resolves each entry.
 2. Start the manual build only when requested. Retain its commit, run URL,
    dependency revisions, source archive, notices, and checksums. Fix failures
@@ -80,3 +81,19 @@ References:
 - https://semver.org/spec/v2.0.0.html
 - https://keepachangelog.com/en/1.1.0/
 - https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository
+
+The final binary review gate runs after Xcode and before IPA packaging or upload.
+App link maps are generated and retained for seven days even when that gate
+blocks packaging. A missing or invalid final-review record blocks packaging.
+This permits an audit build without treating it as an approved release.
+
+The audit artifact also records each native binary's bundle-relative path, size,
+SHA-256 digest and dynamic library references. It contains no executable payloads.
+Compare static dependencies using the link maps; dynamic references alone cannot
+establish static-library source coverage. Inventory failures block packaging.
+
+The Xcode stack-probe distribution review remains open in the final package
+record. It does not prevent compiling an unsigned app for link inspection.
+Moving this item permits that inspection only; it does not resolve the license
+question or authorize distributing an IPA. Both blocker records are checked
+again before packaging.

@@ -11,7 +11,7 @@ match = re.search(r'    static func liveContainerURL\(for url: URL\) -> URL\? \{
 assert match, 'Production URL wrapper missing'
 function = match.group().replace('static func', 'func', 1)
 check = r'''
-for value in ["stikjit://enable-jit?bundle-id=com.vibu.madeira&script-data=ab+/==", "stikjit://enable-jit?pid=123&script-data=%2B%2F%3D"] {
+for value in ["stikjit://enable-jit?bundle-id=org.example.madeira&script-data=ab+/==", "stikjit://enable-jit?pid=123&script-data=%2B%2F%3D"] {
     let input = URL(string: value)!
     let output = liveContainerURL(for: input)!
     let components = URLComponents(url: output, resolvingAgainstBaseURL: false)!

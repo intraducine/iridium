@@ -1,5 +1,1 @@
-[
-  "Collect and review the resolved idevice Cargo dependency licenses and exact vendored source after the source build.",
-  "Collect ANGLE and Cerbero dependency sources, notices, patches and generated build inputs for the selected target. Review codec and compiler-runtime terms.",
-  "Audit the collected corresponding source against the actual link/package inputs before allowing IPA upload. Check compiler runtimes and any non-Git ANGLE inputs."
-]
+[]

@@ -17,3 +17,7 @@ if [ -e "$RESOURCE" ]; then
 fi
 mkdir -p "$(dirname "$RESOURCE")"
 cp -R "$SDK/build/iridium-runtime-base" "$RESOURCE"
+
+# Extract after the SwiftPM copy so it does not receive a second userland tree.
+# The app's existing stage script reads this canonical extracted location.
+python3 "$ROOT/ci/stage-linux-userland.py"

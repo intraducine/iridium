@@ -1,0 +1,10 @@
+diff --git a/MANIFEST.in b/MANIFEST.in
+new file mode 100644
+--- /dev/null
++++ b/MANIFEST.in
+@@ -0,0 +1,5 @@
++include cerbero-uninstalled
++graft recipes
++graft packages
++graft config
++graft tools
