@@ -23,7 +23,8 @@ class RuntimeInputTests(unittest.TestCase):
             inputs.destination(ROOT, bad)
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
         stages = ['prepare-runtime-inputs.sh', 'prepare-native-runtime.sh', 'compile-wine.sh', 'compile-windows-modules.sh', 'prepare-windows-runtime.sh', 'prepare-graphics.sh', 'prepare-stikjit.sh', 'prepare-legacy-bundle.sh', 'check-ipa-prerequisites.py']
-        positions = [workflow.index('ci/' + stage) for stage in stages]
+        positions = [workflow.index('ci/' + stage + '\n') for stage in stages]
+        self.assertLess(workflow.index('ci/prepare-graphics.sh --preflight'), positions[0])
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn('/tmp/iridium-media-sdk', (ROOT / 'iridium/apps/ios/madeira.yml').read_text())
 

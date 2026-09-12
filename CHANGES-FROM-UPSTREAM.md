@@ -82,3 +82,12 @@ Restored the remaining legacy Wine .spec export definitions and removed their in
   and VideoToolbox elements enabled. The Cerbero recipe and source patch are
   retained in `ci/patches/cerbero-assets-library.patch` and included by the
   existing Cerbero source-bundle mechanism.
+
+### ANGLE build configuration for Xcode 27
+
+The CI recipe uses the selected Xcode compiler, compiler runtime, C++ library,
+linker and archive tools. It builds only the Metal backend, with WebGPU disabled.
+Upstream diagnostics remain visible but do not become errors under a newer
+compiler. The former unknown-attribute suppression and libc++ infinity patch
+are removed; ANGLE and its dependency source files remain unchanged.
+The graphics source archive includes the separately pinned bootstrap depot_tools.

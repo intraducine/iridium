@@ -103,6 +103,8 @@ def collect(kind):
                 revisions[relative] = git_snapshot(Path(directory), OUT / (name + '.tar.gz'))
         if '.' not in revisions:
             raise ValueError('ANGLE source checkout missing')
+        revisions['bootstrap_depot_tools'] = git_snapshot(
+            ROOT / '.build/depot_tools', OUT / 'depot_tools.tar.gz')
         (OUT / 'angle-revisions.json').write_text(json.dumps(revisions, indent=2) + '\n')
     elif kind == 'package':
         required = ['iridium.tar.gz', 'repository-revisions.json', 'angle-revisions.json',

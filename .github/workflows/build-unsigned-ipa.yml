@@ -158,6 +158,8 @@ jobs:
           lfs: false
       - name: Check source privacy
         run: python3 check-public-source.py
+      - name: Check graphics SDK interfaces
+        run: bash ci/prepare-graphics.sh --preflight
       - name: Install native build tools
         run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen meson zstd
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

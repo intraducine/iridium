@@ -32,7 +32,7 @@ COMPONENT_INPUTS = {
                 'testrepos/Madeira/wine', 'ci/compile-windows-modules.sh',
                 'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
                 'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
-    'graphics': ('ci/prepare-graphics.sh', 'ci/collect-release-source.py'),
+    'graphics': ('ci/prepare-graphics.sh', 'ci/verify-graphics.py', 'ci/collect-release-source.py'),
     'jit': ('ci/prepare-stikjit.sh', 'ci/collect-release-source.py',
             'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
 }

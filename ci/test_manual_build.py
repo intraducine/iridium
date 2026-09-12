@@ -15,6 +15,7 @@ def load(name, filename):
     return module
 
 dispatch = load("dispatch_build", "dispatch-build.py")
+graphics = load("verify_graphics", "verify-graphics.py")
 
 packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
@@ -58,33 +59,18 @@ class ManualBuildTests(unittest.TestCase):
         self.assertLess(script.index('"$DEPOT/ensure_bootstrap"'), script.index('"$DEPOT/python-bin/python3" --version'))
         self.assertLess(script.index('"$DEPOT/python-bin/python3" --version'), script.index('gclient sync'))
 
-    def test_graphics_sdk_warning_patch_and_other_errors(self):
-        import shutil
-        import subprocess
-        import sys
-        script = (ROOT / "ci/prepare-graphics.sh").read_text()
-        patch_code = script.split("python3 - <<'PATCH'\n", 1)[1].split("\nPATCH", 1)[0]
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "build/config/compiler/BUILD.gn"
-            target.parent.mkdir(parents=True)
-            target.write_text('config("compiler") {\n  cflags = []\n  cflags_cc = []\n}\n')
-            header = Path(tmp) / "third_party/libc++/src/include/__random/clamp_to_integral.h"
-            header.parent.mkdir(parents=True)
-            header.write_text('::nextafter(static_cast<_RealT>(__max_val), INFINITY)')
-            subprocess.run([sys.executable, "-c", patch_code], cwd=tmp, check=True)
-            self.assertIn('numeric_limits<float>::infinity()', header.read_text())
-            self.assertNotIn('INFINITY', header.read_text())
-            self.assertIn('if (is_ios)', target.read_text())
-            self.assertIn('cflags += [ "-Wno-error=unknown-attributes" ]', target.read_text())
-            compiler = shutil.which("clang")
-            if compiler:
-                args = [compiler, "-x", "c", "-fsyntax-only", "-Wall", "-Werror", "-Wno-error=unknown-attributes", "-"]
-                result = subprocess.run(args, input='__attribute__((iridium_unknown_test_attribute)) void f(void);', text=True, capture_output=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("unknown attribute", result.stderr)
-                result = subprocess.run(args, input='int f(void) { int unused; return 0; }', text=True, capture_output=True)
-                self.assertNotEqual(result.returncode, 0)
-        self.assertLess(script.index("\nPATCH\n"), script.index('collect-release-source.py'))
+    def test_graphics_plan_rejects_mixed_tools_backends_and_targets(self):
+        root = Path("/tmp/graphics-test")
+        clang = root / "xcode/bin/clang"
+        command = f"{clang}++ -target arm64-apple-ios18.0 -Wall -c source.cpp -o source.o"
+        graphics.check_plan(command, root, clang)
+        for bad in ("", command.replace("xcode", "old-compiler"),
+                    command.replace("arm64-apple-ios18.0", "arm64-apple-ios18.0-simulator"),
+                    command.replace("source.cpp", "third_party/dawn/file.cpp"),
+                    command.replace("-Wall", "-w"),
+                    command + " -Ithird_party/libc++/src/include"):
+            with self.assertRaises(ValueError):
+                graphics.check_plan(bad, root, clang)
 
     def test_missing_runtime_and_license_records_block_build(self):
         with tempfile.TemporaryDirectory() as tmp:
