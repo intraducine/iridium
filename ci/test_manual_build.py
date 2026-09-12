@@ -17,6 +17,7 @@ def load(name, filename):
 dispatch = load("dispatch_build", "dispatch-build.py")
 graphics = load("verify_graphics", "verify-graphics.py")
 
+stik_interface = load("stik_interface", "prepare-stikjit-interface.py")
 app_audit = load("app_audit", "collect-app-link-audit.py")
 
 packager = load("unsigned_packager", "package-unsigned-ipa.py")
@@ -56,6 +57,20 @@ class ManualBuildTests(unittest.TestCase):
                 tool.side_effect = subprocess.CalledProcessError(1, 'otool')
                 with self.assertRaises(subprocess.CalledProcessError):
                     app_audit.inventory(app)
+
+    def test_stik_interface_repairs_nested_selector_without_changing_binary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaises(ValueError):
+                stik_interface.repair(root)
+            binary = root / 'StikJIT'
+            binary.write_bytes(b'unchanged')
+            interface = root / 'arm64-apple-ios.swiftinterface'
+            interface.write_text('StikJIT::StikJIT::Configuration StikJIT::DDIPaths Swift.String')
+            stik_interface.repair(root)
+            self.assertEqual(interface.read_text(), 'StikJIT::StikJIT.Configuration StikJIT::DDIPaths Swift.String')
+            stik_interface.repair(root)
+            self.assertEqual(binary.read_bytes(), b'unchanged')
 
     def test_manual_trigger_and_no_signing_secrets(self):
         text = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()

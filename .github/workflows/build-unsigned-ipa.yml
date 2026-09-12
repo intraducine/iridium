@@ -376,6 +376,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Prepare and check StikJIT textual interface
+        run: python3 ci/prepare-stikjit-interface.py
       - name: Prepare legacy runtime bundle
         env:
           GH_TOKEN: ${{ github.token }}

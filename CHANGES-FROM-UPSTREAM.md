@@ -114,3 +114,10 @@ manifest for its recipes, patches, configuration, package definitions and tools.
 Rust standard-library source collection now includes registry dependencies from
 each toolchain's library lockfile. Original crate archives and notices remain
 unchanged; the collector checks Cargo's recorded SHA-256 digests before packaging.
+
+
+StikJIT's Swift 6.4 textual interfaces receive a targeted nested-type separator
+correction after compilation or restoration: `StikJIT::StikJIT::` becomes
+`StikJIT::StikJIT.`. The module selector remains intact. The binary is unchanged.
+CI imports a staging copy without its serialized Swift modules to verify the
+textual interface before attempting the app build.
