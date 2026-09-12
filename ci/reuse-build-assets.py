@@ -25,9 +25,13 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
-    # madeira.yml controls the app link, not compilation of these archives.
-    'native': tuple(p for p in NATIVE_INPUTS if p not in {'ci', 'iridium/apps/ios/madeira.yml'}) +
-              ('ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh'),
+    # App UI, docs, and tools are not inputs to the native compiler recipes.
+    # Track Madeira's compiler trees rather than its entire repository.
+    'native': tuple(p for p in NATIVE_INPUTS if p not in {'ci', 'iridium/apps/ios/madeira.yml', 'testrepos/Madeira'}) +
+              ('testrepos/Madeira/FEX', 'testrepos/Madeira/wine',
+               'testrepos/Madeira/build', 'testrepos/Madeira/research/dxmt',
+               'testrepos/Madeira/research/freetype', 'testrepos/Madeira/toolchains',
+               'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh'),
     'wine': ('testrepos/Madeira/wine', 'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh',
              'ci/prepare-runtime-inputs.sh', 'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
     'windows': ('testrepos/Madeira/FEX', 'testrepos/Madeira/research/dxmt',

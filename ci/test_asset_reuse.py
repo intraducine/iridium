@@ -44,6 +44,22 @@ class AssetReuseTests(unittest.TestCase):
             app.write_text('different app frameworks')
             commit()
             reuse.compatible(root, original, 'native')
+            for name in ('testrepos/Madeira/tools/check-jit-url.py',
+                         'testrepos/Madeira/README.md',
+                         'testrepos/Madeira/app/Madeira/Library.swift'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('unrelated change')
+            commit()
+            reuse.compatible(root, original, 'native')
+            for tree in ('build', 'FEX', 'wine', 'research/dxmt', 'research/freetype', 'toolchains'):
+                before = git('rev-parse', 'HEAD')
+                path = root / 'testrepos/Madeira' / tree / 'compiler-input'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('changed compiler input')
+                commit()
+                with self.assertRaisesRegex(ValueError, 'producer input'):
+                    reuse.compatible(root, before, 'native')
             recipe.write_text('different compiler flags')
             commit()
             with self.assertRaisesRegex(ValueError, 'producer input'):
