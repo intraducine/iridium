@@ -52,6 +52,12 @@ class ManualBuildTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
         self.assertLess(workflow.index("ci/dispatch-build.py --check"), workflow.index("ci/reuse-build-assets.py"))
 
+    def test_pinned_graphics_tools_bootstrap_before_sync(self):
+        script = (ROOT / "ci/prepare-graphics.sh").read_text()
+        self.assertLess(script.index('export DEPOT_TOOLS_UPDATE=0'), script.index('"$DEPOT/ensure_bootstrap"'))
+        self.assertLess(script.index('"$DEPOT/ensure_bootstrap"'), script.index('"$DEPOT/python-bin/python3" --version'))
+        self.assertLess(script.index('"$DEPOT/python-bin/python3" --version'), script.index('gclient sync'))
+
     def test_missing_runtime_and_license_records_block_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             findings = prerequisites.blockers(Path(tmp))

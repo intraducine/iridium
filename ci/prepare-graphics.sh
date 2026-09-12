@@ -21,6 +21,9 @@ git -C "$DEPOT" fetch --depth 1 https://chromium.googlesource.com/chromium/tools
 git -C "$DEPOT" checkout --detach FETCH_HEAD
 export DEPOT_TOOLS_UPDATE=0
 export PATH="$DEPOT:$PATH"
+# Updates stay disabled; bootstrap the pinned checkout explicitly for GN.
+"$DEPOT/ensure_bootstrap"
+"$DEPOT/python-bin/python3" --version
 cd "$SOURCE"
 cat > .gclient <<'CONFIG'
 solutions = [{
