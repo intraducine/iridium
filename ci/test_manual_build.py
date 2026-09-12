@@ -58,6 +58,27 @@ class ManualBuildTests(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     app_audit.inventory(app)
 
+    def test_public_fixture_exception_requires_exact_bytes(self):
+        import hashlib
+        import json
+        data = bytes.fromhex("7f454c46") + b"-----BEGIN " + b"PRIVATE KEY-----\nfixture"
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp)
+            binary = app / "library.so"
+            binary.write_bytes(data)
+            original = Path.read_text
+            def read(path, *args, **kwargs):
+                if path.name == "public-key-fixture-binaries.json":
+                    return json.dumps([{"sha256": hashlib.sha256(data).hexdigest()}])
+                return original(path, *args, **kwargs)
+            with patch.object(Path, "read_text", read):
+                # Passing the key scan reaches the required app metadata check.
+                with self.assertRaises(FileNotFoundError):
+                    packager.check_payload(app)
+                binary.write_bytes(data + b"changed")
+                with self.assertRaisesRegex(ValueError, "unreviewed private key"):
+                    packager.check_payload(app)
+
     def test_stik_interface_repairs_nested_selector_without_changing_binary(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
