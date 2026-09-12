@@ -33,10 +33,15 @@ PY
 PACKAGING_PYTHON="$ROOT/.build/media-packaging/bin/python3"
 python3 -m venv "$ROOT/.build/media-packaging"
 "$PACKAGING_PYTHON" -m pip install --disable-pip-version-check 'setuptools==80.9.0'
-"$PACKAGING_PYTHON" "$ROOT/ci/check-media-source-package.py" "$CERBERO"
 python3 "$ROOT/ci/check-media-toolchain.py" "$CERBERO" "$CONFIG"
 git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"
 git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-assets-library.patch"
+if git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch" 2>/dev/null; then
+    git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch"
+else
+    git -C "$ROOT" apply --reverse --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch"
+fi
+"$PACKAGING_PYTHON" "$ROOT/ci/check-media-source-package.py" "$CERBERO"
 [ "${1:-}" != --preflight ] || exit 0
 cd "$CERBERO"
 git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-gperf-cxx14.patch"

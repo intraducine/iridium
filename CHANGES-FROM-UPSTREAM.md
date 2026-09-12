@@ -76,6 +76,7 @@ Also restored nine fork-specific templates and required text .spec/.in inputs fr
 
 Restored the remaining legacy Wine .spec export definitions and removed their incorrect ignore rule after the next clean build identified an implicit MODULE dependency. Source checks now cover implicit module export definitions, not only explicitly listed sources.
 - Cerbero 1.28.6: select C++14 for the gperf 3.1 host-tool recipe. Its legacy `register` declarations fail with the newer compiler's C++17 default. The exact recipe patch is retained in `ci/patches/cerbero-gperf-cxx14.patch`; codec language settings are unchanged.
+- Cerbero source packaging includes a MANIFEST.in patch to retain recipes, nested patches, configuration, package definitions, tools and the launcher. This changes the source archive, not codec compilation.
 
 - GStreamer 1.28.6 applemedia: test whether the selected target can use
   AssetsLibrary before compiling and registering iosassetsrc. Keep AVFoundation
@@ -102,3 +103,14 @@ corresponding-source archive.
 The vendoring step also synchronizes plist_ffi's published lockfile because its
 header generator resolves dependencies independently. Both locked graphs remain
 unchanged. Full offline metadata resolution is checked before JIT compilation.
+
+### Media source collection
+
+Release packaging collects the exact SDK MoltenVK source and its pinned external
+sources without rebuilding the retained library. Upstream license texts are
+copied unchanged into the app notices. Cerbero's source distribution gains a
+manifest for its recipes, patches, configuration, package definitions and tools.
+
+Rust standard-library source collection now includes registry dependencies from
+each toolchain's library lockfile. Original crate archives and notices remain
+unchanged; the collector checks Cargo's recorded SHA-256 digests before packaging.

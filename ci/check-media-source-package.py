@@ -28,6 +28,16 @@ with tempfile.TemporaryDirectory(prefix='iridium-source-check-') as temp:
     if len(archives) != 1:
         raise SystemExit('Expected one Cerbero source archive')
     with tarfile.open(archives[0]) as archive:
+        names = {m.name.split('/', 1)[1] for m in archive if '/' in m.name}
+        required = {'cerbero-uninstalled', 'config/cross-ios-arm64.cbc',
+                    'recipes/build-tools/gperf.recipe', 'packages/gstreamer-1.0-core.package'}
+        # Compare the complete recipe/config inputs, including nested patches.
+        for directory in ('recipes', 'packages', 'config', 'tools'):
+            required.update(str(p.relative_to(source)) for p in (source / directory).rglob('*')
+                            if p.is_file() and '__pycache__' not in p.parts)
+        missing = required - names
+        if missing:
+            raise SystemExit('Source archive omitted build inputs: ' + ', '.join(sorted(missing)))
         matches = [m for m in archive if m.name.endswith('/sources/source-check/source.txt')]
         if len(matches) != 1 or archive.extractfile(matches[0]).read() != marker.read_bytes():
             raise SystemExit('Source archive did not preserve supplied source')

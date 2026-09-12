@@ -126,3 +126,45 @@ Set `reuse_assets=false` and leave explicit media/Linux overrides empty for a
 fresh build. Local tests cover completed-stage reuse after a later failure,
 expired/missing selection, checksum failure, executable permissions, and
 packaging edits versus compiler edits. Real CI restoration is still pending.
+
+
+Source-only repair runs before source packaging and does not compile components.
+Graphics and JIT reuse no longer depends on the source collector script. Media
+reuse excludes the source-distribution manifest and its packaging check, while
+retaining compiler recipes, patches, tools and configuration as inputs.
+The reviewed Node 24 checkout/artifact Action upgrades preserve reuse; changing
+Action inputs or moving to an unreviewed Action pin still invalidates it.
+
+
+## Rebuild and relink a modified media library
+
+Use a separate working directory. Keep the original source archive, checksums
+and test app. Do not use a player's game folder or prefix as a build directory.
+Install Xcode and host tools separately; they are not supplied in the source
+archive. Start with the exact release source and its component patches.
+
+The app links the static library at
+`iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a`.
+The headers come from the same slice. To test library replacement:
+
+1. Prepare the normal build inputs using the release workflow's commands. Keep
+   the prepared Cerbero tree and generated `.build/cerbero-ci.cbc` configuration.
+2. Make the library change in a Cerbero recipe patch, and rebuild the affected
+   recipe and GStreamer package using Cerbero. Keep the patch in the source
+   package. A patch to a temporary extracted source directory can be lost when
+   Cerbero extracts that source again.
+3. Export the XCFramework using the `package` and `xcframework` commands in
+   `ci/prepare-media-sdk.sh`. In this separate test checkout, replace the media
+   SDK slice with that output, including its headers. Do not restore a cached
+   media artifact over the modified output.
+4. Run `python3 ci/check-media-link.py` with the modified `libGStreamer.a` path.
+   Generate the Xcode project with `xcodegen generate --spec
+   iridium/apps/ios/stikjit.yml`, then repeat the unsigned Xcode build command
+   from the workflow using a new DerivedData directory.
+5. Inspect the app link map and library checksum to confirm the modified input
+   was linked. Run the modified code on the device with the user's signing
+   setup. Record what changed and the observed result.
+
+This procedure is a release verification requirement, not a completed test.
+The media probe confirms a link only; it does not replace the complete app
+rebuild, final binary review or device playback check.

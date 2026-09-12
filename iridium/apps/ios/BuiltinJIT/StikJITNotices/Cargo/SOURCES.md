@@ -30,3 +30,35 @@ The final build dependency tree identifies selected normal/build dependencies.
 - `c2rust-BSD-3-Clause.txt`: `2bd73a6df34e41c531e4088a97e90a489b163926fb214ac90e9c172d124bc2f8`
 - `valuable-MIT.txt`: `ed60d479b8fd1f64e9cbc3de449a16a53ac1b3d1b6aeb9bf9d190a8e93061b44`
 - `bytecodealliance-MIT.txt`: `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3`
+
+## Packages with manifest declarations
+
+The following exact upstream revisions declare their license in Cargo.toml
+but do not supply a standalone license text. Their declared author is Jackson
+Coxson. These are upstream author records, not newly assigned copyright years.
+The standard [MIT text](MIT.txt) accompanies these declarations. Its placeholder
+copyright line is the SPDX template, not an upstream copyright notice.
+
+| Package | Version | Upstream revision | Declaration |
+| --- | --- | --- | --- |
+| ns-keyed-archive | 0.1.5 | [f8cec65e](https://github.com/jkcoxson/ns_keyed_archive/tree/f8cec65e865cb48301d33b2244bec45a2f3d2bc2) | MIT OR Apache-2.0 |
+| plist-macro | 0.1.6 | [d1d48559](https://github.com/jkcoxson/plist_macro/tree/d1d48559ddc8e9bd263f36180bbe1d4f2a3d55e5) | MIT |
+| plist_ffi | 0.1.6 | [26537916](https://github.com/jkcoxson/plist_ffi/tree/265379167ab3f9a5664621a7f1c0f494b2ac7c96) | MIT in Cargo; file-specific exceptions below |
+
+`plist_ffi` also includes libplist C++ bindings, tests and tools. Their headers
+retain LGPL-2.1-or-later grants and their original copyright notices. The
+upstream README explicitly preserves those terms. The [LGPL 2.1 text](LGPL-2.1.txt)
+is supplied for those files; the crate's MIT metadata does not replace them.
+Its Cargo build script compiles `src/shims.c`, not the `cpp` directory. This
+distinguishes the supplied source from the selected JIT build inputs.
+
+`plist` 1.8.0 includes its complete MIT notice in `LICENCE`, with copyright
+2015 Edward Barnard. That file remains in the vendored source. Notice searches
+must include both LICENSE and LICENCE spellings.
+
+Standard texts, downloaded unchanged:
+
+- [SPDX MIT](https://spdx.org/licenses/MIT.txt), SHA-256
+  `c3b1b78bc8bd3ea13aa4bc9778442d16560270afa235006d816e5e88cef24db4`.
+- [GNU LGPL 2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt), SHA-256
+  `20e50fe7aae3e56378ebf0417d9de904f55a0e61e4df315333e632a4d3555d95`.

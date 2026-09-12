@@ -11,8 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = 'intraducine/iridium'
 WORKFLOW = '.github/workflows/build-unsigned-ipa.yml'
 MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
-                'ci/check-media-toolchain.py', 'ci/check-media-source-package.py',
-                'ci/runtime-inputs.json', 'ci/patches', 'iridium/apps/ios/stikjit.yml',
+                'ci/check-media-toolchain.py',
+                'ci/runtime-inputs.json', 'ci/patches/cerbero-gperf-cxx14.patch',
+                'ci/patches/cerbero-assets-library.patch', 'iridium/apps/ios/stikjit.yml',
                 'check-public-source.py')
 PREFIX_INPUTS = ('testrepos/Madeira/wine', 'testrepos/Madeira/scripts/build-prefix-snapshot.sh',
                  'ci/prepare-prefix.sh', 'ci/sanitize-prefix.py', 'ci/wineboot-from-build.sh')
@@ -32,8 +33,8 @@ COMPONENT_INPUTS = {
                 'testrepos/Madeira/wine', 'ci/compile-windows-modules.sh',
                 'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
                 'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
-    'graphics': ('ci/prepare-graphics.sh', 'ci/verify-graphics.py', 'ci/collect-release-source.py'),
-    'jit': ('ci/prepare-stikjit.sh', 'ci/collect-release-source.py',
+    'graphics': ('ci/prepare-graphics.sh', 'ci/verify-graphics.py'),
+    'jit': ('ci/prepare-stikjit.sh',
             'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
 }
 
@@ -50,7 +51,25 @@ def git(root, *args):
     return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
 
 
+def normalize_source_only_changes(text):
+    # Only reviewed transport upgrades: preserve every action input and unknown pin.
+    pins = {
+        'checkout': ('11bd71901bbe5b1630ceea73d27597364c9af683',
+                     'fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+                     '3d3c42e5aac5ba805825da76410c181273ba90b1'),
+        'upload-artifact': ('ea165f8d65b6e75b540449e92b4886f43607fa02',
+                            '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'),
+        'download-artifact': ('d3f86a106a0bac45b974a628896c90dbdf5c8093',
+                              '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'),
+    }
+    for action, versions in pins.items():
+        text = re.sub(r'actions/' + action + r'@(?:' + '|'.join(versions) + r')(?: *#[^\n]*)?',
+                      'actions/' + action + '@reviewed-compatible', text)
+    return text
+
+
 def producer_job(text, stage):
+    text = normalize_source_only_changes(text)
     if stage in COMPONENT_INPUTS:
         # Compare the compiler step, not later packaging or checkpoint plumbing.
         match = re.search(r'^      - name: Compile ' + stage + r'\n.*?(?=^      - |\Z)', text, re.M | re.S)
@@ -68,7 +87,7 @@ def producer_job(text, stage):
     if not match:
         raise ValueError('Missing producer job: ' + stage)
     # Scheduling does not change produced bytes. All runner, step, environment,
-    # action-version and tool-install changes still invalidate reuse.
+    # Unreviewed action versions and tool-install changes still invalidate reuse.
     inherited = ''.join(m.group(0) for m in re.finditer(
         r'^(?:env|defaults):.*?(?=^[^ \n]|\Z)', text, re.M | re.S))
     return inherited + '\n'.join(line for line in match[1].splitlines()
@@ -104,6 +123,14 @@ def compatible(root, revision, stage):
     for path in paths:
         # ls-tree returns an empty result for absent inputs, so old producers
         # without newly required scripts are invalidated without a Git error.
+        if path == 'ci/prepare-media-sdk.sh':
+            def compile_script(ref):
+                text = git(root, 'show', ref + ':' + path)
+                # The sdist manifest only changes the source archive, never compilation.
+                text = text.replace('"$PACKAGING_PYTHON" "$ROOT/ci/check-media-source-package.py" "$CERBERO"\n', '')
+                return text.replace('if git -C "$ROOT" apply --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch" 2>/dev/null; then\n    git -C "$ROOT" apply --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch"\nelse\n    git -C "$ROOT" apply --reverse --check --directory=.build/runtime-sources/cerbero "$ROOT/ci/patches/cerbero-source-manifest.patch"\nfi\n', '')
+            if compile_script(revision) == compile_script('HEAD'):
+                continue
         if git(root, 'ls-tree', revision, '--', path) != git(root, 'ls-tree', 'HEAD', '--', path):
             raise ValueError('Changed producer input: ' + path)
     if producer_job(git(root, 'show', revision + ':' + WORKFLOW), stage) != producer_job(git(root, 'show', 'HEAD:' + WORKFLOW), stage):

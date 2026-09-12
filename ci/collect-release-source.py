@@ -8,9 +8,109 @@ import subprocess
 import shutil
 import sys
 import tarfile
+import tomllib
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / '.build/corresponding-source'
+
+
+def collect_media_rust():
+    # Cerbero's Rust plugins use a different standard library from idevice.
+    cerbero = next(x for x in json.loads((ROOT / 'ci/runtime-inputs.json').read_text())
+                   if x['name'] == 'cerbero-source')
+    if cerbero['sha256'] != '1874c5ed8b67612ca0370e5a8c7b25420ed98f0176425aa427eb1461293a82d3':
+        raise ValueError('Review the media Rust source pin for the new Cerbero revision')
+    output = OUT / 'media-rust-src-1.96.0.tar.xz'
+    expected = '7875f9f4b91455ac25e2ea0e0f1cb3d7d16c309ef0720778538d20ed0e9b818b'
+    if output.exists():
+        data = output.read_bytes()
+    else:
+        with urllib.request.urlopen('https://static.rust-lang.org/dist/2026-05-28/rust-src-1.96.0.tar.xz',
+                                    timeout=60) as response:
+            data = response.read()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ValueError('Media Rust source checksum mismatch')
+    output.write_bytes(data)
+
+
+def collect_rust_dependencies(source_archive, output_directory):
+    # rust-src carries the library lockfile, but not its registry crate sources.
+    with tarfile.open(OUT / source_archive) as archive:
+        locks = [m for m in archive if m.name == 'library/Cargo.lock'
+                 or m.name.endswith('/rust/library/Cargo.lock')]
+        if len(locks) != 1:
+            raise ValueError('Expected one Rust standard-library lockfile')
+        lock = locks[0]
+        packages = tomllib.loads(archive.extractfile(lock).read().decode())['package']
+    destination = OUT / output_directory
+    destination.mkdir(exist_ok=True)
+    for package in packages:
+        if not package.get('source'):
+            continue
+        if package['source'] != 'registry+https://github.com/rust-lang/crates.io-index':
+            raise ValueError('Unexpected Rust registry')
+        name, version = package['name'], package['version']
+        filename = name + '-' + version + '.crate'
+        if Path(filename).name != filename:
+            raise ValueError('Invalid Rust crate path')
+        output = destination / filename
+        if output.exists():
+            data = output.read_bytes()
+        else:
+            with urllib.request.urlopen('https://static.crates.io/crates/' + name + '/' + filename,
+                                        timeout=60) as response:
+                data = response.read()
+        if hashlib.sha256(data).hexdigest() != package['checksum']:
+            raise ValueError('Rust crate checksum mismatch: ' + name)
+        output.write_bytes(data)
+
+
+def check_restored_sources():
+    hashes, checksums = {}, {}
+    with tarfile.open(OUT / 'idevice.tar.gz', 'r|gz') as archive:
+        for member in archive:
+            if not member.isfile() or not member.name.startswith('vendor/'):
+                continue
+            if member.name in hashes:
+                raise ValueError('Duplicate vendor source member')
+            stream = archive.extractfile(member)
+            if member.name.endswith('/.cargo-checksum.json'):
+                data = stream.read()
+                checksums[str(Path(member.name).parent)] = json.loads(data)['files']
+                hashes[member.name] = hashlib.sha256(data).hexdigest()
+            else:
+                hashes[member.name] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if not checksums:
+        raise ValueError('Restored idevice source has no vendor checksum records')
+    for parent, files in checksums.items():
+        for name, expected in files.items():
+            full_name = parent + '/' + name
+            if full_name not in hashes:
+                raise ValueError('Restored idevice source is incomplete: ' + full_name)
+            if hashes[full_name] != expected:
+                raise ValueError('Restored idevice source checksum mismatch: ' + full_name)
+    with tarfile.open(OUT / 'cerbero-1.28.6.tar.xz') as archive:
+        names = {m.name.split('/', 1)[1] for m in archive if m.isfile() and '/' in m.name}
+        required = {'cerbero-uninstalled', 'config/cross-ios-arm64.cbc',
+                    'recipes/build-tools/gperf.recipe', 'packages/gstreamer-1.0-core.package'}
+        missing = required - names
+        if missing:
+            raise ValueError('Restored Cerbero source lacks build inputs: ' + ', '.join(sorted(missing)))
+
+
+def collect_moltenvk():
+    # These match the SDK object and its embedded VERSIONS.txt, not a moving tag.
+    for item in json.loads((ROOT / 'ci/moltenvk-source-inputs.json').read_text()):
+        output = OUT / ('media-' + item['name'] + '.tar.gz')
+        if output.exists():
+            data = output.read_bytes()
+        else:
+            with urllib.request.urlopen(item['url'], timeout=60) as response:
+                data = response.read()
+        if hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise ValueError('MoltenVK source checksum mismatch: ' + item['name'])
+        output.write_bytes(data)
 
 # Public fixtures from openssl 0.10.76, tokio-rustls 0.26.4 and untrusted 0.9.0.
 # Every crate archive was verified against the pinned Cargo.lock checksum.
@@ -40,7 +140,9 @@ def source_tree(source, output):
         raise ValueError('Missing source directory')
     with tarfile.open(output, 'w:gz') as archive:
         for directory, dirs, names in os.walk(source, followlinks=False):
-            dirs[:] = sorted(d for d in dirs if d not in {'.git', 'target', '.build'})
+            # Only the root target is Cargo output. cc/src/target is source.
+            dirs[:] = sorted(d for d in dirs if d != '.git' and
+                             not (Path(directory) == source and d in {'target', '.build'}))
             for name in sorted(names + [d for d in dirs if (Path(directory) / d).is_symlink()]):
                 path = Path(directory) / name
                 if path.suffix.lower() in {'.p12', '.pfx', '.mobileprovision', '.key'}:
@@ -48,7 +150,15 @@ def source_tree(source, output):
                     if path.is_symlink() or expected != hashlib.sha256(path.read_bytes()).hexdigest():
                         raise ValueError('Signing material in source input')
                 if path.suffix.lower() in {'.a', '.dylib', '.dll', '.exe'}:
-                    continue
+                    relative = path.relative_to(source)
+                    if relative.parts[0] != 'vendor' or len(relative.parts) < 3:
+                        continue
+                    # Cargo verifies these upstream fixtures/import libraries too.
+                    crate = source.joinpath(*relative.parts[:2])
+                    checksums = json.loads((crate / '.cargo-checksum.json').read_text())
+                    expected = checksums['files'].get(str(path.relative_to(crate)))
+                    if path.is_symlink() or expected != hashlib.sha256(path.read_bytes()).hexdigest():
+                        raise ValueError('Unverified binary in vendored source')
                 if path.is_symlink():
                     if not path.resolve().is_relative_to(source.resolve()):
                         raise ValueError('Source symlink escapes its root')
@@ -107,6 +217,12 @@ def collect(kind):
             ROOT / '.build/depot_tools', OUT / 'depot_tools.tar.gz')
         (OUT / 'angle-revisions.json').write_text(json.dumps(revisions, indent=2) + '\n')
     elif kind == 'package':
+        subprocess.run([sys.executable, str(ROOT / 'ci/repair-release-source.py')], check=True)
+        check_restored_sources()
+        collect_media_rust()
+        collect_rust_dependencies('media-rust-src-1.96.0.tar.xz', 'media-rust-dependencies')
+        collect_rust_dependencies('rust-standard-library.tar.gz', 'jit-rust-dependencies')
+        collect_moltenvk()
         required = ['iridium.tar.gz', 'repository-revisions.json', 'angle-revisions.json',
                     'StikJIT.tar.gz', 'idevice.tar.gz', 'cerbero-1.28.6.tar.xz',
                     'idevice-dependencies.json', 'idevice-ios-dependencies.txt',

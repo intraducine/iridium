@@ -17,10 +17,46 @@ def load(name, filename):
 dispatch = load("dispatch_build", "dispatch-build.py")
 graphics = load("verify_graphics", "verify-graphics.py")
 
+app_audit = load("app_audit", "collect-app-link-audit.py")
+
 packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
 
 class ManualBuildTests(unittest.TestCase):
+    def test_final_audit_blocks_packaging_but_not_audit_build(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'ci').mkdir()
+            (root / 'ci/binary-release-blockers.json').write_text('[]')
+            final = root / 'ci/binary-package-blockers.json'
+            final.write_text('["Final binary review pending"]')
+            with patch.object(prerequisites, 'REQUIRED', {}):
+                self.assertEqual(prerequisites.blockers(root), [])
+                self.assertTrue(prerequisites.blockers(root, package=True))
+                final.unlink()
+                self.assertTrue(prerequisites.blockers(root, package=True))
+        workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        self.assertLess(workflow.index('xcodebuild -project'), workflow.index('check-ipa-prerequisites.py --package'))
+        self.assertLess(workflow.index('check-ipa-prerequisites.py --package'), workflow.index('ci/package-unsigned-ipa.py'))
+
+    def test_app_inventory_hashes_native_files_and_propagates_tool_failure(self):
+        import hashlib
+        import subprocess
+        with tempfile.TemporaryDirectory() as temp:
+            app = Path(temp)
+            data = bytes.fromhex('cffaedfe') + b'native fixture'
+            (app / 'Iridium').write_bytes(data)
+            (app / 'resource.txt').write_text('resource')
+            with patch.object(app_audit.packager, 'check_payload'), patch.object(app_audit.subprocess, 'check_output') as tool:
+                tool.return_value = str(app / 'Iridium') + ':\n\t/usr/lib/libSystem.B.dylib\n'
+                record, = app_audit.inventory(app)
+                self.assertEqual(record['sha256'], hashlib.sha256(data).hexdigest())
+                self.assertEqual(record['path'], 'Iridium')
+                self.assertEqual(record['linked_libraries'], ['\t/usr/lib/libSystem.B.dylib'])
+                tool.side_effect = subprocess.CalledProcessError(1, 'otool')
+                with self.assertRaises(subprocess.CalledProcessError):
+                    app_audit.inventory(app)
+
     def test_manual_trigger_and_no_signing_secrets(self):
         text = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
         trigger = text.split('"on":\n', 1)[1].split('permissions:', 1)[0]

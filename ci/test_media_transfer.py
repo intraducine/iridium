@@ -55,7 +55,8 @@ class MediaTransferTests(unittest.TestCase):
             recipe.write_text(original)
             script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()
             command = next(line for line in script.splitlines()
-                           if line.startswith('git ') and '--check' not in line)
+                           if line.startswith('git ') and '--check' not in line
+                           and 'cerbero-gperf-cxx14.patch' in line)
             command = command.replace('$ROOT', str(root)).replace(
                 str(root / 'ci/patches/cerbero-gperf-cxx14.patch'), str(patch_file))
             subprocess.run(['bash', '-c', command], cwd=recipe.parents[2], check=True)

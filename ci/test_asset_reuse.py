@@ -9,6 +9,16 @@ reuse = load('asset_reuse_tests', 'reuse-build-assets.py')
 
 
 class AssetReuseTests(unittest.TestCase):
+    def test_reviewed_action_upgrade_preserves_inputs(self):
+        old = 'uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4\nwith:\n  path: source\n'
+        new = old.replace('ea165f8d65b6e75b540449e92b4886f43607fa02 # v4',
+                          '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1')
+        self.assertEqual(reuse.normalize_source_only_changes(old), reuse.normalize_source_only_changes(new))
+        self.assertNotEqual(reuse.normalize_source_only_changes(old), reuse.normalize_source_only_changes(new.replace('path: source', 'path: different')))
+        self.assertNotEqual(reuse.normalize_source_only_changes(old), reuse.normalize_source_only_changes(new.replace('043fb46d1a93c77aae656e7c1c64a875d1fc6a0a', 'a' * 40)))
+        for stage in ('jit', 'graphics'):
+            self.assertNotIn('ci/collect-release-source.py', reuse.COMPONENT_INPUTS[stage])
+
     def test_manual_producer_trust_and_success(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature',
                'head_sha': 'a' * 40, 'path': reuse.WORKFLOW,
