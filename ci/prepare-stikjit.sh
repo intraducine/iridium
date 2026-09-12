@@ -16,8 +16,22 @@ command -v rustup >/dev/null
 # is unknown. No existing app, certificate, prefix, or development repo is touched.
 rm "$STIK/idevice/libidevice_ffi.a"
 rustup toolchain install "$RUST" --profile minimal --target aarch64-apple-ios --component rust-src
+# cbindgen invokes Cargo inside vendored crates. Keep them outside this workspace.
+python3 - "$IDEVICE/Cargo.toml" <<'WORKSPACE'
+from pathlib import Path
+import sys
+import tomllib
+path = Path(sys.argv[1])
+text = path.read_text()
+assert 'exclude' not in tomllib.loads(text)['workspace'], "Review changed workspace exclusions"
+assert text.count('[workspace]\n') == 1, "Missing workspace header"
+path.write_text(text.replace('[workspace]\n', '[workspace]\nexclude = ["vendor"]\n', 1))
+WORKSPACE
 mkdir -p "$IDEVICE/.cargo"
 (cd "$IDEVICE" && cargo +"$RUST" vendor --locked vendor > .cargo/config.toml)
+# Fail before compilation if the nested Cargo invocation cannot resolve its package.
+(cd "$IDEVICE" && cargo +"$RUST" metadata --offline --no-deps --format-version=1 \
+    --manifest-path vendor/plist_ffi/Cargo.toml > /dev/null)
 IRIDIUM_RUST_SYSROOT="$(rustc +"$RUST" --print sysroot)" \
     python3 "$ROOT/ci/collect-release-source.py" jit
 rustc +"$RUST" -vV > "$ROOT/.build/corresponding-source/rust-toolchain.txt"

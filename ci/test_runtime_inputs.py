@@ -28,6 +28,32 @@ class RuntimeInputTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn('/tmp/iridium-media-sdk', (ROOT / 'iridium/apps/ios/madeira.yml').read_text())
 
+    def test_vendor_workspace_exclusion_with_real_cargo(self):
+        import shutil
+        import sys
+        cargo = shutil.which('cargo')
+        if not cargo:
+            self.skipTest('Cargo is not installed')
+        script = (ROOT / 'ci/prepare-stikjit.sh').read_text()
+        code = script.split("<<'WORKSPACE'\n", 1)[1].split('\nWORKSPACE', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / 'Cargo.toml'
+            manifest.write_text('[workspace]\nresolver="2"\nmembers=[]\n')
+            for name in ('plist_ffi', 'another_crate'):
+                crate = root / 'vendor' / name
+                (crate / 'src').mkdir(parents=True)
+                (crate / 'src/lib.rs').write_text('')
+                (crate / 'Cargo.toml').write_text(f'[package]\nname="{name}"\nversion="0.1.0"\nedition="2021"\n')
+            command = [cargo, 'metadata', '--offline', '--no-deps', '--format-version=1', '--manifest-path']
+            before = subprocess.run(command + [str(root / 'vendor/plist_ffi/Cargo.toml')], capture_output=True, text=True)
+            self.assertNotEqual(before.returncode, 0)
+            self.assertIn("believes it's in a workspace", before.stderr)
+            subprocess.run([sys.executable, '-c', code, str(manifest)], check=True)
+            for name in ('plist_ffi', 'another_crate'):
+                result = subprocess.run(command + [str(root / 'vendor' / name / 'Cargo.toml')], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_windows_compile_enables_ios_for_all_languages(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

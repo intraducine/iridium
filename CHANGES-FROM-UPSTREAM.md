@@ -91,3 +91,10 @@ Upstream diagnostics remain visible but do not become errors under a newer
 compiler. The former unknown-attribute suppression and libc++ infinity patch
 are removed; ANGLE and its dependency source files remain unchanged.
 The graphics source archive includes the separately pinned bootstrap depot_tools.
+
+### idevice Cargo workspace
+
+The CI recipe excludes its generated `vendor` directory from the idevice workspace
+so vendored build scripts can invoke Cargo independently. Vendored crate manifests
+and checksums are unchanged. The modified workspace manifest is included in the
+corresponding-source archive.
