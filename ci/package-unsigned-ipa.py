@@ -12,7 +12,10 @@ import tempfile
 
 MACHO = {bytes.fromhex(value) for value in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
 SENSITIVE = {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}
-PRIVATE_KEY_MARKER = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
+PRIVATE_KEY_MARKER = re.compile(rb"-----BEGIN (?P<label>(?:RSA |EC |OPENSSH )?PRIVATE KEY)-----")
+PEM_BASE64_LINE = re.compile(rb"[A-Za-z0-9+/]+={0,2}")
+PEM_METADATA_LINE = re.compile(rb"[A-Za-z0-9-]+:[ -~]*")
+MAX_PEM_SCAN = 1024 * 1024
 
 
 def executable_path(bundle, info):
@@ -22,10 +25,46 @@ def executable_path(bundle, info):
     return bundle / name
 
 
-def has_unsafe_private_key_marker(data):
-    """Return True for PEM key markers that are not NUL-terminated parser constants."""
+def _pem_payload_size(body):
+    """Return encoded payload size when body is a plausible textual PEM payload."""
+    encoded = 0
+    payload_started = False
+    for raw_line in body.replace(b"\r\n", b"\n").split(b"\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not payload_started and PEM_METADATA_LINE.fullmatch(line):
+            continue
+        if not PEM_BASE64_LINE.fullmatch(line):
+            return 0
+        payload_started = True
+        encoded += len(line)
+    return encoded
+
+
+def has_private_key_material(data):
+    """Return True only when a private-key PEM marker is followed by key payload data."""
     for match in PRIVATE_KEY_MARKER.finditer(data):
-        if match.end() >= len(data) or data[match.end()] != 0:
+        cursor = match.end()
+        if data[cursor:cursor + 2] == b"\r\n":
+            cursor += 2
+        elif data[cursor:cursor + 1] == b"\n":
+            cursor += 1
+        else:
+            # Compiled crypto libraries often contain parser marker strings without key data.
+            continue
+
+        limit = min(len(data), cursor + MAX_PEM_SCAN)
+        end_marker = b"-----END " + match.group("label") + b"-----"
+        end = data.find(end_marker, cursor, limit)
+        if end >= 0:
+            if _pem_payload_size(data[cursor:end]) >= 32:
+                return True
+            continue
+
+        # Also catch a truncated PEM that contains a substantial base64 payload but no footer.
+        candidate = data[cursor:limit].split(b"\x00", 1)[0]
+        if _pem_payload_size(candidate) >= 128:
             return True
     return False
 
@@ -43,7 +82,7 @@ def check_payload(app):
         if path.suffix.lower() in SENSITIVE:
             raise ValueError("App contains signing material; do not upload it")
         data = path.read_bytes()
-        if has_unsafe_private_key_marker(data):
+        if has_private_key_material(data):
             if hashlib.sha256(data).hexdigest() not in public_fixtures:
                 raise ValueError(f"App contains unreviewed private key material: {path.relative_to(app)}")
         if re.search(rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b", data):
