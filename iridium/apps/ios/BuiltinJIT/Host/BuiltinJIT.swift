@@ -10,7 +10,7 @@ final class BuiltinJIT: NSObject, JITHost {
             .appendingPathComponent("StikJIT/pairingFile.plist")
     }
     static var isHosted: Bool {
-        getenv("LC_HOME_PATH") != nil || Bundle.main.bundlePath.contains("/Documents/Applications/")
+        LiveContainerIntegration.isHosted()
     }
     static func importPairing(_ url: URL) throws {
         let scoped = url.startAccessingSecurityScopedResource()
