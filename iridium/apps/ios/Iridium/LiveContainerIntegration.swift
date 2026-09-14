@@ -110,8 +110,30 @@ enum LiveContainerIntegration {
         return inferredProvider
     }
 
-    static func isHosted(bundleURL: URL = Bundle.main.bundleURL) -> Bool {
-        bundleURL.path.contains("/Documents/Applications/")
+    static func isHosted(
+        bundleURL: URL = Bundle.main.bundleURL,
+        documentDirectoryURL: URL? = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first,
+        liveContainerHomePath: String? = ProcessInfo.processInfo.environment["LC_HOME_PATH"]
+    ) -> Bool {
+        if liveContainerHomePath?.isEmpty == false {
+            return true
+        }
+
+        let bundlePath = bundleURL.standardizedFileURL.path
+        if bundlePath.contains("/Documents/Applications/") {
+            return true
+        }
+
+        // LiveContainer can move a running guest's data container into its shared
+        // App Group during a handoff. Bundle.main is not a reliable hosting signal
+        // in that state, but the guest Documents directory remains under
+        // .../LiveContainer/Data/Application/<UUID>/Documents.
+        guard let documentDirectoryURL else { return false }
+        let documentPath = documentDirectoryURL.standardizedFileURL.path
+        return documentPath.contains("/LiveContainer/Data/Application/")
     }
 
     static func currentStatus(
