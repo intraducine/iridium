@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isPresentingImportPicker = false
+    @State private var isPresentingStandaloneImportPicker = false
+    @State private var isPresentingHostedImportPicker = false
     @State private var liveContainerStatus = LiveContainerIntegration.processLaunchStatus
     @State private var isShowingLiveContainerRepair = false
     @State private var liveContainerRepairRequiresRelaunch = false
@@ -37,7 +38,7 @@ struct LibraryView: View {
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
             importGame: { relocatingGame = nil; requestGameImport() }, settings: { appSettings = true },
-            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && artwork.error == nil)
+            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && artwork.error == nil)
             .toolbar(.hidden, for: .navigationBar)
         }
         }
@@ -63,10 +64,28 @@ struct LibraryView: View {
         .alert("Artwork", isPresented: Binding(get: { artwork.error != nil }, set: { if !$0 { artwork.error = nil } })) {
             Button("OK") { artwork.error = nil }
         } message: { Text(artwork.error ?? "") }
-        .fullScreenCover(isPresented: $isPresentingImportPicker) {
+        .fileImporter(
+            isPresented: $isPresentingStandaloneImportPicker,
+            allowedContentTypes: [.folder]
+        ) { result in
+            switch result {
+            case let .success(url):
+                print("[IridiumRuntime] importPicker: selected \(url.path) mode=standalone")
+                viewModel.scanImportFolder(at: url)
+            case let .failure(error):
+                let nsError = error as NSError
+                if nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError {
+                    print("[IridiumRuntime] importPicker: cancelled mode=standalone")
+                } else {
+                    print("[IridiumRuntime] importPicker: failed mode=standalone error=\(error.localizedDescription)")
+                    viewModel.reportImportSelectionFailure(error)
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $isPresentingHostedImportPicker) {
             GameImportDocumentPicker(
                 selection: {
-                    isPresentingImportPicker = false
+                    isPresentingHostedImportPicker = false
                     switch $0 {
                     case let .success(url):
                         viewModel.scanImportFolder(at: url)
@@ -75,7 +94,7 @@ struct LibraryView: View {
                     }
                 },
                 cancellation: {
-                    isPresentingImportPicker = false
+                    isPresentingHostedImportPicker = false
                 }
             )
             .ignoresSafeArea()
@@ -158,7 +177,12 @@ struct LibraryView: View {
             isShowingLiveContainerRepair = true
             return
         }
-        isPresentingImportPicker = true
+        if liveContainerStatus.isHosted {
+            isPresentingHostedImportPicker = true
+        } else {
+            print("[IridiumRuntime] importPicker: presented mode=standalone")
+            isPresentingStandaloneImportPicker = true
+        }
     }
 
     private func repairLiveContainerIntegration() {
@@ -183,9 +207,8 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // SwiftUI's fileImporter can fail to deliver its completion while an app is
-        // hosted by LiveContainer. Own the UIKit delegate directly so selection and
-        // cancellation always terminate this presentation.
+        // LiveContainer's hosted-app picker hooks need the delegate-backed UIKit
+        // path. Standalone installs use SwiftUI's native fileImporter instead.
         let picker = UIDocumentPickerViewController(
             // LiveContainer's safe picker hook recognizes an exact folder-only
             // request and translates it into its hosted-app compatibility flow.
@@ -195,7 +218,7 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
         picker.delegate = context.coordinator
         picker.allowsMultipleSelection = false
         picker.shouldShowFileExtensions = true
-        print("[IridiumRuntime] importPicker: presented")
+        print("[IridiumRuntime] importPicker: presented mode=livecontainer")
         return picker
     }
 
@@ -227,11 +250,11 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
             completed = true
             guard let url = urls.first else {
                 let error = CocoaError(.fileReadUnknown)
-                print("[IridiumRuntime] importPicker: empty selection")
+                print("[IridiumRuntime] importPicker: empty selection mode=livecontainer")
                 selection(.failure(error))
                 return
             }
-            print("[IridiumRuntime] importPicker: selected \(url.path)")
+            print("[IridiumRuntime] importPicker: selected \(url.path) mode=livecontainer")
             selection(.success(url))
         }
 
@@ -240,7 +263,7 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
                 return
             }
             completed = true
-            print("[IridiumRuntime] importPicker: cancelled")
+            print("[IridiumRuntime] importPicker: cancelled mode=livecontainer")
             cancellation()
         }
     }
