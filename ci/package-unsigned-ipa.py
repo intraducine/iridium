@@ -12,6 +12,7 @@ import tempfile
 
 MACHO = {bytes.fromhex(value) for value in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
 SENSITIVE = {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}
+PRIVATE_KEY_MARKER = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
 
 
 def executable_path(bundle, info):
@@ -19,6 +20,14 @@ def executable_path(bundle, info):
     if not isinstance(name, str) or not name or name in {".", ".."} or Path(name).name != name:
         raise ValueError("Invalid bundle executable name")
     return bundle / name
+
+
+def has_unsafe_private_key_marker(data):
+    """Return True for PEM key markers that are not NUL-terminated parser constants."""
+    for match in PRIVATE_KEY_MARKER.finditer(data):
+        if match.end() >= len(data) or data[match.end()] != 0:
+            return True
+    return False
 
 
 def check_payload(app):
@@ -34,7 +43,7 @@ def check_payload(app):
         if path.suffix.lower() in SENSITIVE:
             raise ValueError("App contains signing material; do not upload it")
         data = path.read_bytes()
-        if re.search(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", data):
+        if has_unsafe_private_key_marker(data):
             if hashlib.sha256(data).hexdigest() not in public_fixtures:
                 raise ValueError(f"App contains unreviewed private key material: {path.relative_to(app)}")
         if re.search(rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b", data):
