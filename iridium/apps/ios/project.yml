@@ -46,6 +46,7 @@ targets:
           - stikjit
           - stikdebug
           - livecontainer2
+          - livecontainer3
           - livecontainer
           - apple-magnifier
           - sidestore
