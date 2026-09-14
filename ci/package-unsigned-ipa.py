@@ -112,6 +112,48 @@ def unsigned_status(path):
     raise ValueError("Could not determine native executable signing state")
 
 
+def refresh_runtime_manifest_artifacts(app):
+    """Refresh artifact hashes after unsigned packaging mutates bundled Mach-O files."""
+    bundled_runtime_root = app / "BundledRuntime"
+    if not bundled_runtime_root.is_dir():
+        return
+
+    manifest_paths = sorted(bundled_runtime_root.glob("*/manifest.json"))
+    for manifest_path in manifest_paths:
+        bundle_root = manifest_path.parent
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        artifacts = manifest.get("artifacts")
+        if not isinstance(artifacts, list):
+            raise ValueError(f"Runtime manifest has invalid artifacts list: {manifest_path.relative_to(app)}")
+
+        changed = False
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                raise ValueError(f"Runtime manifest has invalid artifact entry: {manifest_path.relative_to(app)}")
+            relative_path = artifact.get("relativePath")
+            if not isinstance(relative_path, str) or not relative_path:
+                raise ValueError(f"Runtime manifest artifact is missing relativePath: {manifest_path.relative_to(app)}")
+            artifact_path = bundle_root / relative_path
+            if not artifact_path.is_file():
+                # The iOS bundle intentionally omits the compressed Wine archive when
+                # the extracted app-staged userland is present. Preserve its canonical
+                # archive identity in the manifest for upgrade comparisons.
+                continue
+            data = artifact_path.read_bytes()
+            checksum = hashlib.sha256(data).hexdigest()
+            size_bytes = len(data)
+            if artifact.get("checksum") != checksum or artifact.get("sizeBytes") != size_bytes:
+                artifact["checksum"] = checksum
+                artifact["sizeBytes"] = size_bytes
+                changed = True
+
+        if changed:
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+
 def package(app, output):
     if output.resolve().is_relative_to(app.resolve()):
         raise ValueError("Output directory must be outside the app bundle")
@@ -140,6 +182,10 @@ def package(app, output):
         for path in native:
             if not unsigned_status(path):
                 raise ValueError("Native code still has a signature")
+        # codesign --remove-signature changes Mach-O bytes. Refresh the bundled
+        # runtime inventory only after every signature has been removed so the
+        # manifest describes the exact bytes that are written into the IPA.
+        refresh_runtime_manifest_artifacts(staged)
         check_payload(staged)
         subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(ipa)], check=True)
     (output / "SHA256SUMS").write_text(hashlib.sha256(ipa.read_bytes()).hexdigest() + "  " + ipa.name + "\n")
