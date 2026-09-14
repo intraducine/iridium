@@ -101,7 +101,9 @@ class ManualBuildTests(unittest.TestCase):
     def test_public_fixture_exception_requires_exact_bytes(self):
         import hashlib
         import json
-        data = bytes.fromhex("7f454c46") + b"-----BEGIN " + b"PRIVATE KEY-----\nfixture"
+        begin = b"-----BEGIN " + b"PRIVATE KEY-----"
+        end = b"-----END " + b"PRIVATE KEY-----"
+        data = bytes.fromhex("7f454c46") + begin + b"\n" + b"A" * 96 + b"\n" + end + b"\n"
         with tempfile.TemporaryDirectory() as temp:
             app = Path(temp)
             binary = app / "library.so"
@@ -217,7 +219,17 @@ class ManualBuildTests(unittest.TestCase):
                 packager.executable_path(app, {"CFBundleExecutable": "../outside"})
             with self.assertRaises(ValueError):
                 packager.package(app, app / "output")
-            for filename, data in [("certificate.p12", b"fixture"), ("embedded.mobileprovision", b"fixture"), ("private.txt", b"-----BEGIN " + b"PRIVATE KEY-----")]:
+            private_key = (
+                b"-----BEGIN " + b"PRIVATE KEY-----\n"
+                + b"A" * 96
+                + b"\n-----END "
+                + b"PRIVATE KEY-----\n"
+            )
+            for filename, data in [
+                ("certificate.p12", b"fixture"),
+                ("embedded.mobileprovision", b"fixture"),
+                ("private.txt", private_key),
+            ]:
                 file = app / filename
                 file.write_bytes(data)
                 with self.assertRaises(ValueError):
