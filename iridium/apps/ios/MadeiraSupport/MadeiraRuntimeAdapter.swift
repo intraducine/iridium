@@ -82,7 +82,16 @@ enum MadeiraRuntimeAdapter {
                 }
                 guard DispatchQueue.main.sync(execute: { launchID == token }) else { return }
                 RuntimeLogCapture.writeLine("[Launch] Reserving memory for translated game code.")
-                guard let pool = StikJITHelper.allocateAdaptivePool() else {
+                let requestedPoolMB = UserDefaults.standard.integer(forKey: MadeiraJITPoolPolicy.preferenceKey)
+                let effectivePoolMB = MadeiraJITPoolPolicy.effectiveLimitMB(requested: requestedPoolMB)
+                if effectivePoolMB != requestedPoolMB {
+                    RuntimeLogCapture.writeLine(
+                        "[Launch] Automatic JIT memory capped at \(effectivePoolMB) MB because debugger-backed JIT pages count toward the app memory footprint."
+                    )
+                }
+                guard let pool = MadeiraJITPoolPolicy.withEffectiveLimit({
+                    StikJITHelper.allocateAdaptivePool()
+                }) else {
                     DispatchQueue.main.async { fail("Cannot allocate JIT memory. Restart Iridium, then try a smaller JIT memory limit in Runtime settings.") }
                     return
                 }
