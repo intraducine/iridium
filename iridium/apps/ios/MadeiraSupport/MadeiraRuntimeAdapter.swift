@@ -127,6 +127,15 @@ enum MadeiraRuntimeAdapter {
                 }
             }
         }
+        let finishExternalJIT: (Bool, String) -> Void = { ready, failureMessage in
+            if ready {
+                StikJITHelper.consumePersistentScriptRequest()
+                boot()
+            } else {
+                started = false
+                fail(failureMessage)
+            }
+        }
         let startExternalJIT = {
             if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
                 StikJITHelper.consumePersistentScriptRequest()
@@ -134,9 +143,27 @@ enum MadeiraRuntimeAdapter {
             } else {
                 StikJITHelper.enableJIT { ready in
                     if ready {
-                        StikJITHelper.consumePersistentScriptRequest()
-                        boot()
-                    } else { started = false; fail(StikJITHelper.lastFailure) }
+                        finishExternalJIT(true, "")
+                        return
+                    }
+                    let routeFailure = StikJITHelper.lastFailure
+                    let shouldTryLiveContainer3 =
+                        StikJITHelper.route == .automatic &&
+                        routeFailure.contains("Cannot open the selected JIT app")
+                    guard shouldTryLiveContainer3 else {
+                        finishExternalJIT(false, routeFailure)
+                        return
+                    }
+
+                    RuntimeLogCapture.writeLine(
+                        "[Launch] Existing external JIT routes were unavailable. Trying LiveContainer3."
+                    )
+                    MadeiraLiveContainer3JIT.enableJIT { liveContainer3Ready in
+                        finishExternalJIT(
+                            liveContainer3Ready,
+                            liveContainer3Ready ? "" : MadeiraLiveContainer3JIT.lastFailure
+                        )
+                    }
                 }
             }
         }
@@ -165,6 +192,7 @@ enum MadeiraRuntimeAdapter {
     static func stop() {
         launchID = UUID()
         StikJITHelper.cancel()
+        MadeiraLiveContainer3JIT.cancel()
         #if BUILTIN_STIKJIT
         BuiltinJIT.shared.cancel()
         #endif

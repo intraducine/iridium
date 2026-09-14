@@ -20,6 +20,9 @@ xcrun swiftc "$root/MadeiraSupport/MadeiraPointerContact.swift" \
 xcrun swiftc "$root/MadeiraSupport/MadeiraJITPoolPolicy.swift" \
   "$root/MadeiraSupportTests/JITPoolPolicyCheck.swift" -o "$check_binary"
 "$check_binary"
+xcrun swiftc "$root/MadeiraSupport/MadeiraExternalJITRouting.swift" \
+  "$root/MadeiraSupportTests/ExternalJITRoutingCheck.swift" -o "$check_binary"
+"$check_binary"
 python3 "$root/MadeiraSupportTests/HardwareKeyboardCheck.py"
 python3 "$root/MadeiraSupportTests/CursorCheck.py"
 python3 "$root/MadeiraSupportTests/InputDeliveryCheck.py"
