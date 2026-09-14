@@ -158,7 +158,7 @@ enum ExternalJITProviderResolver {
         static let probedSchemes = ["stikjit", "stikdebug", "livecontainer2", "sidestore", "apple-magnifier"]
 
         static var isHostedByLiveContainer: Bool {
-            Bundle.main.bundlePath.contains("/Documents/Applications/")
+            LiveContainerIntegration.isHosted()
         }
 
         @MainActor
