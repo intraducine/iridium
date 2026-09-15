@@ -37,15 +37,21 @@ for token in [
     assert token in overlay, token
 assert "private func controlSize(" not in overlay
 
-# Touch-controller players open the menu with a non-obstructing right-edge swipe.
-# The visual edge marker does not receive hits, so user-positioned controls remain usable.
+# Touch-controller players get a real right-edge menu hit target. A tap opens the
+# player menu; a drag repositions it vertically so it can be moved off a game control.
 for token in [
     "IridiumTouchControllerPlayerMenuRequested", "playerMenuRequested",
-    "startedAtEdge", "movedInward", "mostlyHorizontal",
+    '@AppStorage("IridiumPlayerMenuHandleYFraction")',
+    ".frame(width: 44, height: 72)", ".contentShape(Rectangle())",
+    ".zIndex(10_000)",
+    'DragGesture(minimumDistance: 0, coordinateSpace: .named("touch-controller-overlay"))',
+    "distance <= 8", "menuHandleYFraction = Double",
     "NotificationCenter.default.post(name: Self.playerMenuRequested",
-    ".allowsHitTesting(false)",
+    'accessibilityLabel("Player Menu")',
 ]:
     assert token in overlay, token
+for obsolete in ["startedAtEdge", "movedInward", "mostlyHorizontal", "Swipe inward from the right edge"]:
+    assert obsolete not in overlay, obsolete
 
 for token in [
     'Label("Add Control"', 'Button("Reset"', 'Button("Delete"',
@@ -94,4 +100,4 @@ for token in [
 ]:
     assert token in settings, token
 
-print("PASS customizable touch controller, unobstructed menu access, opt-in performance HUD, stall diagnostics, lifecycle reset, and input settings wiring")
+print("PASS customizable touch controller, tappable/draggable menu handle, opt-in performance HUD, stall diagnostics, lifecycle reset, and input settings wiring")
