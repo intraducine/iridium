@@ -30,6 +30,8 @@ python3 "$root/MadeiraSupportTests/InputWaitCheck.py"
 python3 "$root/MadeiraSupportTests/KeyboardScanCheck.py"
 python3 "$root/MadeiraSupportTests/HostArenaCheck.py"
 python3 "$root/MadeiraSupportTests/JITWaitCheck.py"
+python3 "$root/MadeiraSupportTests/AutomaticJITFailoverCheck.py"
+python3 "$root/MadeiraSupportTests/ReviewRegressionCheck.py"
 xcrun swiftc "$root/MadeiraSupport/MadeiraLaunchOptions.swift" \
   "$root/MadeiraSupportTests/LaunchOptionsCheck.swift" -o "$check_binary"
 "$check_binary"

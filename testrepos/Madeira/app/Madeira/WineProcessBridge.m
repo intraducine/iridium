@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <string.h>
+#include <stdatomic.h>
 
 #include "WineProcessBridge.h"
 #include "WineServerBridge.h"
@@ -283,7 +284,8 @@ extern void __wine_main(int argc, char *argv[]);
 extern void wine_log_set_file(const char *path);
 
 static pthread_t g_wine_thread;
-static volatile int g_wine_running = 0;
+static _Atomic int g_wine_running = 0;
+static _Atomic int g_wine_exit_code = -1;
 static char *g_prefix_path = NULL;
 
 /***********************************************************************
@@ -841,33 +843,61 @@ static void *wine_process_thread(void *arg) {
             snprintf(exe_path, sizeof(exe_path), "C:\\windows\\system32\\%s", madeira_exe);
         }
 
-        // Optional MADEIRA_ARGS env var: space-separated args appended to argv.
-        // Tokenized in-place; max 16 extra tokens.
+        // Iridium supplies a bounded JSON array. Spaces, quotes, empty strings,
+        // backslashes and Unicode are argv data, never shell syntax.
         static char args_buf[1024];
-        char *extra_argv[16] = {0};
+        char *extra_argv[256] = {0};
         int extra_argc = 0;
-        const char *madeira_args = getenv("MADEIRA_ARGS");
-        if (madeira_args && *madeira_args) {
-            strncpy(args_buf, madeira_args, sizeof(args_buf) - 1);
-            args_buf[sizeof(args_buf) - 1] = 0;
-            char *saveptr = NULL;
-            for (char *tok = strtok_r(args_buf, " ", &saveptr);
-                 tok && extra_argc < 16;
-                 tok = strtok_r(NULL, " ", &saveptr)) {
-                extra_argv[extra_argc++] = tok;
+        const char *json_args = getenv("IRIDIUM_MADEIRA_ARGS_JSON");
+        BOOL owned_arguments = json_args != NULL;
+        if (owned_arguments) {
+            size_t bytes = strnlen(json_args, 65537);
+            NSData *data = bytes <= 65536 ? [NSData dataWithBytes:json_args length:bytes] : nil;
+            id value = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+            BOOL valid = [value isKindOfClass:[NSArray class]] && [value count] <= 256;
+            if (valid) {
+                unichar zero = 0;
+                NSString *nul = [NSString stringWithCharacters:&zero length:1];
+                for (id argument in (NSArray *)value) {
+                    if (![argument isKindOfClass:[NSString class]] ||
+                        [(NSString *)argument rangeOfString:nul].location != NSNotFound) {
+                        valid = NO;
+                        break;
+                    }
+                    const char *utf8 = [(NSString *)argument UTF8String];
+                    char *copy = utf8 ? strdup(utf8) : NULL;
+                    if (!copy) { valid = NO; break; }
+                    extra_argv[extra_argc++] = copy;
+                }
+            }
+            if (!valid) {
+                for (int i = 0; i < extra_argc; i++) free(extra_argv[i]);
+                dprintf(STDERR_FILENO, "[WineProc] Invalid launch argument array\n");
+                g_wine_exit_code = 87;
+                g_wine_running = 0;
+                wineserver_stop();
+                return NULL;
+            }
+        } else {
+            // Retain the original Madeira developer-launch interface.
+            const char *madeira_args = getenv("MADEIRA_ARGS");
+            if (madeira_args && *madeira_args) {
+                strncpy(args_buf, madeira_args, sizeof(args_buf) - 1);
+                args_buf[sizeof(args_buf) - 1] = 0;
+                char *saveptr = NULL;
+                for (char *tok = strtok_r(args_buf, " ", &saveptr);
+                     tok && extra_argc < 16; tok = strtok_r(NULL, " ", &saveptr)) {
+                    extra_argv[extra_argc++] = tok;
+                }
             }
         }
-
-        char *argv[24];
+        char *argv[259];
         int argc = 0;
         argv[argc++] = "wine";
         argv[argc++] = exe_path;
         for (int i = 0; i < extra_argc; i++) argv[argc++] = extra_argv[i];
         argv[argc] = NULL;
-        dprintf(STDERR_FILENO, "[WineProc] argv[1] = %s\n", exe_path);
-        for (int i = 0; i < extra_argc; i++) {
-            dprintf(STDERR_FILENO, "[WineProc] argv[%d] = %s\n", 2 + i, extra_argv[i]);
-        }
+        dprintf(STDERR_FILENO, "[WineProc] Launching with %d arguments\n", extra_argc);
 
         /* iOS-Madeira: chdir to the unix path that maps to the exe's Wine
          * directory BEFORE __wine_main. Wine inherits the iOS app sandbox
@@ -922,9 +952,14 @@ static void *wine_process_thread(void *arg) {
 
         if (setjmp(wine_ios_exit_jmpbuf) == 0) {
             __wine_main(argc, argv);
+            g_wine_exit_code = 0;
             dprintf(STDERR_FILENO, "[WineProc] __wine_main returned normally\n");
         } else {
+            g_wine_exit_code = wine_ios_exit_code;
             dprintf(STDERR_FILENO, "[WineProc] Wine exited with code %d (caught by longjmp)\n", wine_ios_exit_code);
+        }
+        if (owned_arguments) {
+            for (int i = 0; i < extra_argc; i++) free(extra_argv[i]);
         }
 
         g_wine_running = 0;
@@ -962,6 +997,7 @@ int wine_process_start(const char *prefix_path) {
 
     LOG("Starting Wine process with prefix: %{public}s", prefix_path);
 
+    g_wine_exit_code = -1;
     g_wine_running = 1;
 
     // Create socketpair to bypass broken iOS UDS accept()
@@ -1007,6 +1043,10 @@ int wine_process_start(const char *prefix_path) {
 
 int wine_process_is_running(void) {
     return g_wine_running;
+}
+
+int wine_process_exit_code(void) {
+    return g_wine_exit_code;
 }
 
 int madeira_write_continue_flag(void) {

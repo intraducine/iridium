@@ -11,7 +11,7 @@ final class IridiumCoreTests: XCTestCase {
         try Data("fixture".utf8).write(to: exe)
         let snapshot = root.appendingPathComponent("state.json")
         let store = IridiumStore(snapshotURL: snapshot)
-        let game = await store.importGame(title: "Custom Game", installPath: source.path, executablePath: exe.path,
+        let game = try await store.importGame(title: "Custom Game", installPath: source.path, executablePath: exe.path,
             compatibilityProfileName: "generic-broad-catalog", inputProfileName: "", deviceTier: .tier2, rendererPreset: .dxvkPerformance)
         let prefixes = await store.allPrefixes()
         let save = URL(fileURLWithPath: game.installPath).appendingPathComponent("fixture.sav")
@@ -124,7 +124,7 @@ final class IridiumCoreTests: XCTestCase {
 
         let store = IridiumStore(snapshotURL: snapshotURL)
         await store.signIn(accountName: "tester@steam")
-        _ = await store.importGame(
+        _ = try await store.importGame(
             title: "Imported Game",
             installPath: sourceDirectory.path,
             executablePath: executableURL.path,
@@ -155,206 +155,47 @@ final class IridiumCoreTests: XCTestCase {
         XCTAssertTrue(executions.isEmpty)
     }
 
-    func testLegacySnapshotLoadResetsPersistedSeededState() async throws {
-        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        let snapshotURL = tempDirectory.appending(path: "state.json")
-
-        let importedFixture = makeGameFixture(
-            title: "Legacy Imported Game",
-            source: .manualImport,
-            appID: "1000010",
-            installPath: "/Managed/Imports/LegacyImportedGame",
-            executablePath: "/Managed/Imports/LegacyImportedGame/LegacyImportedGame.exe",
-            compatibilityProfileName: "generic-broad-catalog",
-            inputProfileName: "Touch + Controller",
-            titleFlags: ["manual-import"]
-        )
-        let steamFixture = makeGameFixture(
-            title: "Legacy Steam Game",
-            source: .steam,
-            appID: "1000011",
-            installPath: "/Managed/Steam/LegacySteamGame",
-            executablePath: "/Managed/Steam/LegacySteamGame/LegacySteamGame.exe",
-            compatibilityProfileName: "generic-broad-catalog",
-            inputProfileName: "Touch + Controller",
-            titleFlags: ["steam"]
-        )
-
-        var legacySnapshot = IridiumSnapshot.empty
-        legacySnapshot.games = [importedFixture.game, steamFixture.game]
-        legacySnapshot.downloads = [
-            DownloadTask(title: "Legacy Steam Game", progress: 0.4, state: .downloading, detail: "Legacy staged transfer", reservedDiskGB: 12)
-        ]
-        legacySnapshot.installExecutions = [
-            InstallExecutionRecord(
-                title: "Legacy Steam Game",
-                appID: "1000011",
-                buildID: "legacy-build",
-                branchName: "public",
-                targetPath: "/Managed/Steam/LegacySteamGame",
-                primaryExecutable: "LegacySteamGame.exe",
-                depotIDs: ["1000012"],
-                depotMountPaths: ["1000012": "Game"],
-                completedDepotIDs: [],
-                stage: .downloading,
-                detail: "Legacy install in progress",
-                reservedDiskGB: 12
-            )
-        ]
-        legacySnapshot.installHistory = [
-            InstallHistoryEntry(
-                title: "Legacy Steam Game",
-                appID: "1000011",
-                buildID: "legacy-build",
-                branchName: "public",
-                targetPath: "/Managed/Steam/LegacySteamGame",
-                primaryExecutable: "LegacySteamGame.exe",
-                installedAt: Date(),
-                detail: "Legacy install history"
-            )
-        ]
-        legacySnapshot.prefixes = [importedFixture.prefix, steamFixture.prefix]
-        legacySnapshot.steamAccount = SteamAccount(accountName: "legacy@steam", state: .signedIn)
-        legacySnapshot.steamLibrary = [
-            SteamLibraryEntry(title: "Legacy Steam Game", appID: "1000011", installed: true, cloudSavesEnabled: true)
-        ]
-        legacySnapshot.runtimeHealth = RuntimeHealthReport(
-            status: .healthy,
-            runtimeName: "Legacy Runtime",
-            notes: ["Legacy runtime state"]
-        )
-        legacySnapshot.lastLibrarySync = Date()
-        legacySnapshot.launchHistory = [
-            LaunchHistoryEntry(
-                gameTitle: "Legacy Steam Game",
-                resolvedExecutablePath: "/Managed/Steam/LegacySteamGame/LegacySteamGame.exe",
-                readiness: "Ready",
-                issueSummary: ["Legacy launch history"],
-                launchedAt: Date()
-            )
-        ]
-        legacySnapshot.compatibilityEvidence = [
-            CompatibilityEvidenceRecord(
-                title: "Legacy Steam Game",
-                source: .steam,
-                managedArtifactIdentifier: "legacy-steam-game",
-                executableFingerprint: "fingerprint",
-                runtimeBundleIdentifier: "legacy-runtime",
-                runtimeBundleVersion: "2026.03.01",
-                resolvedPolicySummary: "legacy",
-                accepted: true,
-                evidenceSummary: "Legacy evidence"
-            )
-        ]
-        legacySnapshot.verificationAudits = [
-            VerificationAuditEntry(
-                gameID: steamFixture.game.id,
-                gameTitle: "Legacy Steam Game",
-                overallStatus: .warning,
-                summary: "Legacy audit",
-                gates: [
-                    VerificationAuditGate(
-                        title: "Legacy Gate",
-                        detail: "Legacy detail",
-                        status: .warning
-                    )
-                ],
-                verifiedAt: Date()
-            )
-        ]
-        legacySnapshot.activityFeed = [
-            ActivityLogEntry(
-                kind: .steamRegistered,
-                title: "Registered Legacy Steam Game",
-                detail: "Legacy activity entry",
-                relatedTitle: "Legacy Steam Game",
-                recordedAt: Date()
-            )
-        ]
-
-        try writeLegacySnapshot(legacySnapshot, to: snapshotURL)
-
+    func testLegacySnapshotMigrationPreservesRecords() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Source")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let exe = source.appendingPathComponent("Game.exe")
+        try Data("fixture".utf8).write(to: exe)
+        let snapshotURL = root.appendingPathComponent("state.json")
         let store = IridiumStore(snapshotURL: snapshotURL)
-
-        let games = await store.allGames()
-        let downloads = await store.allDownloads()
-        let installExecutions = await store.installExecutions()
-        let installHistory = await store.installHistory()
-        let prefixes = await store.allPrefixes()
-        let account = await store.activeAccount()
-        let library = await store.librarySnapshot()
-        let syncDate = await store.lastLibrarySyncDate()
-        let launchHistory = await store.launchHistory()
-        let compatibilityEvidence = await store.compatibilityEvidence()
-        let audits = await store.verificationAudits()
-        let activity = await store.activityFeed()
-
-        XCTAssertTrue(games.isEmpty)
-        XCTAssertTrue(downloads.isEmpty)
-        XCTAssertTrue(installExecutions.isEmpty)
-        XCTAssertTrue(installHistory.isEmpty)
-        XCTAssertTrue(prefixes.isEmpty)
-        XCTAssertNil(account)
-        XCTAssertTrue(library.isEmpty)
-        XCTAssertNil(syncDate)
-        XCTAssertTrue(launchHistory.isEmpty)
-        XCTAssertTrue(compatibilityEvidence.isEmpty)
-        XCTAssertTrue(audits.isEmpty)
-        XCTAssertTrue(activity.isEmpty)
-
-        let health = await store.healthReport()
-        XCTAssertEqual(health.status, .actionRequired)
-        XCTAssertEqual(health.runtimeName, "Iridium Runtime Base")
-
-        let persistedData = try Data(contentsOf: snapshotURL)
-        let persistedSnapshot = try JSONDecoder().decode(IridiumSnapshot.self, from: persistedData)
-        XCTAssertEqual(persistedSnapshot.snapshotVersion, IridiumSnapshot.currentSnapshotVersion)
-        XCTAssertTrue(persistedSnapshot.games.isEmpty)
-        XCTAssertTrue(persistedSnapshot.activityFeed.isEmpty)
+        let game = try await store.importGame(title: "Game", installPath: source.path, executablePath: exe.path,
+            compatibilityProfileName: "generic-broad-catalog", inputProfileName: "", deviceTier: .tier1,
+            rendererPreset: .metalOpenGLFallback)
+        var old = try JSONDecoder().decode(IridiumSnapshot.self, from: Data(contentsOf: snapshotURL))
+        old.snapshotVersion = 0
+        let oldData = try JSONEncoder().encode(old)
+        try oldData.write(to: snapshotURL, options: .atomic)
+        let migratedStore = IridiumStore(snapshotURL: snapshotURL)
+        let games = await migratedStore.allGames()
+        XCTAssertEqual(games.map(\.id), [game.id])
+        XCTAssertEqual(games.first?.launchProfile.prefixID, game.launchProfile.prefixID)
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: game.launchProfile.executablePath)), Data("fixture".utf8))
+        let migrated = try JSONDecoder().decode(IridiumSnapshot.self, from: Data(contentsOf: snapshotURL))
+        XCTAssertEqual(migrated.snapshotVersion, IridiumSnapshot.currentSnapshotVersion)
+        let backups = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("state.pre-migration-") }
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backups.first)), oldData)
     }
 
-    func testLegacySnapshotResetPurgesOnlyManagedGameStorage() async throws {
-        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appending(path: UUID().uuidString, directoryHint: .isDirectory)
-        let snapshotURL = tempDirectory.appending(path: "state.json")
-        let importsRoot = tempDirectory
-            .appending(path: "Managed", directoryHint: .isDirectory)
-            .appending(path: "Imports", directoryHint: .isDirectory)
-        let steamRoot = tempDirectory
-            .appending(path: "Managed", directoryHint: .isDirectory)
-            .appending(path: "Steam", directoryHint: .isDirectory)
-        let runtimeRoot = tempDirectory
-            .appending(path: "Managed", directoryHint: .isDirectory)
-            .appending(path: "Runtime", directoryHint: .isDirectory)
-        let runtimeBridgeRoot = tempDirectory
-            .appending(path: "NativeBridge", directoryHint: .isDirectory)
-            .appending(path: "RuntimeHost", directoryHint: .isDirectory)
-        let steamBridgeRoot = tempDirectory
-            .appending(path: "NativeBridge", directoryHint: .isDirectory)
-            .appending(path: "Steam", directoryHint: .isDirectory)
-        let runtimeProviderRoot = tempDirectory.appending(path: "RuntimeProvider", directoryHint: .isDirectory)
-        let steamSessionsRoot = tempDirectory.appending(path: "SteamSessions", directoryHint: .isDirectory)
-
-        try writeFile(at: importsRoot.appending(path: "legacy-import.txt"), contents: "legacy import")
-        try writeFile(at: steamRoot.appending(path: "legacy-steam.txt"), contents: "legacy steam")
-        try writeFile(at: runtimeRoot.appending(path: "keep-runtime.txt"), contents: "keep runtime")
-        try writeFile(at: runtimeBridgeRoot.appending(path: "keep-bridge.txt"), contents: "keep bridge")
-        try writeFile(at: steamBridgeRoot.appending(path: "keep-steam-bridge.txt"), contents: "keep steam bridge")
-        try writeFile(at: runtimeProviderRoot.appending(path: "keep-provider.txt"), contents: "keep provider")
-        try writeFile(at: steamSessionsRoot.appending(path: "keep-session.txt"), contents: "keep session")
-
-        try writeLegacySnapshot(.empty, to: snapshotURL)
-
-        _ = IridiumStore(snapshotURL: snapshotURL)
-
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: importsRoot.path), [])
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: steamRoot.path), [])
-        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeRoot.appending(path: "keep-runtime.txt").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeBridgeRoot.appending(path: "keep-bridge.txt").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: steamBridgeRoot.appending(path: "keep-steam-bridge.txt").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: runtimeProviderRoot.appending(path: "keep-provider.txt").path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: steamSessionsRoot.appending(path: "keep-session.txt").path))
+    func testLegacySnapshotMigrationPreservesManagedFiles() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let importFile = root.appendingPathComponent("Managed/Imports/Game/save.dat")
+        let steamFile = root.appendingPathComponent("Managed/Steam/Game/save.dat")
+        try writeFile(at: importFile, contents: "import save")
+        try writeFile(at: steamFile, contents: "steam save")
+        let snapshot = root.appendingPathComponent("state.json")
+        try writeLegacySnapshot(.empty, to: snapshot)
+        _ = IridiumStore(snapshotURL: snapshot)
+        XCTAssertEqual(try String(contentsOf: importFile, encoding: .utf8), "import save")
+        XCTAssertEqual(try String(contentsOf: steamFile, encoding: .utf8), "steam save")
     }
 
     func testPrefixCloneAndRepairMutateRuntimeState() async throws {
@@ -667,10 +508,10 @@ final class IridiumCoreTests: XCTestCase {
         XCTAssertEqual(recoveredLaunch?.failureCode, "runtimeBootFailed")
     }
 
-    func testImportGameRefreshesExistingManualImportInsteadOfDuplicatingIt() async {
+    func testImportGameRefreshesExistingManualImportInsteadOfDuplicatingIt() async throws {
         let store = IridiumStore()
 
-        _ = await store.importGame(
+        _ = try await store.importGame(
             title: "Imported Game",
             installPath: "/Managed/Imports/ImportedGame",
             executablePath: "/Managed/Imports/ImportedGame/ImportedGame.exe",
@@ -680,7 +521,7 @@ final class IridiumCoreTests: XCTestCase {
             rendererPreset: .metalOpenGLFallback
         )
 
-        _ = await store.importGame(
+        _ = try await store.importGame(
             title: "Imported Game Updated",
             installPath: "/Managed/Imports/ImportedGame",
             executablePath: "/Managed/Imports/ImportedGame/ImportedGame.exe",
@@ -1050,7 +891,7 @@ final class IridiumCoreTests: XCTestCase {
             .path
 
         let store = IridiumStore(snapshot: snapshot, snapshotURL: snapshotURL)
-        let imported = await store.importGame(
+        let imported = try await store.importGame(
             title: "Imported Game",
             installPath: sourceDirectory.path,
             executablePath: executableURL.path,
@@ -1211,7 +1052,7 @@ final class IridiumCoreTests: XCTestCase {
         FileManager.default.createFile(atPath: executableURL.path, contents: Data("imported".utf8))
 
         let store = IridiumStore(snapshotURL: snapshotURL)
-        let game = await store.importGame(
+        let game = try await store.importGame(
             title: "Imported Game",
             installPath: sourceDirectory.path,
             executablePath: executableURL.path,
@@ -1252,7 +1093,7 @@ final class IridiumCoreTests: XCTestCase {
         FileManager.default.createFile(atPath: executableURL.path, contents: Data("imported".utf8))
 
         let store = IridiumStore(snapshotURL: snapshotURL)
-        let game = await store.importGame(
+        let game = try await store.importGame(
             title: "Imported Game",
             installPath: aliasedSourceDirectory.path,
             executablePath: executableURL.path,
@@ -1276,7 +1117,7 @@ final class IridiumCoreTests: XCTestCase {
         FileManager.default.createFile(atPath: executableURL.path, contents: Data("imported".utf8))
 
         let store = IridiumStore(snapshotURL: snapshotURL)
-        let game = await store.importGame(
+        let game = try await store.importGame(
             title: "Imported Game",
             installPath: sourceDirectory.path,
             executablePath: executableURL.path,
@@ -1451,7 +1292,7 @@ final class IridiumCoreTests: XCTestCase {
         try encoder.encode(snapshot).write(to: snapshotURL, options: .atomic)
 
         let store = IridiumStore(snapshotURL: snapshotURL)
-        let refreshed = await store.importGame(
+        let refreshed = try await store.importGame(
             title: "hollow_knight",
             installPath: sourceDirectory.path,
             executablePath: sourceExecutable.path,
@@ -1461,15 +1302,11 @@ final class IridiumCoreTests: XCTestCase {
             rendererPreset: .metalOpenGLFallback
         )
 
-        XCTAssertEqual(refreshed.installPath, currentRoot.appending(path: "Managed", directoryHint: .isDirectory)
-            .appending(path: "Imports", directoryHint: .isDirectory)
-            .appending(path: "hollowknight", directoryHint: .isDirectory)
-            .path)
-        XCTAssertEqual(refreshed.launchProfile.executablePath, currentRoot.appending(path: "Managed", directoryHint: .isDirectory)
-            .appending(path: "Imports", directoryHint: .isDirectory)
-            .appending(path: "hollowknight", directoryHint: .isDirectory)
-            .appending(path: "hollow_knight.exe")
-            .path)
+        XCTAssertTrue(refreshed.installPath.hasPrefix(currentRoot.appendingPathComponent("Managed/Imports/hollowknight-").path))
+        XCTAssertEqual(refreshed.launchProfile.executablePath,
+                       URL(fileURLWithPath: refreshed.installPath).appendingPathComponent("hollow_knight.exe").path)
+        XCTAssertEqual(refreshed.id, gameID)
+        XCTAssertEqual(refreshed.launchProfile.prefixID, prefixID)
         XCTAssertTrue(FileManager.default.fileExists(atPath: refreshed.launchProfile.executablePath))
         let isVerified = await store.verify(gameID: gameID)
         XCTAssertTrue(isVerified)
@@ -1485,7 +1322,7 @@ final class IridiumCoreTests: XCTestCase {
         FileManager.default.createFile(atPath: executableURL.path, contents: Data("imported".utf8))
 
         let store = IridiumStore(snapshotURL: snapshotURL)
-        let game = await store.importGame(
+        let game = try await store.importGame(
             title: "Imported Game",
             installPath: sourceDirectory.path,
             executablePath: executableURL.path,

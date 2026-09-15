@@ -17,13 +17,53 @@ import MadeiraNative
     private static var keyboardDelivered = 0
     static func key(hid: Int, pressed: Bool) {
         keyboardEvents += 1
-        guard acceptingInput, UIApplication.shared.applicationState == .active,
+        guard acceptingInput, !softwareKeyboardActive, UIApplication.shared.applicationState == .active,
               let key = MadeiraKeys.virtualKey(hid: hid) else { return }
         let changed = pressed ? held.insert(key).inserted : held.remove(key) != nil
         if changed {
+            if key == 0x14 && pressed { capsLockEnabled.toggle() }
             keyboardDelivered += 1
             winios_post_key(key, pressed ? 1 : 0)
         }
+    }
+
+    static var softwareKeyboardActive = false {
+        didSet {
+            guard softwareKeyboardActive, !oldValue else { return }
+            for key in held { winios_post_key(key, 0) }
+            held.removeAll()
+            pointerCaptured = false
+        }
+    }
+    private static var capsLockEnabled = false
+
+    @discardableResult
+    static func insertText(_ text: String) -> Bool {
+        guard acceptingInput, UIApplication.shared.applicationState == .active else { return true }
+        let mappings = text.map { MadeiraKeys.virtualKey(character: $0) }
+        // Reject the entire insertion rather than silently dropping or substituting letters.
+        guard mappings.allSatisfy({ $0 != nil }) else { return false }
+        for mapping in mappings.compactMap({ $0 }) { tap(key: mapping.key, shift: mapping.shift) }
+        return true
+    }
+
+    static func deleteBackward() {
+        guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
+        tap(key: 0x08, shift: false)
+    }
+
+    private static func tap(key: Int32, shift: Bool) {
+        keyboardEvents += 1
+        keyboardDelivered += 1
+        let modifiers: Set<Int32> = [0x10, 0x11, 0x12, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c]
+        let temporarilyReleased = held.intersection(modifiers.union([key])).sorted()
+        for heldKey in temporarilyReleased { winios_post_key(heldKey, 0) }
+        let effectiveShift = (0x41...0x5a).contains(key) ? (shift != capsLockEnabled) : shift
+        if effectiveShift { winios_post_key(0x10, 1) }
+        winios_post_key(key, 1)
+        winios_post_key(key, 0)
+        if effectiveShift { winios_post_key(0x10, 0) }
+        for heldKey in temporarilyReleased { winios_post_key(heldKey, 1) }
     }
 
     // Relative deltas and absolute UIKit locations must never drive the cursor together.

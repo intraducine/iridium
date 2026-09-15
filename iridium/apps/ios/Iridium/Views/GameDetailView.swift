@@ -10,6 +10,7 @@ struct GameDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var rename = false
     @State private var confirmRemoval = false
+    @State private var confirmRefresh = false
 
     var body: some View {
         List {
@@ -25,6 +26,14 @@ struct GameDetailView: View {
                     .accessibilityIdentifier("gameControlsLink")
                 MenuNavigationLink { GameStorageView(game: game, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
                     Label("Files & Saves", systemImage: "folder")
+                }
+            }
+            if viewModel.usesMadeiraRuntime {
+                Section {
+                    MenuButton("Refresh Game Copy", systemImage: "arrow.clockwise") { confirmRefresh = true }
+                        .disabled(viewModel.refreshingGameCopy || viewModel.isLaunchActionDisabled(for: game))
+                } footer: {
+                    Text("Refreshes the isolated runtime copy from the imported files. The current copy is kept as a backup. Restart Iridium before refreshing after a game session.")
                 }
             }
             if viewModel.isLaunchActionDisabled(for: game) {
@@ -75,6 +84,12 @@ struct GameDetailView: View {
                     Spacer()
                 }
             }.padding(.horizontal, 16).padding(.vertical, 8)
+        }
+        .confirmationDialog("Refresh the isolated game copy?", isPresented: $confirmRefresh, titleVisibility: .visible) {
+            Button("Refresh and Keep Backup") { viewModel.refreshMadeiraGameCopy(game) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Conflicting files, including any saves stored in the game folder, will be replaced by the imported versions. The complete previous copy is kept in Documents/MadeiraTestPrefixes/<game ID>/game-backup-<ID>. Windows profile saves are not replaced. Updating first copies the entire game and needs extra storage.")
         }
         .sheet(isPresented: $rename) { LibraryAppearanceEditor(game: game, artwork: artwork) }
         .sheet(isPresented: $confirmRemoval) {
