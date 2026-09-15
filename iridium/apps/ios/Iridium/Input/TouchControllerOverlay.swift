@@ -1,0 +1,316 @@
+import SwiftUI
+
+struct TouchControllerOverlay: View {
+    let gameID: UUID
+    @State private var layout: TouchControllerLayout
+
+    init(gameID: UUID) {
+        self.gameID = gameID
+        _layout = State(initialValue: TouchControllerLayoutStore.layout(for: gameID))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let minimumDimension = min(geometry.size.width, geometry.size.height)
+            ZStack {
+                ForEach(layout.controls.filter { !$0.isHidden }) { control in
+                    let size = controlSize(control, minimumDimension: minimumDimension)
+                    TouchControllerRuntimeControl(control: control, renderedSize: size)
+                        .frame(width: size.width, height: size.height)
+                        .position(
+                            x: control.centerX * geometry.size.width,
+                            y: control.centerY * geometry.size.height
+                        )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .ignoresSafeArea()
+        .onAppear { TouchControllerRuntimeBridge.setActive(true) }
+        .onDisappear { TouchControllerRuntimeBridge.setActive(false) }
+        .onReceive(NotificationCenter.default.publisher(for: TouchControllerLayoutStore.settingsChanged)) { notification in
+            guard let changedGame = notification.object as? UUID, changedGame == gameID else { return }
+            layout = TouchControllerLayoutStore.layout(for: gameID)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("On-screen controller")
+    }
+}
+
+private func controlSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
+    let base = max(38, CGFloat(control.size) * minimumDimension)
+    switch control.mapping.kind {
+    case .stick, .dpad:
+        return CGSize(width: base, height: base)
+    case .trigger:
+        return CGSize(width: base * 1.55, height: base * 0.68)
+    case .button:
+        switch control.mapping {
+        case .leftBumper, .rightBumper:
+            return CGSize(width: base * 1.45, height: base * 0.70)
+        case .menu, .view:
+            return CGSize(width: base * 1.15, height: base * 0.80)
+        default:
+            return CGSize(width: base, height: base)
+        }
+    }
+}
+
+private struct TouchControllerRuntimeControl: View {
+    let control: TouchControllerControl
+    let renderedSize: CGSize
+
+    var body: some View {
+        switch control.mapping.kind {
+        case .button:
+            TouchControllerButton(control: control)
+        case .trigger:
+            TouchControllerTrigger(control: control)
+        case .stick:
+            TouchControllerStick(control: control, renderedSize: renderedSize)
+        case .dpad:
+            TouchControllerDPad(control: control, renderedSize: renderedSize)
+        }
+    }
+}
+
+private struct TouchControllerButton: View {
+    let control: TouchControllerControl
+    @State private var pressed = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(pressed ? 0.58 : 0.36))
+            Circle()
+                .stroke(.white.opacity(pressed ? 0.88 : 0.58), lineWidth: 2)
+            Text(control.mapping.compactLabel)
+                .font(.system(.body, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .opacity(control.opacity)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed else { return }
+                    pressed = true
+                    TouchControllerRuntimeBridge.setButton(control.mapping, pressed: true)
+                }
+                .onEnded { _ in release() }
+        )
+        .onDisappear { release() }
+        .accessibilityLabel(control.mapping.displayName)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func release() {
+        guard pressed else { return }
+        pressed = false
+        TouchControllerRuntimeBridge.setButton(control.mapping, pressed: false)
+    }
+}
+
+private struct TouchControllerTrigger: View {
+    let control: TouchControllerControl
+    @State private var pressed = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(.black.opacity(pressed ? 0.60 : 0.38))
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(.white.opacity(pressed ? 0.90 : 0.60), lineWidth: 2)
+            Text(control.mapping.compactLabel)
+                .font(.system(.caption, design: .rounded, weight: .bold))
+                .foregroundStyle(.white)
+        }
+        .opacity(control.opacity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !pressed else { return }
+                    pressed = true
+                    TouchControllerRuntimeBridge.setTrigger(control.mapping, value: 1)
+                }
+                .onEnded { _ in release() }
+        )
+        .onDisappear { release() }
+        .accessibilityLabel(control.mapping.displayName)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func release() {
+        guard pressed else { return }
+        pressed = false
+        TouchControllerRuntimeBridge.setTrigger(control.mapping, value: 0)
+    }
+}
+
+private struct TouchControllerStick: View {
+    let control: TouchControllerControl
+    let renderedSize: CGSize
+    @State private var knobOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Circle().fill(.black.opacity(0.32))
+            Circle().stroke(.white.opacity(0.45), lineWidth: 2)
+            Circle()
+                .fill(.white.opacity(0.42))
+                .frame(width: renderedSize.width * 0.46, height: renderedSize.height * 0.46)
+                .offset(knobOffset)
+            Text(control.mapping.compactLabel)
+                .font(.caption2.bold())
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .opacity(control.opacity)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in update(location: value.location) }
+                .onEnded { _ in reset() }
+        )
+        .onDisappear { reset() }
+        .accessibilityLabel(control.mapping.displayName)
+    }
+
+    private func update(location: CGPoint) {
+        let radius = max(1, min(renderedSize.width, renderedSize.height) * 0.38)
+        var x = location.x - renderedSize.width / 2
+        var y = location.y - renderedSize.height / 2
+        let length = sqrt(x * x + y * y)
+        if length > radius {
+            x *= radius / length
+            y *= radius / length
+        }
+        knobOffset = CGSize(width: x, height: y)
+        TouchControllerRuntimeBridge.setStick(
+            control.mapping,
+            x: Float(x / radius),
+            y: Float(-y / radius),
+            active: true
+        )
+    }
+
+    private func reset() {
+        knobOffset = .zero
+        TouchControllerRuntimeBridge.setStick(control.mapping, x: 0, y: 0, active: false)
+    }
+}
+
+private struct TouchControllerDPad: View {
+    let control: TouchControllerControl
+    let renderedSize: CGSize
+    @State private var directions: Set<Direction> = []
+
+    private enum Direction: CaseIterable, Hashable {
+        case up, down, left, right
+
+        var mask: UInt16 {
+            switch self {
+            case .up: 0x0001
+            case .down: 0x0002
+            case .left: 0x0004
+            case .right: 0x0008
+            }
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black.opacity(0.30))
+                .frame(width: renderedSize.width * 0.34, height: renderedSize.height)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black.opacity(0.30))
+                .frame(width: renderedSize.width, height: renderedSize.height * 0.34)
+            Image(systemName: "dpad.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white.opacity(0.55))
+                .padding(renderedSize.width * 0.10)
+        }
+        .opacity(control.opacity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in update(location: value.location) }
+                .onEnded { _ in releaseAll() }
+        )
+        .onDisappear { releaseAll() }
+        .accessibilityLabel("D-Pad")
+    }
+
+    private func update(location: CGPoint) {
+        let center = CGPoint(x: renderedSize.width / 2, y: renderedSize.height / 2)
+        let dx = location.x - center.x
+        let dy = location.y - center.y
+        let threshold = min(renderedSize.width, renderedSize.height) * 0.14
+        var next = Set<Direction>()
+        if dx > threshold { next.insert(.right) }
+        if dx < -threshold { next.insert(.left) }
+        if dy > threshold { next.insert(.down) }
+        if dy < -threshold { next.insert(.up) }
+
+        for direction in Direction.allCases where directions.contains(direction) != next.contains(direction) {
+            TouchControllerRuntimeBridge.setDPad(direction.mask, pressed: next.contains(direction))
+        }
+        directions = next
+    }
+
+    private func releaseAll() {
+        for direction in directions {
+            TouchControllerRuntimeBridge.setDPad(direction.mask, pressed: false)
+        }
+        directions.removeAll()
+    }
+}
+
+private enum TouchControllerRuntimeBridge {
+    static func setActive(_ active: Bool) {
+        #if MADEIRA_RUNTIME
+        MadeiraController.setTouchControlsActive(active)
+        #endif
+    }
+
+    static func setButton(_ mapping: TouchControllerMapping, pressed: Bool) {
+        guard let mask = mapping.buttonMask else { return }
+        #if MADEIRA_RUNTIME
+        MadeiraController.setTouchButton(mask: mask, pressed: pressed)
+        #endif
+    }
+
+    static func setDPad(_ mask: UInt16, pressed: Bool) {
+        #if MADEIRA_RUNTIME
+        MadeiraController.setTouchButton(mask: mask, pressed: pressed)
+        #endif
+    }
+
+    static func setTrigger(_ mapping: TouchControllerMapping, value: Float) {
+        #if MADEIRA_RUNTIME
+        switch mapping {
+        case .leftTrigger:
+            MadeiraController.setTouchTrigger(left: true, value: value)
+        case .rightTrigger:
+            MadeiraController.setTouchTrigger(left: false, value: value)
+        default:
+            break
+        }
+        #endif
+    }
+
+    static func setStick(_ mapping: TouchControllerMapping, x: Float, y: Float, active: Bool) {
+        #if MADEIRA_RUNTIME
+        switch mapping {
+        case .leftStick:
+            MadeiraController.setTouchStick(left: true, x: x, y: y, active: active)
+        case .rightStick:
+            MadeiraController.setTouchStick(left: false, x: x, y: y, active: active)
+        default:
+            break
+        }
+        #endif
+    }
+}
