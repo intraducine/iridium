@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct TouchControllerLayoutEditorView: View {
@@ -37,8 +38,8 @@ struct TouchControllerLayoutEditorView: View {
                         )
                         .frame(width: renderedSize.width, height: renderedSize.height)
                         .position(
-                            x: control.centerX * geometry.size.width,
-                            y: control.centerY * geometry.size.height
+                            x: CGFloat(control.centerX) * geometry.size.width,
+                            y: CGFloat(control.centerY) * geometry.size.height
                         )
                         .opacity(control.isHidden ? 0.26 : 1)
                         .gesture(
@@ -183,8 +184,8 @@ struct TouchControllerLayoutEditorView: View {
     private func move(_ id: UUID, to location: CGPoint, canvas: CGSize) {
         guard canvas.width > 0, canvas.height > 0,
               let index = layout.controls.firstIndex(where: { $0.id == id }) else { return }
-        layout.controls[index].centerX = min(0.98, max(0.02, location.x / canvas.width))
-        layout.controls[index].centerY = min(0.98, max(0.02, location.y / canvas.height))
+        layout.controls[index].centerX = min(0.98, max(0.02, Double(location.x / canvas.width)))
+        layout.controls[index].centerY = min(0.98, max(0.02, Double(location.y / canvas.height)))
         save()
     }
 
