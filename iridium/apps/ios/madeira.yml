@@ -9,6 +9,7 @@ targets:
     sources:
       - path: MediaSupport/MediaRuntime.c
       - path: MadeiraSupport/MadeiraSteamEnv.c
+      - path: MadeiraSupport/MadeiraGuestControl.c
       - path: ../../../testrepos/Madeira/app/Madeira
         includes:
           - JITAllocator.c
