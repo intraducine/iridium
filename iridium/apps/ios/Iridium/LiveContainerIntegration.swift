@@ -26,8 +26,12 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             && jitScriptMatches
     }
 
+    var automaticJITDisabled: Bool {
+        configurationFilePresent && !launchWithJITEnabled
+    }
+
     var fullyConfigured: Bool {
-        filePickerConfigured && jitConfigured
+        filePickerConfigured && automaticJITDisabled && jitScriptMatches
     }
 
     func setupFeedback(launchStatus: LiveContainerIntegrationStatus) -> String? {
@@ -36,12 +40,12 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             return "Could not verify LiveContainer setup. Its settings file is missing or unreadable."
         }
         guard fullyConfigured else {
-            return "LiveContainer setup is incomplete. Use Add Game to repair the file-picker and JIT settings."
+            return "LiveContainer setup is incomplete. Use Add Game to repair its settings."
         }
         guard launchStatus.fullyConfigured else {
             return "Setup saved and verified. Restart required: fully close Iridium, then open it from LiveContainer. LiveContainer loads these per-app settings only when Iridium starts."
         }
-        return "LiveContainer setup complete. LiveContainer will prepare JIT before Iridium starts."
+        return "LiveContainer setup complete. Iridium will request JIT when you play."
     }
 
 }
@@ -206,11 +210,11 @@ enum LiveContainerIntegration {
             throw LiveContainerIntegrationError.malformedConfiguration
         }
 
-        // A guest process cannot survive when its host switches to StikDebug.
-        // Let LiveContainer obtain JIT before it starts the Iridium guest.
+        // Keep host startup JIT disabled. Iridium requests JIT for its running
+        // process only after the user starts a game.
         configuration["doSymlinkInbox"] = true
         configuration["fixFilePickerNew"] = true
-        configuration["isJITNeeded"] = true
+        configuration["isJITNeeded"] = false
         configuration["jitLaunchScriptJs"] = expectedJITScriptData.base64EncodedString()
 
         let encoded = try PropertyListSerialization.data(

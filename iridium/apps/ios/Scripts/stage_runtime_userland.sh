@@ -545,30 +545,6 @@ if [ ! -s "${support_root}/share/wine/nls/l_intl.nls" ]; then
   exit 1
 fi
 
-# SwiftPM also copies the package's canonical runtime resource bundle into the
-# app. Iridium uses the explicit Bundle.main override above, so keep only its
-# tiny manifest fallback and remove the duplicate payload from this derived
-# build product.
-package_resource_bundle="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Iridium_IridiumRuntime.bundle"
-package_runtime_root="${package_resource_bundle}/BundledRuntime"
-case "${package_runtime_root}" in
-  "${TARGET_BUILD_DIR}"/*/Iridium_IridiumRuntime.bundle/BundledRuntime)
-    if [ -d "${package_resource_bundle}" ]; then
-      rm -rf "${package_runtime_root}"
-      mkdir -p "${package_runtime_root}/iridium-runtime-base"
-      # The root manifest is finalized above with the app-staged userland
-      # delivery contract. Keep SwiftPM's manifest-only fallback identical so
-      # version and delivery diagnostics cannot disagree about this IPA.
-      cp -f "${runtime_bundle_root}/manifest.json" \
-        "${package_runtime_root}/iridium-runtime-base/manifest.json"
-    fi
-    ;;
-  *)
-    echo "error: Refusing to prune unexpected SwiftPM runtime resource path ${package_runtime_root}" >&2
-    exit 1
-    ;;
-esac
-
 if [ "${CODE_SIGNING_ALLOWED:-NO}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
   mach_o_candidates="$(mktemp)"
   find "${support_root}" "${frameworks_root}/libEGL.framework" "${frameworks_root}/libGLESv2.framework" -type f > "${mach_o_candidates}"

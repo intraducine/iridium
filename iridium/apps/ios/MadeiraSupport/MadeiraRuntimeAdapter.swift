@@ -94,6 +94,9 @@ enum MadeiraRuntimeAdapter {
                 defer { DispatchQueue.main.async { bootInProgress = false } }
                 func current() -> Bool { DispatchQueue.main.sync { launchID == token && !launchCancelled && !failureReported } }
                 guard current() else { return }
+                // The handoff is complete. Do not replay this launch if iOS
+                // later terminates the process during game preparation.
+                UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                 if !cube {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
@@ -174,7 +177,6 @@ enum MadeiraRuntimeAdapter {
                     wineserver_stop() // worker only; never join a native thread on the UI queue
                     return
                 }
-                UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                 DispatchQueue.main.async {
                     guard launchID == token else {
                         requestGuestClose()
