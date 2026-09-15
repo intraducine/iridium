@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 root=Path(__file__).resolve().parents[4]
 s=(root/'testrepos/Madeira/app/Madeira/StikJITHelper.swift').read_text()
+lc3=(root/'iridium/apps/ios/MadeiraSupport/MadeiraLiveContainer3JIT.swift').read_text()
+assert 'URLQueryItem(name: "pid", value: String(getpid()))' in lc3
 body=s[s.index('    enum Route:'):s.index('    private static var pinned')]
 stubs=r'''
 import Foundation
@@ -16,6 +18,7 @@ struct Date: Comparable {
  func addingTimeInterval(_ value: Double) -> Date { Date(timeIntervalSince1970 + value) }
  static func <(a: Date,b: Date) -> Bool { a.timeIntervalSince1970 < b.timeIntervalSince1970 }
 }
+func getpid() -> Int32 { 4242 }
 var poolAttempts: [Int] = []
 var available: UInt = 2048 * 1024 * 1024
 func os_proc_available_memory() -> UInt { available }
@@ -29,11 +32,11 @@ final class LogStore {
 final class UIApplication {
  static let shared = UIApplication()
  static let didBecomeActiveNotification = Notification.Name("active")
- var opened: [String] = []
+ var opened: [URL] = []
  var accepted = "stikjit"
  func canOpenURL(_ url: URL) -> Bool { url.scheme == accepted }
  func open(_ url: URL, options: [String: String], completionHandler: (Bool) -> Void) {
-  opened.append(url.scheme!); completionHandler(url.scheme == accepted)
+  opened.append(url); completionHandler(url.scheme == accepted)
  }
 }
 enum StikJITHelper {
@@ -44,12 +47,24 @@ enum StikJITHelper {
   return (p,p,poolSize)
  }
  static let persistentScriptRequestKey = "IridiumTestJITRequested"
- static let resolvedScriptBase64 = "YWJjKys/"
+ static let resolvedScriptBase64: String? = "YWJjKys/"
  static func consumePersistentScriptRequest() { UserDefaults.standard.removeObject(forKey: persistentScriptRequestKey) }
 '''
 checks=r'''
 }
 func tick() { RunLoop.current.run(until: Foundation.Date().addingTimeInterval(0.6)) }
+func decodedGuest(_ destination: URL) -> URL {
+ if destination.scheme == "stikjit" { return destination }
+ let value=URLComponents(url:destination,resolvingAgainstBaseURL:false)!.queryItems!.first{$0.name=="url"}!.value!
+ return URL(string:String(data:Data(base64Encoded:value)!,encoding:.utf8)!)!
+}
+func assertPIDRequest(_ destination: URL) {
+ let guest=decodedGuest(destination)
+ let items=URLComponents(url:guest,resolvingAgainstBaseURL:false)!.queryItems!
+ assert(items.first{$0.name=="pid"}!.value=="4242")
+ assert(items.first{$0.name=="bundle-id"} != nil)
+ assert(items.first{$0.name=="script-data"}!.value=="YWJjKys/")
+}
 let defaults = UserDefaults.standard
 let oldPool=defaults.object(forKey:"IridiumJITPoolMB")
 let oldRoute=defaults.object(forKey: StikJITHelper.routeKey)
@@ -70,7 +85,8 @@ for scheme in ["livecontainer", "livecontainer2"] {
 assert(StikJITHelper.liveContainerURL(for:guest,scheme:"https")==nil)
 var results: [Bool] = []
 StikJITHelper.enableJIT { results.append($0) }
-assert(UIApplication.shared.opened == ["livecontainer2","stikjit"])
+assert(UIApplication.shared.opened.map{$0.scheme!} == ["livecontainer2","stikjit"])
+for destination in UIApplication.shared.opened { assertPIDRequest(destination) }
 debugged=true; tick(); assert(results == [true])
 StikJITHelper.cancel(); tick(); assert(results == [true])
 debugged=false; results=[]
@@ -90,7 +106,7 @@ poolAttempts=[]; available=200 * 1024 * 1024
 assert(StikJITHelper.allocateAdaptivePool()==nil && poolAttempts.isEmpty)
 available=2048 * 1024 * 1024; defaults.set(128,forKey:"IridiumJITPoolMB")
 assert(StikJITHelper.allocateAdaptivePool() != nil && poolAttempts == [128])
-print("JIT pool fallback, routing, completion, cancellation, and timeout passed")
+print("JIT PID request, pool fallback, routing, completion, cancellation, and timeout passed")
 '''
 with tempfile.TemporaryDirectory() as tmp:
  p=Path(tmp)/'main.swift';exe=Path(tmp)/'check';p.write_text(stubs+body+checks)

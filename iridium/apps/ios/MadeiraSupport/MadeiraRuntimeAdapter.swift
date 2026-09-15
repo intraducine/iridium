@@ -136,34 +136,119 @@ enum MadeiraRuntimeAdapter {
                 fail(failureMessage)
             }
         }
-        let startExternalJIT = {
-            if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
-                StikJITHelper.consumePersistentScriptRequest()
-                boot()
-            } else {
-                StikJITHelper.enableJIT { ready in
-                    if ready {
-                        finishExternalJIT(true, "")
-                        return
-                    }
-                    let routeFailure = StikJITHelper.lastFailure
-                    let shouldTryLiveContainer3 =
-                        StikJITHelper.route == .automatic &&
-                        routeFailure.contains("Cannot open the selected JIT app")
-                    guard shouldTryLiveContainer3 else {
-                        finishExternalJIT(false, routeFailure)
-                        return
-                    }
 
+        func startAutomaticExternalJIT() {
+            let defaults = UserDefaults.standard
+            let savedRoute = defaults.string(forKey: StikJITHelper.routeKey)
+            let routes = MadeiraExternalJITRouting.automaticRouteNames.compactMap {
+                StikJITHelper.Route(rawValue: $0)
+            }
+            var activation: Task<Void, Never>?
+            var activeAttempt = UUID()
+
+            func restoreRoutePreference() {
+                if let savedRoute {
+                    defaults.set(savedRoute, forKey: StikJITHelper.routeKey)
+                } else {
+                    defaults.removeObject(forKey: StikJITHelper.routeKey)
+                }
+            }
+
+            func attempt(_ index: Int) {
+                guard launchID == token else {
+                    activation?.cancel()
+                    restoreRoutePreference()
+                    return
+                }
+                guard index < routes.count else {
+                    activation?.cancel()
+                    restoreRoutePreference()
                     RuntimeLogCapture.writeLine(
-                        "[Launch] Existing external JIT routes were unavailable. Trying LiveContainer3."
+                        "[Launch] Existing external JIT routes did not attach. Trying LiveContainer3."
                     )
                     MadeiraLiveContainer3JIT.enableJIT { liveContainer3Ready in
+                        guard launchID == token else { return }
                         finishExternalJIT(
                             liveContainer3Ready,
                             liveContainer3Ready ? "" : MadeiraLiveContainer3JIT.lastFailure
                         )
                     }
+                    return
+                }
+
+                let chosen = routes[index]
+                let attemptID = UUID()
+                activeAttempt = attemptID
+                activation?.cancel()
+                defaults.set(chosen.rawValue, forKey: StikJITHelper.routeKey)
+                RuntimeLogCapture.writeLine("[Launch] Trying \(chosen.title) for external JIT.")
+
+                StikJITHelper.enableJIT { ready in
+                    guard launchID == token else {
+                        restoreRoutePreference()
+                        return
+                    }
+                    guard activeAttempt == attemptID else { return }
+                    activation?.cancel()
+                    if ready {
+                        restoreRoutePreference()
+                        finishExternalJIT(true, "")
+                        return
+                    }
+
+                    let routeFailure = StikJITHelper.lastFailure
+                    RuntimeLogCapture.writeLine(
+                        "[Launch] \(chosen.title) did not enable JIT: \(routeFailure)"
+                    )
+                    attempt(index + 1)
+                }
+
+                guard activeAttempt == attemptID, launchID == token else { return }
+                activation = Task { @MainActor in
+                    for await _ in NotificationCenter.default.notifications(
+                        named: UIApplication.didBecomeActiveNotification
+                    ) {
+                        guard !Task.isCancelled,
+                              launchID == token,
+                              activeAttempt == attemptID
+                        else { return }
+
+                        try? await Task.sleep(
+                            nanoseconds: MadeiraExternalJITRouting.automaticAttachGraceNanoseconds
+                        )
+                        guard !Task.isCancelled,
+                              launchID == token,
+                              activeAttempt == attemptID
+                        else { return }
+
+                        let shouldAdvance = MadeiraExternalJITRouting.shouldAdvanceAutomaticRoute(
+                            opened: true,
+                            returnedToApp: true,
+                            debugged: jit_check_debugged()
+                        )
+                        guard shouldAdvance else { return }
+
+                        RuntimeLogCapture.writeLine(
+                            "[Launch] \(chosen.title) returned without attaching JIT. Trying the next external JIT route."
+                        )
+                        StikJITHelper.cancel()
+                        return
+                    }
+                }
+            }
+
+            attempt(0)
+        }
+
+        let startExternalJIT = {
+            if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
+                StikJITHelper.consumePersistentScriptRequest()
+                boot()
+            } else if StikJITHelper.route == .automatic {
+                startAutomaticExternalJIT()
+            } else {
+                StikJITHelper.enableJIT { ready in
+                    finishExternalJIT(ready, ready ? "" : StikJITHelper.lastFailure)
                 }
             }
         }
