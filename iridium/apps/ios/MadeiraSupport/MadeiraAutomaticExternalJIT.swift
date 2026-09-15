@@ -3,6 +3,7 @@ import Foundation
 enum MadeiraAutomaticExternalJIT {
     private enum ActiveHelper: Equatable {
         case stik
+        case stikDebug
         case liveContainer3
     }
 
@@ -43,6 +44,17 @@ enum MadeiraAutomaticExternalJIT {
             callback(success)
         }
 
+        func cancelHelper(_ helper: ActiveHelper) {
+            switch helper {
+            case .stik:
+                StikJITHelper.cancel()
+            case .stikDebug:
+                MadeiraStikDebugJIT.cancel()
+            case .liveContainer3:
+                MadeiraLiveContainer3JIT.cancel()
+            }
+        }
+
         func armWatchdog(_ helper: ActiveHelper, message: String) {
             watchdog?.invalidate()
             watchdog = Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { _ in
@@ -55,12 +67,7 @@ enum MadeiraAutomaticExternalJIT {
                 }
                 timedOutHelper = helper
                 RuntimeLogCapture.writeLine("[Launch] \(message)")
-                switch helper {
-                case .stik:
-                    StikJITHelper.cancel()
-                case .liveContainer3:
-                    MadeiraLiveContainer3JIT.cancel()
-                }
+                cancelHelper(helper)
             }
         }
 
@@ -111,14 +118,15 @@ enum MadeiraAutomaticExternalJIT {
             defaults.set(chosen.rawValue, forKey: StikJITHelper.routeKey)
 
             var completedSynchronously = false
-            activeHelper = .stik
-            StikJITHelper.enableJIT { ready in
+            let helper: ActiveHelper = chosen == .stikdebug ? .stikDebug : .stik
+            activeHelper = helper
+            let callback: (Bool) -> Void = { ready in
                 completedSynchronously = true
                 guard request == token, Self.completion != nil else { return }
                 watchdog?.invalidate()
                 watchdog = nil
                 activeHelper = nil
-                let timedOut = timedOutHelper == .stik
+                let timedOut = timedOutHelper == helper
                 timedOutHelper = nil
                 if ready {
                     finish(true)
@@ -135,15 +143,21 @@ enum MadeiraAutomaticExternalJIT {
                 }
             }
 
+            if chosen == .stikdebug {
+                MadeiraStikDebugJIT.enableJIT(completion: callback)
+            } else {
+                StikJITHelper.enableJIT(completion: callback)
+            }
+
             if let previousRoute {
                 defaults.set(previousRoute, forKey: StikJITHelper.routeKey)
             } else {
                 defaults.removeObject(forKey: StikJITHelper.routeKey)
             }
 
-            if !completedSynchronously, request == token, activeHelper == .stik {
+            if !completedSynchronously, request == token, activeHelper == helper {
                 armWatchdog(
-                    .stik,
+                    helper,
                     message: "\(chosen.title) opened but did not attach JIT. Trying the next automatic route."
                 )
             }
@@ -163,6 +177,8 @@ enum MadeiraAutomaticExternalJIT {
         switch helper {
         case .stik:
             StikJITHelper.cancel()
+        case .stikDebug:
+            MadeiraStikDebugJIT.cancel()
         case .liveContainer3:
             MadeiraLiveContainer3JIT.cancel()
         case nil:
