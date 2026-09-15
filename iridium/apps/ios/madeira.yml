@@ -53,7 +53,7 @@ targets:
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/FEXCore/Source
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/fmt
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/cephes
-          - $(SRCROOT)/../../../testrepos/Madeira/FEX/External/xxhash/cmake_unofficial
+          - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/xxhash/cmake_unofficial
           - $(SRCROOT)/../../../testrepos/Madeira/FEX/build-ios/External/SoftFloat-3e
     dependencies:
       - sdk: UIKit.framework
