@@ -211,9 +211,12 @@ enum LiveContainerIntegration {
         }
 
         // Keep host startup JIT disabled. Iridium requests JIT for its running
-        // process only after the user starts a game.
+        // process only after the user starts a game. StikDebug uses the bundle ID
+        // to return after JIT; hosted guests therefore need LiveContainer's bundle
+        // ID mode enabled in the same app-specific configuration.
         configuration["doSymlinkInbox"] = true
         configuration["fixFilePickerNew"] = true
+        configuration["doUseLCBundleId"] = true
         configuration["isJITNeeded"] = false
         configuration["jitLaunchScriptJs"] = expectedJITScriptData.base64EncodedString()
 
