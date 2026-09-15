@@ -13,6 +13,9 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
     let launchWithJITEnabled: Bool
     let jitScriptInstalled: Bool
     let jitScriptMatches: Bool
+    // Default true keeps explicit test fixtures/source compatibility; real
+    // LCAppInfo.plist reads always supply the persisted value below.
+    var usesLiveContainerBundleID: Bool = true
 
     var filePickerConfigured: Bool {
         configurationFilePresent
@@ -32,6 +35,7 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
 
     var fullyConfigured: Bool {
         filePickerConfigured && automaticJITDisabled && jitScriptMatches
+            && usesLiveContainerBundleID
     }
 
     func setupFeedback(launchStatus: LiveContainerIntegrationStatus) -> String? {
@@ -100,7 +104,7 @@ enum LiveContainerIntegration {
             String(cString: $0)
         } ?? "none"
         print(
-            "[IridiumRuntime] LiveContainer process launch: hosted=\(status.isHosted) configuration=\(status.configurationFilePresent) launch_with_jit=\(status.launchWithJITEnabled) script_matches=\(status.jitScriptMatches) inferred_provider=\(inferredProvider ?? "none") effective_provider=\(effectiveProvider)"
+            "[IridiumRuntime] LiveContainer process launch: hosted=\(status.isHosted) configuration=\(status.configurationFilePresent) launch_with_jit=\(status.launchWithJITEnabled) script_matches=\(status.jitScriptMatches) lc_bundle_id=\(status.usesLiveContainerBundleID) inferred_provider=\(inferredProvider ?? "none") effective_provider=\(effectiveProvider)"
         )
         return inferredProvider
     }
@@ -155,7 +159,8 @@ enum LiveContainerIntegration {
                 documentHostFixEnabled: false,
                 launchWithJITEnabled: false,
                 jitScriptInstalled: false,
-                jitScriptMatches: false
+                jitScriptMatches: false,
+                usesLiveContainerBundleID: false
             )
         }
 
@@ -167,7 +172,8 @@ enum LiveContainerIntegration {
                 documentHostFixEnabled: false,
                 launchWithJITEnabled: false,
                 jitScriptInstalled: false,
-                jitScriptMatches: false
+                jitScriptMatches: false,
+                usesLiveContainerBundleID: false
             )
         }
 
@@ -180,7 +186,8 @@ enum LiveContainerIntegration {
             documentHostFixEnabled: configuration["fixFilePickerNew"] as? Bool == true,
             launchWithJITEnabled: configuration["isJITNeeded"] as? Bool == true,
             jitScriptInstalled: installedScript?.isEmpty == false,
-            jitScriptMatches: installedScript == expectedScript
+            jitScriptMatches: installedScript == expectedScript,
+            usesLiveContainerBundleID: configuration["doUseLCBundleId"] as? Bool == true
         )
     }
 
