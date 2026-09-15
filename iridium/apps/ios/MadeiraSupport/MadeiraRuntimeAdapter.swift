@@ -106,6 +106,10 @@ enum MadeiraRuntimeAdapter {
                             executable: URL(fileURLWithPath: executable),
                             gameRoot: URL(fileURLWithPath: gameRoot), prefix: prefix)
                         guard current() else { return }
+                        MadeiraSteamEnvironment.publish(
+                            sourceExecutable: URL(fileURLWithPath: executable),
+                            sourceRoot: URL(fileURLWithPath: gameRoot),
+                            windowsExecutable: path)
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
