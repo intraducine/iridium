@@ -4,13 +4,17 @@ import UIKit
 
 @MainActor
 enum MadeiraController {
+    private static let touchInputResetNotification = Notification.Name("IridiumTouchControllerInputReset")
     private static var timer: Timer?
     private static var observers: [NSObjectProtocol] = []
     private static var statePath: URL?
     static var acceptingInput = true {
         didSet {
             guard acceptingInput != oldValue else { return }
-            if !acceptingInput { touch.releaseInputs() }
+            if !acceptingInput {
+                touch.releaseInputs()
+                NotificationCenter.default.post(name: touchInputResetNotification, object: nil)
+            }
             publishSnapshot(forceLog: true, reason: acceptingInput ? "input-resumed" : "input-paused")
         }
     }
@@ -156,6 +160,7 @@ enum MadeiraController {
         observers.append(NotificationCenter.default.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 touch.releaseInputs()
+                NotificationCenter.default.post(name: touchInputResetNotification, object: nil)
                 publishSnapshot(forceLog: true, reason: "scene-deactivated")
             }
         })
