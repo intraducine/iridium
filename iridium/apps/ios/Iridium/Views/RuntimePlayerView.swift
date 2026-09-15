@@ -770,7 +770,8 @@ private final class RuntimePlayerHostView: UIView, UITextFieldDelegate {
         }
 
         if deviceKeyboardPresented {
-            deviceKeyboardField.text = ""
+            // Keep one invisible sentinel so backspace is delivered even though typed text is rejected.
+            deviceKeyboardField.text = " "
             if !deviceKeyboardField.isFirstResponder {
                 _ = deviceKeyboardField.becomeFirstResponder()
             }
