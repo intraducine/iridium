@@ -1,5 +1,12 @@
 # Changes from upstream
 
+## Launch and shutdown corrections
+
+- `WineProcessBridge.m`: accept bounded JSON argv arrays from Iridium without space splitting; expose the root process exit code and use atomic liveness state. Preserve the older Madeira developer argument interface.
+- `Winios/Winios.m`: remove the direct per-keystroke trace, including software-keyboard input.
+- `WineServerBridge.m`: publish atomic liveness and clear it on thread cleanup, including fatal startup exits. No forced thread cancellation is added.
+
+
 Source snapshot and privacy edits: 2026-09-10. Existing notices are retained. This is a modified source distribution.
 
 Iridium app changes include Madeira runtime integration, JIT helper support, media and input integration, and library/navigation changes. Legacy runtime forks include the Iridium iOS bridge and build support. The upstream records below identify base revisions; they do not assert a byte-identical copy.

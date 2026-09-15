@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import Darwin
 
 enum MadeiraLiveContainer3JIT {
     private static let persistentScriptRequestKey = "IridiumPersistentJITScriptRequested"
@@ -29,6 +30,7 @@ enum MadeiraLiveContainer3JIT {
         guest.scheme = "stikjit"
         guest.host = "enable-jit"
         guest.queryItems = [
+            URLQueryItem(name: "pid", value: String(getpid())),
             URLQueryItem(name: "bundle-id", value: Bundle.main.bundleIdentifier ?? "software.iridium"),
             URLQueryItem(name: "script-data", value: scriptData.base64EncodedString())
         ]

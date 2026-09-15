@@ -5,7 +5,6 @@ import MadeiraNative
 
 enum MadeiraRuntimeAdapter {
     static let enabled: Bool = {
-        // Madeira is the normal runtime. A test launch can explicitly select legacy.
         let selection = ProcessInfo.processInfo.environment["IRIDIUM_RUNTIME"]
         if let test = ProcessInfo.processInfo.environment["IRIDIUM_MADEIRA_TEST"] {
             UserDefaults.standard.set(test, forKey: "IridiumMadeiraTest")
@@ -15,11 +14,31 @@ enum MadeiraRuntimeAdapter {
     private(set) static var started = false
     static var resolution = MadeiraResolution.selected
     private static var launchID = UUID()
-    private static var wineStarted = false
+    private static var bootInProgress = false
+    private static var bootWasRequested = false
+    private static var launchCancelled = false
+    private static var failureReported = false
     private static var combatProfile: MadeiraCombatProfile?
+    private static var monitorTask: Task<Void, Never>?
+    private static var closeTask: Task<Void, Never>?
 
-    static func start(executable: String, gameRoot: String, gameID: UUID, report: @escaping (String) -> Void, fail: @escaping (String) -> Void) {
-        guard !started else { report("Restart Iridium before another Madeira session."); return }
+    // Lifecycle entry points are called on the main queue. Native boot stays on a worker.
+    @MainActor
+    static func start(executable: String, gameRoot: String, gameID: UUID,
+                      arguments: [String] = [],
+                      report: @escaping (String) -> Void,
+                      fail: @escaping (String) -> Void,
+                      exited: @escaping () -> Void = {}) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !started else { fail("Restart Iridium before another Madeira session."); return }
+        let encodedArguments: String
+        do { encodedArguments = try MadeiraLaunchArguments.encode(arguments) }
+        catch { fail("Invalid launch arguments: \(error.localizedDescription)"); return }
+        let prefix = MadeiraGamePreparation.prefix(for: gameID)
+        do { try FileManager.default.createDirectory(at: prefix, withIntermediateDirectories: true) }
+        catch { fail("Cannot create the game environment: \(error.localizedDescription)"); return }
+        // Once native/JIT state is touched this process remains single-session,
+        // including failures and cancellation. Never race a canceled worker with a retry.
         started = true
         let token = UUID()
         launchID = token
@@ -27,10 +46,6 @@ enum MadeiraRuntimeAdapter {
         #if BUILTIN_STIKJIT
         var useBuiltinJIT = BuiltinJIT.selected && !StikJITHelper.persistentScriptRequested
         #endif
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let prefix = docs.appendingPathComponent("MadeiraTestPrefixes/\(gameID.uuidString)")
-        do { try FileManager.default.createDirectory(at: prefix, withIntermediateDirectories: true) }
-        catch { report("Cannot create test prefix: \(error.localizedDescription)"); return }
         if let trace = ProcessInfo.processInfo.environment["IRIDIUM_MEDIA_TRACE"] {
             UserDefaults.standard.set(trace == "1", forKey: "IridiumMediaTrace")
         }
@@ -49,71 +64,94 @@ enum MadeiraRuntimeAdapter {
         setenv("MADEIRA_SCREEN_W", String(resolution.rawValue), 1)
         setenv("MADEIRA_SCREEN_H", String(resolution.height), 1)
         unsetenv("MADEIRA_ARGS")
+        setenv("IRIDIUM_MADEIRA_ARGS_JSON", cube ? "[]" : encodedArguments, 1)
         jit_install_trap_handler()
         _ = LogStore.shared
         RuntimeLogCapture.writeLine("[Launch] Waiting for JIT permission.")
+
+        let failure: (String) -> Void = { message in
+            DispatchQueue.main.async {
+                guard launchID == token, !failureReported else { return }
+                failureReported = true
+                monitorTask?.cancel()
+                MadeiraController.stop()
+                MadeiraHardwareInput.acceptingInput = false
+                combatProfile?.stop()
+                combatProfile = nil
+                RuntimeLogCapture.writeLine("[Launch] \(message)")
+                fail(message)
+            }
+        }
         let boot = {
-            guard launchID == token else { return }
-            // Keep the request only across the JIT handoff, never across a game crash.
+            guard launchID == token, !bootWasRequested, !launchCancelled, !failureReported else { return }
+            bootWasRequested = true
+            bootInProgress = true
             UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
             RuntimeLogCapture.writeLine("[Launch] JIT handoff complete. Automatic resume request cleared.")
+            #if BUILTIN_STIKJIT
+            let usingBuiltinJIT = useBuiltinJIT
+            #endif
             DispatchQueue.global(qos: .userInitiated).async {
+                defer { DispatchQueue.main.async { bootInProgress = false } }
+                func current() -> Bool { DispatchQueue.main.sync { launchID == token && !launchCancelled && !failureReported } }
+                guard current() else { return }
                 if !cube {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
                         madeira_seed_prefix_if_needed(prefix.path)
                         try MadeiraMediaInstall.install(prefix: prefix)
-                        let path = try MadeiraGamePreparation.prepare(executable: URL(fileURLWithPath: executable),
+                        let path = try MadeiraGamePreparation.prepare(
+                            executable: URL(fileURLWithPath: executable),
                             gameRoot: URL(fileURLWithPath: gameRoot), prefix: prefix)
+                        guard current() else { return }
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
+                        guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
-                        DispatchQueue.main.async { MadeiraController.start(prefix: prefix) }
+                        DispatchQueue.main.async {
+                            guard launchID == token, !launchCancelled, !failureReported else { return }
+                            MadeiraController.start(prefix: prefix)
+                        }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
                         setenv("MADEIRA_EXE", path, 1)
                         if UserDefaults.standard.string(forKey: "IridiumMadeiraTest") == "media" {
                             guard let probe = Bundle.main.url(forResource: "iridium-mfprobe", withExtension: "exe", subdirectory: "MediaRuntime") else { throw CocoaError(.fileNoSuchFile) }
                             try Data(contentsOf: probe).write(to: prefix.appendingPathComponent("drive_c/iridium-mfprobe.exe"), options: .atomic)
                             setenv("MADEIRA_EXE", "C:\\iridium-mfprobe.exe", 1)
+                            setenv("IRIDIUM_MADEIRA_ARGS_JSON", "[]", 1)
                         }
                     } catch {
-                        DispatchQueue.main.async { report("Cannot prepare isolated game copy: \(error.localizedDescription)") }
+                        failure("Cannot prepare the isolated game copy: \(error.localizedDescription)")
                         return
                     }
                 }
-                guard DispatchQueue.main.sync(execute: { launchID == token }) else { return }
+                guard current() else { return }
                 RuntimeLogCapture.writeLine("[Launch] Reserving memory for translated game code.")
                 let requestedPoolMB = UserDefaults.standard.integer(forKey: MadeiraJITPoolPolicy.preferenceKey)
                 let effectivePoolMB = MadeiraJITPoolPolicy.effectiveLimitMB(requested: requestedPoolMB)
                 if effectivePoolMB != requestedPoolMB {
-                    RuntimeLogCapture.writeLine(
-                        "[Launch] Automatic JIT memory capped at \(effectivePoolMB) MB because debugger-backed JIT pages count toward the app memory footprint."
-                    )
+                    RuntimeLogCapture.writeLine("[Launch] Automatic JIT memory capped at \(effectivePoolMB) MB because debugger-backed pages count toward the app memory footprint.")
                 }
-                guard let pool = MadeiraJITPoolPolicy.withEffectiveLimit({
-                    StikJITHelper.allocateAdaptivePool()
-                }) else {
-                    DispatchQueue.main.async { fail("Cannot allocate JIT memory. Restart Iridium, then try a smaller JIT memory limit in Runtime settings.") }
+                guard let pool = MadeiraJITPoolPolicy.withEffectiveLimit({ StikJITHelper.allocateAdaptivePool() }) else {
+                    failure("Cannot allocate JIT memory. Restart Iridium, then try a smaller JIT memory limit.")
                     return
                 }
                 setenv("WINE_IOS_JIT_RX", String(UInt(bitPattern: pool.rx), radix: 16), 1)
                 setenv("WINE_IOS_JIT_RW", String(UInt(bitPattern: pool.rw), radix: 16), 1)
                 setenv("WINE_IOS_JIT_SIZE", String(pool.size, radix: 16), 1)
-                RuntimeLogCapture.writeLine("[Launch] Code memory is ready. Starting the Windows runtime.")
+                // Complete detach even if Close was requested during allocation.
                 StikJITHelper.detachDebugger()
                 #if BUILTIN_STIKJIT
-                if useBuiltinJIT && !BuiltinJIT.shared.waitForDetach() {
-                    DispatchQueue.main.async { report("Built-in JIT did not confirm memory preparation. Restart Iridium before retrying.") }
+                if usingBuiltinJIT && !BuiltinJIT.shared.waitForDetach() {
+                    failure("Built-in JIT did not confirm memory preparation. Restart Iridium before retrying.")
                     return
                 }
                 #endif
-                guard DispatchQueue.main.sync(execute: { launchID == token }) else { return }
+                guard current() else { return }
                 guard winios_reserve_fex_memory() != 0 else {
-                    DispatchQueue.main.async {
-                        fail("Cannot start the runtime: this app process has too little usable address space. Restart Iridium and try again.")
-                    }
+                    failure("Cannot start the runtime: too little usable address space. Restart Iridium and try again.")
                     return
                 }
-                DispatchQueue.main.sync { wineStarted = true }
+                guard current() else { return }
                 ws_log_quiet = 1
                 // The embedded iOS wineserver's semaphore wake path can crash while
                 // the first Wine request fd becomes active. Prefer the existing
@@ -121,96 +159,163 @@ enum MadeiraRuntimeAdapter {
                 // override so the semaphore path can still be tested diagnostically.
                 setenv("MADEIRA_SRV_NOSEM", "1", 0)
                 guard wineserver_start(prefix.path) == 0 else {
-                    DispatchQueue.main.async { report("Madeira Wine server failed to start.") }
+                    failure("Madeira Wine server failed to start. Restart Iridium before retrying.")
                     return
                 }
                 Thread.sleep(forTimeInterval: 2)
+                guard current() else { wineserver_stop(); return }
+                guard wineserver_is_running() != 0 else {
+                    failure("Madeira Wine server stopped during startup. Restart Iridium before retrying.")
+                    return
+                }
                 RuntimeLogCapture.writeLine("[Launch] Starting the game process. Waiting for display output.")
                 let result = wine_process_start(prefix.path)
+                guard result == 0 else {
+                    failure("Madeira Wine launch failed. Restart Iridium before retrying.")
+                    wineserver_stop() // worker only; never join a native thread on the UI queue
+                    return
+                }
                 DispatchQueue.main.async {
-                    report(result == 0 ? "Madeira started; waiting for rendered frames." : "Madeira Wine launch failed.")
+                    guard launchID == token else {
+                        requestGuestClose()
+                        return
+                    }
+                    if launchCancelled { requestGuestClose() }
+                    else if !failureReported { report("Madeira started; waiting for rendered frames.") }
+                    monitorTask?.cancel()
+                    monitorTask = Task { @MainActor in
+                        while wine_process_is_running() != 0 {
+                            do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
+                            guard launchID == token else { return }
+                        }
+                        guard !Task.isCancelled, launchID == token else { return }
+                        MadeiraController.stop()
+                        MadeiraHardwareInput.acceptingInput = false
+                        combatProfile?.stop()
+                        combatProfile = nil
+                        let code = wine_process_exit_code()
+                        if code != 0 {
+                            failure("The game exited with code \(code). Restart Iridium before retrying.")
+                            return
+                        }
+                        let deadline = ProcessInfo.processInfo.systemUptime + 8
+                        while wineserver_is_running() != 0 {
+                            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                                failure("The game exited but runtime shutdown is unconfirmed. Restart Iridium.")
+                                return
+                            }
+                            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+                            guard launchID == token else { return }
+                        }
+                        exited()
+                    }
                 }
             }
         }
-        let finishExternalJIT: (Bool, String) -> Void = { ready, failureMessage in
-            if ready {
-                StikJITHelper.consumePersistentScriptRequest()
-                boot()
-            } else {
-                started = false
-                fail(failureMessage)
-            }
+        let finishExternalJIT: (Bool, String) -> Void = { ready, message in
+            guard launchID == token, !launchCancelled, !failureReported else { return }
+            if ready { StikJITHelper.consumePersistentScriptRequest(); boot() }
+            else { failure(message) }
         }
         let startExternalJIT = {
+            guard launchID == token, !launchCancelled, !failureReported else { return }
             if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
                 StikJITHelper.consumePersistentScriptRequest()
                 boot()
+            } else if StikJITHelper.route == .automatic {
+                MadeiraAutomaticExternalJIT.enableJIT { ready in
+                    finishExternalJIT(
+                        ready,
+                        ready ? "" : MadeiraAutomaticExternalJIT.lastFailure
+                    )
+                }
             } else {
                 StikJITHelper.enableJIT { ready in
-                    if ready {
-                        finishExternalJIT(true, "")
-                        return
-                    }
-                    let routeFailure = StikJITHelper.lastFailure
-                    let shouldTryLiveContainer3 =
-                        StikJITHelper.route == .automatic &&
-                        routeFailure.contains("Cannot open the selected JIT app")
-                    guard shouldTryLiveContainer3 else {
-                        finishExternalJIT(false, routeFailure)
-                        return
-                    }
-
-                    RuntimeLogCapture.writeLine(
-                        "[Launch] Existing external JIT routes were unavailable. Trying LiveContainer3."
-                    )
-                    MadeiraLiveContainer3JIT.enableJIT { liveContainer3Ready in
-                        finishExternalJIT(
-                            liveContainer3Ready,
-                            liveContainer3Ready ? "" : MadeiraLiveContainer3JIT.lastFailure
-                        )
-                    }
+                    guard launchID == token, !launchCancelled, !failureReported else { return }
+                    finishExternalJIT(ready, ready ? "" : StikJITHelper.lastFailure)
                 }
             }
         }
         #if BUILTIN_STIKJIT
         if useBuiltinJIT {
-            if !BuiltinJIT.shared.start(onListening: boot, report: fail, onUnavailable: {
+            _ = BuiltinJIT.shared.start(onListening: boot, report: failure, onUnavailable: {
                 useBuiltinJIT = false
                 report("Opening the external JIT app.")
                 startExternalJIT()
-            }) { started = false }
+            })
             return
         }
         #endif
         startExternalJIT()
     }
 
+    @MainActor
+    private static func requestGuestClose() {
+        releaseKeys()
+        winios_post_key(0x12, 1)
+        winios_post_key(0x73, 1)
+        winios_post_key(0x73, 0)
+        winios_post_key(0x12, 0)
+    }
+
+    /// A timeout is not a successful shutdown. Keep the player reachable then.
+    @MainActor
+    static func requestClose(completion: @escaping (Bool) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard closeTask == nil else { return }
+        launchCancelled = true
+        MadeiraHardwareInput.acceptingInput = false
+        MadeiraController.acceptingInput = false
+        UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
+        StikJITHelper.cancel()
+        MadeiraLiveContainer3JIT.cancel()
+        #if BUILTIN_STIKJIT
+        BuiltinJIT.shared.cancel()
+        #endif
+        if wine_process_is_running() != 0 { requestGuestClose() }
+        closeTask = Task { @MainActor in
+            let deadline = ProcessInfo.processInfo.systemUptime + 8
+            while bootInProgress || wine_process_is_running() != 0 || wineserver_is_running() != 0 {
+                if ProcessInfo.processInfo.systemUptime >= deadline {
+                    closeTask = nil
+                    completion(false)
+                    return
+                }
+                do { try await Task.sleep(nanoseconds: 100_000_000) }
+                catch { closeTask = nil; return }
+            }
+            closeTask = nil
+            completion(true)
+        }
+    }
+
     private static let controllerQueue = DispatchQueue(label: "iridium.madeira.keys")
     private static var controllerKeys = MadeiraKeys()
-
     static func releaseKeys() {
         controllerQueue.sync {
             for key in controllerKeys.releaseAll() { winios_post_key(key, 0) }
         }
     }
 
+    @MainActor
     static func stop() {
         launchID = UUID()
+        monitorTask?.cancel()
+        closeTask?.cancel()
+        closeTask = nil
+        MadeiraAutomaticExternalJIT.cancel()
         StikJITHelper.cancel()
         MadeiraLiveContainer3JIT.cancel()
         #if BUILTIN_STIKJIT
         BuiltinJIT.shared.cancel()
         #endif
+        MadeiraController.stop()
+        MadeiraHardwareInput.acceptingInput = false
+        MadeiraHardwareInput.stop()
         combatProfile?.stop()
         combatProfile = nil
-        guard wineStarted else { started = false; return }
         releaseKeys()
-        // Madeira cannot safely reinitialize all process-global Wine/FEX state yet.
-        // Keep this process single-session; preserve the test prefix on shutdown.
-        winios_post_key(0x12, 1)
-        winios_post_key(0x73, 1)
-        winios_post_key(0x73, 0)
-        winios_post_key(0x12, 0)
+        // No unsafe pthread cancellation or process-global runtime reinitialization.
     }
 
     static func input(type: String, phase: String, x: CGFloat?, y: CGFloat?, value: Double, name: String) {
@@ -230,4 +335,5 @@ enum MadeiraRuntimeAdapter {
             }
         }
     }
+
 }

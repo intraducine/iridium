@@ -15,6 +15,14 @@ struct ExternalJITRoutingCheck {
         }
         assert(MadeiraExternalJITRouting.liveContainer3Scheme == "livecontainer3")
         assert(MadeiraExternalJITRouting.liveContainerURL(for: guest, scheme: "https") == nil)
-        print("External JIT LiveContainer routing passed")
+
+        assert(MadeiraExternalJITRouting.automaticRouteNames == ["livecontainer2", "stikdebug", "livecontainer"])
+        assert(MadeiraExternalJITRouting.shouldAdvanceAutomaticRoute(opened: true, returnedToApp: true, debugged: false))
+        assert(!MadeiraExternalJITRouting.shouldAdvanceAutomaticRoute(opened: true, returnedToApp: true, debugged: true))
+        assert(!MadeiraExternalJITRouting.shouldAdvanceAutomaticRoute(opened: true, returnedToApp: false, debugged: false))
+        assert(!MadeiraExternalJITRouting.shouldAdvanceAutomaticRoute(opened: false, returnedToApp: true, debugged: false))
+        assert(MadeiraExternalJITRouting.automaticAttachGraceNanoseconds == 5_000_000_000)
+
+        print("External JIT LiveContainer routing and opened-without-attach fallback passed")
     }
 }

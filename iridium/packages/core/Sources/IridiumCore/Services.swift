@@ -15,7 +15,7 @@ public protocol GameLibraryService: Sendable {
         executableFingerprint: String?,
         runtimeBundleIdentifier: String?,
         runtimeBundleVersion: String?
-    ) async -> GameRecord
+    ) async throws -> GameRecord
     func registerSteamGame(
         title: String,
         appID: String,
@@ -229,7 +229,13 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
     }
 
     public func allGames() async -> [GameRecord] {
-        games.sorted { $0.title < $1.title }
+        if hasManagedFilesystemContext() {
+            for index in games.indices {
+                games[index].installedSizeGB = ManagedGameFiles.sizeGB(
+                    at: URL(fileURLWithPath: games[index].installPath))
+            }
+        }
+        return games.sorted { $0.title < $1.title }
     }
 
     public func register(_ game: GameRecord) async {
@@ -249,12 +255,23 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         executableFingerprint: String? = nil,
         runtimeBundleIdentifier: String? = nil,
         runtimeBundleVersion: String? = nil
-    ) async -> GameRecord {
+    ) async throws -> GameRecord {
+        let resolved: (directory: String, executable: String)
+        if let imports = importsRootURL() {
+            let copied = try ManagedGameFiles.importCopy(
+                from: URL(fileURLWithPath: installPath),
+                executable: URL(fileURLWithPath: executablePath),
+                into: imports, title: title)
+            resolved = (copied.directory.path, copied.executable.path)
+        } else {
+            // In-memory fixtures do not perform filesystem operations.
+            resolved = (installPath, executablePath)
+        }
         let game = upsertGame(
             source: .manualImport,
             title: title,
-            installPath: installPath,
-            executablePath: executablePath,
+            installPath: resolved.directory,
+            executablePath: resolved.executable,
             compatibilityProfileName: compatibilityProfileName,
             inputProfileName: inputProfileName,
             deviceTier: deviceTier,
@@ -264,7 +281,7 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
             touchOverlayName: "Custom Touch Overlay",
             controllerPresetName: "Custom Controller Preset",
             keyboardMouseEnabled: true,
-            installedSizeGB: estimatedImportedSizeGB(for: deviceTier),
+            installedSizeGB: ManagedGameFiles.sizeGB(at: URL(fileURLWithPath: resolved.directory)),
             prefixFootprintGB: 2.0,
             managedArtifactIdentifier: managedArtifactIdentifier,
             executableFingerprint: executableFingerprint,
@@ -422,20 +439,16 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
     }
 
     public func relocateLibraryEntry(gameID: UUID, folder: URL, executable: URL, identifier: String, fingerprint: String) async throws {
-        guard let index = games.firstIndex(where: { $0.id == gameID }), let imports = importsRootURL() else { throw CocoaError(.fileNoSuchFile) }
-        let source = folder.resolvingSymlinksInPath().standardizedFileURL
-        let file = executable.resolvingSymlinksInPath().standardizedFileURL
-        guard file.path.hasPrefix(source.path + "/"), file.pathExtension.lowercased() == "exe",
-              FileManager.default.fileExists(atPath: file.path) else { throw CocoaError(.fileReadInvalidFileName) }
-        let relative = String(file.path.dropFirst(source.path.count + 1))
-        let destination = imports.appendingPathComponent("Relocated-" + UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: imports, withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: source, to: destination)
-        guard FileManager.default.fileExists(atPath: destination.appendingPathComponent(relative).path) else { throw CocoaError(.fileNoSuchFile) }
-        games[index].installPath = destination.path
-        games[index].launchProfile.executablePath = destination.appendingPathComponent(relative).path
+        guard let index = games.firstIndex(where: { $0.id == gameID }), let imports = importsRootURL() else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let copied = try ManagedGameFiles.importCopy(
+            from: folder, executable: executable, into: imports, title: games[index].title)
+        games[index].installPath = copied.directory.path
+        games[index].launchProfile.executablePath = copied.executable.path
         games[index].managedArtifactIdentifier = identifier
         games[index].executableFingerprint = fingerprint
+        games[index].installedSizeGB = ManagedGameFiles.sizeGB(at: copied.directory)
         persist()
     }
 
@@ -1704,87 +1717,6 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         try? FileManager.default.removeItem(at: standardizedInstallURL)
     }
 
-    private func resolvedManagedImportLocation(
-        title: String,
-        installPath: String,
-        executablePath: String
-    ) -> (installPath: String, executablePath: String) {
-        guard let importsRoot = importsRootURL(),
-              installPath.hasPrefix("/") else {
-            return (installPath, executablePath)
-        }
-
-        let sourceDirectory = URL(fileURLWithPath: installPath, isDirectory: true)
-        let managedDirectory = importsRoot
-            .appending(path: normalizedIdentifier(from: title), directoryHint: .isDirectory)
-            .standardizedFileURL
-
-        guard canonicalPath(for: sourceDirectory) != canonicalPath(for: managedDirectory) else {
-            return (installPath, executablePath)
-        }
-
-        do {
-            ensureManagedStorageRoots()
-            if FileManager.default.fileExists(atPath: managedDirectory.path) {
-                try FileManager.default.removeItem(at: managedDirectory)
-            }
-            try copyDirectory(from: sourceDirectory, to: managedDirectory)
-
-            let executableURL = fileURLIfAbsolutePath(executablePath)
-            let relativeExecutable = executableURL
-                .flatMap { relativePath(from: sourceDirectory, to: $0) }
-                ?? URL(fileURLWithPath: executablePath).lastPathComponent
-            let managedExecutableURL = managedDirectory.appending(path: relativeExecutable)
-
-            try repairManagedExecutableIfNeeded(
-                sourceExecutable: executableURL,
-                managedExecutable: managedExecutableURL
-            )
-
-            guard FileManager.default.fileExists(atPath: managedDirectory.path),
-                  FileManager.default.fileExists(atPath: managedExecutableURL.path) else {
-                throw CocoaError(.fileNoSuchFile)
-            }
-
-            return (
-                managedDirectory.path,
-                managedExecutableURL.path
-            )
-        } catch {
-            print(
-                "[IridiumRuntime] resolvedManagedImportLocation: Falling back to source paths for \(title) after copy failure: \(error)"
-            )
-            return (installPath, executablePath)
-        }
-    }
-
-    private func repairManagedExecutableIfNeeded(
-        sourceExecutable: URL?,
-        managedExecutable: URL
-    ) throws {
-        guard !FileManager.default.fileExists(atPath: managedExecutable.path) else {
-            return
-        }
-
-        guard let sourceExecutable else {
-            return
-        }
-
-        let canonicalSourceExecutable = sourceExecutable
-        guard FileManager.default.fileExists(atPath: canonicalSourceExecutable.path) else {
-            return
-        }
-
-        try FileManager.default.createDirectory(
-            at: managedExecutable.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if FileManager.default.fileExists(atPath: managedExecutable.path) {
-            try FileManager.default.removeItem(at: managedExecutable)
-        }
-        try FileManager.default.copyItem(at: canonicalSourceExecutable, to: managedExecutable)
-    }
-
     private func copyDirectory(from source: URL, to destination: URL) throws {
         let sourceRoot = source
         let destinationRoot = destination.standardizedFileURL
@@ -1865,7 +1797,7 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         touchOverlayName: String,
         controllerPresetName: String,
         keyboardMouseEnabled: Bool,
-        installedSizeGB: Double,
+        installedSizeGB: Double?,
         prefixFootprintGB: Double,
         managedArtifactIdentifier: String?,
         executableFingerprint: String?,
@@ -1873,16 +1805,7 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         runtimeBundleVersion: String?,
         summary: String
     ) -> GameRecord {
-        let resolvedPaths: (installPath: String, executablePath: String)
-        if source == .manualImport {
-            resolvedPaths = resolvedManagedImportLocation(
-                title: title,
-                installPath: installPath,
-                executablePath: executablePath
-            )
-        } else {
-            resolvedPaths = (installPath, executablePath)
-        }
+        let resolvedPaths = (installPath: installPath, executablePath: executablePath)
 
         if let existingIndex = games.firstIndex(where: {
             $0.installPath == resolvedPaths.installPath
@@ -1984,17 +1907,6 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         "\(value.formatted(.number.precision(.fractionLength(1)))) GB"
     }
 
-    private func estimatedImportedSizeGB(for deviceTier: DeviceTier) -> Double {
-        switch deviceTier {
-        case .tier1:
-            4
-        case .tier2:
-            12
-        case .tier3:
-            36
-        }
-    }
-
     private func estimatedSteamInstallSizeGB(for title: String) -> Double {
         let normalized = title.lowercased()
         if normalized.contains("heavy")
@@ -2018,47 +1930,27 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
     }
 
     private func computeManagedStorageStatus() -> ManagedStorageStatus {
-        let totalCapacityGB = 256.0
-        let reservedForSystemGB = 24.0
-        let usedByGamesGB = games.reduce(0) { $0 + ($1.installedSizeGB ?? 0) }
-        let usedByPrefixesGB = prefixes.reduce(0) { $0 + ($1.storageFootprintGB ?? 0) }
-        let reservedForQueuedDownloadsGB = downloads.reduce(0) { partial, task in
-            guard task.state != .installed else {
-                return partial
-            }
-            return partial + (task.reservedDiskGB ?? 0)
+        let volume = ManagedGameFiles.volumeSpace(at: rootURL() ?? FileManager.default.temporaryDirectory)
+        let gameSizes = games.map { ManagedGameFiles.sizeGB(at: URL(fileURLWithPath: $0.installPath)) }
+        let prefixSizes = prefixes.compactMap { prefix -> Double? in
+            guard let path = prefix.manifestPath else { return nil }
+            return ManagedGameFiles.sizeGB(at: URL(fileURLWithPath: path).deletingLastPathComponent())
         }
-        let headroom = totalCapacityGB - reservedForSystemGB - usedByGamesGB - usedByPrefixesGB - reservedForQueuedDownloadsGB
-
-        let pressure: StoragePressure
-        if headroom <= 16 {
-            pressure = .critical
-        } else if headroom <= 40 {
-            pressure = .warning
-        } else {
-            pressure = .healthy
+        let reserved = downloads.reduce(0.0) {
+            $0 + ($1.state == .installed ? 0 : max(0, $1.reservedDiskGB ?? 0))
         }
-
-        var notes = [
-            "Managed storage reserves \(reservedForSystemGB.formatted(.number.precision(.fractionLength(0)))) GB for iOS, caches, and rollback buffers."
-        ]
-        if reservedForQueuedDownloadsGB > 0 {
-            notes.append("Queued transfers are holding \(reservedForQueuedDownloadsGB.formatted(.number.precision(.fractionLength(0)))) GB of install headroom.")
-        }
-        if pressure != .healthy {
-            notes.append("Heavy installs should be deferred until storage headroom is recovered.")
-        }
-
+        let available = volume.map { max(0, $0.freeGB - reserved) }
+        let pressure: StoragePressure = available.map { $0 <= 16 ? .critical : ($0 <= 40 ? .warning : .healthy) } ?? .warning
+        var notes = ["Available space is measured on the filesystem and accounts for other apps, runtime copies, and backups."]
+        if volume == nil { notes = ["Device storage could not be measured. Available space is unknown."] }
+        if gameSizes.contains(where: { $0 == nil }) { notes.append("Some game sizes could not be measured; the game total is incomplete.") }
+        notes.append("Game totals cover registered imports, not isolated runtime copies or retained backups.")
         return ManagedStorageStatus(
-            totalCapacityGB: totalCapacityGB,
-            reservedForSystemGB: reservedForSystemGB,
-            usedByGamesGB: usedByGamesGB,
-            usedByPrefixesGB: usedByPrefixesGB,
-            reservedForQueuedDownloadsGB: reservedForQueuedDownloadsGB,
-            pressure: pressure,
-            notes: notes,
-            lastMeasuredAt: Date()
-        )
+            totalCapacityGB: volume?.totalGB ?? 0, reservedForSystemGB: 0,
+            usedByGamesGB: gameSizes.compactMap { $0 }.reduce(0, +),
+            usedByPrefixesGB: prefixSizes.reduce(0, +),
+            reservedForQueuedDownloadsGB: reserved, pressure: pressure, notes: notes,
+            lastMeasuredAt: volume == nil ? nil : Date(), measuredAvailableGB: volume?.freeGB)
     }
 
     private static func loadInitialSnapshot(
@@ -2073,13 +1965,18 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
 
         let rootURL = snapshotURL.deletingLastPathComponent()
 
-        guard stored.snapshotVersion < IridiumSnapshot.currentSnapshotVersion else {
-            let rebasedState = rebaseManagedPaths(in: stored, rootURL: rootURL)
-            return LoadedSnapshotState(snapshot: rebasedState.snapshot, didResetLegacyState: rebasedState.didRebase)
+        var migrated = stored
+        let needsMigration = stored.snapshotVersion < IridiumSnapshot.currentSnapshotVersion
+        if needsMigration {
+            let backup = snapshotURL.deletingPathExtension()
+                .appendingPathExtension("pre-migration-" + UUID().uuidString + ".json")
+            do { try FileManager.default.copyItem(at: snapshotURL, to: backup) }
+            catch { return LoadedSnapshotState(snapshot: stored, didResetLegacyState: false) }
+            migrated.snapshotVersion = IridiumSnapshot.currentSnapshotVersion
         }
-
-        purgeLegacyManagedGameStorage(rootURL: rootURL)
-        return LoadedSnapshotState(snapshot: .empty, didResetLegacyState: true)
+        let rebased = rebaseManagedPaths(in: migrated, rootURL: rootURL)
+        return LoadedSnapshotState(snapshot: rebased.snapshot,
+                                   didResetLegacyState: needsMigration || rebased.didRebase)
     }
 
     private static func rebaseManagedPaths(
@@ -2159,20 +2056,6 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
 
         let suffix = String(standardizedPath[markerRange.upperBound...])
         return rootURL.appending(path: suffix).path
-    }
-
-    private static func purgeLegacyManagedGameStorage(rootURL: URL) {
-        let managedRoot = rootURL.appending(path: "Managed", directoryHint: .isDirectory)
-        resetDirectory(at: managedRoot.appending(path: "Imports", directoryHint: .isDirectory))
-        resetDirectory(at: managedRoot.appending(path: "Steam", directoryHint: .isDirectory))
-    }
-
-    private static func resetDirectory(at url: URL) {
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: url.path) {
-            try? fileManager.removeItem(at: url)
-        }
-        try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
     private static func persistSnapshot(_ snapshot: IridiumSnapshot, to snapshotURL: URL?) {
