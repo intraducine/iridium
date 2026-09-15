@@ -94,6 +94,9 @@ enum MadeiraRuntimeAdapter {
                 defer { DispatchQueue.main.async { bootInProgress = false } }
                 func current() -> Bool { DispatchQueue.main.sync { launchID == token && !launchCancelled && !failureReported } }
                 guard current() else { return }
+                // The handoff is complete. Do not replay this launch if iOS
+                // later terminates the process during game preparation.
+                UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                 if !cube {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
@@ -103,6 +106,10 @@ enum MadeiraRuntimeAdapter {
                             executable: URL(fileURLWithPath: executable),
                             gameRoot: URL(fileURLWithPath: gameRoot), prefix: prefix)
                         guard current() else { return }
+                        MadeiraSteamEnvironment.publish(
+                            sourceExecutable: URL(fileURLWithPath: executable),
+                            sourceRoot: URL(fileURLWithPath: gameRoot),
+                            windowsExecutable: path)
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
@@ -174,7 +181,6 @@ enum MadeiraRuntimeAdapter {
                     wineserver_stop() // worker only; never join a native thread on the UI queue
                     return
                 }
-                UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                 DispatchQueue.main.async {
                     guard launchID == token else {
                         requestGuestClose()
@@ -252,12 +258,17 @@ enum MadeiraRuntimeAdapter {
     }
 
     @MainActor
-    private static func requestGuestClose() {
+    private static func requestGuestClose(keyboardFallback: Bool = false) {
         releaseKeys()
-        winios_post_key(0x12, 1)
-        winios_post_key(0x73, 1)
-        winios_post_key(0x73, 0)
-        winios_post_key(0x12, 0)
+        let posted = madeira_request_guest_close() != 0
+        RuntimeLogCapture.writeLine("[Launch] Guest WM_CLOSE posted=\(posted).")
+        if keyboardFallback || !posted {
+            winios_post_key(0x12, 1)
+            winios_post_key(0x73, 1)
+            winios_post_key(0x73, 0)
+            winios_post_key(0x12, 0)
+            RuntimeLogCapture.writeLine("[Launch] Guest Alt+F4 fallback sent.")
+        }
     }
 
     /// A timeout is not a successful shutdown. Keep the player reachable then.
@@ -276,10 +287,19 @@ enum MadeiraRuntimeAdapter {
         #endif
         if wine_process_is_running() != 0 { requestGuestClose() }
         closeTask = Task { @MainActor in
-            let deadline = ProcessInfo.processInfo.systemUptime + 8
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            let deadline = startedAt + 8
+            var retried = false
             while bootInProgress || wine_process_is_running() != 0 || wineserver_is_running() != 0 {
-                if ProcessInfo.processInfo.systemUptime >= deadline {
+                let now = ProcessInfo.processInfo.systemUptime
+                if !retried, now - startedAt >= 2, wine_process_is_running() != 0 {
+                    retried = true
+                    RuntimeLogCapture.writeLine("[Launch] Guest still running after WM_CLOSE; retrying with Alt+F4 fallback.")
+                    requestGuestClose(keyboardFallback: true)
+                }
+                if now >= deadline {
                     closeTask = nil
+                    RuntimeLogCapture.writeLine("[Launch] Guest close timed out; Wine process or wineserver is still running.")
                     completion(false)
                     return
                 }
@@ -287,6 +307,7 @@ enum MadeiraRuntimeAdapter {
                 catch { closeTask = nil; return }
             }
             closeTask = nil
+            RuntimeLogCapture.writeLine("[Launch] Guest process and wineserver stopped after close request.")
             completion(true)
         }
     }

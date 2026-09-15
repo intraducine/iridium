@@ -18,6 +18,7 @@ enum MadeiraGamePreparation {
         case legacyCopy
         case sourceChanged
         case invalidManifest
+        case fileAccess(operation: String, path: String, underlying: Error)
         var errorDescription: String? {
             switch self {
             case .conflictingChanges:
@@ -28,6 +29,9 @@ enum MadeiraGamePreparation {
                 return "The source game folder changed during preparation. Finish updating the files and try again."
             case .invalidManifest:
                 return "The game-copy update record is invalid. Existing files were kept. Restore the game-copy backup before retrying."
+            case let .fileAccess(operation, path, underlying):
+                let error = underlying as NSError
+                return "Game copy \(operation) failed at \(path) [\(error.domain) \(error.code)]: \(error.localizedDescription)"
             }
         }
     }
@@ -148,7 +152,8 @@ enum MadeiraGamePreparation {
                 try fm.removeItem(at: destination)
             }
             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: root.appendingPathComponent(path), to: destination)
+            do { try fm.copyItem(at: root.appendingPathComponent(path), to: destination) }
+            catch { throw PreparationError.fileAccess(operation: "copy", path: path, underlying: error) }
             guard try fingerprint(destination) == hash else { throw PreparationError.sourceChanged }
         }
         for (path, hash) in prior.files where source.files[path] == nil && current.files[path] == hash {
@@ -212,7 +217,11 @@ enum MadeiraGamePreparation {
         var directories: [String] = []
         for case let item as URL in enumerator {
             try Task.checkCancellation()
-            let relative = String(item.path.dropFirst(root.path.count + 1))
+            let canonicalItem = item.resolvingSymlinksInPath().standardizedFileURL
+            guard canonicalItem.path.hasPrefix(root.path + "/") else {
+                throw CocoaError(.fileReadInvalidFileName)
+            }
+            let relative = String(canonicalItem.path.dropFirst(root.path.count + 1))
             if relative == ".iridium" || relative == manifestName || relative == oldStamp {
                 enumerator.skipDescendants()
                 continue
@@ -222,7 +231,8 @@ enum MadeiraGamePreparation {
             guard itemValues.isSymbolicLink != true else { throw CocoaError(.fileReadUnsupportedScheme) }
             if itemValues.isDirectory == true { directories.append(relative); continue }
             guard itemValues.isRegularFile == true else { throw CocoaError(.fileReadUnsupportedScheme) }
-            files[relative] = try fingerprint(item)
+            do { files[relative] = try fingerprint(canonicalItem) }
+            catch { throw PreparationError.fileAccess(operation: "read", path: relative, underlying: error) }
         }
         if let enumerationError { throw enumerationError }
         return Manifest(files: files, directories: directories.sorted())
@@ -294,9 +304,16 @@ enum MadeiraGamePreparation {
         let file = try FileHandle(forReadingFrom: url)
         defer { try? file.close() }
         var hash = SHA256()
-        while let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty {
+        while true {
             try Task.checkCancellation()
-            hash.update(data: data)
+            let reachedEnd = try autoreleasepool { () throws -> Bool in
+                guard let data = try file.read(upToCount: 1024 * 1024), !data.isEmpty else {
+                    return true
+                }
+                hash.update(data: data)
+                return false
+            }
+            if reachedEnd { break }
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
         #else

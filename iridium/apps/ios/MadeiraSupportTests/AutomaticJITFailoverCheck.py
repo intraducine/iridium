@@ -56,6 +56,28 @@ enum StikJITHelper {
     }
 }
 
+enum MadeiraStikDebugJIT {
+    static var started = 0
+    static var pending: ((Bool) -> Void)?
+    static var succeeds = false
+    static var lastFailure = "StikDebug stub failed"
+
+    static func enableJIT(completion: @escaping (Bool) -> Void) {
+        started += 1
+        if succeeds {
+            completion(true)
+        } else {
+            pending = completion
+        }
+    }
+
+    static func cancel() {
+        let callback = pending
+        pending = nil
+        callback?(false)
+    }
+}
+
 enum MadeiraLiveContainer3JIT {
     static var started = 0
     static var pending: ((Bool) -> Void)?
@@ -88,6 +110,9 @@ func reset() {
     StikJITHelper.started = []
     StikJITHelper.pending = nil
     StikJITHelper.succeeds = nil
+    MadeiraStikDebugJIT.started = 0
+    MadeiraStikDebugJIT.pending = nil
+    MadeiraStikDebugJIT.succeeds = false
     MadeiraLiveContainer3JIT.started = 0
     MadeiraLiveContainer3JIT.pending = nil
     MadeiraLiveContainer3JIT.succeeds = false
@@ -111,17 +136,19 @@ var results: [Bool] = []
 MadeiraAutomaticExternalJIT.enableJIT(routeTimeout: 0.03) { results.append($0) }
 assert(defaults.string(forKey: StikJITHelper.routeKey) == "automatic")
 runFor(0.25)
-assert(StikJITHelper.started == [.livecontainer2, .stikdebug, .livecontainer])
+assert(StikJITHelper.started == [.livecontainer2, .livecontainer])
+assert(MadeiraStikDebugJIT.started == 1)
 assert(MadeiraLiveContainer3JIT.started == 1)
 assert(results == [false])
 assert(MadeiraAutomaticExternalJIT.lastFailure.contains("none attached"))
 
 reset()
 results = []
-StikJITHelper.succeeds = .stikdebug
+MadeiraStikDebugJIT.succeeds = true
 MadeiraAutomaticExternalJIT.enableJIT(routeTimeout: 0.03) { results.append($0) }
 runFor(0.12)
-assert(StikJITHelper.started == [.livecontainer2, .stikdebug])
+assert(StikJITHelper.started == [.livecontainer2])
+assert(MadeiraStikDebugJIT.started == 1)
 assert(MadeiraLiveContainer3JIT.started == 0)
 assert(results == [true])
 assert(defaults.string(forKey: StikJITHelper.routeKey) == "automatic")
@@ -132,10 +159,11 @@ MadeiraAutomaticExternalJIT.enableJIT(routeTimeout: 1.0) { results.append($0) }
 MadeiraAutomaticExternalJIT.cancel()
 runFor(0.05)
 assert(StikJITHelper.started == [.livecontainer2])
+assert(MadeiraStikDebugJIT.started == 0)
 assert(MadeiraLiveContainer3JIT.started == 0)
 assert(results == [false])
 
-print("PASS automatic JIT advances after open-without-attach, preserves route preference, and cancels cleanly")
+print("PASS automatic JIT advances after open-without-attach, uses current StikDebug route, preserves route preference, and cancels cleanly")
 '''
 
 with tempfile.TemporaryDirectory() as directory:

@@ -229,3 +229,37 @@ Use the recipient's own supported signing and JIT setup for device execution.
 No maintainer key is required by these unsigned build commands. Installation
 rights and runtime behavior must be assessed separately; these commands do not
 establish either. They are not a claim that all replacement variants were tested.
+
+## Local incremental app builds
+
+With the runtime dependencies staged, run from the repository root:
+
+```sh
+bash ci/build-local-ipa.sh
+```
+
+This local setup targets iOS 27 because its retained media SDK requires iOS 27.
+Do not use its output as an iOS 26 compatibility build.
+
+The script uses Xcode beta by default. Set `DEVELOPER_DIR` to choose another
+installed Xcode. It builds without signing and checks the package before writing
+a new `.build/local-ipa-output.XXXXXX/Iridium-unsigned.ipa` and its checksum.
+The command prints the output path and preserves earlier IPAs.
+
+Keep `.build/local-ipa` between builds. Xcode reuses unchanged compilation outputs;
+the script does not run a clean build. Packaging failures leave those outputs
+available. To retry packaging alone after correcting a packaging issue:
+
+```sh
+python3 ci/check-ipa-prerequisites.py --package
+output=$(mktemp -d "$PWD/.build/local-ipa-output.XXXXXX")
+python3 ci/package-unsigned-ipa.py \
+  .build/local-ipa/Build/Products/Release-iphoneos/Iridium.app "$output"
+```
+
+This command rebuilds the app, not its precompiled runtime dependencies. After
+changing Wine, FEX, DXMT, media, or the dependency toolchain, rebuild and stage
+those inputs with the component instructions above before running it. Missing
+inputs stop the build. The presence check does not prove that existing libraries
+match changed dependency source. Keep matching source and notices for any IPA
+that you distribute. Device testing remains separate.

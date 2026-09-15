@@ -13,6 +13,9 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
     let launchWithJITEnabled: Bool
     let jitScriptInstalled: Bool
     let jitScriptMatches: Bool
+    // Default true keeps explicit test fixtures/source compatibility; real
+    // LCAppInfo.plist reads always supply the persisted value below.
+    var usesLiveContainerBundleID: Bool = true
 
     var filePickerConfigured: Bool {
         configurationFilePresent
@@ -26,8 +29,13 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             && jitScriptMatches
     }
 
+    var automaticJITDisabled: Bool {
+        configurationFilePresent && !launchWithJITEnabled
+    }
+
     var fullyConfigured: Bool {
-        filePickerConfigured && jitConfigured
+        filePickerConfigured && automaticJITDisabled && jitScriptMatches
+            && usesLiveContainerBundleID
     }
 
     func setupFeedback(launchStatus: LiveContainerIntegrationStatus) -> String? {
@@ -36,12 +44,12 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             return "Could not verify LiveContainer setup. Its settings file is missing or unreadable."
         }
         guard fullyConfigured else {
-            return "LiveContainer setup is incomplete. Use Add Game to repair the file-picker and JIT settings."
+            return "LiveContainer setup is incomplete. Use Add Game to repair its settings."
         }
         guard launchStatus.fullyConfigured else {
             return "Setup saved and verified. Restart required: fully close Iridium, then open it from LiveContainer. LiveContainer loads these per-app settings only when Iridium starts."
         }
-        return "LiveContainer setup complete. LiveContainer will prepare JIT before Iridium starts."
+        return "LiveContainer setup complete. Iridium will request JIT when you play."
     }
 
 }
@@ -96,7 +104,7 @@ enum LiveContainerIntegration {
             String(cString: $0)
         } ?? "none"
         print(
-            "[IridiumRuntime] LiveContainer process launch: hosted=\(status.isHosted) configuration=\(status.configurationFilePresent) launch_with_jit=\(status.launchWithJITEnabled) script_matches=\(status.jitScriptMatches) inferred_provider=\(inferredProvider ?? "none") effective_provider=\(effectiveProvider)"
+            "[IridiumRuntime] LiveContainer process launch: hosted=\(status.isHosted) configuration=\(status.configurationFilePresent) launch_with_jit=\(status.launchWithJITEnabled) script_matches=\(status.jitScriptMatches) lc_bundle_id=\(status.usesLiveContainerBundleID) inferred_provider=\(inferredProvider ?? "none") effective_provider=\(effectiveProvider)"
         )
         return inferredProvider
     }
@@ -151,7 +159,8 @@ enum LiveContainerIntegration {
                 documentHostFixEnabled: false,
                 launchWithJITEnabled: false,
                 jitScriptInstalled: false,
-                jitScriptMatches: false
+                jitScriptMatches: false,
+                usesLiveContainerBundleID: false
             )
         }
 
@@ -163,7 +172,8 @@ enum LiveContainerIntegration {
                 documentHostFixEnabled: false,
                 launchWithJITEnabled: false,
                 jitScriptInstalled: false,
-                jitScriptMatches: false
+                jitScriptMatches: false,
+                usesLiveContainerBundleID: false
             )
         }
 
@@ -176,7 +186,8 @@ enum LiveContainerIntegration {
             documentHostFixEnabled: configuration["fixFilePickerNew"] as? Bool == true,
             launchWithJITEnabled: configuration["isJITNeeded"] as? Bool == true,
             jitScriptInstalled: installedScript?.isEmpty == false,
-            jitScriptMatches: installedScript == expectedScript
+            jitScriptMatches: installedScript == expectedScript,
+            usesLiveContainerBundleID: configuration["doUseLCBundleId"] as? Bool == true
         )
     }
 
@@ -206,11 +217,14 @@ enum LiveContainerIntegration {
             throw LiveContainerIntegrationError.malformedConfiguration
         }
 
-        // A guest process cannot survive when its host switches to StikDebug.
-        // Let LiveContainer obtain JIT before it starts the Iridium guest.
+        // Keep host startup JIT disabled. Iridium requests JIT for its running
+        // process only after the user starts a game. StikDebug uses the bundle ID
+        // to return after JIT; hosted guests therefore need LiveContainer's bundle
+        // ID mode enabled in the same app-specific configuration.
         configuration["doSymlinkInbox"] = true
         configuration["fixFilePickerNew"] = true
-        configuration["isJITNeeded"] = true
+        configuration["doUseLCBundleId"] = true
+        configuration["isJITNeeded"] = false
         configuration["jitLaunchScriptJs"] = expectedJITScriptData.base64EncodedString()
 
         let encoded = try PropertyListSerialization.data(
