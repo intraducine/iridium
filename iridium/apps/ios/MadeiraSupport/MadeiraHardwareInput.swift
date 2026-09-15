@@ -39,7 +39,10 @@ import MadeiraNative
 
     @discardableResult
     static func insertText(_ text: String) -> Bool {
-        guard acceptingInput, UIApplication.shared.applicationState == .active else { return true }
+        // In LiveContainer the hosted guest can own a foreground-active scene while
+        // UIApplication.applicationState remains inactive. The player controller is
+        // the authority for whether guest input is currently accepted.
+        guard acceptingInput else { return true }
         let mappings = text.map { MadeiraKeys.virtualKey(character: $0) }
         // Reject the entire insertion rather than silently dropping or substituting letters.
         guard mappings.allSatisfy({ $0 != nil }) else { return false }
@@ -48,7 +51,7 @@ import MadeiraNative
     }
 
     static func deleteBackward() {
-        guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
+        guard acceptingInput else { return }
         tap(key: 0x08, shift: false)
     }
 
