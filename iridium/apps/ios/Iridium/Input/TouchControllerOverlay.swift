@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TouchControllerOverlay: View {
     private static let inputResetNotification = Notification.Name("IridiumTouchControllerInputReset")
+    static let playerMenuRequested = Notification.Name("IridiumTouchControllerPlayerMenuRequested")
 
     let gameID: UUID
     @State private var layout: TouchControllerLayout
@@ -26,9 +27,31 @@ struct TouchControllerOverlay: View {
                             y: CGFloat(control.centerY) * geometry.size.height
                         )
                 }
+
+                // A visual hint only. The edge swipe is simultaneous with game controls,
+                // so no permanent hit target sits on top of a customizable button.
+                HStack {
+                    Spacer()
+                    Capsule()
+                        .fill(.white.opacity(0.32))
+                        .frame(width: 3, height: 44)
+                        .padding(.trailing, 2)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .id(resetGeneration)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                    .onEnded { value in
+                        let startedAtEdge = value.startLocation.x >= geometry.size.width - 28
+                        let movedInward = value.translation.width <= -60
+                        let mostlyHorizontal = abs(value.translation.height) <= 90
+                        guard startedAtEdge, movedInward, mostlyHorizontal else { return }
+                        NotificationCenter.default.post(name: Self.playerMenuRequested, object: gameID)
+                    }
+            )
         }
         .ignoresSafeArea()
         .onAppear { TouchControllerRuntimeBridge.setActive(true) }
@@ -42,6 +65,7 @@ struct TouchControllerOverlay: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("On-screen controller")
+        .accessibilityHint("Swipe inward from the right edge to open the player menu")
     }
 }
 
