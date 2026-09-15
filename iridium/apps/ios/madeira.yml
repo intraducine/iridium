@@ -8,6 +8,7 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: MediaSupport/MediaRuntime.c
+      - path: MadeiraSupport/MadeiraSteamEnv.c
       - path: ../../../testrepos/Madeira/app/Madeira
         includes:
           - JITAllocator.c
@@ -27,6 +28,10 @@ targets:
         CLANG_CXX_LANGUAGE_STANDARD: c++20
         CLANG_ENABLE_OBJC_ARC: YES
         GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "WINE_IOS=1"]
+        OTHER_CFLAGS:
+          - "$(inherited)"
+          - "-include"
+          - "$(SRCROOT)/MadeiraSupport/MadeiraSteamEnv.h"
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/.build/media-sdk/GStreamer.xcframework/ios-arm64/Headers
           - $(SRCROOT)/../../../testrepos/Madeira/app/Madeira
