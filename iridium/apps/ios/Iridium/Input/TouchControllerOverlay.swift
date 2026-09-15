@@ -18,7 +18,7 @@ struct TouchControllerOverlay: View {
             let minimumDimension = min(geometry.size.width, geometry.size.height)
             ZStack {
                 ForEach(layout.controls.filter { !$0.isHidden }) { control in
-                    let size = controlSize(control, minimumDimension: minimumDimension)
+                    let size = touchControllerRenderedSize(control, minimumDimension: minimumDimension)
                     TouchControllerRuntimeControl(control: control, renderedSize: size)
                         .frame(width: size.width, height: size.height)
                         .position(
@@ -45,7 +45,7 @@ struct TouchControllerOverlay: View {
     }
 }
 
-private func controlSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
+private func touchControllerRenderedSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
     let base = max(38, CGFloat(control.size) * minimumDimension)
     switch control.mapping.kind {
     case .stick, .dpad:
