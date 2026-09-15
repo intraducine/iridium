@@ -82,7 +82,32 @@ import Foundation
         MadeiraHardwareInput.key(hid: 26, pressed: true)
         precondition(events.count == 4)
         precondition(!MadeiraHardwareInput.usesRawMouse)
-        print("PASS keyboard fallback deduplication, menu release, inactive rejection")
+
+        UIApplication.shared.applicationState = .active
+        events.removeAll()
+        MadeiraHardwareInput.insertText("aA!")
+        MadeiraHardwareInput.deleteBackward()
+        let typed: [(Int32, Int32)] = [
+            (0x41, 1), (0x41, 0),
+            (0x10, 1), (0x41, 1), (0x41, 0), (0x10, 0),
+            (0x10, 1), (0x31, 1), (0x31, 0), (0x10, 0),
+            (0x08, 1), (0x08, 0),
+        ]
+        precondition(events.count == typed.count)
+        for index in typed.indices {
+            precondition(events[index].0 == typed[index].0 && events[index].1 == typed[index].1)
+        }
+
+        events.removeAll()
+        MadeiraHardwareInput.key(hid: 225, pressed: true)
+        MadeiraHardwareInput.insertText("A")
+        precondition(events.count == 3)
+        precondition(events[0].0 == 0xa0 && events[0].1 == 1)
+        precondition(events[1].0 == 0x41 && events[1].1 == 1)
+        precondition(events[2].0 == 0x41 && events[2].1 == 0)
+        MadeiraHardwareInput.key(hid: 225, pressed: false)
+
+        print("PASS keyboard fallback deduplication, software text input, menu release, inactive rejection")
     }
 }
 """

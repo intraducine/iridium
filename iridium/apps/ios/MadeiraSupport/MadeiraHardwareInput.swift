@@ -26,6 +26,28 @@ import MadeiraNative
         }
     }
 
+    static func insertText(_ text: String) {
+        guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
+        for character in text {
+            keyboardEvents += 1
+            guard let mapping = MadeiraKeys.virtualKey(character: character) else { continue }
+            keyboardDelivered += 1
+            let shiftAlreadyHeld = held.contains(0x10) || held.contains(0xa0) || held.contains(0xa1)
+            if mapping.shift && !shiftAlreadyHeld { winios_post_key(0x10, 1) }
+            winios_post_key(mapping.key, 1)
+            winios_post_key(mapping.key, 0)
+            if mapping.shift && !shiftAlreadyHeld { winios_post_key(0x10, 0) }
+        }
+    }
+
+    static func deleteBackward() {
+        guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
+        keyboardEvents += 1
+        keyboardDelivered += 1
+        winios_post_key(0x08, 1)
+        winios_post_key(0x08, 0)
+    }
+
     // Relative deltas and absolute UIKit locations must never drive the cursor together.
     static var usesRawMouse: Bool {
         acceptingInput && pointerCaptured && UIApplication.shared.applicationState == .active

@@ -11,6 +11,9 @@ xcrun clang "$root/MadeiraSupportTests/ControllerPacketCheck.c" -o "$check_binar
 xcrun swiftc "$root/MadeiraSupport/MadeiraKeys.swift" \
   "$root/MadeiraSupportTests/ControllerCheck.swift" -o "$check_binary"
 "$check_binary"
+xcrun swiftc "$root/Iridium/Views/RuntimeViewportGeometry.swift" \
+  "$root/MadeiraSupportTests/ViewportGeometryCheck.swift" -o "$check_binary"
+"$check_binary"
 xcrun swiftc "$root/MadeiraSupport/MadeiraLaunchReadiness.swift" \
   "$root/MadeiraSupportTests/LaunchReadinessCheck.swift" -o "$check_binary"
 "$check_binary"
