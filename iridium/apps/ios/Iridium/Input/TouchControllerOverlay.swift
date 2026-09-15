@@ -81,10 +81,8 @@ private struct TouchControllerButton: View {
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(.black.opacity(pressed ? 0.58 : 0.36))
-            Circle()
-                .stroke(.white.opacity(pressed ? 0.88 : 0.58), lineWidth: 2)
+            Circle().fill(.black.opacity(pressed ? 0.58 : 0.36))
+            Circle().stroke(.white.opacity(pressed ? 0.88 : 0.58), lineWidth: 2)
             Text(control.mapping.compactLabel)
                 .font(.system(.body, design: .rounded, weight: .bold))
                 .foregroundStyle(.white)
@@ -96,7 +94,7 @@ private struct TouchControllerButton: View {
                 .onChanged { _ in
                     guard !pressed else { return }
                     pressed = true
-                    TouchControllerRuntimeBridge.setButton(control.mapping, pressed: true)
+                    TouchControllerRuntimeBridge.setButton(source: control.id, mapping: control.mapping, pressed: true)
                 }
                 .onEnded { _ in release() }
         )
@@ -108,7 +106,7 @@ private struct TouchControllerButton: View {
     private func release() {
         guard pressed else { return }
         pressed = false
-        TouchControllerRuntimeBridge.setButton(control.mapping, pressed: false)
+        TouchControllerRuntimeBridge.setButton(source: control.id, mapping: control.mapping, pressed: false)
     }
 }
 
@@ -133,7 +131,7 @@ private struct TouchControllerTrigger: View {
                 .onChanged { _ in
                     guard !pressed else { return }
                     pressed = true
-                    TouchControllerRuntimeBridge.setTrigger(control.mapping, value: 1)
+                    TouchControllerRuntimeBridge.setTrigger(source: control.id, mapping: control.mapping, value: 1)
                 }
                 .onEnded { _ in release() }
         )
@@ -145,7 +143,7 @@ private struct TouchControllerTrigger: View {
     private func release() {
         guard pressed else { return }
         pressed = false
-        TouchControllerRuntimeBridge.setTrigger(control.mapping, value: 0)
+        TouchControllerRuntimeBridge.setTrigger(source: control.id, mapping: control.mapping, value: 0)
     }
 }
 
@@ -188,7 +186,8 @@ private struct TouchControllerStick: View {
         }
         knobOffset = CGSize(width: x, height: y)
         TouchControllerRuntimeBridge.setStick(
-            control.mapping,
+            source: control.id,
+            mapping: control.mapping,
             x: Float(x / radius),
             y: Float(-y / radius),
             active: true
@@ -197,7 +196,7 @@ private struct TouchControllerStick: View {
 
     private func reset() {
         knobOffset = .zero
-        TouchControllerRuntimeBridge.setStick(control.mapping, x: 0, y: 0, active: false)
+        TouchControllerRuntimeBridge.setStick(source: control.id, mapping: control.mapping, x: 0, y: 0, active: false)
     }
 }
 
@@ -256,19 +255,20 @@ private struct TouchControllerDPad: View {
         if dy < -threshold { next.insert(.up) }
 
         for direction in Direction.allCases where directions.contains(direction) != next.contains(direction) {
-            TouchControllerRuntimeBridge.setDPad(direction.mask, pressed: next.contains(direction))
+            TouchControllerRuntimeBridge.setDPad(source: control.id, mask: direction.mask, pressed: next.contains(direction))
         }
         directions = next
     }
 
     private func releaseAll() {
         for direction in directions {
-            TouchControllerRuntimeBridge.setDPad(direction.mask, pressed: false)
+            TouchControllerRuntimeBridge.setDPad(source: control.id, mask: direction.mask, pressed: false)
         }
         directions.removeAll()
     }
 }
 
+@MainActor
 private enum TouchControllerRuntimeBridge {
     static func setActive(_ active: Bool) {
         #if MADEIRA_RUNTIME
@@ -276,39 +276,39 @@ private enum TouchControllerRuntimeBridge {
         #endif
     }
 
-    static func setButton(_ mapping: TouchControllerMapping, pressed: Bool) {
+    static func setButton(source: UUID, mapping: TouchControllerMapping, pressed: Bool) {
         guard let mask = mapping.buttonMask else { return }
         #if MADEIRA_RUNTIME
-        MadeiraController.setTouchButton(mask: mask, pressed: pressed)
+        MadeiraController.setTouchButton(source: source, mask: mask, pressed: pressed)
         #endif
     }
 
-    static func setDPad(_ mask: UInt16, pressed: Bool) {
+    static func setDPad(source: UUID, mask: UInt16, pressed: Bool) {
         #if MADEIRA_RUNTIME
-        MadeiraController.setTouchButton(mask: mask, pressed: pressed)
+        MadeiraController.setTouchButton(source: source, mask: mask, pressed: pressed)
         #endif
     }
 
-    static func setTrigger(_ mapping: TouchControllerMapping, value: Float) {
+    static func setTrigger(source: UUID, mapping: TouchControllerMapping, value: Float) {
         #if MADEIRA_RUNTIME
         switch mapping {
         case .leftTrigger:
-            MadeiraController.setTouchTrigger(left: true, value: value)
+            MadeiraController.setTouchTrigger(source: source, left: true, value: value)
         case .rightTrigger:
-            MadeiraController.setTouchTrigger(left: false, value: value)
+            MadeiraController.setTouchTrigger(source: source, left: false, value: value)
         default:
             break
         }
         #endif
     }
 
-    static func setStick(_ mapping: TouchControllerMapping, x: Float, y: Float, active: Bool) {
+    static func setStick(source: UUID, mapping: TouchControllerMapping, x: Float, y: Float, active: Bool) {
         #if MADEIRA_RUNTIME
         switch mapping {
         case .leftStick:
-            MadeiraController.setTouchStick(left: true, x: x, y: y, active: active)
+            MadeiraController.setTouchStick(source: source, left: true, x: x, y: y, active: active)
         case .rightStick:
-            MadeiraController.setTouchStick(left: false, x: x, y: y, active: active)
+            MadeiraController.setTouchStick(source: source, left: false, x: x, y: y, active: active)
         default:
             break
         }
