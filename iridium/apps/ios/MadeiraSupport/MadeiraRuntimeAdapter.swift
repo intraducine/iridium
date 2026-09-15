@@ -26,6 +26,7 @@ enum MadeiraRuntimeAdapter {
     @MainActor
     static func start(executable: String, gameRoot: String, gameID: UUID,
                       arguments: [String] = [],
+                      steamAppID: String? = nil,
                       report: @escaping (String) -> Void,
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
@@ -94,14 +95,23 @@ enum MadeiraRuntimeAdapter {
                 defer { DispatchQueue.main.async { bootInProgress = false } }
                 func current() -> Bool { DispatchQueue.main.sync { launchID == token && !launchCancelled && !failureReported } }
                 guard current() else { return }
+                if cube { applySteamMetadata(nil) }
                 if !cube {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
                         madeira_seed_prefix_if_needed(prefix.path)
                         try MadeiraMediaInstall.install(prefix: prefix)
+                        let executableURL = URL(fileURLWithPath: executable)
+                        let gameRootURL = URL(fileURLWithPath: gameRoot)
                         let path = try MadeiraGamePreparation.prepare(
-                            executable: URL(fileURLWithPath: executable),
-                            gameRoot: URL(fileURLWithPath: gameRoot), prefix: prefix)
+                            executable: executableURL,
+                            gameRoot: gameRootURL, prefix: prefix)
+                        let steam = MadeiraGamePreparation.steamMetadata(appID: steamAppID, windowsExecutable: path)
+                            ?? MadeiraGamePreparation.steamMetadata(
+                                executable: executableURL,
+                                gameRoot: gameRootURL,
+                                windowsExecutable: path)
+                        applySteamMetadata(steam)
                         guard current() else { return }
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
@@ -117,6 +127,7 @@ enum MadeiraRuntimeAdapter {
                             try Data(contentsOf: probe).write(to: prefix.appendingPathComponent("drive_c/iridium-mfprobe.exe"), options: .atomic)
                             setenv("MADEIRA_EXE", "C:\\iridium-mfprobe.exe", 1)
                             setenv("IRIDIUM_MADEIRA_ARGS_JSON", "[]", 1)
+                            applySteamMetadata(nil)
                         }
                     } catch {
                         failure("Cannot prepare the isolated game copy: \(error.localizedDescription)")
@@ -258,6 +269,22 @@ enum MadeiraRuntimeAdapter {
         winios_post_key(0x73, 1)
         winios_post_key(0x73, 0)
         winios_post_key(0x12, 0)
+    }
+
+    private static func applySteamMetadata(_ metadata: MadeiraGamePreparation.SteamMetadata?) {
+        if let metadata {
+            setenv("SteamAppPath", metadata.appPath, 1)
+            setenv("SteamGameId", metadata.appID, 1)
+            setenv("SteamAppId", metadata.appID, 1)
+            setenv("IRIDIUM_STEAM_METADATA_STATE", "present", 1)
+            RuntimeLogCapture.writeLine("[Launch] Steam metadata: app \(metadata.appID) at \(metadata.appPath).")
+        } else {
+            unsetenv("SteamAppPath")
+            unsetenv("SteamGameId")
+            unsetenv("SteamAppId")
+            setenv("IRIDIUM_STEAM_METADATA_STATE", "absent", 1)
+            RuntimeLogCapture.writeLine("[Launch] No Steam metadata is available for this game.")
+        }
     }
 
     /// A timeout is not a successful shutdown. Keep the player reachable then.
