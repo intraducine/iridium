@@ -8,6 +8,8 @@ struct TouchControllerOverlay: View {
     let gameID: UUID
     @State private var layout: TouchControllerLayout
     @State private var resetGeneration = 0
+    @AppStorage("IridiumPlayerMenuHandleYFraction") private var menuHandleYFraction = 0.5
+    @State private var menuHandleMoved = false
 
     init(gameID: UUID) {
         self.gameID = gameID
@@ -17,6 +19,8 @@ struct TouchControllerOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let minimumDimension = min(geometry.size.width, geometry.size.height)
+            let handleY = max(44, min(geometry.size.height - 44, CGFloat(menuHandleYFraction) * geometry.size.height))
+
             ZStack {
                 ForEach(layout.controls.filter { !$0.isHidden }) { control in
                     let size = touchControllerRenderedSize(control, minimumDimension: minimumDimension)
@@ -28,30 +32,54 @@ struct TouchControllerOverlay: View {
                         )
                 }
 
-                // A visual hint only. The edge swipe is simultaneous with game controls,
-                // so no permanent hit target sits on top of a customizable button.
-                HStack {
-                    Spacer()
-                    Capsule()
-                        .fill(.white.opacity(0.32))
-                        .frame(width: 3, height: 44)
-                        .padding(.trailing, 2)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
+                // This is an actual hit target, not just a visual hint. It sits above the
+                // customizable controls, opens on a tap, and can be moved vertically.
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(.black.opacity(0.48))
+                        .frame(width: 18, height: 56)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(.white.opacity(0.34), lineWidth: 1)
+                        .frame(width: 18, height: 56)
+                    Image(systemName: "ellipsis")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.white.opacity(0.88))
+                        .rotationEffect(.degrees(90))
+                }
+                .frame(width: 44, height: 72)
+                .contentShape(Rectangle())
+                .position(x: geometry.size.width - 22, y: handleY)
+                .zIndex(10_000)
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .named("touch-controller-overlay"))
+                        .onChanged { value in
+                            let distance = hypot(value.translation.width, value.translation.height)
+                            if distance > 8 { menuHandleMoved = true }
+                            guard menuHandleMoved, geometry.size.height > 0 else { return }
+                            let y = max(44, min(geometry.size.height - 44, value.location.y))
+                            menuHandleYFraction = Double(y / geometry.size.height)
+                        }
+                        .onEnded { value in
+                            let distance = hypot(value.translation.width, value.translation.height)
+                            if distance <= 8 {
+                                NotificationCenter.default.post(name: Self.playerMenuRequested, object: gameID)
+                            } else if geometry.size.height > 0 {
+                                let y = max(44, min(geometry.size.height - 44, value.location.y))
+                                menuHandleYFraction = Double(y / geometry.size.height)
+                            }
+                            menuHandleMoved = false
+                        }
+                )
+                .accessibilityLabel("Player Menu")
+                .accessibilityHint("Tap to open the player menu. Drag up or down to move this handle.")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    NotificationCenter.default.post(name: Self.playerMenuRequested, object: gameID)
                 }
             }
+            .coordinateSpace(name: "touch-controller-overlay")
             .id(resetGeneration)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 24, coordinateSpace: .local)
-                    .onEnded { value in
-                        let startedAtEdge = value.startLocation.x >= geometry.size.width - 28
-                        let movedInward = value.translation.width <= -60
-                        let mostlyHorizontal = abs(value.translation.height) <= 90
-                        guard startedAtEdge, movedInward, mostlyHorizontal else { return }
-                        NotificationCenter.default.post(name: Self.playerMenuRequested, object: gameID)
-                    }
-            )
         }
         .ignoresSafeArea()
         .onAppear { TouchControllerRuntimeBridge.setActive(true) }
@@ -65,7 +93,7 @@ struct TouchControllerOverlay: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("On-screen controller")
-        .accessibilityHint("Swipe inward from the right edge to open the player menu")
+        .accessibilityHint("Use the right-edge Player Menu handle to open Iridium controls")
     }
 }
 
