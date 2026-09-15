@@ -9,6 +9,11 @@ root = Path(__file__).resolve().parents[1]
 with (root / "Iridium/Info.plist").open("rb") as plist:
     assert plistlib.load(plist).get("UIApplicationSupportsIndirectInputEvents") is True
 assert "UIApplicationSupportsIndirectInputEvents: true" in (root / "project.yml").read_text()
+
+presentation = (root / "MadeiraSupport/MadeiraPlayerPresentation.swift").read_text()
+assert "playerSceneIsForeground" in presentation
+assert "MadeiraHardwareInput.acceptingInput = captureRequested && playerSceneIsForeground" in presentation
+
 source = (root / "MadeiraSupport/MadeiraHardwareInput.swift").read_text()
 start = source.index("    static var acceptingInput")
 end = source.index("    private static var observers")
@@ -77,12 +82,27 @@ import Foundation
         MadeiraHardwareInput.key(hid: 225, pressed: true)
         MadeiraHardwareInput.acceptingInput = false
         precondition(events.count == 4 && events[3].0 == 0xa0 && events[3].1 == 0)
+
+        // A hosted LiveContainer guest can have a foreground-active player scene
+        // while UIApplication remains inactive. Hardware-key callbacks remain gated,
+        // but the device keyboard must follow acceptingInput from the player scene.
         MadeiraHardwareInput.acceptingInput = true
         UIApplication.shared.applicationState = .inactive
         MadeiraHardwareInput.key(hid: 26, pressed: true)
         precondition(events.count == 4)
         precondition(!MadeiraHardwareInput.usesRawMouse)
-        print("PASS keyboard fallback deduplication, menu release, inactive rejection")
+
+        MadeiraHardwareInput.softwareKeyboardActive = true
+        precondition(MadeiraHardwareInput.insertText("w"))
+        precondition(events.count == 6)
+        precondition(events[4].0 == 0x57 && events[4].1 == 1)
+        precondition(events[5].0 == 0x57 && events[5].1 == 0)
+        MadeiraHardwareInput.deleteBackward()
+        precondition(events.count == 8)
+        precondition(events[6].0 == 0x08 && events[6].1 == 1)
+        precondition(events[7].0 == 0x08 && events[7].1 == 0)
+
+        print("PASS keyboard fallback deduplication, inactive hardware rejection, hosted device-keyboard delivery")
     }
 }
 """
