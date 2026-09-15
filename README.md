@@ -20,6 +20,21 @@ Clone this repository. Optional external dependencies are pinned in the root `.g
 
 The [manual IPA workflow](docs/actions-ipa.md) builds runtime dependencies and the app, with source and license checks before packaging. IPA packaging requires the final binary and source audits to pass. Start with the [product guide](iridium/docs/product-experience.md) for app navigation and the build guide for development setup.
 
+## Build an unsigned IPA locally
+
+Install Xcode 27, Python 3.12 or newer, XcodeGen, and LLVM. Prepare the runtime
+dependencies by following [the full IPA build guide](docs/actions-ipa.md), then
+run this command from the repository root:
+
+```sh
+bash ci/build-local-ipa.sh
+```
+
+The script checks the staged dependencies, builds the Release app without
+signing, audits the package, and prints the path to `Iridium-unsigned.ipa`.
+It keeps `.build/local-ipa`, so later builds reuse unchanged Xcode outputs.
+The IPA must be signed with a suitable sideloading tool before installation.
+
 ## Privacy and contributions
 
 Run `python3 check-public-source.py` before contributing. You can pass private strings as arguments for a targeted local scan; do not add those strings to public workflows. This scan does not guarantee anonymity.

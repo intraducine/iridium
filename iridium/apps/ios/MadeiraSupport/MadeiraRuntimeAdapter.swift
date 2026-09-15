@@ -86,8 +86,7 @@ enum MadeiraRuntimeAdapter {
             guard launchID == token, !bootWasRequested, !launchCancelled, !failureReported else { return }
             bootWasRequested = true
             bootInProgress = true
-            UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
-            RuntimeLogCapture.writeLine("[Launch] JIT handoff complete. Automatic resume request cleared.")
+            RuntimeLogCapture.writeLine("[Launch] JIT handoff complete. Starting the pending game.")
             #if BUILTIN_STIKJIT
             let usingBuiltinJIT = useBuiltinJIT
             #endif
@@ -175,6 +174,7 @@ enum MadeiraRuntimeAdapter {
                     wineserver_stop() // worker only; never join a native thread on the UI queue
                     return
                 }
+                UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                 DispatchQueue.main.async {
                     guard launchID == token else {
                         requestGuestClose()
@@ -219,8 +219,10 @@ enum MadeiraRuntimeAdapter {
         }
         let startExternalJIT = {
             guard launchID == token, !launchCancelled, !failureReported else { return }
-            if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
-                StikJITHelper.consumePersistentScriptRequest()
+            if jit_check_debugged() {
+                if StikJITHelper.persistentScriptRequested {
+                    StikJITHelper.consumePersistentScriptRequest()
+                }
                 boot()
             } else if StikJITHelper.route == .automatic {
                 MadeiraAutomaticExternalJIT.enableJIT { ready in

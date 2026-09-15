@@ -20,23 +20,14 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             && documentHostFixEnabled
     }
 
-    // This describes the legacy LiveContainer-owned JIT launch path only. It is
-    // intentionally separate from fullyConfigured because Iridium now requests
-    // StikDebug for its already-running PID when the user starts a game.
     var jitConfigured: Bool {
         configurationFilePresent
             && launchWithJITEnabled
             && jitScriptMatches
     }
 
-    var automaticJITDisabled: Bool {
-        configurationFilePresent && !launchWithJITEnabled
-    }
-
     var fullyConfigured: Bool {
-        filePickerConfigured
-            && automaticJITDisabled
-            && jitScriptMatches
+        filePickerConfigured && jitConfigured
     }
 
     func setupFeedback(launchStatus: LiveContainerIntegrationStatus) -> String? {
@@ -45,12 +36,12 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
             return "Could not verify LiveContainer setup. Its settings file is missing or unreadable."
         }
         guard fullyConfigured else {
-            return "LiveContainer setup is incomplete. Use Add Game to repair the file-picker settings and disable LiveContainer's automatic JIT launch."
+            return "LiveContainer setup is incomplete. Use Add Game to repair the file-picker and JIT settings."
         }
         guard launchStatus.fullyConfigured else {
             return "Setup saved and verified. Restart required: fully close Iridium, then open it from LiveContainer. LiveContainer loads these per-app settings only when Iridium starts."
         }
-        return "LiveContainer setup complete. Automatic host JIT is disabled; Iridium will request JIT for the running process when you play."
+        return "LiveContainer setup complete. LiveContainer will prepare JIT before Iridium starts."
     }
 
 }
@@ -215,13 +206,11 @@ enum LiveContainerIntegration {
             throw LiveContainerIntegrationError.malformedConfiguration
         }
 
-        // LiveContainer's bundle-ID JIT path can ask StikDebug to relaunch a
-        // hosted guest and fail before it obtains a PID. Keep its automatic JIT
-        // launch disabled. Iridium's in-app handoff targets getpid() directly.
-        // The exact bootstrap script remains staged for compatibility and audit.
+        // A guest process cannot survive when its host switches to StikDebug.
+        // Let LiveContainer obtain JIT before it starts the Iridium guest.
         configuration["doSymlinkInbox"] = true
         configuration["fixFilePickerNew"] = true
-        configuration["isJITNeeded"] = false
+        configuration["isJITNeeded"] = true
         configuration["jitLaunchScriptJs"] = expectedJITScriptData.base64EncodedString()
 
         let encoded = try PropertyListSerialization.data(

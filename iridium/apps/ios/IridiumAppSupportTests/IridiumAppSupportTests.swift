@@ -15,7 +15,7 @@ final class IridiumAppSupportTests: XCTestCase {
         func status(hosted: Bool = true, present: Bool = true, configured: Bool) -> LiveContainerIntegrationStatus {
             .init(isHosted: hosted, configurationFilePresent: present,
                   legacyFilePickerFixEnabled: configured, documentHostFixEnabled: configured,
-                  launchWithJITEnabled: false, jitScriptInstalled: configured, jitScriptMatches: configured)
+                  launchWithJITEnabled: configured, jitScriptInstalled: configured, jitScriptMatches: configured)
         }
         let incomplete = status(configured: false)
         let complete = status(configured: true)
@@ -1504,8 +1504,7 @@ final class IridiumAppSupportTests: XCTestCase {
         XCTAssertTrue(repaired.fullyConfigured)
         XCTAssertTrue(repaired.legacyFilePickerFixEnabled)
         XCTAssertTrue(repaired.documentHostFixEnabled)
-        XCTAssertFalse(repaired.launchWithJITEnabled)
-        XCTAssertTrue(repaired.automaticJITDisabled)
+        XCTAssertTrue(repaired.launchWithJITEnabled)
         XCTAssertTrue(repaired.jitScriptMatches)
 
         let repairedData = try Data(contentsOf: configurationURL)
@@ -1517,7 +1516,7 @@ final class IridiumAppSupportTests: XCTestCase {
             ) as? [String: Any]
         )
         XCTAssertEqual(repairedPropertyList["unrelatedLiveContainerSetting"] as? String, "preserve-me")
-        XCTAssertEqual(repairedPropertyList["isJITNeeded"] as? Bool, false)
+        XCTAssertEqual(repairedPropertyList["isJITNeeded"] as? Bool, true)
         XCTAssertEqual(
             repairedPropertyList["jitLaunchScriptJs"] as? String,
             expectedScript.base64EncodedString()
@@ -1539,7 +1538,7 @@ final class IridiumAppSupportTests: XCTestCase {
             ExternalJITProvider.stikDebug.runtimeIdentifier
         )
 
-        let safePIDHandoff = LiveContainerIntegrationStatus(
+        let disabledJIT = LiveContainerIntegrationStatus(
             isHosted: true,
             configurationFilePresent: true,
             legacyFilePickerFixEnabled: true,
@@ -1548,9 +1547,9 @@ final class IridiumAppSupportTests: XCTestCase {
             jitScriptInstalled: true,
             jitScriptMatches: true
         )
-        XCTAssertTrue(safePIDHandoff.fullyConfigured)
+        XCTAssertFalse(disabledJIT.fullyConfigured)
         XCTAssertNil(
-            LiveContainerIntegration.inferredActiveJITProviderIdentifier(for: safePIDHandoff)
+            LiveContainerIntegration.inferredActiveJITProviderIdentifier(for: disabledJIT)
         )
 
         let staleScript = LiveContainerIntegrationStatus(
