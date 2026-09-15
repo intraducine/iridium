@@ -21,12 +21,15 @@ final class MadeiraCombatProfile { init(prefix: URL) throws {}; func stop() {} }
 enum RuntimeLogCapture { static func writeLine(_ s: String) {} }
 final class LogStore { static let shared = LogStore() }
 enum MadeiraGamePreparation {
+    struct SteamMetadata: Equatable { let appID: String; let appPath: String }
     static let directory = FileManager.default.temporaryDirectory.appendingPathComponent("iridium-adapter-"+UUID().uuidString)
     static func prefix(for id: UUID) -> URL { directory }
     static func prepare(executable: URL, gameRoot: URL, prefix: URL) throws -> String {
         if scenario == "prepare-failure" { throw CocoaError(.fileWriteOutOfSpace) }
         return "C:\\IridiumGame\\game.exe"
     }
+    static func steamMetadata(appID: String?, windowsExecutable: String) -> SteamMetadata? { nil }
+    static func steamMetadata(executable: URL, gameRoot: URL, windowsExecutable: String) -> SteamMetadata? { nil }
 }
 enum MadeiraMediaInstall { static func install(prefix: URL) throws {} }
 @MainActor enum MadeiraController { static var acceptingInput = true; static var active = false; static func start(prefix: URL) { active=true }; static func stop() { active=false } }
