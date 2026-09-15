@@ -31,8 +31,11 @@ for token in [
     "TouchControllerButton", "TouchControllerTrigger", "TouchControllerStick",
     "TouchControllerDPad", "source: control.id", "@MainActor",
     "setTouchButton", "setTouchTrigger", "setTouchStick",
+    "touchControllerRenderedSize(control, minimumDimension: minimumDimension)",
+    "private func touchControllerRenderedSize",
 ]:
     assert token in overlay, token
+assert "private func controlSize(" not in overlay
 
 for token in [
     'Label("Add Control"', 'Button("Reset"', 'Button("Delete"',
