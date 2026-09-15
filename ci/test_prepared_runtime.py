@@ -12,6 +12,21 @@ prepared = load('prepared_tests', 'prepared-runtime.py')
 
 
 class PreparedRuntimeTests(unittest.TestCase):
+    def test_steam_is_required_at_app_build_but_not_in_runtime_archive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            names = {name for paths in prepared.RUNTIME_REQUIRED.values() for name in paths}
+            names.update(prepared.ARCHIVES[1] + '/artifacts/' + name for name in prepared.LINK_ARCHIVES)
+            for name in names:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'fixture')
+            (root / 'ci').mkdir()
+            (root / 'ci/binary-release-blockers.json').write_text('[]')
+            prepared.check_outputs(root)
+            self.assertEqual(prepared.prerequisites.blockers(root),
+                             ['native Steam framework: 1 required file(s) missing'])
+
     def test_producer_must_complete_transfer_even_if_app_later_fails(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature', 'head_sha': 'a' * 40,
                'path': prepared.reuse.WORKFLOW,
@@ -35,7 +50,7 @@ class PreparedRuntimeTests(unittest.TestCase):
             producer, consumer = (Path(temp) / name for name in ('producer', 'consumer'))
             for tree in prepared.TREES + prepared.ARCHIVES + prepared.HEADERS:
                 (producer / tree).mkdir(parents=True, exist_ok=True)
-            required = dict(prepared.prerequisites.REQUIRED)
+            required = dict(prepared.RUNTIME_REQUIRED)
             names = set(prepared.FILES)
             names.update(prepared.ARCHIVES[1] + '/artifacts/' + name for name in prepared.LINK_ARCHIVES)
             names.update(name for group in required.values() for name in group)
