@@ -991,6 +991,30 @@ final class AppViewModel: ObservableObject {
     }
 
     func dismissActiveRuntimePlayer() {
+        #if MADEIRA_RUNTIME
+        if MadeiraRuntimeAdapter.enabled {
+            guard !closingMadeiraSession, let id = activeRuntimePlayerSession?.sessionIdentifier else { return }
+            closingMadeiraSession = true
+            madeiraShutdownUnconfirmed = false
+            activeRuntimePlayerSession?.statusSummary = "Close requested. Waiting for the game and runtime to stop."
+            MadeiraRuntimeAdapter.requestClose { [weak self] confirmed in
+                guard let self else { return }
+                self.closingMadeiraSession = false
+                guard self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                if confirmed {
+                    self.releaseRuntimePlayerReservation(sessionIdentifier: id)
+                    self.activityStatusMessage = "Game stopped. Restart Iridium before another session."
+                } else {
+                    self.madeiraShutdownUnconfirmed = true
+                    let message = "Shutdown was not confirmed. The player remains open. Use the game's Quit option, or restart Iridium."
+                    self.activeRuntimePlayerSession?.statusSummary = message
+                    self.activityStatusMessage = message
+                    RuntimeLogCapture.writeLine("[Launch] \(message)")
+                }
+            }
+            return
+        }
+        #endif
         let sessionTitle = activeRuntimePlayerSession?.gameTitle ?? runtimePlayerReservation?.gameTitle
         let sessionIdentifier = activeRuntimePlayerSession?.sessionIdentifier
             ?? runtimePlayerReservation?.sessionIdentifier
@@ -1219,12 +1243,16 @@ final class AppViewModel: ObservableObject {
         importStatusMessage = "Scanning \(installURL.lastPathComponent)…"
         let artifactInventory = self.artifactInventory
         importScanTask = Task.detached(priority: .userInitiated) {
-            [resolvedInstallPath, inferredTitle, installURL] in
+            [resolvedInstallPath, inferredTitle, installURL, url] in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            guard !Task.isCancelled else { return }
             let scanResult = ImportScanner().scan(
                 installPath: installURL.path, title: inferredTitle)
             var metadataCache: [String: (identifier: String, fingerprint: String)] = [:]
 
             for executable in scanResult.executables {
+                guard !Task.isCancelled else { return }
                 let artifact = try? artifactInventory.makeManagedArtifact(
                     title: inferredTitle,
                     executablePath: executable.path,
@@ -1246,6 +1274,7 @@ final class AppViewModel: ObservableObject {
                 metadataCache[executable.path] = (identifier, fingerprint)
             }
             let resolvedMetadataCache = metadataCache
+            guard !Task.isCancelled else { return }
 
             await MainActor.run {
                 guard requestID == self.importScanRequestID else {
@@ -1300,6 +1329,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func removeLibraryEntry(_ game: GameRecord) {
+        guard !refreshingGameCopy else { return }
         guard activeRuntimePlayerSession?.gameID != game.id, runtimePlayerReservation?.gameID != game.id else { return }
         Task {
             await store.removeLibraryEntry(gameID: game.id)
@@ -1370,10 +1400,10 @@ final class AppViewModel: ObservableObject {
                 )
                 return
             }
-            let importedGame = await withImportSecurityScopedAccess(
-                importSourceURL
-            ) {
-                await store.importGame(
+            let importedGame: GameRecord
+            do {
+                importedGame = try await withImportSecurityScopedAccess(importSourceURL) {
+                    try await store.importGame(
                     title: inferredTitle,
                     installPath: importInstallPath,
                     executablePath: executable.path,
@@ -1385,7 +1415,11 @@ final class AppViewModel: ObservableObject {
                     executableFingerprint: metadata.fingerprint,
                     runtimeBundleIdentifier: hostCapabilities.selectedRuntimeBundle?.id,
                     runtimeBundleVersion: hostCapabilities.selectedRuntimeBundle?.version
-                )
+                    )
+                }
+            } catch {
+                importStatusMessage = "Import failed. Existing game files were kept: \(error.localizedDescription)"
+                return
             }
 
             print(
@@ -1414,7 +1448,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func dismissImportScan() {
+        importScanRequestID = UUID()
         importScanTask?.cancel()
+        importScanTask = nil
         importMetadataCache = [:]
         importMetadataCacheTitle = nil
         releaseImportSecurityScopedAccess()
@@ -1524,6 +1560,8 @@ final class AppViewModel: ObservableObject {
     func recordRuntimePlayerFirstFramePresented(sessionIdentifier: String) {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
+            guard activeRuntimePlayerSession?.sessionIdentifier == sessionIdentifier,
+                  activeRuntimePlayerSession?.state == .running else { return }
             UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
             activeRuntimePlayerSession?.statusSummary = "The game is displaying frames."
             print("[IridiumMadeira] first-present session=\(sessionIdentifier)")
@@ -1790,7 +1828,7 @@ final class AppViewModel: ObservableObject {
         MadeiraLaunchReadiness.issue(
             runtimeAvailable: madeiraRuntimeAvailable,
             executableExists: FileManager.default.fileExists(atPath: buildLaunchSession(for: game, jitStatus: jitStatus).executablePath),
-            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil,
+            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy,
             started: MadeiraRuntimeAdapter.started
         )
     }
@@ -1958,6 +1996,34 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    @Published private(set) var refreshingGameCopy = false
+    @Published private(set) var closingMadeiraSession = false
+    @Published private(set) var madeiraShutdownUnconfirmed = false
+
+    func refreshMadeiraGameCopy(_ game: GameRecord) {
+        #if MADEIRA_RUNTIME
+        guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy,
+              activeRuntimePlayerSession == nil, !MadeiraRuntimeAdapter.started else { return }
+        refreshingGameCopy = true
+        Task {
+            defer { refreshingGameCopy = false }
+            do {
+                let executable = URL(fileURLWithPath: game.launchProfile.executablePath)
+                let root = URL(fileURLWithPath: game.installPath)
+                let prefix = MadeiraGamePreparation.prefix(for: game.id)
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try MadeiraGamePreparation.prepare(executable: executable, gameRoot: root,
+                        prefix: prefix, replaceConflictsWithBackup: true)
+                }.value
+                activityStatusMessage = "Game copy refreshed. The previous isolated copy was retained in its game-backup folder."
+                await refresh()
+            } catch {
+                activityStatusMessage = "Game copy could not be refreshed: \(error.localizedDescription)"
+            }
+        }
+        #endif
+    }
+
     func recordLaunchPreparation(for game: GameRecord) {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
@@ -1978,7 +2044,7 @@ final class AppViewModel: ObservableObject {
                     launchTicketPath: "", sessionLogPath: prepared.bridgeConfiguration.wineDebugLogPath,
                     telemetryPath: "", state: .running, stateHistory: [.running],
                     statusSummary: "Preparing Madeira. No rendered frame yet.", launchedAt: Date())
-                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id) { [weak self] message in
+                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launchSession(for: game).arguments) { [weak self] message in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                     if message.contains("failed") || message.hasPrefix("Cannot") {
                         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
@@ -1991,6 +2057,16 @@ final class AppViewModel: ObservableObject {
                     UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
                     self.activeRuntimePlayerSession?.state = .failed
                     self.activeRuntimePlayerSession?.stateHistory.append(.failed)
+                    self.activeRuntimePlayerSession?.statusSummary = message
+                    self.activityStatusMessage = message
+                    RuntimeLogCapture.writeLine("[Launch] \(message)")
+                } exited: { [weak self] in
+                    guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                    let presented = madeira_get_present_count() > 0
+                    self.madeiraShutdownUnconfirmed = false
+                    self.activeRuntimePlayerSession?.state = presented ? .completed : .failed
+                    self.activeRuntimePlayerSession?.stateHistory.append(presented ? .completed : .failed)
+                    let message = presented ? "The game stopped. Restart Iridium before another session." : "The game exited before displaying a frame. Restart Iridium before retrying."
                     self.activeRuntimePlayerSession?.statusSummary = message
                     self.activityStatusMessage = message
                     RuntimeLogCapture.writeLine("[Launch] \(message)")
@@ -3072,8 +3148,9 @@ final class AppViewModel: ObservableObject {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             if activeRuntimePlayerSession?.gameID == game.id {
-                return TitleReadinessReport(title: game.title, overallStatus: .ready, checks: [
-                    VerificationCheck(title: "Player", detail: activeRuntimePlayerSession?.statusSummary ?? "Game session open.", status: .ready)
+                let state: VerificationGateStatus = activeRuntimePlayerSession?.state == .failed ? .blocked : .ready
+                return TitleReadinessReport(title: game.title, overallStatus: state, checks: [
+                    VerificationCheck(title: "Player", detail: activeRuntimePlayerSession?.statusSummary ?? "Game session open.", status: state)
                 ])
             }
             let issue = madeiraLaunchIssue(for: game)
@@ -3120,7 +3197,7 @@ final class AppViewModel: ObservableObject {
             return GamePresentationStatus(
                 title: "Player Open",
                 summary: activeRuntimePlayerSession.statusSummary,
-                tone: .ready
+                tone: activeRuntimePlayerSession.state == .failed ? .blocked : .ready
             )
         }
 
@@ -4008,20 +4085,20 @@ final class AppViewModel: ObservableObject {
     private func withImportSecurityScopedAccess<T>(
         _ importSourceURL: URL?,
         reuseExistingAccess: Bool = false,
-        _ operation: () async -> T
-    ) async -> T {
+        _ operation: () async throws -> T
+    ) async rethrows -> T {
         guard let importSourceURL else {
             print(
                 "[IridiumRuntime] registerScannedImport: No retained source URL; running without security-scoped access"
             )
-            return await operation()
+            return try await operation()
         }
 
         if reuseExistingAccess {
             print(
                 "[IridiumRuntime] registerScannedImport: Reusing active security-scoped access for \(importSourceURL.path)"
             )
-            return await operation()
+            return try await operation()
         }
 
         let didStartAccessing = importSourceURL.startAccessingSecurityScopedResource()
@@ -4038,7 +4115,7 @@ final class AppViewModel: ObservableObject {
             }
         }
 
-        return await operation()
+        return try await operation()
     }
 
     private func releaseImportSecurityScopedAccess() {
@@ -4153,38 +4230,13 @@ final class AppViewModel: ObservableObject {
         games: [GameRecord],
         prefixes: [PrefixRecord]
     ) -> ManagedStorageStatus {
-        let usedByGamesGB = games.reduce(0) { $0 + ($1.installedSizeGB ?? 0) }
-        let usedByPrefixesGB = prefixes.reduce(0) { $0 + ($1.storageFootprintGB ?? 0) }
-        let reservedForQueuedDownloadsGB = 0.0
-        let headroom =
-            base.totalCapacityGB - base.reservedForSystemGB - usedByGamesGB - usedByPrefixesGB
-
-        let pressure: StoragePressure
-        if headroom <= 16 {
-            pressure = .critical
-        } else if headroom <= 40 {
-            pressure = .warning
-        } else {
-            pressure = .healthy
+        var storage = base
+        storage.usedByGamesGB = games.compactMap(\.installedSizeGB).reduce(0, +)
+        storage.reservedForQueuedDownloadsGB = 0
+        if let available = storage.measuredAvailableGB {
+            storage.pressure = available <= 16 ? .critical : (available <= 40 ? .warning : .healthy)
         }
-
-        var notes = [
-            "Managed storage reserves \(base.reservedForSystemGB.formatted(.number.precision(.fractionLength(0)))) GB for iOS, caches, and rollback buffers."
-        ]
-        if pressure != .healthy {
-            notes.append("Large imports should be deferred until storage headroom is recovered.")
-        }
-
-        return ManagedStorageStatus(
-            totalCapacityGB: base.totalCapacityGB,
-            reservedForSystemGB: base.reservedForSystemGB,
-            usedByGamesGB: usedByGamesGB,
-            usedByPrefixesGB: usedByPrefixesGB,
-            reservedForQueuedDownloadsGB: reservedForQueuedDownloadsGB,
-            pressure: pressure,
-            notes: notes,
-            lastMeasuredAt: base.lastMeasuredAt ?? Date()
-        )
+        return storage
     }
 
     private func visibleActivityEntries(

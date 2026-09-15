@@ -54,6 +54,8 @@ struct RuntimePlayerView: View {
     @State private var isShowingDiagnostics = false
     @State private var isShowingControls = false
     @State private var showPerformance = true
+    @State private var deviceKeyboardVisible = false
+    @State private var keyboardInputRejected = false
     @AppStorage("IridiumMouseSensitivity") private var mouseSensitivity = 1.0
     @AppStorage("IridiumScrollSensitivity") private var scrollSensitivity = 1.0
     @State private var isConfirmingClose = false
@@ -73,7 +75,9 @@ struct RuntimePlayerView: View {
             ) {
                     RuntimeRenderHostView(
                         configuration: bridgeConfiguration,
-                        isRunning: session.state == .running
+                        isRunning: session.state == .running,
+                        showsDeviceKeyboard: deviceKeyboardVisible,
+                        inputEnabled: guestInputEnabled
                     ) { count in
                         touchEventCount += count
                     } onFrameCount: { count in
@@ -95,6 +99,11 @@ struct RuntimePlayerView: View {
                         viewModel.recordRuntimePlayerFirstFramePresented(
                             sessionIdentifier: session.sessionIdentifier
                         )
+                    } onDeviceKeyboardVisibilityChange: { visible in
+                        deviceKeyboardVisible = visible
+                    } onKeyboardInputRejected: {
+                        deviceKeyboardVisible = false
+                        keyboardInputRejected = true
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
@@ -118,8 +127,13 @@ struct RuntimePlayerView: View {
                                 ScrollView {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Button("Resume", systemImage: "play") { controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Controls", systemImage: "gamecontroller") { isShowingControls = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    Button("Controls", systemImage: "gamecontroller") { deviceKeyboardVisible = false; isShowingControls = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                     #if MADEIRA_RUNTIME
+                                    Toggle("Device Keyboard", isOn: Binding(
+                                        get: { deviceKeyboardVisible },
+                                        set: { deviceKeyboardVisible = $0; if $0 { controlsVisible = false } }
+                                    )).frame(minHeight: 44).accessibilityIdentifier("deviceKeyboard")
+                                        .disabled(session.state != .running || viewModel.closingMadeiraSession)
                                     Stepper(value: $mouseSensitivity, in: 0.25...4, step: 0.25) {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text("Mouse sensitivity")
@@ -138,8 +152,8 @@ struct RuntimePlayerView: View {
                                     .accessibilityIdentifier("scrollSensitivity")
                                     #endif
                                     Toggle("Performance", isOn: $showPerformance).frame(minHeight: 44)
-                                    Button("View Log", systemImage: "doc.text") { isShowingDiagnostics = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Close Game", systemImage: "xmark", role: .destructive) { isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    Button("View Log", systemImage: "doc.text") { deviceKeyboardVisible = false; isShowingDiagnostics = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
                                 .controlSize(.large)
@@ -158,10 +172,10 @@ struct RuntimePlayerView: View {
                         .foregroundStyle(.white)
                     }
                     .overlay(alignment: .topLeading) {
-                        if !hasPresentedFirstFrame && !controlsVisible {
+                        if (!hasPresentedFirstFrame || session.state != .running || viewModel.closingMadeiraSession || viewModel.madeiraShutdownUnconfirmed) && !controlsVisible {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Starting game…").font(.headline)
-                                Text(launchEvents.last ?? "Preparing the game…")
+                                Text(viewModel.closingMadeiraSession ? "Closing game…" : (viewModel.madeiraShutdownUnconfirmed ? "Shutdown not confirmed" : (session.state == .failed ? "Launch failed" : (session.state == .completed ? "Game stopped" : "Starting game…")))).font(.headline)
+                                Text(session.state == .running && !viewModel.closingMadeiraSession && !viewModel.madeiraShutdownUnconfirmed ? (launchEvents.last ?? "Preparing the game…") : session.statusSummary)
                                     .font(.footnote).lineLimit(3)
                             }.padding(16).frame(maxWidth: 280, alignment: .leading)
                                 .modifier(PlayerGlassPanel())
@@ -274,7 +288,19 @@ struct RuntimePlayerView: View {
                 .onReceive(NotificationCenter.default.publisher(for: .GCMouseDidDisconnect)) { _ in
                     showInputNotice(device: "Mouse", symbol: "computermouse.fill", connected: false)
                 }
-                .onChange(of: controlsVisible) { _, _ in updatePointerCapture() }
+                .onChange(of: controlsVisible) { _, visible in
+                    if visible { deviceKeyboardVisible = false }
+                    updatePointerCapture()
+                }
+                .onChange(of: deviceKeyboardVisible) { _, _ in updatePointerCapture() }
+                .onChange(of: session.state) { _, _ in updatePointerCapture() }
+                .onChange(of: viewModel.closingMadeiraSession) { _, _ in updatePointerCapture() }
+                .onChange(of: keyboardInputRejected) { _, _ in updatePointerCapture() }
+                .alert("Keyboard input not sent", isPresented: $keyboardInputRejected) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text("The device-keyboard bridge supports basic US-layout letters, numbers, and symbols. This insertion contained an unsupported character; nothing from that insertion was sent.")
+                }
                 .onKeyPress(.escape) {
                     guard controlsVisible else { return .ignored }
                     controlsVisible = false
@@ -292,6 +318,11 @@ struct RuntimePlayerView: View {
                 .onChange(of: isConfirmingClose) { _, _ in updatePointerCapture() }
                 .onAppear { updatePointerCapture() }
                 .onDisappear {
+                    deviceKeyboardVisible = false
+                    #if MADEIRA_RUNTIME
+                    MadeiraHardwareInput.softwareKeyboardActive = false
+                    MadeiraController.acceptingInput = false
+                    #endif
                     onCaptureChange(false)
                     inputNoticeTask?.cancel()
                     RuntimePlayerControllerBridge.shared.stop()
@@ -342,8 +373,19 @@ struct RuntimePlayerView: View {
         frameCount > 0
     }
 
+    private var guestInputEnabled: Bool {
+        session.state == .running && !controlsVisible && !isShowingDiagnostics && !isShowingControls
+            && !isConfirmingClose && !keyboardInputRejected && !viewModel.closingMadeiraSession
+    }
+
     private func updatePointerCapture() {
-        onCaptureChange(!controlsVisible && !isShowingDiagnostics && !isShowingControls && !isConfirmingClose)
+        #if MADEIRA_RUNTIME
+        MadeiraHardwareInput.softwareKeyboardActive = deviceKeyboardVisible
+        MadeiraController.acceptingInput = guestInputEnabled && !deviceKeyboardVisible
+        #endif
+        // Capture eligibility stays true while typing, but the presented host
+        // suppresses pointer locking independently from keyboard delivery.
+        onCaptureChange(guestInputEnabled)
     }
 
     private func showInputNotice(device: String, symbol: String, connected: Bool) {
@@ -431,25 +473,31 @@ private struct RuntimePlayerDiagnosticsView: View {
 private struct RuntimeRenderHostView: UIViewRepresentable {
     let configuration: RuntimePlayerBridgeConfiguration
     let isRunning: Bool
+    let showsDeviceKeyboard: Bool
+    let inputEnabled: Bool
     let onTouchEvents: (Int) -> Void
     let onFrameCount: (UInt64) -> Void
     let onFrameTiming: (FrameTiming) -> Void
     let onFirstFramePresented: () -> Void
+    let onDeviceKeyboardVisibilityChange: (Bool) -> Void
+    let onKeyboardInputRejected: () -> Void
 
     func makeUIView(context: Context) -> RuntimePlayerHostView {
-        RuntimePlayerHostView(
-            configuration: configuration,
-            isRunning: isRunning,
-            onTouchEvents: onTouchEvents,
-            onFrameCount: onFrameCount,
-            onFrameTiming: onFrameTiming,
-            onFirstFramePresented: onFirstFramePresented
-        )
+        let view = RuntimePlayerHostView(
+            configuration: configuration, isRunning: isRunning,
+            onTouchEvents: onTouchEvents, onFrameCount: onFrameCount,
+            onFrameTiming: onFrameTiming, onFirstFramePresented: onFirstFramePresented)
+        view.onKeyboardVisibilityChange = onDeviceKeyboardVisibilityChange
+        view.onKeyboardInputRejected = onKeyboardInputRejected
+        view.setInputState(enabled: inputEnabled, keyboard: showsDeviceKeyboard)
+        return view
     }
 
     func updateUIView(_ uiView: RuntimePlayerHostView, context: Context) {
-        _ = context
+        uiView.onKeyboardVisibilityChange = onDeviceKeyboardVisibilityChange
+        uiView.onKeyboardInputRejected = onKeyboardInputRejected
         uiView.updateConfiguration(configuration, isRunning: isRunning)
+        uiView.setInputState(enabled: inputEnabled, keyboard: showsDeviceKeyboard)
     }
 
     static func dismantleUIView(_ uiView: RuntimePlayerHostView, coordinator: ()) {
@@ -475,8 +523,15 @@ private final class PlayerMetalLayer: CAMetalLayer {
 private final class RuntimePlayerHostView: UIView {
     #if MADEIRA_RUNTIME
     private let madeiraLayer = PlayerMetalLayer()
+    private let softwareKeyboardView = RuntimeDeviceKeyboardResponder(frame: CGRect(x: -2, y: -2, width: 1, height: 1))
     private var pointerContact = MadeiraPointerContact()
     #endif
+    var onKeyboardVisibilityChange: (Bool) -> Void = { _ in }
+    var onKeyboardInputRejected: () -> Void = {}
+    private var wantsDeviceKeyboard = false
+    private var guestInputEnabled = false
+    private var focusPolicy = RuntimeInputFocusPolicy()
+    private var keyboardFrame: CGRect?
     private let imageView = UIImageView(frame: .zero)
     private let onTouchEvents: (Int) -> Void
     private var timing = FrameTiming()
@@ -540,6 +595,25 @@ private final class RuntimePlayerHostView: UIView {
             layer.addSublayer(madeiraLayer)
             madeira_display_set_layer(madeiraLayer)
             addInteraction(UIPointerInteraction(delegate: self))
+            softwareKeyboardView.isAccessibilityElement = false
+            softwareKeyboardView.accessibilityElementsHidden = true
+            softwareKeyboardView.onInsert = { [weak self] text in
+                guard let self, self.focusPolicy.owner == .keyboard else { return }
+                if !MadeiraHardwareInput.insertText(text) {
+                    self.keyboardHidden()
+                    DispatchQueue.main.async { [weak self] in self?.onKeyboardInputRejected() }
+                }
+            }
+            softwareKeyboardView.onDelete = { [weak self] in
+                guard self?.focusPolicy.owner == .keyboard else { return }
+                MadeiraHardwareInput.deleteBackward()
+            }
+            softwareKeyboardView.onDismiss = { [weak self] in self?.keyboardHidden() }
+            addSubview(softwareKeyboardView)
+            NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
+                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(keyboardDidHide(_:)),
+                name: UIResponder.keyboardDidHideNotification, object: nil)
         }
         #endif
     }
@@ -550,6 +624,7 @@ private final class RuntimePlayerHostView: UIView {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
         stop()
     }
 
@@ -559,10 +634,11 @@ private final class RuntimePlayerHostView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        imageView.frame = bounds
+        imageView.frame = renderViewportFrame()
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
-            madeiraLayer.frame = bounds
+            // Presentation-only size; never change drawableSize here.
+            madeiraLayer.frame = renderViewportFrame()
             winios_cursor_attach(madeiraLayer)
         }
         #endif
@@ -579,9 +655,81 @@ private final class RuntimePlayerHostView: UIView {
             #if MADEIRA_RUNTIME
             if MadeiraRuntimeAdapter.enabled { MadeiraHardwareInput.start() }
             #endif
-            _ = becomeFirstResponder()
+            applyInputFocus(force: true)
             updateDisplayLinkForRunningState()
         }
+    }
+
+    func setInputState(enabled: Bool, keyboard: Bool) {
+        guestInputEnabled = enabled
+        wantsDeviceKeyboard = keyboard
+        if !keyboard { keyboardFrame = nil; setNeedsLayout() }
+        applyInputFocus()
+    }
+
+    private func applyInputFocus(force: Bool = false) {
+        let changed = focusPolicy.update(inputEnabled: guestInputEnabled && window != nil,
+                                         keyboard: wantsDeviceKeyboard)
+        guard changed || force else { return }
+        #if MADEIRA_RUNTIME
+        if MadeiraRuntimeAdapter.enabled {
+            switch focusPolicy.owner {
+            case .none:
+                if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
+                if isFirstResponder { _ = resignFirstResponder() }
+            case .keyboard:
+                if !softwareKeyboardView.isFirstResponder, !softwareKeyboardView.becomeFirstResponder() {
+                    keyboardHidden()
+                }
+            case .game:
+                if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
+                if !isFirstResponder { _ = becomeFirstResponder() }
+            }
+            return
+        }
+        #endif
+        if focusPolicy.owner == .game { _ = becomeFirstResponder() }
+        else if isFirstResponder { _ = resignFirstResponder() }
+    }
+
+    @objc private func keyboardChanged(_ notification: Notification) {
+        guard wantsDeviceKeyboard, focusPolicy.owner == .keyboard else { return }
+        keyboardFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        setNeedsLayout()
+    }
+
+    @objc private func keyboardDidHide(_ notification: Notification) {
+        if wantsDeviceKeyboard { keyboardHidden() }
+    }
+
+    private func keyboardHidden() {
+        let notify = wantsDeviceKeyboard
+        wantsDeviceKeyboard = false
+        keyboardFrame = nil
+        setNeedsLayout()
+        applyInputFocus()
+        if notify {
+            // Avoid modifying SwiftUI state from updateUIView/dismantleUIView.
+            DispatchQueue.main.async { [weak self] in self?.onKeyboardVisibilityChange(false) }
+        }
+    }
+
+    private func renderViewportFrame() -> CGRect {
+        var occlusion: CGFloat = 0
+        if let keyboardFrame, let window, wantsDeviceKeyboard {
+            let inWindow = window.convert(keyboardFrame, from: window.screen.coordinateSpace)
+            let frame = convert(inWindow, from: window)
+            occlusion = RuntimeViewportGeometry.bottomOcclusion(keyboard: frame, bounds: bounds)
+        }
+        var size = CGSize(width: configuration.surfaceWidth, height: configuration.surfaceHeight)
+        #if MADEIRA_RUNTIME
+        if MadeiraRuntimeAdapter.enabled { size = madeiraLayer.drawableSize }
+        #endif
+        return RuntimeViewportGeometry.aspectFitFrame(in: bounds, bottomOcclusion: occlusion, surfaceSize: size)
+    }
+
+    private func normalizedPoint(_ point: CGPoint) -> CGPoint {
+        RuntimeViewportGeometry.normalizedPoint(point, in: renderViewportFrame())
     }
 
     override var keyCommands: [UIKeyCommand]? {
@@ -815,6 +963,7 @@ private final class RuntimePlayerHostView: UIView {
     }
 
     func stop() {
+        setInputState(enabled: false, keyboard: false)
         #if MADEIRA_RUNTIME
         if pointerContact.release() { winios_pointer(0, 0, 0x0004, 0) }
         #endif
@@ -888,7 +1037,7 @@ private final class RuntimePlayerHostView: UIView {
               !MadeiraHardwareInput.usesRawMouse else { return }
         let size = madeiraLayer.drawableSize
         if let (x, y) = MadeiraPointerContact.position(
-            x: Double(point.x / max(bounds.width, 1)), y: Double(point.y / max(bounds.height, 1)),
+            x: Double(normalizedPoint(point).x), y: Double(normalizedPoint(point).y),
             width: Double(size.width), height: Double(size.height)
         ) {
             winios_pointer(x, y, 0x8001, 0)
@@ -929,7 +1078,7 @@ private final class RuntimePlayerHostView: UIView {
                 let point = touch.location(in: self)
                 let size = madeiraLayer.drawableSize
                 guard let (x, y) = MadeiraPointerContact.position(
-                    x: Double(point.x / max(bounds.width, 1)), y: Double(point.y / max(bounds.height, 1)),
+                    x: Double(normalizedPoint(point).x), y: Double(normalizedPoint(point).y),
                     width: Double(size.width), height: Double(size.height)
                 ) else { continue }
                 let id = UInt64(UInt(bitPattern: Unmanaged.passUnretained(touch).toOpaque()))
@@ -943,9 +1092,9 @@ private final class RuntimePlayerHostView: UIView {
         #endif
         var appendedCount = 0
         for touch in touches {
-            let location = touch.location(in: self)
-            let normalizedX = bounds.width > 0 ? min(max(location.x / bounds.width, 0), 1) : 0
-            let normalizedY = bounds.height > 0 ? min(max(location.y / bounds.height, 0), 1) : 0
+            let location = normalizedPoint(touch.location(in: self))
+            let normalizedX = location.x
+            let normalizedY = location.y
             let identifier = UInt64(UInt(bitPattern: Unmanaged.passUnretained(touch).toOpaque()))
             inputBridge.appendTouch(
                 identifier: identifier,

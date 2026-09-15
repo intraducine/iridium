@@ -9,6 +9,7 @@
 
 #include "WineServerBridge.h"
 #include <sys/time.h>
+#include <stdatomic.h>
 
 static FILE *g_ws_bridge_log = NULL;
 static pthread_mutex_t g_ws_bridge_log_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -68,10 +69,16 @@ extern int debug_level;
 volatile int g_wineserver_should_stop = 0;
 
 static pthread_t g_wineserver_thread;
-static volatile int g_wineserver_running = 0;
+static _Atomic int g_wineserver_running = 0;
 static char *g_prefix_path = NULL;
 
+static void wineserver_mark_stopped(void *unused) {
+    (void)unused;
+    g_wineserver_running = 0;
+}
+
 static void *wineserver_thread_func(void *arg) {
+    pthread_cleanup_push(wineserver_mark_stopped, NULL);
     @autoreleasepool {
         // Set up file-based logging
         NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -126,6 +133,7 @@ static void *wineserver_thread_func(void *arg) {
 
         g_wineserver_running = 0;
     }
+    pthread_cleanup_pop(1);
     return NULL;
 }
 

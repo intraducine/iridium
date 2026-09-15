@@ -20,6 +20,8 @@ void wineserver_stop(void);
 int wine_process_start(const char *);
 void madeira_seed_prefix_if_needed(const char *);
 int wine_process_is_running(void);
+int wine_process_exit_code(void);
+int wineserver_is_running(void);
 uint64_t madeira_get_present_count(void);
 void winios_post_key(int, int);
 void winios_post_touch_down(int, int);

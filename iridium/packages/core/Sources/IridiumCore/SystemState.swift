@@ -498,6 +498,7 @@ public struct ManagedStorageStatus: Codable, Hashable, Sendable {
     public var usedByGamesGB: Double
     public var usedByPrefixesGB: Double
     public var reservedForQueuedDownloadsGB: Double
+    public var measuredAvailableGB: Double?
     public var pressure: StoragePressure
     public var notes: [String]
     public var lastMeasuredAt: Date?
@@ -510,20 +511,23 @@ public struct ManagedStorageStatus: Codable, Hashable, Sendable {
         reservedForQueuedDownloadsGB: Double,
         pressure: StoragePressure,
         notes: [String],
-        lastMeasuredAt: Date? = nil
+        lastMeasuredAt: Date? = nil,
+        measuredAvailableGB: Double? = nil
     ) {
         self.totalCapacityGB = totalCapacityGB
         self.reservedForSystemGB = reservedForSystemGB
         self.usedByGamesGB = usedByGamesGB
         self.usedByPrefixesGB = usedByPrefixesGB
         self.reservedForQueuedDownloadsGB = reservedForQueuedDownloadsGB
+        self.measuredAvailableGB = measuredAvailableGB
         self.pressure = pressure
         self.notes = notes
         self.lastMeasuredAt = lastMeasuredAt
     }
 
     public var availableInstallHeadroomGB: Double {
-        max(totalCapacityGB - reservedForSystemGB - usedByGamesGB - usedByPrefixesGB - reservedForQueuedDownloadsGB, 0)
+        if let measuredAvailableGB { return max(measuredAvailableGB - reservedForQueuedDownloadsGB, 0) }
+        return max(totalCapacityGB - reservedForSystemGB - usedByGamesGB - usedByPrefixesGB - reservedForQueuedDownloadsGB, 0)
     }
 }
 
