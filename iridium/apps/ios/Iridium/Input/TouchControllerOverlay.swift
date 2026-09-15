@@ -2,8 +2,11 @@ import Foundation
 import SwiftUI
 
 struct TouchControllerOverlay: View {
+    private static let inputResetNotification = Notification.Name("IridiumTouchControllerInputReset")
+
     let gameID: UUID
     @State private var layout: TouchControllerLayout
+    @State private var resetGeneration = 0
 
     init(gameID: UUID) {
         self.gameID = gameID
@@ -24,11 +27,15 @@ struct TouchControllerOverlay: View {
                         )
                 }
             }
+            .id(resetGeneration)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .ignoresSafeArea()
         .onAppear { TouchControllerRuntimeBridge.setActive(true) }
         .onDisappear { TouchControllerRuntimeBridge.setActive(false) }
+        .onReceive(NotificationCenter.default.publisher(for: Self.inputResetNotification)) { _ in
+            resetGeneration &+= 1
+        }
         .onReceive(NotificationCenter.default.publisher(for: TouchControllerLayoutStore.settingsChanged)) { notification in
             guard let changedGame = notification.object as? UUID, changedGame == gameID else { return }
             layout = TouchControllerLayoutStore.layout(for: gameID)
