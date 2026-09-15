@@ -29,10 +29,12 @@ for token in [
 for mask in ["0x1000", "0x2000", "0x4000", "0x8000", "0x0100", "0x0200", "0x0040", "0x0080", "0x0010", "0x0020"]:
     assert mask in layout, mask
 
-# Runtime controls must cover digital buttons, analog triggers/sticks, and dpad.
+# Runtime controls cover digital buttons, analog triggers/sticks, and dpad. Each
+# control sends its UUID so duplicate/remapped controls do not release each other.
 for token in [
     "TouchControllerButton", "TouchControllerTrigger", "TouchControllerStick",
-    "TouchControllerDPad", "setTouchButton", "setTouchTrigger", "setTouchStick",
+    "TouchControllerDPad", "source: control.id", "@MainActor",
+    "setTouchButton", "setTouchTrigger", "setTouchStick",
 ]:
     assert token in overlay, token
 
@@ -45,16 +47,25 @@ for token in [
     assert token in editor, token
 
 # Touch is merged into existing XInput slot zero rather than introducing a new
-# guest protocol. Digital values combine; analog triggers take the stronger input;
-# a currently touched stick owns that stick until released.
+# guest protocol. Sources are tracked independently so duplicate A buttons,
+# triggers, dpads, or sticks can be held at the same time safely.
 for token in [
-    "private struct TouchState", "touchConnected = index == 0 && touch.active",
-    "var buttons: UInt16 = touchInput ? touch.buttons : 0",
-    "buttons |= mask", "max(physicalLT, touchInput ? touch.leftTrigger : 0)",
+    "private struct TouchState", "buttonSources: [UInt16: Set<UUID>]",
+    "leftTriggerSources: [UUID: Float]", "leftStickSources: [UUID: StickSample]",
+    "touchConnected = index == 0 && touch.active", "touch.setButton(source:",
+    "touch.setTrigger(source:", "touch.setStick(source:",
+    "max(physicalLT, touchInput ? touch.leftTrigger : 0)",
     "max(physicalRT, touchInput ? touch.rightTrigger : 0)",
-    "touch.leftStickActive ? touch.leftX", "touch.rightStickActive ? touch.rightX",
+    "let touchLeft = touchInput ? touch.leftStick : nil",
+    "let touchRight = touchInput ? touch.rightStick : nil",
 ]:
     assert token in controller, token
+
+# Interrupted touch gestures must never come back as stale XInput after opening
+# a menu or backgrounding the player scene.
+assert "if !acceptingInput { touch.releaseInputs() }" in controller
+assert "UIScene.willDeactivateNotification" in controller
+assert 'reason: "scene-deactivated"' in controller
 
 # Player menu is intentionally compact: detailed input controls moved behind one
 # submenu, and app/game settings expose the same configuration surfaces.
@@ -71,4 +82,4 @@ for token in [
 ]:
     assert token in settings, token
 
-print("PASS customizable touch controller layout, XInput merge, and input settings wiring")
+print("PASS customizable touch controller layout, source-safe XInput merge, lifecycle release, and input settings wiring")
