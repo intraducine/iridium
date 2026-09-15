@@ -56,8 +56,7 @@ struct RuntimePlayerView: View {
     @State private var showPerformance = true
     @State private var deviceKeyboardVisible = false
     @State private var keyboardInputRejected = false
-    @AppStorage("IridiumMouseSensitivity") private var mouseSensitivity = 1.0
-    @AppStorage("IridiumScrollSensitivity") private var scrollSensitivity = 1.0
+    @State private var touchControlsEnabled = false
     @State private var isConfirmingClose = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -108,6 +107,14 @@ struct RuntimePlayerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
                     .overlay {
+                        if touchControlsEnabled {
+                            TouchControllerOverlay(gameID: session.gameID)
+                                .opacity(guestInputEnabled && !deviceKeyboardVisible ? 1 : 0)
+                                .allowsHitTesting(guestInputEnabled && !deviceKeyboardVisible)
+                                .animation(.easeOut(duration: 0.12), value: guestInputEnabled && !deviceKeyboardVisible)
+                        }
+                    }
+                    .overlay {
                         if controlsVisible {
                             Color.clear
                                 .ignoresSafeArea()
@@ -127,30 +134,12 @@ struct RuntimePlayerView: View {
                                 ScrollView {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Button("Resume", systemImage: "play") { controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Controls", systemImage: "gamecontroller") { deviceKeyboardVisible = false; isShowingControls = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    #if MADEIRA_RUNTIME
-                                    Toggle("Device Keyboard", isOn: Binding(
-                                        get: { deviceKeyboardVisible },
-                                        set: { deviceKeyboardVisible = $0; if $0 { controlsVisible = false } }
-                                    )).frame(minHeight: 44).accessibilityIdentifier("deviceKeyboard")
-                                        .disabled(session.state != .running || viewModel.closingMadeiraSession)
-                                    Stepper(value: $mouseSensitivity, in: 0.25...4, step: 0.25) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Mouse sensitivity")
-                                            Text(mouseSensitivity.formatted(.number.precision(.fractionLength(2))) + "×")
-                                                .font(.caption).monospacedDigit()
-                                        }
+                                    Button("Input Settings", systemImage: "gamecontroller") {
+                                        deviceKeyboardVisible = false
+                                        isShowingControls = true
+                                        controlsVisible = false
                                     }
-                                    .accessibilityIdentifier("mouseSensitivity")
-                                    Stepper(value: $scrollSensitivity, in: 0.25...4, step: 0.25) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Scroll sensitivity")
-                                            Text(scrollSensitivity.formatted(.number.precision(.fractionLength(2))) + "×")
-                                                .font(.caption).monospacedDigit()
-                                        }
-                                    }
-                                    .accessibilityIdentifier("scrollSensitivity")
-                                    #endif
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                     Toggle("Performance", isOn: $showPerformance).frame(minHeight: 44)
                                     Button("View Log", systemImage: "doc.text") { deviceKeyboardVisible = false; isShowingDiagnostics = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                     Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -161,7 +150,7 @@ struct RuntimePlayerView: View {
                                 .padding(16)
                                 }
                                 .scrollBounceBehavior(.basedOnSize)
-                                .frame(width: 282, height: min(410, max(100, safeGeometry.size.height - safeGeometry.safeAreaInsets.top - safeGeometry.safeAreaInsets.bottom - 80)))
+                                .frame(width: 282, height: min(310, max(100, safeGeometry.size.height - safeGeometry.safeAreaInsets.top - safeGeometry.safeAreaInsets.bottom - 80)))
                                 .modifier(PlayerGlassPanel())
                                 .accessibilityIdentifier("playerMenuPanel")
                                 .contentShape(Rectangle()).onTapGesture {}
@@ -275,6 +264,13 @@ struct RuntimePlayerView: View {
                 }
                 .onAppear {
                     controllerCount = GCController.controllers().count
+                    touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: session.gameID)
+                    updatePointerCapture()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: TouchControllerLayoutStore.settingsChanged)) { notification in
+                    guard let changedGame = notification.object as? UUID, changedGame == session.gameID else { return }
+                    touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: session.gameID)
+                    updatePointerCapture()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in
                     showInputNotice(device: "Keyboard", symbol: "keyboard", connected: true)
@@ -309,19 +305,33 @@ struct RuntimePlayerView: View {
                 .sheet(isPresented: $isShowingControls) {
                     NavigationStack {
                         if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
-                            GameControlsView(game: game).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction) } }
+                            GameInputSettingsView(
+                                game: game,
+                                deviceKeyboardVisible: Binding(
+                                    get: { deviceKeyboardVisible },
+                                    set: { visible in
+                                        deviceKeyboardVisible = visible
+                                        if visible { isShowingControls = false }
+                                    }
+                                )
+                            )
+                            .toolbar {
+                                ToolbarItem(placement: .confirmationAction) {
+                                    Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction)
+                                }
+                            }
                         }
                     }
                 }
                 .onChange(of: isShowingControls) { _, _ in updatePointerCapture() }
                 .onChange(of: isShowingDiagnostics) { _, _ in updatePointerCapture() }
                 .onChange(of: isConfirmingClose) { _, _ in updatePointerCapture() }
-                .onAppear { updatePointerCapture() }
                 .onDisappear {
                     deviceKeyboardVisible = false
                     #if MADEIRA_RUNTIME
                     MadeiraHardwareInput.softwareKeyboardActive = false
                     MadeiraController.acceptingInput = false
+                    MadeiraController.setTouchControlsActive(false)
                     #endif
                     onCaptureChange(false)
                     inputNoticeTask?.cancel()
@@ -381,6 +391,7 @@ struct RuntimePlayerView: View {
     private func updatePointerCapture() {
         #if MADEIRA_RUNTIME
         MadeiraHardwareInput.softwareKeyboardActive = deviceKeyboardVisible
+        MadeiraController.setTouchControlsActive(touchControlsEnabled)
         MadeiraController.acceptingInput = guestInputEnabled && !deviceKeyboardVisible
         #endif
         // Capture eligibility stays true while typing, but the presented host
