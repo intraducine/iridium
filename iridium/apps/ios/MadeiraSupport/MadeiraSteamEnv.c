@@ -1,5 +1,6 @@
 #define MADEIRA_STEAM_ENV_IMPLEMENTATION
 #include "MadeiraSteamEnv.h"
+#undef setenv
 
 #include <stdio.h>
 #include <string.h>
