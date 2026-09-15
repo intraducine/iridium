@@ -10,7 +10,7 @@ struct InputSettingsView: View {
     var body: some View {
         List {
             Section("On-Screen Controller") {
-                Toggle("Enable for New Games", isOn: $touchControlsDefaultEnabled)
+                Toggle("Enable by Default", isOn: $touchControlsDefaultEnabled)
                 Text("Games without their own override use this setting. Each game can still enable or disable its touch controller separately.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
