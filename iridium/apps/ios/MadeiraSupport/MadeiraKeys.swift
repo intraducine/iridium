@@ -18,6 +18,27 @@ struct MadeiraKeys {
         return keys[hid]
     }
 
+    static func virtualKey(character: Character) -> (key: Int32, shift: Bool)? {
+        guard let ascii = character.asciiValue else { return nil }
+        if (65...90).contains(ascii) { return (Int32(ascii), true) }
+        if (97...122).contains(ascii) { return (Int32(ascii - 32), false) }
+        if (48...57).contains(ascii) { return (Int32(ascii), false) }
+        if ascii == 10 || ascii == 13 { return (0x0d, false) }
+        if ascii == 9 { return (0x09, false) }
+        if ascii == 32 { return (0x20, false) }
+        let symbols: [Character: (Int32, Bool)] = [
+            "!": (0x31, true), "@": (0x32, true), "#": (0x33, true), "$": (0x34, true),
+            "%": (0x35, true), "^": (0x36, true), "&": (0x37, true), "*": (0x38, true),
+            "(": (0x39, true), ")": (0x30, true), "-": (0xbd, false), "_": (0xbd, true),
+            "=": (0xbb, false), "+": (0xbb, true), "[": (0xdb, false), "{": (0xdb, true),
+            "]": (0xdd, false), "}": (0xdd, true), "\\": (0xdc, false), "|": (0xdc, true),
+            ";": (0xba, false), ":": (0xba, true), "'": (0xde, false), "\"": (0xde, true),
+            ",": (0xbc, false), "<": (0xbc, true), ".": (0xbe, false), ">": (0xbe, true),
+            "/": (0xbf, false), "?": (0xbf, true), "`": (0xc0, false), "~": (0xc0, true)
+        ]
+        return symbols[character]
+    }
+
     private var sources: [String: Set<Int32>] = [:]
     mutating func update(name: String, value: Double) -> [(Int32, Bool)] {
         let before = Set(sources.values.flatMap { $0 })
@@ -29,8 +50,9 @@ struct MadeiraKeys {
                 "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
                 "space": 0x20, "enter": 0x0d, "return": 0x0d, "escape": 0x1b]
             if let vk = bindings[key] { held.insert(vk) }
-            else if key.count == 1, let ascii = key.uppercased().utf8.first, ascii < 128 {
-                held.insert(Int32(ascii))
+            else if key.count == 1, let character = key.first,
+                    let mapping = Self.virtualKey(character: character), !mapping.shift {
+                held.insert(mapping.key)
             }
         }
         sources[key] = held.isEmpty ? nil : held

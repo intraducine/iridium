@@ -5,14 +5,35 @@ import UIKit
 @MainActor
 enum MadeiraController {
     private static var timer: Timer?
+    private static var statePath: URL?
+    static var acceptingInput = true
+
+    static func stop() {
+        timer?.invalidate()
+        timer = nil
+        if let path = statePath {
+            // Four disconnected controller records, with a new sequence number.
+            packet &+= 1
+            var value = packet.littleEndian
+            var neutral = Data()
+            withUnsafeBytes(of: &value) { neutral.append(contentsOf: $0) }
+            neutral.append(Data(repeating: 0, count: 64))
+            do { try neutral.write(to: path, options: .atomic) }
+            catch { NSLog("[IridiumController] Could not write disconnected state: %@", error.localizedDescription) }
+        }
+        statePath = nil
+        previous = Data()
+        slots = Array(repeating: nil, count: 4)
+    }
     private static var previous = Data()
     private static var packet: UInt32 = 0
     private static var slots: [GCController?] = Array(repeating: nil, count: 4)
 
     static func start(prefix: URL) {
-        timer?.invalidate()
+        stop()
         previous = Data()
         let path = prefix.appendingPathComponent("drive_c/iridium-controller.bin")
+        statePath = path
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { _ in
             MainActor.assumeIsolated {
                 var data = Data()
@@ -28,8 +49,9 @@ enum MadeiraController {
                     if let i = slots.firstIndex(where: { $0 == nil }) { slots[i] = controller }
                 }
                 for index in 0..<4 {
-                    let pad = UIApplication.shared.applicationState == .active ? slots[index]?.extendedGamepad : nil
-                    put(UInt32(pad == nil ? 0 : 1))
+                    let connectedPad = slots[index]?.extendedGamepad
+                    let pad = acceptingInput && UIApplication.shared.applicationState == .active ? connectedPad : nil
+                    put(UInt32(connectedPad == nil ? 0 : 1))
                     var buttons: UInt16 = 0
                     if let p = pad {
                         let pairs: [(GCControllerButtonInput, UInt16)] = [
