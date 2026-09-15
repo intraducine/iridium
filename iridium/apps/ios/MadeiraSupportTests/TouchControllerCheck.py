@@ -56,8 +56,6 @@ for token in [
 ]:
     assert token in controller, token
 
-# Interrupted touch gestures must clear both the synthetic XInput state and the
-# SwiftUI control-local pressed/knob state before gameplay resumes.
 assert "if !acceptingInput" in controller
 assert "touch.releaseInputs()" in controller
 assert "IridiumTouchControllerInputReset" in controller
