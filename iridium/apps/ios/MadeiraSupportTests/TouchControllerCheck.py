@@ -37,6 +37,16 @@ for token in [
     assert token in overlay, token
 assert "private func controlSize(" not in overlay
 
+# Touch-controller players open the menu with a non-obstructing right-edge swipe.
+# The visual edge marker does not receive hits, so user-positioned controls remain usable.
+for token in [
+    "IridiumTouchControllerPlayerMenuRequested", "playerMenuRequested",
+    "startedAtEdge", "movedInward", "mostlyHorizontal",
+    "NotificationCenter.default.post(name: Self.playerMenuRequested",
+    ".allowsHitTesting(false)",
+]:
+    assert token in overlay, token
+
 for token in [
     'Label("Add Control"', 'Button("Reset"', 'Button("Delete"',
     'Text("Size")', 'Text("Opacity")', 'Toggle("Hidden"',
@@ -67,6 +77,12 @@ assert "resetGeneration &+= 1" in overlay
 
 assert 'Button("Input Settings", systemImage: "gamecontroller")' in player
 assert 'TouchControllerOverlay(gameID: session.gameID)' in player
+assert 'TouchControllerOverlay.playerMenuRequested' in player
+assert 'if !touchControlsEnabled || controlsVisible' in player
+assert '@State private var showPerformance = false' in player
+assert 'Toggle("Pin Performance HUD", isOn: $showPerformance)' in player
+assert 'runtimePlayer: madeiraPresentStalled' in player
+assert 'runtimePlayer: madeiraPresentResumed' in player
 assert 'Stepper(value: $mouseSensitivity' not in player
 assert 'Stepper(value: $scrollSensitivity' not in player
 assert 'InputSettingsView()' in app_settings
@@ -78,4 +94,4 @@ for token in [
 ]:
     assert token in settings, token
 
-print("PASS customizable touch controller layout, source-safe XInput merge, lifecycle/UI reset, and input settings wiring")
+print("PASS customizable touch controller, unobstructed menu access, opt-in performance HUD, stall diagnostics, lifecycle reset, and input settings wiring")
