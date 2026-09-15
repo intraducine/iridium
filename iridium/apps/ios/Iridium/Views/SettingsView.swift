@@ -33,6 +33,17 @@ struct SettingsView: View {
                 }
 
                 MenuNavigationLink {
+                    InputSettingsView()
+                } label: {
+                    settingRow(
+                        title: "Input",
+                        summary: "Touch controller, mouse, and keyboard",
+                        systemImage: "gamecontroller.fill",
+                        tone: .blue
+                    )
+                }
+
+                MenuNavigationLink {
                     StorageSettingsView(viewModel: viewModel)
                 } label: {
                     settingRow(
@@ -64,7 +75,7 @@ struct SettingsView: View {
 
             Section("About") {
                 MenuValue("Version", value: version)
-                Text("Manage launch support, artwork, and storage.")
+                Text("Manage launch support, runtime, input, artwork, and storage.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }.listRowBackground(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.06)).padding(.vertical, 2)).listRowSeparator(.hidden)
