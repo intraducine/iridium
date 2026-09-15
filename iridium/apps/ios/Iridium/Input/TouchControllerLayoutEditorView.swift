@@ -62,8 +62,8 @@ struct TouchControllerLayoutEditorView: View {
                         .padding(12)
                         .allowsHitTesting(false)
                 }
-                .padding(12)
             }
+            .padding(12)
             .frame(minHeight: 280)
 
             Divider()
@@ -184,8 +184,16 @@ struct TouchControllerLayoutEditorView: View {
     private func move(_ id: UUID, to location: CGPoint, canvas: CGSize) {
         guard canvas.width > 0, canvas.height > 0,
               let index = layout.controls.firstIndex(where: { $0.id == id }) else { return }
-        layout.controls[index].centerX = min(0.98, max(0.02, Double(location.x / canvas.width)))
-        layout.controls[index].centerY = min(0.98, max(0.02, Double(location.y / canvas.height)))
+        let rendered = editorControlSize(
+            layout.controls[index],
+            minimumDimension: min(canvas.width, canvas.height)
+        )
+        let marginX = min(0.49, Double(rendered.width / (2 * canvas.width)))
+        let marginY = min(0.49, Double(rendered.height / (2 * canvas.height)))
+        let x = Double(location.x / canvas.width)
+        let y = Double(location.y / canvas.height)
+        layout.controls[index].centerX = min(1 - marginX, max(marginX, x))
+        layout.controls[index].centerY = min(1 - marginY, max(marginY, y))
         save()
     }
 
