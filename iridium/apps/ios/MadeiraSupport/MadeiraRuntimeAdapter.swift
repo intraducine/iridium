@@ -217,20 +217,17 @@ enum MadeiraRuntimeAdapter {
             if jit_check_debugged() && StikJITHelper.persistentScriptRequested {
                 StikJITHelper.consumePersistentScriptRequest()
                 boot()
+            } else if StikJITHelper.route == .automatic {
+                MadeiraAutomaticExternalJIT.enableJIT { ready in
+                    finishExternalJIT(
+                        ready,
+                        ready ? "" : MadeiraAutomaticExternalJIT.lastFailure
+                    )
+                }
             } else {
                 StikJITHelper.enableJIT { ready in
                     guard launchID == token, !launchCancelled, !failureReported else { return }
-                    if ready { finishExternalJIT(true, ""); return }
-                    let routeFailure = StikJITHelper.lastFailure
-                    guard StikJITHelper.route == .automatic,
-                          routeFailure.contains("Cannot open the selected JIT app") else {
-                        finishExternalJIT(false, routeFailure)
-                        return
-                    }
-                    RuntimeLogCapture.writeLine("[Launch] Existing external JIT routes were unavailable. Trying LiveContainer3.")
-                    MadeiraLiveContainer3JIT.enableJIT { ready in
-                        finishExternalJIT(ready, ready ? "" : MadeiraLiveContainer3JIT.lastFailure)
-                    }
+                    finishExternalJIT(ready, ready ? "" : StikJITHelper.lastFailure)
                 }
             }
         }
@@ -301,6 +298,7 @@ enum MadeiraRuntimeAdapter {
         monitorTask?.cancel()
         closeTask?.cancel()
         closeTask = nil
+        MadeiraAutomaticExternalJIT.cancel()
         StikJITHelper.cancel()
         MadeiraLiveContainer3JIT.cancel()
         #if BUILTIN_STIKJIT
