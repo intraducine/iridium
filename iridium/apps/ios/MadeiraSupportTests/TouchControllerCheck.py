@@ -14,8 +14,6 @@ app_settings = (app / "Views/SettingsView.swift").read_text()
 game_detail = (app / "Views/GameDetailView.swift").read_text()
 controller = (root / "MadeiraSupport/MadeiraController.swift").read_text()
 
-# The persisted model is per game, versioned, normalized, and contains the full
-# standard Xbox surface Iridium can currently represent through XInput.
 for token in [
     "TouchControllerLayoutStore", "layoutKey(gameID:", "enabledKey(gameID:",
     "centerX", "centerY", "opacity", "isHidden", "xboxDefault",
@@ -29,8 +27,6 @@ for token in [
 for mask in ["0x1000", "0x2000", "0x4000", "0x8000", "0x0100", "0x0200", "0x0040", "0x0080", "0x0010", "0x0020"]:
     assert mask in layout, mask
 
-# Runtime controls cover digital buttons, analog triggers/sticks, and dpad. Each
-# control sends its UUID so duplicate/remapped controls do not release each other.
 for token in [
     "TouchControllerButton", "TouchControllerTrigger", "TouchControllerStick",
     "TouchControllerDPad", "source: control.id", "@MainActor",
@@ -38,7 +34,6 @@ for token in [
 ]:
     assert token in overlay, token
 
-# The editor supports the expected customization operations.
 for token in [
     'Label("Add Control"', 'Button("Reset"', 'Button("Delete"',
     'Text("Size")', 'Text("Opacity")', 'Toggle("Hidden"',
@@ -46,9 +41,6 @@ for token in [
 ]:
     assert token in editor, token
 
-# Touch is merged into existing XInput slot zero rather than introducing a new
-# guest protocol. Sources are tracked independently so duplicate A buttons,
-# triggers, dpads, or sticks can be held at the same time safely.
 for token in [
     "private struct TouchState", "buttonSources: [UInt16: Set<UUID>]",
     "leftTriggerSources: [UUID: Float]", "leftStickSources: [UUID: StickSample]",
@@ -61,14 +53,17 @@ for token in [
 ]:
     assert token in controller, token
 
-# Interrupted touch gestures must never come back as stale XInput after opening
-# a menu or backgrounding the player scene.
-assert "if !acceptingInput { touch.releaseInputs() }" in controller
+# Interrupted touch gestures must clear both the synthetic XInput state and the
+# SwiftUI control-local pressed/knob state before gameplay resumes.
+assert "if !acceptingInput" in controller
+assert "touch.releaseInputs()" in controller
+assert "IridiumTouchControllerInputReset" in controller
 assert "UIScene.willDeactivateNotification" in controller
 assert 'reason: "scene-deactivated"' in controller
+assert "IridiumTouchControllerInputReset" in overlay
+assert ".id(resetGeneration)" in overlay
+assert "resetGeneration &+= 1" in overlay
 
-# Player menu is intentionally compact: detailed input controls moved behind one
-# submenu, and app/game settings expose the same configuration surfaces.
 assert 'Button("Input Settings", systemImage: "gamecontroller")' in player
 assert 'TouchControllerOverlay(gameID: session.gameID)' in player
 assert 'Stepper(value: $mouseSensitivity' not in player
@@ -82,4 +77,4 @@ for token in [
 ]:
     assert token in settings, token
 
-print("PASS customizable touch controller layout, source-safe XInput merge, lifecycle release, and input settings wiring")
+print("PASS customizable touch controller layout, source-safe XInput merge, lifecycle/UI reset, and input settings wiring")
