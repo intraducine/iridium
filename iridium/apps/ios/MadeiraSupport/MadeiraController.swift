@@ -10,32 +10,74 @@ enum MadeiraController {
     static var acceptingInput = true {
         didSet {
             guard acceptingInput != oldValue else { return }
+            if !acceptingInput { touch.releaseInputs() }
             publishSnapshot(forceLog: true, reason: acceptingInput ? "input-resumed" : "input-paused")
         }
     }
 
+    private struct StickSample {
+        var x: Float
+        var y: Float
+        var order: UInt64
+    }
+
     private struct TouchState {
         var active = false
-        var buttons: UInt16 = 0
-        var leftTrigger: Float = 0
-        var rightTrigger: Float = 0
-        var leftX: Float = 0
-        var leftY: Float = 0
-        var rightX: Float = 0
-        var rightY: Float = 0
-        var leftStickActive = false
-        var rightStickActive = false
+        var buttonSources: [UInt16: Set<UUID>] = [:]
+        var leftTriggerSources: [UUID: Float] = [:]
+        var rightTriggerSources: [UUID: Float] = [:]
+        var leftStickSources: [UUID: StickSample] = [:]
+        var rightStickSources: [UUID: StickSample] = [:]
+        var order: UInt64 = 0
+
+        var buttons: UInt16 {
+            buttonSources.reduce(0) { value, entry in
+                entry.value.isEmpty ? value : value | entry.key
+            }
+        }
+
+        var leftTrigger: Float { leftTriggerSources.values.max() ?? 0 }
+        var rightTrigger: Float { rightTriggerSources.values.max() ?? 0 }
+        var leftStick: StickSample? { leftStickSources.values.max { $0.order < $1.order } }
+        var rightStick: StickSample? { rightStickSources.values.max { $0.order < $1.order } }
+
+        mutating func setButton(source: UUID, mask: UInt16, pressed: Bool) {
+            var sources = buttonSources[mask] ?? []
+            if pressed { sources.insert(source) }
+            else { sources.remove(source) }
+            if sources.isEmpty { buttonSources.removeValue(forKey: mask) }
+            else { buttonSources[mask] = sources }
+        }
+
+        mutating func setTrigger(source: UUID, left: Bool, value: Float) {
+            let clamped = max(0, min(1, value))
+            if left {
+                if clamped == 0 { leftTriggerSources.removeValue(forKey: source) }
+                else { leftTriggerSources[source] = clamped }
+            } else {
+                if clamped == 0 { rightTriggerSources.removeValue(forKey: source) }
+                else { rightTriggerSources[source] = clamped }
+            }
+        }
+
+        mutating func setStick(source: UUID, left: Bool, x: Float, y: Float, active: Bool) {
+            if !active {
+                if left { leftStickSources.removeValue(forKey: source) }
+                else { rightStickSources.removeValue(forKey: source) }
+                return
+            }
+            order &+= 1
+            let sample = StickSample(x: max(-1, min(1, x)), y: max(-1, min(1, y)), order: order)
+            if left { leftStickSources[source] = sample }
+            else { rightStickSources[source] = sample }
+        }
 
         mutating func releaseInputs() {
-            buttons = 0
-            leftTrigger = 0
-            rightTrigger = 0
-            leftX = 0
-            leftY = 0
-            rightX = 0
-            rightY = 0
-            leftStickActive = false
-            rightStickActive = false
+            buttonSources.removeAll(keepingCapacity: true)
+            leftTriggerSources.removeAll(keepingCapacity: true)
+            rightTriggerSources.removeAll(keepingCapacity: true)
+            leftStickSources.removeAll(keepingCapacity: true)
+            rightStickSources.removeAll(keepingCapacity: true)
         }
     }
 
@@ -59,37 +101,21 @@ enum MadeiraController {
         publishSnapshot(forceLog: true, reason: active ? "touch-connected" : "touch-disconnected")
     }
 
-    static func setTouchButton(mask: UInt16, pressed: Bool) {
+    static func setTouchButton(source: UUID, mask: UInt16, pressed: Bool) {
         guard touch.active else { return }
-        if pressed {
-            touch.buttons |= mask
-        } else {
-            touch.buttons &= ~mask
-        }
+        touch.setButton(source: source, mask: mask, pressed: pressed)
         publishSnapshot()
     }
 
-    static func setTouchTrigger(left: Bool, value: Float) {
+    static func setTouchTrigger(source: UUID, left: Bool, value: Float) {
         guard touch.active else { return }
-        let clamped = max(0, min(1, value))
-        if left { touch.leftTrigger = clamped }
-        else { touch.rightTrigger = clamped }
+        touch.setTrigger(source: source, left: left, value: value)
         publishSnapshot()
     }
 
-    static func setTouchStick(left: Bool, x: Float, y: Float, active: Bool) {
+    static func setTouchStick(source: UUID, left: Bool, x: Float, y: Float, active: Bool) {
         guard touch.active else { return }
-        let clampedX = max(-1, min(1, x))
-        let clampedY = max(-1, min(1, y))
-        if left {
-            touch.leftX = active ? clampedX : 0
-            touch.leftY = active ? clampedY : 0
-            touch.leftStickActive = active
-        } else {
-            touch.rightX = active ? clampedX : 0
-            touch.rightY = active ? clampedY : 0
-            touch.rightStickActive = active
-        }
+        touch.setStick(source: source, left: left, x: x, y: y, active: active)
         publishSnapshot()
     }
 
@@ -101,7 +127,6 @@ enum MadeiraController {
         touch.active = false
         touch.releaseInputs()
         if let path = statePath {
-            // Four disconnected controller records, with a new sequence number.
             packet &+= 1
             var value = packet.littleEndian
             var neutral = Data()
@@ -128,6 +153,12 @@ enum MadeiraController {
                 }
             })
         }
+        observers.append(NotificationCenter.default.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                touch.releaseInputs()
+                publishSnapshot(forceLog: true, reason: "scene-deactivated")
+            }
+        })
 
         let pollTimer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
             MainActor.assumeIsolated { publishSnapshot() }
@@ -183,15 +214,15 @@ enum MadeiraController {
 
             let physicalLT = max(0, min(1, pad?.leftTrigger.value ?? 0))
             let physicalRT = max(0, min(1, pad?.rightTrigger.value ?? 0))
-            let mergedLT = max(physicalLT, touchInput ? touch.leftTrigger : 0)
-            let mergedRT = max(physicalRT, touchInput ? touch.rightTrigger : 0)
-            put(UInt8(mergedLT * 255))
-            put(UInt8(mergedRT * 255))
+            put(UInt8(max(physicalLT, touchInput ? touch.leftTrigger : 0) * 255))
+            put(UInt8(max(physicalRT, touchInput ? touch.rightTrigger : 0) * 255))
 
-            let leftX = touchInput && touch.leftStickActive ? touch.leftX : (pad?.leftThumbstick.xAxis.value ?? 0)
-            let leftY = touchInput && touch.leftStickActive ? touch.leftY : (pad?.leftThumbstick.yAxis.value ?? 0)
-            let rightX = touchInput && touch.rightStickActive ? touch.rightX : (pad?.rightThumbstick.xAxis.value ?? 0)
-            let rightY = touchInput && touch.rightStickActive ? touch.rightY : (pad?.rightThumbstick.yAxis.value ?? 0)
+            let touchLeft = touchInput ? touch.leftStick : nil
+            let touchRight = touchInput ? touch.rightStick : nil
+            let leftX = touchLeft?.x ?? (pad?.leftThumbstick.xAxis.value ?? 0)
+            let leftY = touchLeft?.y ?? (pad?.leftThumbstick.yAxis.value ?? 0)
+            let rightX = touchRight?.x ?? (pad?.rightThumbstick.xAxis.value ?? 0)
+            let rightY = touchRight?.y ?? (pad?.rightThumbstick.yAxis.value ?? 0)
             for value in [leftX, leftY, rightX, rightY] { put(axis(value)) }
         }
 
