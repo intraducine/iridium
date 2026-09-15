@@ -9,6 +9,10 @@ enum MadeiraGamePreparation {
         var files: [String: String]
         var directories: [String] = []
     }
+    struct SteamMetadata: Equatable {
+        let appID: String
+        let appPath: String
+    }
     private struct Journal: Codable {
         let staging: String
         let backup: String
@@ -185,8 +189,60 @@ enum MadeiraGamePreparation {
         return windowsPath(relative)
     }
 
+    static func steamMetadata(appID: String?, windowsExecutable: String) -> SteamMetadata? {
+        guard let normalized = normalizedSteamAppID(appID) else { return nil }
+        return SteamMetadata(appID: normalized, appPath: windowsDirectory(for: windowsExecutable))
+    }
+
+    static func steamMetadata(executable: URL, gameRoot: URL, windowsExecutable: String) -> SteamMetadata? {
+        let root = gameRoot.resolvingSymlinksInPath().standardizedFileURL
+        let exe = executable.resolvingSymlinksInPath().standardizedFileURL
+        guard exe.path.hasPrefix(root.path + "/") else { return nil }
+
+        for directory in uniqueSteamMetadataDirectories(executable: exe, gameRoot: root) {
+            guard let appID = steamAppID(from: directory.appendingPathComponent("steam_appid.txt")) else { continue }
+            return SteamMetadata(appID: appID, appPath: windowsDirectory(for: windowsExecutable))
+        }
+        return nil
+    }
+
     private static func windowsPath(_ relative: String) -> String {
         "C:\\IridiumGame\\" + relative.replacingOccurrences(of: "/", with: "\\")
+    }
+
+    private static func windowsDirectory(for path: String) -> String {
+        guard let separator = path.lastIndex(of: "\\") else { return "C:\\IridiumGame" }
+        return String(path[..<separator])
+    }
+
+    private static func uniqueSteamMetadataDirectories(executable: URL, gameRoot: URL) -> [URL] {
+        var directories: [URL] = []
+        func append(_ url: URL) {
+            let candidate = url.resolvingSymlinksInPath().standardizedFileURL
+            if !directories.contains(candidate) { directories.append(candidate) }
+        }
+        append(executable.deletingLastPathComponent())
+        append(gameRoot)
+        return directories
+    }
+
+    private static func steamAppID(from url: URL) -> String? {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size > 0, size <= 1024,
+              let data = try? Data(contentsOf: url), data.count <= 1024,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return normalizedSteamAppID(text)
+    }
+
+    private static func normalizedSteamAppID(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.utf8.allSatisfy({ $0 >= Character("0").asciiValue! && $0 <= Character("9").asciiValue! }) else {
+            return nil
+        }
+        return trimmed
     }
 
     static func validRelativePath(_ path: String) -> Bool {
