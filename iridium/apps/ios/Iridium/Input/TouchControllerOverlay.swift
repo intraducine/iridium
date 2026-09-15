@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct TouchControllerOverlay: View {
@@ -18,8 +19,8 @@ struct TouchControllerOverlay: View {
                     TouchControllerRuntimeControl(control: control, renderedSize: size)
                         .frame(width: size.width, height: size.height)
                         .position(
-                            x: control.centerX * geometry.size.width,
-                            y: control.centerY * geometry.size.height
+                            x: CGFloat(control.centerX) * geometry.size.width,
+                            y: CGFloat(control.centerY) * geometry.size.height
                         )
                 }
             }
