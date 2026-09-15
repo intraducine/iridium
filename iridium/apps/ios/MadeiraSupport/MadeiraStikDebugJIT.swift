@@ -5,7 +5,6 @@ import UIKit
 /// Current StikDebug URL integration for Madeira. Keep debugger acquisition
 /// separate from StikJITHelper's allocator/detach implementation so protocol
 /// updates cannot perturb the working JIT memory path.
-@MainActor
 enum MadeiraStikDebugJIT {
     private static let persistentScriptRequestKey = "IridiumPersistentJITScriptRequested"
     private static var timer: Timer?
@@ -56,26 +55,22 @@ enum MadeiraStikDebugJIT {
         )
 
         let pollTimer = Timer(timeInterval: 0.5, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                guard request == token, Self.completion != nil else { return }
-                if jit_check_debugged() {
-                    finish(true)
-                } else if Date() >= deadline {
-                    finish(false, message: "StikDebug JIT timed out.")
-                }
+            guard request == token, Self.completion != nil else { return }
+            if jit_check_debugged() {
+                finish(true)
+            } else if Date() >= deadline {
+                finish(false, message: "StikDebug JIT timed out.")
             }
         }
         timer = pollTimer
         RunLoop.main.add(pollTimer, forMode: .common)
 
         UIApplication.shared.open(url, options: [:]) { opened in
-            Task { @MainActor in
-                guard request == token, Self.completion != nil else { return }
-                if opened {
-                    RuntimeLogCapture.writeLine("[Launch] StikDebug JIT request opened; waiting for debugger attachment.")
-                } else {
-                    finish(false, message: "Could not open StikDebug. Verify that it is installed.")
-                }
+            guard request == token, Self.completion != nil else { return }
+            if opened {
+                RuntimeLogCapture.writeLine("[Launch] StikDebug JIT request opened; waiting for debugger attachment.")
+            } else {
+                finish(false, message: "Could not open StikDebug. Verify that it is installed.")
             }
         }
     }
