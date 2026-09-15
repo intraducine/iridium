@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' != ''">obj/packages.$(RuntimeIdentifier).lock.json</NuGetLockFilePath>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishAotUsingRuntimePack Condition="$(RuntimeIdentifier.StartsWith('ios'))">true</PublishAotUsingRuntimePack>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SteamKit2" Version="[3.4.0]" />
+    <PackageReference Include="protobuf-net" Version="[3.2.56]" />
+    <PackageReference Include="protobuf-net.Core" Version="[3.2.56]" />
+    <PackageReference Include="System.IO.Hashing" Version="[10.0.1]" />
+    <PackageReference Include="ZstdSharp.Port" Version="[0.8.7]" />
+    <TrimmerRootDescriptor Include="TrimmerRoots.xml" />
+    <RdXmlFile Include="NativeRoots.xml" />
+  </ItemGroup>
+</Project>

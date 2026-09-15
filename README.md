@@ -2,7 +2,7 @@
 
 An experimental iPhone and iPad Windows-game runtime, with a native game library and touch, keyboard, mouse, and controller integration. Compatibility varies by game and device.
 
-This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Game files must be supplied by the user.
+This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The new [Steam integration](iridium/packages/steam/README.md) is experimental and still requires iOS build and device validation; game compatibility and Iridium's JIT requirements apply.
 
 | Directory | Purpose |
 | --- | --- |
@@ -22,7 +22,7 @@ The [manual IPA workflow](docs/actions-ipa.md) builds runtime dependencies and t
 
 ## Build an unsigned IPA locally
 
-Install Xcode 27, Python 3.12 or newer, XcodeGen, and LLVM. Prepare the runtime
+Install Xcode 27, Python 3.12 or newer, XcodeGen, LLVM, and .NET SDK 10.0.401. Prepare the runtime
 dependencies by following [the full IPA build guide](docs/actions-ipa.md), then
 run this command from the repository root:
 

@@ -7,14 +7,15 @@ enum MadeiraSteamEnvironment {
     static func publish(
         sourceExecutable: URL,
         sourceRoot: URL,
-        windowsExecutable: String
+        windowsExecutable: String,
+        registeredAppID: String? = nil
     ) {
         unsetenv("SteamAppPath")
         unsetenv("SteamGameId")
         unsetenv("SteamAppId")
         setenv(lockKey, "1", 1)
 
-        guard let appID = resolveAppID(sourceExecutable: sourceExecutable, sourceRoot: sourceRoot) else {
+        guard let appID = sanitizedAppID(registeredAppID) ?? resolveAppID(sourceExecutable: sourceExecutable, sourceRoot: sourceRoot) else {
             RuntimeLogCapture.writeLine("[Launch] Steam metadata unset for selected game; no steam_appid.txt or IRIDIUM_STEAM_APP_ID was found.")
             return
         }

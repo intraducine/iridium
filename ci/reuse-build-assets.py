@@ -8,7 +8,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = 'intraducine/iridium'
+REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
 WORKFLOW = '.github/workflows/build-unsigned-ipa.yml'
 MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/check-media-toolchain.py',

@@ -142,9 +142,38 @@ jobs:
           path: .build/prefix-transfer/
           if-no-files-found: error
           retention-days: 7
+  steam:
+    if: ${{ !inputs.media_only }}
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Check requested source revision
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 ci/dispatch-build.py --check
+      - name: Install the pinned Steam module SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.401'
+      - name: Build and test the native Steam framework
+        run: python3 ci/build-steam-framework.py --device-only
+      - name: Archive framework without changing executable permissions
+        run: tar -czf .build/steam-framework.tar.gz -C iridium/apps/ios/Frameworks IridiumSteam.xcframework
+      - name: Retain Steam framework
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: steam-framework-${{ github.sha }}
+          path: .build/steam-framework.tar.gz
+          if-no-files-found: error
+          retention-days: 7
   build:
-    needs: [asset-plan, linux-userland, media, prefix]
-    if: ${{ !cancelled() && !inputs.media_only && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
+    needs: [asset-plan, linux-userland, media, prefix, steam]
+    if: ${{ !cancelled() && !inputs.media_only && needs.steam.result == 'success' && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -382,6 +411,15 @@ jobs:
           retention-days: 7
       - name: Prepare and check StikJIT textual interface
         run: python3 ci/prepare-stikjit-interface.py
+      - name: Download Steam framework from this run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: steam-framework-${{ github.sha }}
+          path: .build/steam-transfer
+      - name: Restore Steam framework
+        run: |
+          mkdir -p iridium/apps/ios/Frameworks
+          tar -xzf .build/steam-transfer/steam-framework.tar.gz -C iridium/apps/ios/Frameworks
       - name: Prepare legacy runtime bundle
         env:
           GH_TOKEN: ${{ github.token }}

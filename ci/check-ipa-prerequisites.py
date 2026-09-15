@@ -6,6 +6,9 @@ import json
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {
+    "native Steam framework": [
+        "iridium/apps/ios/Frameworks/IridiumSteam.xcframework/ios-arm64/IridiumSteam.framework/IridiumSteam",
+    ],
     "legacy runtime host and userland": [
         "iridium-runtime-sdk/build/iridium-runtime-base/manifest.json",
         "iridium-runtime-sdk/build/iridium-runtime-base/Runtime/runtime-host.bin",

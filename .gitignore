@@ -10,3 +10,6 @@ DerivedData/
 *.xcarchive/
 xcuserdata/
 __pycache__/
+iridium/packages/steam/**/bin/
+iridium/packages/steam/**/obj/
+iridium/apps/ios/Frameworks/IridiumSteam.xcframework/

@@ -11,7 +11,7 @@ class LinuxReuseTests(unittest.TestCase):
         revision = 'a' * 40
         run = {'event': 'workflow_dispatch', 'head_branch': 'main', 'head_sha': revision,
                'path': '.github/workflows/build-unsigned-ipa.yml',
-               'head_repository': {'full_name': 'intraducine/iridium'}}
+               'head_repository': {'full_name': reuse.REPO}}
         jobs = [{'name': 'linux-userland', 'conclusion': 'success'}]
         reuse.validate_run(run, jobs, revision)
         for key, value in [('event', 'pull_request'), ('head_branch', 'untrusted'),
@@ -26,7 +26,7 @@ class LinuxReuseTests(unittest.TestCase):
         revision = 'a' * 40
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature', 'head_sha': revision,
                'path': '.github/workflows/build-unsigned-ipa.yml',
-               'head_repository': {'full_name': 'intraducine/iridium'}}
+               'head_repository': {'full_name': reuse.REPO}}
         jobs = [{'name': 'linux-userland', 'conclusion': 'success'}]
         reuse.validate_run(run, jobs, revision, 'feature')
         with self.assertRaises(ValueError):

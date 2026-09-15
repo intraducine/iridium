@@ -26,6 +26,7 @@ enum MadeiraRuntimeAdapter {
     @MainActor
     static func start(executable: String, gameRoot: String, gameID: UUID,
                       arguments: [String] = [],
+                      steamAppID: String? = nil,
                       report: @escaping (String) -> Void,
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
@@ -109,7 +110,7 @@ enum MadeiraRuntimeAdapter {
                         MadeiraSteamEnvironment.publish(
                             sourceExecutable: URL(fileURLWithPath: executable),
                             sourceRoot: URL(fileURLWithPath: gameRoot),
-                            windowsExecutable: path)
+                            windowsExecutable: path, registeredAppID: steamAppID)
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")

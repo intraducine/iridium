@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+python3 ci/build-steam-framework.py --device-only
 python3 ci/check-ipa-prerequisites.py
 runtime_resources=iridium/packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime
 mkdir -p "$runtime_resources"

@@ -149,7 +149,7 @@ class ManualBuildTests(unittest.TestCase):
         expected = "a" * 40
         for actual in (expected, "b" * 40):
             run = {"id": 123, "display_title": "build · token", "head_sha": actual,
-                   "html_url": "https://github.com/intraducine/iridium/actions/runs/123"}
+                   "html_url": f"https://github.com/{dispatch.REPO}/actions/runs/123"}
             unrelated = dict(run, id=456, display_title="build · other")
             with patch.object(dispatch.uuid, "uuid4") as token, patch.object(dispatch, "gh") as gh:
                 token.return_value.hex = "token"
@@ -160,7 +160,7 @@ class ManualBuildTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         dispatch.dispatch("main", expected)
-                    self.assertEqual(gh.call_args.args[-1], "repos/intraducine/iridium/actions/runs/123/cancel")
+                    self.assertEqual(gh.call_args.args[-1], f"repos/{dispatch.REPO}/actions/runs/123/cancel")
         for invalid in ("", "a" * 7, "z" * 40):
             with self.assertRaises(ValueError):
                 dispatch.check_commit(invalid, invalid)

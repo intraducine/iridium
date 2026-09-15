@@ -7,7 +7,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = 'intraducine/iridium'
+REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
 INPUTS = ('iridium-wine-ios', 'ci/prepare-linux-runtime.sh', 'ci/collect-debian-sources.py')
 
 

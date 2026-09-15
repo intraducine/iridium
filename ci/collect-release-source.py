@@ -219,6 +219,7 @@ def collect(kind):
             ROOT / '.build/depot_tools', OUT / 'depot_tools.tar.gz')
         (OUT / 'angle-revisions.json').write_text(json.dumps(revisions, indent=2) + '\n')
     elif kind == 'package':
+        subprocess.run([sys.executable, str(ROOT / 'ci/collect-steam-source.py')], check=True)
         subprocess.run([sys.executable, str(ROOT / 'ci/repair-release-source.py')], check=True)
         check_restored_sources()
         collect_media_rust()
