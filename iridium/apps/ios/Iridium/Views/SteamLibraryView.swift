@@ -19,72 +19,18 @@ struct SteamLibraryView: View {
         NavigationStack {
             List {
                 if !steam.state.signedIn { signIn }
-                else {
-                    Section {
-                        Label(steam.state.accountName ?? "Steam", systemImage: "person.crop.circle.fill")
-                        Button("Sign Out", role: .destructive) { steam.perform(["action": "signOut"]) }
-                            .disabled(steam.busy || adding)
-                    } footer: { Text("Games download directly to this device. Compatibility varies; games requiring the desktop Steam client may not launch.") }
-                }
+                else { accountSection }
 
                 if steam.busy || steam.state.appId != nil || steam.state.error != nil {
-                    Section("Download status") {
-                        if let appId = steam.state.appId,
-                           let game = steam.state.games.first(where: { $0.appId == appId }) {
-                            Text(game.name).font(.headline)
-                        }
-                        Text(steam.state.message).font(.subheadline)
-                        if steam.state.totalBytes > 0 {
-                            ProgressView(value: Double(steam.state.completedBytes), total: Double(steam.state.totalBytes))
-                            Text("\(ByteCountFormatter.string(fromByteCount: steam.state.completedBytes, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: steam.state.totalBytes, countStyle: .file)) verified")
-                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                        } else if steam.busy { ProgressView() }
-                        if steam.busy {
-                            Button(steam.state.signedIn ? "Pause" : "Cancel Sign-in") { steam.perform(["action": "cancel"]) }
-                                .disabled(steam.state.phase == "pausing")
-                        }
-                    }
+                    downloadStatusSection
                 }
 
                 if let installed = steam.state.installed {
-                    Section("Ready to add") {
-                        Picker("Windows executable", selection: $executable) {
-                            Text("Choose executable").tag("")
-                            ForEach(installed.executables, id: \.self) { Text($0).tag($0) }
-                        }
-                        Button {
-                            adding = true
-                            Task {
-                                do {
-                                    try await viewModel.registerSteamDownload(title: installed.name, appID: String(installed.appId),
-                                        directory: installed.directory, executable: executable)
-                                    dismiss()
-                                } catch { steam.error = error.localizedDescription }
-                                adding = false
-                            }
-                        } label: {
-                            HStack { Text("Add to Library"); if adding { Spacer(); ProgressView() } }
-                        }.disabled(executable.isEmpty || adding || steam.busy)
-                    } footer: { Text("Choose the main game executable. Play will use Iridium's usual runtime and JIT checks.") }
-                    .onAppear { if installed.executables.count == 1 { executable = installed.executables[0] } }
+                    installedSection(installed)
                 }
 
                 if steam.state.signedIn {
-                    Section("Your games · \(steam.state.games.count)") {
-                        if steam.state.games.isEmpty && !steam.busy {
-                            Text("No games returned. Refresh your library to try again.").foregroundStyle(.secondary)
-                        }
-                        ForEach(steam.state.games.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { game in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(game.name).font(.headline)
-                                Button("Download / resume", systemImage: "arrow.down.circle") {
-                                    executable = ""
-                                    steam.perform(["action": "install", "appId": game.appId])
-                                }.disabled(steam.busy || adding)
-                                .accessibilityLabel("Download or resume \(game.name)")
-                            }.padding(.vertical, 6)
-                        }
-                    }
+                    librarySection
                 }
                 if let error = steam.error {
                     Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
@@ -110,6 +56,95 @@ struct SteamLibraryView: View {
             }
             .interactiveDismissDisabled(adding)
         }
+    }
+
+    private var accountSection: some View {
+        Section {
+            Label(steam.state.accountName ?? "Steam", systemImage: "person.crop.circle.fill")
+            Button("Sign Out", role: .destructive) { steam.perform(["action": "signOut"]) }
+                .disabled(steam.busy || adding)
+        } footer: {
+            Text("Games download directly to this device. Compatibility varies; games requiring the desktop Steam client may not launch.")
+        }
+    }
+
+    private var downloadingGameName: String? {
+        guard let appId = steam.state.appId else { return nil }
+        return steam.state.games.first { $0.appId == appId }?.name
+    }
+
+    private var progressDescription: String {
+        let completed = ByteCountFormatter.string(fromByteCount: steam.state.completedBytes, countStyle: .file)
+        let total = ByteCountFormatter.string(fromByteCount: steam.state.totalBytes, countStyle: .file)
+        return "\(completed) of \(total) verified"
+    }
+
+    private var downloadStatusSection: some View {
+        Section("Download status") {
+            if let name = downloadingGameName { Text(name).font(.headline) }
+            Text(steam.state.message).font(.subheadline)
+            if steam.state.totalBytes > 0 {
+                ProgressView(value: Double(steam.state.completedBytes), total: Double(steam.state.totalBytes))
+                Text(progressDescription).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            } else if steam.busy { ProgressView() }
+            if steam.busy {
+                Button(steam.state.signedIn ? "Pause" : "Cancel Sign-in") { steam.perform(["action": "cancel"]) }
+                    .disabled(steam.state.phase == "pausing")
+            }
+        }
+    }
+
+    private func installedSection(_ installed: SteamDownloadedGame) -> some View {
+        Section {
+            Picker("Windows executable", selection: $executable) {
+                Text("Choose executable").tag("")
+                ForEach(installed.executables, id: \.self) { Text($0).tag($0) }
+            }
+            Button { addToLibrary(installed) } label: {
+                HStack { Text("Add to Library"); if adding { Spacer(); ProgressView() } }
+            }.disabled(executable.isEmpty || adding || steam.busy)
+        } header: {
+            Text("Ready to add")
+        } footer: {
+            Text("Choose the main game executable. Play will use Iridium's usual runtime and JIT checks.")
+        }
+        .onAppear { if installed.executables.count == 1 { executable = installed.executables[0] } }
+    }
+
+    private func addToLibrary(_ installed: SteamDownloadedGame) {
+        adding = true
+        Task {
+            do {
+                try await viewModel.registerSteamDownload(title: installed.name, appID: String(installed.appId),
+                    directory: installed.directory, executable: executable)
+                dismiss()
+            } catch { steam.error = error.localizedDescription }
+            adding = false
+        }
+    }
+
+    private var filteredGames: [SteamOwnedGame] {
+        steam.state.games.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }
+    }
+
+    private var librarySection: some View {
+        Section("Your games · \(steam.state.games.count)") {
+            if steam.state.games.isEmpty && !steam.busy {
+                Text("No games returned. Refresh your library to try again.").foregroundStyle(.secondary)
+            }
+            ForEach(filteredGames) { game in gameRow(game) }
+        }
+    }
+
+    private func gameRow(_ game: SteamOwnedGame) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(game.name).font(.headline)
+            Button("Download / resume", systemImage: "arrow.down.circle") {
+                executable = ""
+                steam.perform(["action": "install", "appId": game.appId])
+            }.disabled(steam.busy || adding)
+            .accessibilityLabel("Download or resume \(game.name)")
+        }.padding(.vertical, 6)
     }
 
     private var signIn: some View {

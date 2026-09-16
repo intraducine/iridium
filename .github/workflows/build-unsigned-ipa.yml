@@ -156,6 +156,8 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
+      - name: Type-check the Steam screen with the iOS SDK
+        run: python3 ci/check-steam-ui.py
       - name: Install the pinned Steam module SDK
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
