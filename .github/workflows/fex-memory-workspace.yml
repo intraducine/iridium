@@ -1,0 +1,32 @@
+name: FEX memory workspace
+on:
+  push:
+    branches: [work/fex-memory-regression-20260916]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Collect exact regression inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 -- testrepos/Madeira/FEX/External/rpmalloc
+          mkdir -p .build/fex-review
+          git archive HEAD ci .github testrepos/Madeira/FEX testrepos/Madeira/build testrepos/Madeira/app iridium/apps/ios/MadeiraSupport iridium/apps/ios/MadeiraSupportTests iridium-fex-ios/iridium/ios > .build/fex-review/source.tar
+          tar --append --file .build/fex-review/source.tar --exclude=.git testrepos/Madeira/FEX/External/rpmalloc
+          gzip .build/fex-review/source.tar
+          git ls-tree -r HEAD > .build/fex-review/tree.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fex-review-sources
+          path: .build/fex-review/
+          if-no-files-found: error
+          retention-days: 1
