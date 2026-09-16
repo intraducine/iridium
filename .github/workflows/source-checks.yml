@@ -21,5 +21,7 @@ jobs:
         run: python3 ci/check-standards.py
       - name: Check touch controller wiring
         run: python3 iridium/apps/ios/MadeiraSupportTests/TouchControllerCheck.py
+      - name: Check FEX arena reservation
+        run: python3 iridium/apps/ios/MadeiraSupportTests/HostArenaCheck.py
       - name: Check manual build safeguards
         run: python3 -B -m unittest discover -s ci -p 'test_*.py'
