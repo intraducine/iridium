@@ -3,9 +3,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+python3 ci/prepare-local-runtime.py
+python3 ci/check-local-runtime-provenance.py
 python3 ci/check-ipa-prerequisites.py
 runtime_resources=iridium/packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime
 mkdir -p "$runtime_resources"
+rm -rf "$runtime_resources/iridium-runtime-base"
 ditto iridium-runtime-sdk/build/iridium-runtime-base "$runtime_resources/iridium-runtime-base"
 python3 ci/prepare-stikjit-interface.py
 xcodegen generate --spec iridium/apps/ios/stikjit.yml
