@@ -205,7 +205,11 @@ def prepare_submodules(modules: list[str]) -> None:
 
 
 def main() -> None:
-    run("xcodebuild", "-downloadComponent", "MetalToolchain")
+    # The bootstrap normally did this already; direct use is also idempotent.
+    probe = subprocess.run(["xcrun", "--sdk", "iphoneos", "metal", "--version"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if probe.returncode:
+        run("xcodebuild", "-downloadComponent", "MetalToolchain")
     run("xcrun", "--sdk", "iphoneos", "metal", "--version")
     refresh_pinned_inputs()
 
@@ -215,6 +219,7 @@ def main() -> None:
             modules.append(f"{fork}/External/{module}")
         modules.append(f"{fork}/Source/Common/cpp-optparse")
     modules.append("testrepos/Madeira/research/dxmt/include/native/directx")
+    run("python3", "ci/local_submodule_recovery.py", *modules)
     prepare_submodules(modules)
 
     allocator = MADEIRA / "FEX/External/rpmalloc"
