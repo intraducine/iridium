@@ -28,15 +28,19 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         self.assertIn("build_runtime_bundle.sh", source)
         self.assertIn('"local-" + head_short()', source)
 
-    def test_local_input_prep_reuses_existing_sources_and_patch(self):
+    def test_local_input_prep_repairs_only_clean_managed_submodules(self):
         source = (ROOT / "ci/prepare-local-runtime-inputs.py").read_text()
         self.assertIn("if destination.exists()", source)
         self.assertIn("Reuse local runtime input", source)
         self.assertIn("prepare_submodules(modules)", source)
-        self.assertIn("Reuse local submodule source", source)
-        self.assertIn("missing.append(module)", source)
-        self.assertIn('"submodule", "update", "--init", "--depth", "1", "--", *missing', source)
+        self.assertIn("--show-superproject-working-tree", source)
+        self.assertIn("checkout_dirty(path)", source)
+        self.assertIn("Repair clean managed submodule", source)
+        self.assertIn("Managed submodule", source)
+        self.assertIn("and has local changes. Refusing to overwrite them.", source)
+        self.assertIn("Standalone checkout", source)
         self.assertIn("Refusing to overwrite local source", source)
+        self.assertIn('"submodule", "update", "--init", "--depth", "1", "--", *update', source)
         self.assertIn('"apply", "--reverse", "--check"', source)
         native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
         self.assertIn("LLVM iOS linker correction already applied", native)
