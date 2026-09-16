@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Iridium.Steam;
 using SteamKit2;
+using SteamKit2.CDN;
 using SteamKit2.Internal;
 using ProtoBuf;
 
@@ -140,6 +141,40 @@ try
     Check(SteamInstaller.SelectWindowsDepot(depot), "multi-platform depot selected");
     config.Children.Add(new("language", "german"));
     Check(!SteamInstaller.SelectWindowsDepot(depot), "other language excluded");
+
+    // Steam lists most Valve caches with optional HTTPS; they must still be used over TLS.
+    CContentServerDirectory_ServerInfo Listed(string type, string host, string https, float load,
+        bool proxy = false, bool china = false, uint app = 0, string? vhost = null)
+    {
+        var info = new CContentServerDirectory_ServerInfo
+        {
+            type = type, host = host, vhost = vhost ?? host, https_support = https,
+            weighted_load = load, use_as_proxy = proxy, steam_china_only = china,
+        };
+        if (app != 0) info.allowed_app_ids.Add(app);
+        return info;
+    }
+    var listed = new[]
+    {
+        Listed("SteamCache", "cache1-fra1.steamcontent.com", "optional", 2),
+        Listed("CDN", "steampipe.akamaized.net", "mandatory", 1),
+        Listed("CDN", "this-app.example.net", "optional", 3, app: 42),
+        Listed("CDN", "plain.example.net", "", 0),
+        Listed("SteamCache", "proxy.example.net", "optional", 0, proxy: true),
+        Listed("SteamCache", "china.example.net", "optional", 0, china: true),
+        Listed("OpenCache", "isp.example.net", "optional", 0),
+        Listed("CDN", "other-app.example.net", "mandatory", 0, app: 999),
+        Listed("CDN", "aliased.example.net", "mandatory", 0, vhost: "other.example.net"),
+        Listed("CDN", "bad host!", "mandatory", 0),
+        Listed("CDN", "", "mandatory", 0),
+    };
+    var chosen = SteamInstaller.SelectContentServers(listed, 42);
+    Check(chosen.Select(s => s.Host).SequenceEqual(new[] { "steampipe.akamaized.net", "cache1-fra1.steamcontent.com", "this-app.example.net" }),
+        "TLS-capable caches and CDNs are kept in load order");
+    Check(chosen.All(s => s.Protocol == Server.ConnectionProtocol.HTTPS && s.Port == 443 && s.VHost == s.Host),
+        "optional-HTTPS hosts are used over TLS only");
+    Check(SteamInstaller.SelectContentServers(listed, 42, 1).Length == 1, "server limit applies");
+    Check(SteamInstaller.SelectContentServers(new[] { listed[3], listed[4] }, 42).Length == 0, "no plain HTTP or proxy fallback");
 
     var engine = new SteamEngine(root);
     Check(!engine.Submit(new() { Action = "install", AppId = 42 }), "signed-out install rejected");

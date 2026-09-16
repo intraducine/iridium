@@ -63,8 +63,10 @@ including exception messages, passwords, tokens, or local paths.
 - Passwords are held only during authentication. Saved sessions go to an iOS
   Keychain item with `WhenUnlockedThisDeviceOnly`; sign-out deletes the item.
 - Only one account operation/download runs at a time. Download uses up to four
-  concurrent chunks, pooled buffers, TLS CDN endpoints, bounded retries, and
-  manifest/file hashes. No simulated account or download fallback is used.
+  concurrent chunks, pooled buffers, bounded retries, and manifest/file hashes.
+  Steam cache and CDN hosts are used over TLS only, including hosts that report
+  HTTPS as optional; there is no plain-HTTP, proxy, simulated account, or download
+  fallback.
 - Downloads pause when backgrounded. Select the same game to resume after reopening;
   valid chunks are reused, including after a process restart.
 - Installs live in Application Support, excluded from device backups. Each build

@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
 using SteamKit2;
 using SteamKit2.CDN;
+using SteamKit2.Internal;
 
 namespace Iridium.Steam;
 
@@ -21,6 +23,22 @@ public sealed class SteamInstaller(SteamConnection connection)
             && !config["lowviolence"].AsBoolean();
     }
 
+    // SteamKit marks a host HTTPS only when Steam reports "mandatory". Valve's own
+    // caches usually report "optional" and still serve TLS on 443, so the earlier
+    // Protocol filter left many regions with no server. Accept every TLS-capable
+    // Steam cache or CDN host and always connect over HTTPS; plain HTTP is never used.
+    public static Server[] SelectContentServers(IEnumerable<CContentServerDirectory_ServerInfo> candidates, uint appId, int limit = 6)
+        => candidates
+            .Where(s => s.type is "SteamCache" or "CDN"
+                && s.https_support is "optional" or "mandatory"
+                && !s.use_as_proxy && !s.steam_china_only
+                && !string.IsNullOrEmpty(s.host) && Uri.CheckHostName(s.host) == UriHostNameType.Dns
+                && (string.IsNullOrEmpty(s.vhost) || s.vhost == s.host)
+                && (s.allowed_app_ids.Count == 0 || s.allowed_app_ids.Contains(appId)))
+            .OrderBy(s => s.weighted_load)
+            .Select(s => (Server)new DnsEndPoint(s.host, 443))
+            .Take(limit).ToArray();
+
     public async Task<InstalledGame> Install(Game game, string root, Action<long, long> progress,
         Action<string> phase, CancellationToken ct)
     {
@@ -33,10 +51,17 @@ public sealed class SteamInstaller(SteamConnection connection)
         var content = connection.Client.GetHandler<SteamContent>()!;
         var apps = connection.Client.GetHandler<SteamApps>()!;
         using var cdn = new Client(connection.Client);
-        var servers = (await content.GetServersForSteamPipe().WaitAsync(TimeSpan.FromSeconds(30), ct))
-            .Where(s => s.Type == "CDN" && !string.IsNullOrEmpty(s.Host) && !s.UseAsProxy && s.Protocol == Server.ConnectionProtocol.HTTPS
-                && (s.AllowedAppIds.Length == 0 || s.AllowedAppIds.Contains(game.AppId)))
-            .OrderBy(s => s.WeightedLoad).Take(6).ToArray();
+        var directory = connection.Client.GetHandler<SteamUnifiedMessages>()!.CreateService<ContentServerDirectory>();
+        async Task<Server[]> ResolveServers(uint cellId, uint maxServers)
+        {
+            var response = await directory.GetServersForSteamPipe(new() { cell_id = cellId, max_servers = maxServers })
+                .ToTask().WaitAsync(TimeSpan.FromSeconds(30), ct);
+            if (response.Result != EResult.OK) throw new SteamFailure($"Steam did not provide a download server list ({response.Result}). Try again shortly.");
+            return SelectContentServers(response.Body.servers, game.AppId);
+        }
+        // The client's cell list can be short; ask again without a cell before giving up.
+        var servers = await ResolveServers(connection.Client.CellID ?? 0, 20);
+        if (servers.Length == 0) servers = await ResolveServers(0, 50);
         if (servers.Length == 0) throw new SteamFailure("Steam has no secure download servers available. Try again shortly.");
         var authTokens = new ConcurrentDictionary<string, string>();
 
