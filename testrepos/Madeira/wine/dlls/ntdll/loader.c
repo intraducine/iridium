@@ -5584,7 +5584,13 @@ void loader_init( CONTEXT *context, void **entry )
         if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
 #endif
 #ifdef __arm64ec__
-        arm64ec_thread_init();
+if ((status = arm64ec_thread_init()) != STATUS_SUCCESS)
+{
+    ERR( "ARM64EC thread initialization failed, status %#lx\n", status );
+    RtlLeaveCriticalSection( &loader_section );
+    NtTerminateThread( GetCurrentThread(), status );
+    return;
+}
 #endif
 
         if (NtCurrentTeb()->SkipThreadAttach)

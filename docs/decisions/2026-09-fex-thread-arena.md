@@ -70,3 +70,10 @@ checks that its mutex is unlocked.
 These tests do not run the ARM64EC ABI, Wine, Metal, or UIKit on an iPhone. They
 support the allocation and null-handling corrections, not a claim that Hollow
 Knight now renders or that an unlimited number of guest threads can be created.
+
+## Wine caller propagation
+
+Wine loader_init previously ignored arm64ec_thread_init() status. It now
+releases the loader critical section and terminates the failed thread before
+TLS attachment or guest callbacks. A scoped executable C test checks the actual
+production guard with both failure statuses and success; OS calls are stubbed.
