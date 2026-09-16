@@ -3,8 +3,9 @@
 
 Unlike the clean-runner Actions helper, local builds may already have extracted
 source trees, parent-managed submodules, or standalone checkouts at gitlink
-paths. Repair only clean submodules owned by this Iridium checkout; preserve
-standalone/local source and initialize only genuinely missing dependencies.
+paths. Repair only submodules owned by this Iridium checkout when their tracked
+source is clean; preserve standalone/local source and initialize only genuinely
+missing dependencies.
 """
 import json
 from pathlib import Path
@@ -97,11 +98,25 @@ def checkout_info(path: Path) -> tuple[str | None, bool]:
     return head, managed
 
 
-def checkout_dirty(path: Path) -> bool:
-    status = subprocess.check_output(
-        ["git", "-C", str(path), "status", "--porcelain"], text=True
+def checkout_has_tracked_changes(path: Path) -> bool:
+    """Ignore untracked build files; never ignore tracked/index source edits."""
+    worktree = subprocess.run(
+        ["git", "-C", str(path), "diff", "--quiet", "--ignore-submodules=none", "--"],
+        check=False,
     )
-    return bool(status.strip())
+    index = subprocess.run(
+        ["git", "-C", str(path), "diff", "--cached", "--quiet", "--ignore-submodules=none", "--"],
+        check=False,
+    )
+    return worktree.returncode != 0 or index.returncode != 0
+
+
+def checkout_has_untracked_files(path: Path) -> bool:
+    output = subprocess.check_output(
+        ["git", "-C", str(path), "ls-files", "--others", "--exclude-standard"],
+        text=True,
+    )
+    return bool(output.strip())
 
 
 def prepare_submodules(modules: list[str]) -> None:
@@ -119,21 +134,30 @@ def prepare_submodules(modules: list[str]) -> None:
         if actual is None:
             print(f"Reuse local submodule source {module}: existing source tree", flush=True)
             continue
+        tracked_changes = checkout_has_tracked_changes(path)
+        untracked = checkout_has_untracked_files(path)
         if actual == expected:
-            detail = actual[:12] + (" (local changes preserved)" if checkout_dirty(path) else "")
+            detail = actual[:12]
+            if tracked_changes:
+                detail += " (tracked local changes preserved)"
+            elif untracked:
+                detail += " (untracked files preserved)"
             print(f"Reuse local submodule source {module}: {detail}", flush=True)
             continue
 
         if managed:
-            if checkout_dirty(path):
+            if tracked_changes:
                 raise RuntimeError(
                     f"Managed submodule {module} is at {actual[:12]}, expected {expected[:12]}, "
-                    "and has local changes. Refusing to overwrite them."
+                    "and has tracked local changes. Refusing to overwrite them."
                 )
+            suffix = "; untracked files will be preserved" if untracked else ""
             print(
-                f"Repair clean managed submodule {module}: {actual[:12]} -> {expected[:12]}",
+                f"Repair managed submodule {module}: {actual[:12]} -> {expected[:12]}{suffix}",
                 flush=True,
             )
+            # Do not use --force. Git itself will abort if checkout of the pinned
+            # commit would overwrite an untracked path, preserving local data.
             update.append(module)
             continue
 
