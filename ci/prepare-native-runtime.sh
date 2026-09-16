@@ -48,6 +48,9 @@ for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson 
     fi
 done
 
+# Reject unsafe publication paths before doing any native compilation.
+python3 "$ROOT/iridium-fex-ios/iridium/ios/publish_build_aliases.py" --check
+
 bash "$MADEIRA/build/gnutls-ios/build.sh"
 bash "$MADEIRA/build/freetype-ios/build.sh"
 for name in gnutls hogweed nettle gmp; do
@@ -122,7 +125,12 @@ bash "$MADEIRA/build/dxmt-ios/build.sh"
 xcrun --sdk iphoneos libtool -static -o "$APP/libdxmt_combined.a" \
     "$MADEIRA/build/dxmt-ios/obj/"*.o "$IOS/lib/"*.a
 
-bash "$ROOT/iridium-fex-ios/iridium/ios/build_embedded_translator.sh" --platform device --jobs "$JOBS"
+# Keep the canonical build directory (and completed objects) in place. Explicit
+# --build-root disables the standalone helper's strict alias replacement; the
+# publisher preserves real directories restored at the compatibility paths.
+bash "$ROOT/iridium-fex-ios/iridium/ios/build_embedded_translator.sh" \
+    --platform device --build-root "$ROOT/iridium-fex-ios/build-iridium-ios-device" --jobs "$JOBS"
+python3 "$ROOT/iridium-fex-ios/iridium/ios/publish_build_aliases.py"
 # The iOS Wine configure step needs host-built Wine tools first.
 mkdir -p "$ROOT/iridium-wine-ios/build-iridium-ios/wine-build"
 (
