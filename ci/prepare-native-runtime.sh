@@ -31,16 +31,21 @@ for name in gnutls hogweed nettle gmp; do
 done
 
 # LLVM 15 assumes every Apple target is named Darwin. Apply the documented
-# Madeira iOS linker correction to the downloaded source, preserving the patch.
+# Madeira iOS linker correction idempotently so repeated local builds can reuse
+# the extracted source tree instead of requiring a fresh Actions checkout.
 python3 - "$MADEIRA/toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 old = 'MATCHES "Darwin"'
-if text.count(old) != 2:
+new = 'MATCHES "Darwin|iOS"'
+if text.count(old) == 2:
+    path.write_text(text.replace(old, new))
+elif text.count(new) == 2:
+    print('LLVM iOS linker correction already applied')
+else:
     raise SystemExit('Unexpected LLVM source; refusing to apply linker patch')
-path.write_text(text.replace(old, 'MATCHES "Darwin|iOS"'))
 PY
 LLVM="$MADEIRA/toolchains/llvm-project/llvm"
 HOST="$MADEIRA/toolchains/llvm-host-build"
