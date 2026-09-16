@@ -22,8 +22,32 @@ fi
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || {
     echo 'Requires an Apple Silicon macOS runner with Xcode 27.' >&2; exit 1;
 }
-for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do command -v "$tool" >/dev/null; done
-export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+
+# Local builds use the digest-locked LLVM-MinGW tree prepared by
+# prepare-local-runtime-inputs.py. Put it on PATH before checking compiler
+# prerequisites; the previous order silently exited on Macs that did not also
+# have a separate system MinGW installation.
+for package in bison llvm; do
+    prefix="$(brew --prefix "$package" 2>/dev/null)" || {
+        echo "Missing Homebrew package: $package (run: brew install $package)" >&2
+        exit 69
+    }
+    PATH="$prefix/bin:$PATH"
+done
+PATH="$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+export PATH
+
+for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson \
+            x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "Missing native-build tool: $tool" >&2
+        if [[ "$tool" == *-w64-mingw32-gcc ]]; then
+            echo "The prepared LLVM-MinGW toolchain is missing its expected compiler alias: $MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin" >&2
+        fi
+        exit 69
+    fi
+done
+
 bash "$MADEIRA/build/gnutls-ios/build.sh"
 bash "$MADEIRA/build/freetype-ios/build.sh"
 for name in gnutls hogweed nettle gmp; do
