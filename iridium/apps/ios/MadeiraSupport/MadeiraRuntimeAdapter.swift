@@ -153,7 +153,7 @@ enum MadeiraRuntimeAdapter {
                 }
                 #endif
                 guard current() else { return }
-                guard winios_reserve_fex_memory() != 0 else {
+                guard iridium_reserve_fex_memory() != 0 else {
                     failure("Cannot start the runtime: too little usable address space. Restart Iridium and try again.")
                     return
                 }
