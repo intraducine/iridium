@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Exercise the production reservation with a constrained/fragmented Mach map."""
+"""Exercise Iridium's robust FEX arena reservation without Apple headers."""
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 
-root = Path(__file__).resolve().parents[4]
-source = (root / 'testrepos/Madeira/app/Madeira/Winios/Winios.m').read_text()
-function = source[source.index('int winios_reserve_fex_memory(void)'):]
+root = Path(__file__).resolve().parents[1]
+source = (root / "MadeiraSupport/NativePool.c").read_text()
+start = source.index("extern int winios_reserve_fex_memory(void);")
+function = source[start:]
+
 harness = r'''
 #include <stdint.h>
 #include <stdio.h>
@@ -25,45 +28,82 @@ typedef struct { uint64_t max_address; } task_vm_info_data_t;
 #define VM_PROT_NONE 0
 #define FALSE 0
 #define G (1ULL<<30)
-static uint64_t ceiling, taken, length;
-static int attempts, mode, releases;
+static uint64_t ceiling, largest_hole;
+static int info_fails, protect_fails, fallback_calls, allocations;
 static int mach_task_self(void) { return 1; }
 static int task_info(int t, int f, task_info_t i, int *n) {
- ((task_vm_info_data_t *)i)->max_address=ceiling; return mode==3 ? 1 : 0;
+    (void)t; (void)f; (void)n;
+    if (info_fails) return 1;
+    ((task_vm_info_data_t *)i)->max_address = ceiling;
+    return 0;
 }
-static int vm_allocate(int t, uint64_t *b, uint64_t s, int flags) {
- assert(flags==VM_FLAGS_FIXED);
- assert(*b+s<=ceiling && *b>=4*G);
- assert(!(*b&65535));
- attempts++;
- if(mode==1 || (mode==4 && *b > ceiling-4*G-G/2) || *b < ceiling-(mode==6 ? 64 : 5)*G) return 1;
- taken=*b+s/2; length=s/2; return 0;
+static int vm_allocate(int t, uint64_t *base, uint64_t size, int flags) {
+    (void)t; (void)flags;
+    allocations++;
+    if (size > largest_hole || *base < 4*G || *base + size > ceiling) return 1;
+    return 0;
 }
-static int vm_protect(int t,uint64_t b,uint64_t s,int max,int p) {
- assert(b==taken && s==length && p==VM_PROT_NONE && !max);
- return mode==2 ? 1 : 0;
+static int vm_protect(int t, uint64_t b, uint64_t s, int max, int p) {
+    (void)t; (void)b; (void)s; (void)max; (void)p;
+    return protect_fails ? 1 : 0;
 }
-static int vm_deallocate(int t,uint64_t b,uint64_t s) { releases++; return 0; }
+static int vm_deallocate(int t, uint64_t b, uint64_t s) {
+    (void)t; (void)b; (void)s; return 0;
+}
+int winios_reserve_fex_memory(void) {
+    fallback_calls++;
+    setenv("WINE_IOS_FEX_ARENA_BASE", "7100000000", 1);
+    setenv("WINE_IOS_FEX_ARENA_SIZE", "80000000", 1);
+    return 1;
+}
 '''
+
 main = r'''
-int main(int argc,char **argv) {
- mode=atoi(argv[1]); ceiling=strtoull(argv[2],0,10)*G;
- int ok=winios_reserve_fex_memory();
- if(mode==1 || mode==2 || mode==3 || ceiling<6*G) {
-  assert(!ok); assert(!getenv("WINE_IOS_FEX_ARENA_BASE"));
-  if(mode==2) assert(releases>0);
- } else {
-  assert(ok); assert(length<=16*G && (mode==6 || length<=2*G));
-  assert(strtoull(getenv("WINE_IOS_FEX_ARENA_BASE"),0,16)==taken);
-  assert(strtoull(getenv("WINE_IOS_FEX_ARENA_SIZE"),0,16)==length);
-  int old=attempts; assert(winios_reserve_fex_memory()); assert(old==attempts);
- }
+int main(int argc, char **argv) {
+    (void)argc;
+    int mode = atoi(argv[1]);
+    ceiling = mode == 0 ? 0x8000000000ULL : 0x7180000000ULL;
+    largest_hole = mode == 0 ? 16*G : mode == 1 ? 4*G : mode == 2 ? 8*G : 0;
+    info_fails = mode == 3;
+    protect_fails = mode == 4;
+    if (mode == 4) largest_hole = 16*G;
+    if (mode == 5) {
+        setenv("WINE_IOS_FEX_ARENA_BASE", "123400000", 1);
+        setenv("WINE_IOS_FEX_ARENA_SIZE", "100000000", 1);
+    }
+
+    assert(iridium_reserve_fex_memory());
+    uint64_t base = strtoull(getenv("WINE_IOS_FEX_ARENA_BASE"), 0, 16);
+    uint64_t size = strtoull(getenv("WINE_IOS_FEX_ARENA_SIZE"), 0, 16);
+    if (mode == 0) {
+        assert(base == 0x7c00000000ULL); /* Same final range as the known-working launch. */
+        assert(size == 16*G && fallback_calls == 0);
+    } else if (mode == 1) {
+        assert(base == 0x7080000000ULL); /* Fragmented 0x718... host now gets 4 GB, not 2 GB. */
+        assert(size == 4*G && fallback_calls == 0);
+    } else if (mode == 2) {
+        assert(size == 8*G && fallback_calls == 0);
+    } else if (mode == 3 || mode == 4) {
+        assert(size == 2*G && fallback_calls == 1);
+    } else if (mode == 5) {
+        assert(base == 0x123400000ULL && size == 4*G);
+        assert(allocations == 0 && fallback_calls == 0);
+    }
+    return 0;
 }
 '''
+
 with tempfile.TemporaryDirectory() as tmp:
-    src=Path(tmp)/'arena.c'; exe=Path(tmp)/'arena'
-    src.write_text(harness+function+main)
-    subprocess.run(['cc','-Wall','-Werror',str(src),'-o',str(exe)],check=True)
-    for mode, limit in [(0,454),(0,512),(0,5),(1,454),(2,454),(3,454),(4,454),(0,63),(6,512)]:
-        subprocess.run([str(exe),str(mode),str(limit)],check=True)
-print('Host arena reservation: 9 cases passed')
+    src = Path(tmp) / "arena.c"
+    exe = Path(tmp) / "arena"
+    src.write_text(harness + function + main)
+    subprocess.run(
+        ["cc", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Werror", str(src), "-o", str(exe)],
+        check=True,
+    )
+    clean_env = {k: v for k, v in os.environ.items()
+                 if k not in {"WINE_IOS_FEX_ARENA_BASE", "WINE_IOS_FEX_ARENA_SIZE"}}
+    for mode in range(6):
+        subprocess.run([str(exe), str(mode)], check=True, env=clean_env)
+
+print("Host arena reservation: robust direct 16/8/4 GB and legacy fallback passed")
