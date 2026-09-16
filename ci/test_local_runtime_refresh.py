@@ -26,7 +26,7 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
             self.assertIn(command, source)
         self.assertIn("Local native runtime unchanged; reusing", source)
         self.assertIn("build_runtime_bundle.sh", source)
-        self.assertIn("wine-userland.tar.zst", source)
+        self.assertIn('"local-" + head_short()', source)
 
     def test_local_input_prep_reuses_existing_sources_and_patch(self):
         source = (ROOT / "ci/prepare-local-runtime-inputs.py").read_text()
@@ -36,12 +36,16 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
         self.assertIn("LLVM iOS linker correction already applied", native)
 
-    def test_cross_platform_inputs_never_silently_mix(self):
+    def test_fingerprint_tracks_source_toolchain_and_staged_artifacts(self):
         source = (ROOT / "ci/prepare-local-runtime.py").read_text()
-        self.assertIn("reuse.MEDIA_INPUTS", source)
-        self.assertIn("reuse.PREFIX_INPUTS", source)
-        self.assertIn("reuse.linux.INPUTS", source)
-        self.assertIn("Run python3 ci/dispatch-build.py", source)
+        self.assertIn("native_contract_inputs", source)
+        self.assertIn('("xcodebuild", "-version")', source)
+        self.assertIn('("xcrun", "--sdk", "iphoneos", "--show-sdk-build-version")', source)
+        self.assertIn('("media", MEDIA)', source)
+        self.assertIn('("prefix", PREFIX)', source)
+        self.assertIn('("userland", USERLAND)', source)
+        self.assertIn("IRIDIUM_FORCE_NATIVE_REBUILD", source)
+        self.assertIn(".build/local-native-runtime-state.json", source)
 
 
 if __name__ == "__main__":
