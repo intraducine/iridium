@@ -28,16 +28,18 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         self.assertIn("build_runtime_bundle.sh", source)
         self.assertIn('"local-" + head_short()', source)
 
-    def test_local_input_prep_repairs_only_clean_managed_submodules(self):
+    def test_local_input_prep_repairs_managed_submodules_without_losing_source(self):
         source = (ROOT / "ci/prepare-local-runtime-inputs.py").read_text()
         self.assertIn("if destination.exists()", source)
         self.assertIn("Reuse local runtime input", source)
         self.assertIn("prepare_submodules(modules)", source)
         self.assertIn("--show-superproject-working-tree", source)
-        self.assertIn("checkout_dirty(path)", source)
-        self.assertIn("Repair clean managed submodule", source)
-        self.assertIn("Managed submodule", source)
-        self.assertIn("and has local changes. Refusing to overwrite them.", source)
+        self.assertIn("checkout_has_tracked_changes(path)", source)
+        self.assertIn("checkout_has_untracked_files(path)", source)
+        self.assertIn("Repair managed submodule", source)
+        self.assertIn("and has tracked local changes. Refusing to overwrite them.", source)
+        self.assertIn("untracked files will be preserved", source)
+        self.assertIn("Do not use --force", source)
         self.assertIn("Standalone checkout", source)
         self.assertIn("Refusing to overwrite local source", source)
         self.assertIn('"submodule", "update", "--init", "--depth", "1", "--", *update', source)
