@@ -25,6 +25,8 @@ jobs:
         run: python3 iridium/apps/ios/MadeiraSupportTests/HostArenaCheck.py
       - name: Check LiveContainer startup JIT policy
         run: python3 iridium/apps/ios/MadeiraSupportTests/LiveContainerStartupJITCheck.py
+      - name: Check startup JIT status reporting
+        run: python3 iridium/apps/ios/MadeiraSupportTests/StartupJITStatusCheck.py
       - name: Check library status UI
         run: python3 iridium/apps/ios/MadeiraSupportTests/LibraryStatusCheck.py
       - name: Check manual build safeguards
