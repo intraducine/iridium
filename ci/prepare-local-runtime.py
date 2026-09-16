@@ -18,6 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / "ci"
 STATE = ROOT / ".build/local-native-runtime-state.json"
+INCOMPLETE = STATE.with_suffix(".incomplete")
 RUNTIME_ROOT = ROOT / "iridium-runtime-sdk/build/iridium-runtime-base"
 APP = ROOT / "testrepos/Madeira/app/Madeira"
 TRANSLATOR = ROOT / "iridium-fex-ios/build-iridium-ios-iphoneos/artifacts/libiridium-fex-ios-embedded.a"
@@ -74,9 +75,17 @@ def native_fingerprint(provenance) -> str:
         digest.update(value.encode())
         digest.update(b"\0")
 
-    for path in provenance.native_contract_inputs(reuse):
+    paths = provenance.native_contract_inputs(reuse)
+    for path in paths:
         add("tree:" + path, reuse.git(ROOT, "ls-tree", "HEAD", "--", path))
 
+    # HEAD alone misses uncommitted source fixes. Include tracked working-tree
+    # changes (including managed submodule changes) without deleting any edits.
+    add("working-tree", reuse.git(ROOT, "diff", "--binary", "--submodule=diff", "--ignore-submodules=none", "HEAD", "--", *paths))
+    untracked = reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+    for name in sorted(filter(None, untracked.split("\0"))):
+        path = ROOT / name
+        add("untracked:" + name, os.readlink(path) if path.is_symlink() else file_digest(path))
     workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
     for component in ("native", "wine", "windows"):
         add("recipe:" + component, reuse.producer_job(workflow, component))
@@ -97,6 +106,13 @@ def native_fingerprint(provenance) -> str:
     return digest.hexdigest()
 
 
+def native_worktree_dirty(provenance) -> bool:
+    reuse = provenance.load_reuse()
+    paths = provenance.native_contract_inputs(reuse)
+    return bool(reuse.git(ROOT, "diff", "--name-only", "--ignore-submodules=none", "HEAD", "--", *paths)
+                or reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "--", *paths))
+
+
 def read_state() -> dict:
     try:
         data = json.loads(STATE.read_text())
@@ -105,12 +121,14 @@ def read_state() -> dict:
         return {}
 
 
-def write_state(fingerprint: str) -> None:
+def write_state(fingerprint: str, retained_revision: str) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "fingerprint": fingerprint,
         "revision": output("git", "rev-parse", "HEAD"),
         "runtimeVersion": "local-" + head_short(),
+        "retainedRevision": retained_revision,
+        "outputs": load("local_staging", CI / "local_runtime_staging.py").native_output_inventory(ROOT),
     }
     temporary = STATE.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -179,7 +197,7 @@ def rebuild_native_runtime(previous: str | None) -> None:
             RUNTIME_ROOT.rename(backup)
         try:
             shutil.move(str(rebuilt), str(RUNTIME_ROOT))
-        except Exception:
+        except BaseException:
             if RUNTIME_ROOT.exists():
                 shutil.rmtree(RUNTIME_ROOT)
             if backup.exists():
@@ -197,47 +215,98 @@ def rebuild_native_runtime(previous: str | None) -> None:
     )
 
 
+def verify_retained_inputs(reuse, revision: str) -> None:
+    """A native refresh must not relabel incompatible Linux/media assets."""
+    stages = {
+        "media": reuse.MEDIA_INPUTS,
+        "prefix": reuse.PREFIX_INPUTS,
+        "linux-userland": tuple(reuse.linux.INPUTS),
+        "graphics": reuse.COMPONENT_INPUTS["graphics"],
+        "jit": reuse.COMPONENT_INPUTS["jit"],
+    }
+    old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
+    new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
+    problems = []
+    for stage, paths in stages.items():
+        changed = [path for path in paths
+                   if reuse.git(ROOT, "ls-tree", revision, "--", path)
+                   != reuse.git(ROOT, "ls-tree", "HEAD", "--", path)]
+        dirty = reuse.git(ROOT, "diff", "--name-only", "HEAD", "--", *paths)
+        dirty += reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "--", *paths)
+        if changed or dirty or reuse.producer_job(old_workflow, stage) != reuse.producer_job(new_workflow, stage):
+            problems.append(stage)
+    if problems:
+        raise RuntimeError("Retained inputs need matching producers: " + ", ".join(problems)
+                           + ". The local native build does not rebuild these components. "
+                             "Restore matching inputs via docs/actions-ipa.md; no compiler work started.")
+
+
 def main() -> None:
+    staging = load("local_staging", CI / "local_runtime_staging.py")
+    staging.recover_bundle(ROOT)
+    staging.check_retained_inputs(ROOT)
     provenance = load("local_runtime_provenance", CI / "check-local-runtime-provenance.py")
-    fingerprint = native_fingerprint(provenance)
     state = read_state()
     producer = existing_producer(provenance)
+    pending = {}
+    if INCOMPLETE.exists():
+        try:
+            pending = json.loads(INCOMPLETE.read_text())
+        except (OSError, ValueError):
+            pass
+    if not isinstance(pending, dict):
+        pending = {}
+    retained = pending.get("retainedRevision") or state.get("retainedRevision") or producer
+    if not retained:
+        raise RuntimeError("Cannot identify the retained runtime producer. Restore matching runtime inputs before building.")
+    reuse = provenance.load_reuse()
+    verify_retained_inputs(reuse, retained)
+    fingerprint = native_fingerprint(provenance)
 
     contract_ok = False
     if producer is not None:
         try:
-            provenance.verify_native_contract(provenance.load_reuse(), producer)
+            provenance.verify_native_contract(reuse, producer)
             contract_ok = True
         except (ValueError, subprocess.CalledProcessError):
-            contract_ok = False
+            pass
+    try:
+        outputs = staging.native_output_inventory(ROOT)
+    except (OSError, ValueError) as error:
+        print(str(error), flush=True)
+        outputs = None
 
-    force = os.environ.get("IRIDIUM_FORCE_NATIVE_REBUILD") == "1"
-    if not force and state.get("fingerprint") == fingerprint and contract_ok:
+    force = os.environ.get("IRIDIUM_FORCE_NATIVE_REBUILD") == "1" or INCOMPLETE.exists()
+    if (not force and state.get("fingerprint") == fingerprint and contract_ok
+            and outputs is not None and state.get("outputs") == outputs):
         print(
             f"Local native runtime unchanged; reusing {state.get('revision', producer or 'unknown')[:12]}",
             flush=True,
         )
         return
 
-    if not force and not state and contract_ok:
-        # A compatible Actions/runtime bundle is already staged. Seed the local
-        # fingerprint without recompiling it once merely to create the cache.
-        write_state(fingerprint)
+    # Only seed a genuinely complete, compatible initial staging. A failed
+    # rebuild leaves INCOMPLETE and can never enter this path on the next run.
+    if (not force and not state and contract_ok and outputs is not None
+            and not native_worktree_dirty(provenance)):
+        write_state(fingerprint, retained)
         print(f"Local native runtime compatible; seeded cache from {producer[:12]}", flush=True)
         return
 
-    reason = "forced" if force else "native inputs changed or staged runtime is stale"
+    reason = "forced/interrupted refresh" if force else "inputs changed or compiler outputs missing/changed"
     print(f"Refreshing local native runtime: {reason}", flush=True)
+    INCOMPLETE.parent.mkdir(parents=True, exist_ok=True)
+    INCOMPLETE.write_text(json.dumps({"retainedRevision": retained}) + "\n")
+    STATE.unlink(missing_ok=True)
     rebuild_native_runtime(producer)
-
-    # Recompute after rebuilding because staged prefix/userland/media bytes are
-    # part of the cache identity and Windows staging may have refreshed files.
     fingerprint = native_fingerprint(provenance)
-    write_state(fingerprint)
     producer = existing_producer(provenance)
     if producer is None:
         raise RuntimeError("Rebuilt local runtime does not identify its producer")
-    provenance.verify_native_contract(provenance.load_reuse(), producer)
+    provenance.verify_native_contract(reuse, producer)
+    # Publish success only after validating provenance AND compiler outputs.
+    write_state(fingerprint, retained)
+    INCOMPLETE.unlink()
 
 
 if __name__ == "__main__":

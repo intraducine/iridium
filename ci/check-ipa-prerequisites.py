@@ -54,7 +54,7 @@ def blockers(root, package=False):
     for group, paths in REQUIRED.items():
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
-            result.append(f"{group}: {len(missing)} required file(s) missing")
+            result.append(f"{group}: missing " + ", ".join(missing))
     records = ['binary-release-blockers.json']
     if package:
         records.append('binary-package-blockers.json')
