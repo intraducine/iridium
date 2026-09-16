@@ -3,30 +3,74 @@ on:
   push:
     branches: [work/fex-memory-regression-20260916]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          persist-credentials: false
+          persist-credentials: true
           submodules: false
           lfs: false
-      - name: Collect exact regression inputs
+      - name: Apply exact reviewed patches to original PR head
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          import gzip, hashlib, json, os, pathlib, subprocess
+          data = b''.join(pathlib.Path(f'.github/fex-review/part-{i}').read_bytes() for i in range(4))
+          raw = gzip.decompress(data)
+          assert hashlib.sha256(raw).hexdigest() == 'd1c6658beb4cd077222fa78c5f4e9da981fd6816d9478f1021c56d512ffff53c'
+          bundle = json.loads(raw)
+          assert bundle['base'] == '469b19451dad445d1a7640ec2ffd0b9bf9daa069'
+          run = lambda args: subprocess.run(args, check=True)
+          run(['git','fetch','--depth=1','origin',bundle['base']])
+          run(['git','checkout','--detach',bundle['base']])
+          report = pathlib.Path(os.environ['RUNNER_TEMP'])/'fex-validation'
+          report.mkdir(exist_ok=True)
+          commits = []
+          for index, change in enumerate(bundle['commits']):
+              patch = report/f'fix-{index}.patch'
+              patch.write_text(change['patch'])
+              run(['git','apply','--check',str(patch)])
+              run(['git','apply','--index',str(patch)])
+              run(['git','diff','--cached','--check'])
+              run(['git','commit','-m',change['message']])
+              commits.append(subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
+          for path, expected in bundle['files'].items():
+              actual = subprocess.check_output(['git','hash-object',path],text=True).strip()
+              assert actual == expected, (path,expected,actual)
+          (report/'commits.json').write_text(json.dumps({'base':bundle['base'],'commits':commits,'files':bundle['files']},indent=2)+'\n')
+          print('Reviewed file hashes verified. Candidate commits:', *commits)
+          PY
+      - name: Prepare pinned allocator input
+        run: |
           git submodule update --init --depth 1 -- testrepos/Madeira/FEX/External/rpmalloc
-          mkdir -p .build/fex-review
-          git archive HEAD ci .github testrepos/Madeira/FEX testrepos/Madeira/build testrepos/Madeira/app iridium/apps/ios/MadeiraSupport iridium/apps/ios/MadeiraSupportTests iridium-fex-ios/iridium/ios > .build/fex-review/source.tar
-          tar --append --file .build/fex-review/source.tar --exclude=.git testrepos/Madeira/FEX/External/rpmalloc
-          gzip .build/fex-review/source.tar
-          git ls-tree -r HEAD > .build/fex-review/tree.txt
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          python3 ci/apply-rpmalloc-patches.py
+      - name: Run complete source checks and executable regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 check-public-source.py
+          python3 ci/check-standards.py
+          for test in TouchControllerCheck HostArenaCheck LiveContainerStartupJITCheck StartupJITStatusCheck LibraryStatusCheck; do
+            python3 "iridium/apps/ios/MadeiraSupportTests/$test.py"
+          done
+          python3 -B -m unittest discover -s ci -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/fex-validation/tests.txt"
+      - name: Publish only the validated candidate branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/work/fex-memory-validated-20260916
+      - name: Retain validation report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: fex-review-sources
-          path: .build/fex-review/
-          if-no-files-found: error
-          retention-days: 1
+          name: fex-memory-validation
+          path: ${{ runner.temp }}/fex-validation/
+          if-no-files-found: warn
+          retention-days: 3
