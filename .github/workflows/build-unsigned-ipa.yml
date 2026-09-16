@@ -426,6 +426,7 @@ jobs:
         run: bash ci/prepare-legacy-bundle.sh
       - name: Collect exact repository and dependency source
         run: |
+          python3 ci/reclaim-build-space.py prepare-source
           python3 ci/collect-release-source.py repository
           python3 ci/collect-release-source.py package
       - name: Retain source archive for release audit
@@ -438,7 +439,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Check full-runtime build readiness
-        run: python3 ci/check-ipa-prerequisites.py
+        run: |
+          python3 ci/reclaim-build-space.py source-uploaded
+          python3 ci/check-ipa-prerequisites.py
       - name: Generate Xcode project
         run: |
           xcodegen generate --spec iridium/apps/ios/stikjit.yml
