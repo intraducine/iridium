@@ -2,6 +2,9 @@
 # Prepare missing tools, refresh changed runtime inputs, then build incrementally.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
+if [ "${IRIDIUM_LOCAL_BUILD_LOCKED:-}" != "$PWD" ]; then
+  exec python3 ci/local_build_lock.py "$PWD" bash ci/build-local-ipa.sh "$@"
+fi
 mkdir -p .build/local-build-logs
 log="$PWD/.build/local-build-logs/build-$(date +%Y%m%d-%H%M%S)-$$.log"
 exec > >(tee "$log") 2>&1
@@ -12,11 +15,17 @@ python3 ci/local_build_tools.py --write-env .build/local-build-tools.env
 source .build/local-build-tools.env
 python3 ci/prepare-local-runtime.py
 python3 ci/check-local-runtime-provenance.py
+python3 ci/local_runtime_staging.py
+export IRIDIUM_WINE_STAGED_ROOT="$PWD/iridium-runtime-sdk/build/wine-userland-linux-x86_64/staged-root"
+export IRIDIUM_RUNTIME_BUNDLE_ROOT="$PWD/iridium-runtime-sdk/build/iridium-runtime-base"
 python3 ci/check-ipa-prerequisites.py
 runtime_resources=iridium/packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime
 mkdir -p "$runtime_resources"
 rm -rf "$runtime_resources/iridium-runtime-base"
-ditto iridium-runtime-sdk/build/iridium-runtime-base "$runtime_resources/iridium-runtime-base"
+# Bundle.main supplies the real runtime. SwiftPM needs only the manifest
+# fallback, not another compressed archive or a stale Userland/extracted tree.
+mkdir -p "$runtime_resources/iridium-runtime-base"
+cp iridium-runtime-sdk/build/iridium-runtime-base/manifest.json "$runtime_resources/iridium-runtime-base/manifest.json"
 python3 ci/prepare-stikjit-interface.py
 xcodegen generate --spec iridium/apps/ios/stikjit.yml
 xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
@@ -25,6 +34,8 @@ xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
   DEVELOPMENT_TEAM= EXPANDED_CODE_SIGN_IDENTITY= \
   PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
+  IRIDIUM_WINE_STAGED_ROOT="$IRIDIUM_WINE_STAGED_ROOT" \
+  IRIDIUM_RUNTIME_BUNDLE_ROOT="$IRIDIUM_RUNTIME_BUNDLE_ROOT" \
   IPHONEOS_DEPLOYMENT_TARGET=27.0 LD_GENERATE_MAP_FILE=YES build
 app=.build/local-ipa/Build/Products/Release-iphoneos/Iridium.app
 objcopy="$(brew --prefix llvm)/bin/llvm-objcopy"
