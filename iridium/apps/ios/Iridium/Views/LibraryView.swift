@@ -32,7 +32,7 @@ struct LibraryView: View {
             SettingsView(viewModel: viewModel, onBack: { appSettings = false })
         } else {
         LibraryShelf(games: viewModel.games, artwork: artwork, controller: controller,
-            play: { viewModel.recordLaunchPreparation(for: $0) },
+            play: { requestGameLaunch($0) },
             disabled: { viewModel.isLaunchActionDisabled(for: $0) },
             launchTitle: { viewModel.launchActionTitle(for: $0) },
             launchDetail: { viewModel.isLaunchActionDisabled(for: $0) ? viewModel.launchActionDetail(for: $0) : nil },
@@ -172,6 +172,39 @@ struct LibraryView: View {
         // Normal LiveContainer state belongs in the setup flow, not a permanent
         // library banner. Keep this slot for an actual repair failure only.
         liveContainerIntegrationMessage = nil
+    }
+
+    private func requestGameLaunch(_ game: GameRecord) {
+        refreshLiveContainerSetup()
+        guard liveContainerStatus.isHosted else {
+            viewModel.recordLaunchPreparation(for: game)
+            return
+        }
+
+        let launchStatus = LiveContainerIntegration.processLaunchStatus
+        if !liveContainerStatus.fullyConfigured || !liveContainerStatus.launchWithJITEnabled {
+            do {
+                liveContainerStatus = try LiveContainerIntegration.repairCurrentProcessConfiguration()
+                refreshLiveContainerSetup()
+                liveContainerIntegrationMessage = nil
+                isShowingLiveContainerRelaunchRequired = true
+                print("[IridiumRuntime] livecontainer: game launch repaired configuration; relaunch required")
+            } catch {
+                liveContainerStatus = LiveContainerIntegration.currentStatus()
+                liveContainerIntegrationMessage = "Could not repair LiveContainer settings: \(error.localizedDescription)"
+                print("[IridiumRuntime] livecontainer: game launch repair failed: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        guard launchStatus.fullyConfigured,
+              launchStatus.launchWithJITEnabled,
+              launchStatus.launchWithJITEnabled == liveContainerStatus.launchWithJITEnabled else {
+            isShowingLiveContainerRelaunchRequired = true
+            return
+        }
+
+        viewModel.recordLaunchPreparation(for: game)
     }
 
     private func requestGameImport() {
