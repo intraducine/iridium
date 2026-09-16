@@ -222,18 +222,7 @@ def main() -> None:
     run("python3", "ci/local_submodule_recovery.py", *modules)
     prepare_submodules(modules)
 
-    allocator = MADEIRA / "FEX/External/rpmalloc"
-    patch = ROOT / "ci/patches/rpmalloc-host-arena.patch"
-    reverse = subprocess.run(
-        ["git", "-C", str(allocator), "apply", "--reverse", "--check", str(patch)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if reverse.returncode == 0:
-        print("rpmalloc host-arena patch already applied", flush=True)
-        return
-    run("git", "-C", str(allocator), "apply", "--check", str(patch))
-    run("git", "-C", str(allocator), "apply", str(patch))
+    run("python3", "ci/apply-rpmalloc-patches.py")
 
 
 if __name__ == "__main__":

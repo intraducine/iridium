@@ -20,12 +20,5 @@ done
 modules+=(testrepos/Madeira/research/dxmt/include/native/directx)
 git submodule update --init --depth 1 -- "${modules[@]}"
 
-# Keep the local allocator change reproducible without changing its upstream gitlink.
-allocator="$MADEIRA/FEX/External/rpmalloc"
-patch="$ROOT/ci/patches/rpmalloc-host-arena.patch"
-if git -C "$allocator" apply --reverse --check "$patch" 2>/dev/null; then
-    : # Already applied.
-else
-    git -C "$allocator" apply --check "$patch"
-    git -C "$allocator" apply "$patch"
-fi
+# Additive patches also accept a previously patched local dependency.
+python3 "$ROOT/ci/apply-rpmalloc-patches.py"

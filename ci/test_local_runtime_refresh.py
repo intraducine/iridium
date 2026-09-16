@@ -46,7 +46,7 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         self.assertIn("Standalone checkout", source)
         self.assertIn("Refusing to overwrite local source", source)
         self.assertIn('"submodule", "update", "--init", "--depth", "1", "--", *update', source)
-        self.assertIn('"apply", "--reverse", "--check"', source)
+        self.assertIn('run("python3", "ci/apply-rpmalloc-patches.py")', source)
         native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
         self.assertIn("LLVM iOS linker correction already applied", native)
 

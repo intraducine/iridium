@@ -1,0 +1,62 @@
+--- a/rpmalloc/rpmalloc.c
++++ b/rpmalloc/rpmalloc.c
+@@ -186,7 +186,8 @@
+  * SPAN_SIZE note below). Large-class ceiling falls 64MB -> 16MB; blocks in
+  * (16MB, 64MB] shift to the huge path, which maps them at exact size — a VA
+  * IMPROVEMENT over carving them from a 64MB span. */
+-#define LARGE_PAGE_SIZE_SHIFT 24
++/* Compact profile: keep LARGE_PAGE_SIZE <= SPAN_SIZE. */
++#define LARGE_PAGE_SIZE_SHIFT 22
+ #else
+ #define LARGE_PAGE_SIZE_SHIFT 26
+ #endif
+@@ -214,8 +215,12 @@
+  * the per-thread span footprint 4x (~48MB worst case); with the ml389 VA diet and
+  * db 5392 exact-aligned maps this puts 74 threads at ~3.5GB. Exit-leak (12 heaps,
+  * ~2GB) is secondary and partially covered by the ml435 ThreadTerm hardening. */
+-static const char ios_span16_marker[] __attribute__((used)) = "rpmalloc-span16 rev=ml436";
+-#define SPAN_SIZE (16 * 1024 * 1024)
++/* Iridium: 4 MiB is the floor with the existing 4 MiB medium pages.
++ * Small per-thread heaps must not each consume multiple 16 MiB spans from
++ * a 1 GiB arena. Large classes that cannot fit with their header use the
++ * already-supported huge mapping path; do not create a zero-block page. */
++static const char ios_span4_marker[] __attribute__((used)) = "rpmalloc-span4 rev=iridium-compact";
++#define SPAN_SIZE (4 * 1024 * 1024)
+ #else
+ #define SPAN_SIZE (256 * 1024 * 1024)
+ #endif
+@@ -785,6 +790,10 @@
+ 	                "Size class misconfiguration");
+ 	rpmalloc_assert((class_idx >= SIZE_CLASS_COUNT) || (global_size_class[class_idx - 1].block_size < size),
+ 	                "Size class misconfiguration");
++#ifdef FEX_IOS_HOST
++	if (class_idx < SIZE_CLASS_COUNT && !global_size_class[class_idx].block_count)
++		return SIZE_CLASS_COUNT;
++#endif
+ 	return class_idx;
+ }
+ 
+@@ -1768,20 +1777,20 @@
+ 		return bad;
+ 
+ 	{
+-		char buf[256];
++		char buf[384];
+ 		const char* hexd = "0123456789abcdef";
+ 		int i = 0, j;
+ 		unsigned long w;
+ #define RPM_STR(s)                                     \
+ 	do {                                               \
+ 		const char* _s = (s);                          \
+-		while (*_s)                                    \
++		while (*_s && i < (int)sizeof(buf) - 1)                                    \
+ 			buf[i++] = *_s++;                          \
+ 	} while (0)
+ #define RPM_HEX(v)                                     \
+ 	do {                                               \
+ 		unsigned long long _v = (unsigned long long)(v); \
+-		for (j = 60; j >= 0; j -= 4)                   \
++		for (j = 60; j >= 0 && i < (int)sizeof(buf) - 1; j -= 4)                   \
+ 			buf[i++] = hexd[(_v >> j) & 0xf];          \
+ 	} while (0)
+ 		RPM_STR("[rpm-avail] ml607 CORRUPT op=");

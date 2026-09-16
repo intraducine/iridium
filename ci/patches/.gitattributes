@@ -2,3 +2,4 @@
 rpmalloc-host-arena.patch -whitespace
 cerbero-meson-source-cache.patch -whitespace
 cerbero-cargo-source-cache.patch -whitespace
+rpmalloc-compact-spans.patch -whitespace
