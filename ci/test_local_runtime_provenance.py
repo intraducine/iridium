@@ -11,8 +11,9 @@ SPEC.loader.exec_module(MODULE)
 
 
 class LocalRuntimeProvenanceTests(unittest.TestCase):
-    def test_parses_ci_runtime_producer(self):
+    def test_parses_ci_and_local_runtime_producers(self):
         self.assertEqual(MODULE.producer_from_version("ci-54daddedca86"), "54daddedca86")
+        self.assertEqual(MODULE.producer_from_version("local-54daddedca86"), "54daddedca86")
         with self.assertRaises(ValueError):
             MODULE.producer_from_version("0.0.0-imported")
 
@@ -24,6 +25,7 @@ class LocalRuntimeProvenanceTests(unittest.TestCase):
         self.assertIn("testrepos/Madeira/app/Madeira/Winios/Winios.m", paths)
         self.assertIn("testrepos/Madeira/FEX", paths)
         self.assertIn("testrepos/Madeira/wine", paths)
+        self.assertIn("ci/prepare-local-runtime.py", paths)
 
 
 if __name__ == "__main__":
