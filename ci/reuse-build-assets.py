@@ -124,7 +124,7 @@ def validate(run, jobs, stage, branch, allow_other_branch=False):
 
 
 def compatible(root, revision, stage):
-    subprocess.run(['git', '-C', str(root), 'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
+    linux.fetch_revision(root, revision)
     paths = {'media': MEDIA_INPUTS, 'native-runtime': NATIVE_INPUTS,
              'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:

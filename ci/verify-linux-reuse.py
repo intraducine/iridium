@@ -11,6 +11,16 @@ REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
 INPUTS = ('iridium-wine-ios', 'ci/prepare-linux-runtime.sh', 'ci/collect-debian-sources.py')
 
 
+def fetch_revision(root, revision):
+    if not re.fullmatch('[0-9a-f]{40}', revision):
+        raise ValueError('Invalid producer source revision')
+    # checkout deliberately does not persist credentials. Let gh supply the
+    # step's GH_TOKEN without putting its value in argv, URLs, or git config.
+    subprocess.run(['git', '-C', str(root), '-c', 'credential.helper=',
+                    '-c', 'credential.https://github.com.helper=!gh auth git-credential',
+                    'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
+
+
 def producer_revision_is_ancestor(root, revision):
     current = subprocess.check_output(
         ['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
@@ -48,7 +58,7 @@ def verify(root, run_id):
         validate_run(run, jobs, revision, branch, allow_other_branch=other_branch)
         if other_branch and not producer_revision_is_ancestor(root, revision):
             raise ValueError('Linux producer revision is not an ancestor of the current build')
-        subprocess.run(['git', '-C', str(root), 'fetch', '--depth=1', 'origin', revision], check=True)
+        fetch_revision(root, revision)
         for path in INPUTS:
             if git('rev-parse', revision + ':' + path) != git('rev-parse', 'HEAD:' + path):
                 raise ValueError('Linux source input changed: ' + path)
