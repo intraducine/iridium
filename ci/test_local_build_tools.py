@@ -149,6 +149,11 @@ print('Xcode test')
         with self.assertRaisesRegex(RuntimeError, "Metal toolchain is missing"):
             tools.prepare_environment(self.root, install=False, environ=self.env)
 
+    def test_llvm_does_not_require_the_separate_lld_formula(self):
+        # Homebrew LLVM no longer contains ld.lld. Cross-linkers are supplied by
+        # the separately pinned LLVM-MinGW toolchain used by the native recipe.
+        self.assertNotIn("ld.lld", tools.FORMULAE["llvm"])
+
     def test_setup_runs_before_runtime_refresh_or_xcode(self):
         script = (ROOT / "ci/build-local-ipa.sh").read_text()
         self.assertLess(script.index("python3 ci/local_build_tools.py"), script.index("python3 ci/prepare-local-runtime.py"))

@@ -22,7 +22,7 @@ FORMULAE = {
     "bison": ("bison",),
     "flex": ("flex",),
     "pkgconf": ("pkg-config",),
-    "llvm": ("llvm-objcopy", "llvm-ar", "clang", "clang++", "ld.lld"),
+    "llvm": ("llvm-objcopy", "llvm-ar", "clang", "clang++"),
     "xcodegen": ("xcodegen",),
     "meson": ("meson",),
     "zstd": ("zstd",),
@@ -81,6 +81,10 @@ def prepare_environment(root, *, install=True, environ=None):
     prefix = Path(require_output([brew, "--prefix"], env))
     env["PATH"] = build_path(root, prefix, original)
 
+    # Preserve build-local-ipa.sh's historical Xcode-beta default when present.
+    beta = Path("/Applications/Xcode-beta.app/Contents/Developer")
+    if not env.get("DEVELOPER_DIR") and (beta / "Platforms/iPhoneOS.platform").is_dir():
+        env["DEVELOPER_DIR"] = str(beta)
     if not env.get("DEVELOPER_DIR"):
         selected = capture(["xcode-select", "-p"], env)
         if selected.returncode == 0 and (Path(selected.stdout.strip()) / "Platforms/iPhoneOS.platform").is_dir():

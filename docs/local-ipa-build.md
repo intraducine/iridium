@@ -18,8 +18,8 @@ The build exports keg-only tool paths to all child processes.
 
 Apple Silicon macOS, Homebrew, Python 3.11+, and a full Xcode installation with
 its iPhoneOS SDK are required. Set `DEVELOPER_DIR` to select a particular Xcode;
-otherwise the active full Xcode is used, with `/Applications/Xcode-beta.app`
-and `/Applications/Xcode.app` as fallbacks. Command Line Tools alone are not
+otherwise the existing `/Applications/Xcode-beta.app` default is retained
+when installed, followed by the active full Xcode and `/Applications/Xcode.app`. Command Line Tools alone are not
 sufficient. Metal is downloaded only when `xcrun` cannot find a working compiler.
 
 To check without installing tools:
