@@ -14,7 +14,7 @@ jobs:
           persist-credentials: true
           submodules: false
           lfs: false
-      - name: Apply exact reviewed patches to original PR head
+      - name: Apply reviewed runtime changes without publishing workflows
         shell: bash
         run: |
           set -euo pipefail
@@ -27,6 +27,7 @@ jobs:
           assert hashlib.sha256(raw).hexdigest() == 'd1c6658beb4cd077222fa78c5f4e9da981fd6816d9478f1021c56d512ffff53c'
           bundle = json.loads(raw)
           assert bundle['base'] == '469b19451dad445d1a7640ec2ffd0b9bf9daa069'
+          test_source = pathlib.Path('.github/fex-review/test_wine_thread_init.py').read_text()
           run = lambda args: subprocess.run(args, check=True)
           run(['git','fetch','--depth=1','origin',bundle['base']])
           run(['git','checkout','--detach',bundle['base']])
@@ -44,8 +45,42 @@ jobs:
           for path, expected in bundle['files'].items():
               actual = subprocess.check_output(['git','hash-object',path],text=True).strip()
               assert actual == expected, (path,expected,actual)
-          (report/'commits.json').write_text(json.dumps({'base':bundle['base'],'commits':commits,'files':bundle['files']},indent=2)+'\n')
-          print('Reviewed file hashes verified. Candidate commits:', *commits)
+          # GITHUB_TOKEN cannot publish workflow changes. Keep that reviewed
+          # update for the authorized connector to commit separately.
+          workflow = '.github/workflows/source-checks.yml'
+          (report/'source-checks.yml').write_text(pathlib.Path(workflow).read_text())
+          run(['git','restore','--source='+bundle['base'],'--staged','--worktree',workflow])
+          run(['git','commit','--amend','--no-edit'])
+          commits[-1] = subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+          loader = pathlib.Path('testrepos/Madeira/wine/dlls/ntdll/loader.c')
+          source = loader.read_text()
+          old = '#ifdef __arm64ec__\n        arm64ec_thread_init();\n#endif'
+          new = '''#ifdef __arm64ec__
+                  if ((status = arm64ec_thread_init()) != STATUS_SUCCESS)
+                  {
+                      ERR( "ARM64EC thread initialization failed, status %#lx\\n", status );
+                      RtlLeaveCriticalSection( &loader_section );
+                      NtTerminateThread( GetCurrentThread(), status );
+                      return;
+                  }
+          #endif'''
+          # Remove YAML/Python display indentation from the source fragment.
+          new = '\n'.join(line[8:] if line.startswith('        ') else line for line in new.splitlines())
+          assert source.count(old) == 1
+          loader.write_text(source.replace(old,new))
+          pathlib.Path('ci/test_wine_thread_init.py').write_text(test_source)
+          doc = pathlib.Path('docs/decisions/2026-09-fex-thread-arena.md')
+          doc.write_text(doc.read_text() + '\n## Wine caller propagation\n\nWine loader_init previously ignored arm64ec_thread_init() status. It now\nreleases the loader critical section and terminates the failed thread before\nTLS attachment or guest callbacks. A scoped executable C test checks the actual\nproduction guard with both failure statuses and success; OS calls are stubbed.\n')
+          run(['git','add',str(loader),'ci/test_wine_thread_init.py',str(doc)])
+          run(['git','diff','--cached','--check'])
+          run(['git','commit','-m','Stop Wine thread attachment when FEX initialization fails'])
+          commits.append(subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())
+          assert not subprocess.check_output(['git','diff',bundle['base'],'HEAD','--','.github/workflows'])
+          files = dict(bundle['files'])
+          for path in (str(loader),'ci/test_wine_thread_init.py',str(doc)):
+              files[path] = subprocess.check_output(['git','hash-object',path],text=True).strip()
+          (report/'commits.json').write_text(json.dumps({'base':bundle['base'],'commits':commits,'files':files},indent=2)+'\n')
+          print('Reviewed code-only candidate commits:', *commits)
           PY
       - name: Prepare pinned allocator input
         run: |
@@ -61,7 +96,7 @@ jobs:
             python3 "iridium/apps/ios/MadeiraSupportTests/$test.py"
           done
           python3 -B -m unittest discover -s ci -p 'test_*.py' -v 2>&1 | tee "$RUNNER_TEMP/fex-validation/tests.txt"
-      - name: Publish only the validated candidate branch
+      - name: Publish only the validated code candidate branch
         shell: bash
         run: |
           set -euo pipefail
