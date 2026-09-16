@@ -11,6 +11,7 @@ struct LibraryView: View {
     @State private var isPresentingHostedImportPicker = false
     @State private var liveContainerStatus = LiveContainerIntegration.processLaunchStatus
     @State private var isShowingLiveContainerRepair = false
+    @State private var isShowingLiveContainerRelaunchRequired = false
     @State private var liveContainerRepairRequiresRelaunch = false
     @State private var liveContainerIntegrationMessage: String?
 
@@ -31,14 +32,14 @@ struct LibraryView: View {
             SettingsView(viewModel: viewModel, onBack: { appSettings = false })
         } else {
         LibraryShelf(games: viewModel.games, artwork: artwork, controller: controller,
-            play: { viewModel.recordLaunchPreparation(for: $0) },
+            play: { requestGameLaunch($0) },
             disabled: { viewModel.isLaunchActionDisabled(for: $0) },
             launchTitle: { viewModel.launchActionTitle(for: $0) },
             launchDetail: { viewModel.isLaunchActionDisabled(for: $0) ? viewModel.launchActionDetail(for: $0) : nil },
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
             importGame: { relocatingGame = nil; requestGameImport() }, settings: { appSettings = true },
-            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && artwork.error == nil)
+            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && !isShowingLiveContainerRelaunchRequired && artwork.error == nil)
             .toolbar(.hidden, for: .navigationBar)
         }
         }
@@ -107,6 +108,11 @@ struct LibraryView: View {
         } message: {
             Text("Iridium will enable LiveContainer's file-picker fixes, Launch with JIT, and install Iridium's persistent TXM script. Fully close and relaunch Iridium afterward.")
         }
+        .alert("Restart Iridium", isPresented: $isShowingLiveContainerRelaunchRequired) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("LiveContainer settings are repaired. Fully close Iridium, then reopen it from LiveContainer so the updated launch settings take effect.")
+        }
         .onAppear { refreshLiveContainerSetup() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshLiveContainerSetup() }
@@ -158,21 +164,58 @@ struct LibraryView: View {
 
     private func refreshLiveContainerSetup() {
         liveContainerStatus = LiveContainerIntegration.currentStatus()
+        let launchStatus = LiveContainerIntegration.processLaunchStatus
         liveContainerRepairRequiresRelaunch = liveContainerStatus.isHosted
             && liveContainerStatus.fullyConfigured
-            && !LiveContainerIntegration.processLaunchStatus.fullyConfigured
-        liveContainerIntegrationMessage = liveContainerStatus.setupFeedback(
-            launchStatus: LiveContainerIntegration.processLaunchStatus)
+            && (!launchStatus.fullyConfigured
+                || launchStatus.launchWithJITEnabled != liveContainerStatus.launchWithJITEnabled)
+        // Normal LiveContainer state belongs in the setup flow, not a permanent
+        // library banner. Keep this slot for an actual repair failure only.
+        liveContainerIntegrationMessage = nil
+    }
+
+    private func requestGameLaunch(_ game: GameRecord) {
+        refreshLiveContainerSetup()
+        guard liveContainerStatus.isHosted else {
+            viewModel.recordLaunchPreparation(for: game)
+            return
+        }
+
+        let launchStatus = LiveContainerIntegration.processLaunchStatus
+        if !liveContainerStatus.fullyConfigured || !liveContainerStatus.launchWithJITEnabled {
+            do {
+                liveContainerStatus = try LiveContainerIntegration.repairCurrentProcessConfiguration()
+                refreshLiveContainerSetup()
+                liveContainerIntegrationMessage = nil
+                isShowingLiveContainerRelaunchRequired = true
+                print("[IridiumRuntime] livecontainer: game launch repaired configuration; relaunch required")
+            } catch {
+                liveContainerStatus = LiveContainerIntegration.currentStatus()
+                liveContainerIntegrationMessage = "Could not repair LiveContainer settings: \(error.localizedDescription)"
+                print("[IridiumRuntime] livecontainer: game launch repair failed: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        guard launchStatus.fullyConfigured,
+              launchStatus.launchWithJITEnabled,
+              launchStatus.launchWithJITEnabled == liveContainerStatus.launchWithJITEnabled else {
+            isShowingLiveContainerRelaunchRequired = true
+            return
+        }
+
+        viewModel.recordLaunchPreparation(for: game)
     }
 
     private func requestGameImport() {
         refreshLiveContainerSetup()
         // Saved settings cannot activate hooks in an already-running guest.
-        // Keep the verified restart guidance instead of asking to repair again.
-        if liveContainerRepairRequiresRelaunch { return }
+        if liveContainerRepairRequiresRelaunch {
+            isShowingLiveContainerRelaunchRequired = true
+            return
+        }
         guard !liveContainerStatus.isHosted
-            || (LiveContainerIntegration.processLaunchStatus.filePickerConfigured
-                && !liveContainerRepairRequiresRelaunch)
+            || LiveContainerIntegration.processLaunchStatus.filePickerConfigured
         else {
             isShowingLiveContainerRepair = true
             return
@@ -189,6 +232,8 @@ struct LibraryView: View {
         do {
             liveContainerStatus = try LiveContainerIntegration.repairCurrentProcessConfiguration()
             refreshLiveContainerSetup()
+            liveContainerIntegrationMessage = nil
+            isShowingLiveContainerRelaunchRequired = true
             print("[IridiumRuntime] livecontainer: configuration repaired; relaunch required")
         } catch {
             liveContainerStatus = LiveContainerIntegration.currentStatus()
