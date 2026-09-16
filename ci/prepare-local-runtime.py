@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Incrementally refresh locally staged native runtime inputs before IPA builds.
 
-The bundled runtime manifest records the commit that produced the currently staged
-native runtime. Compare only runtime/compiler inputs against that producer. Pure
-app/UI commits therefore reuse native outputs, while FEX/Wine/DXMT/native bridge
-changes rebuild the local native stack before packaging.
+Local IPA builds keep a native-input fingerprint in .build. Pure Swift/UI edits
+reuse the existing FEX/Wine/DXMT/native outputs. Changes to those sources,
+compiler recipes, toolchain identity, or staged media/userland/prefix artifacts
+refresh the native stack before packaging.
 """
+import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,11 +17,14 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 CI = ROOT / "ci"
+STATE = ROOT / ".build/local-native-runtime-state.json"
 RUNTIME_ROOT = ROOT / "iridium-runtime-sdk/build/iridium-runtime-base"
-MANIFEST = RUNTIME_ROOT / "manifest.json"
 APP = ROOT / "testrepos/Madeira/app/Madeira"
 TRANSLATOR = ROOT / "iridium-fex-ios/build-iridium-ios-iphoneos/artifacts/libiridium-fex-ios-embedded.a"
 WORKFLOW = ".github/workflows/build-unsigned-ipa.yml"
+MEDIA = ROOT / "iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a"
+PREFIX = APP / "prefix-template.tar.gz"
+USERLAND = RUNTIME_ROOT / "Userland/wine-userland.tar.zst"
 
 
 def load(name: str, path: Path):
@@ -35,86 +40,110 @@ def run(*args: str) -> None:
     subprocess.run(args, cwd=ROOT, check=True)
 
 
-def changed_paths(reuse, revision: str, paths) -> list[str]:
-    changed = []
-    for path in sorted(set(paths)):
-        old = reuse.git(ROOT, "ls-tree", revision, "--", path)
-        new = reuse.git(ROOT, "ls-tree", "HEAD", "--", path)
-        if old != new:
-            changed.append(path)
-    return changed
+def output(*args: str) -> str:
+    return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 
-def recipe_changed(reuse, revision: str, stage: str) -> bool:
-    old = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
-    new = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
-    return reuse.producer_job(old, stage) != reuse.producer_job(new, stage)
+def file_digest(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def existing_producer(provenance) -> str:
-    if not MANIFEST.is_file():
-        raise ValueError(f"Missing local runtime manifest: {MANIFEST}")
-    manifest = json.loads(MANIFEST.read_text())
-    short_sha = provenance.producer_from_version(str(manifest.get("version", "")))
-    return provenance.resolve_commit(short_sha)
+def head_short() -> str:
+    return output("git", "rev-parse", "--short=12", "HEAD")
 
 
-def unsupported_changes(reuse, revision: str) -> list[str]:
-    """Return dependencies that require the full cross-platform Actions pipeline."""
-    reasons = []
-    media = changed_paths(reuse, revision, reuse.MEDIA_INPUTS)
-    if media or recipe_changed(reuse, revision, "media"):
-        reasons.append("media SDK")
+def existing_producer(provenance) -> str | None:
+    manifest = RUNTIME_ROOT / "manifest.json"
+    if not manifest.is_file():
+        return None
+    try:
+        version = str(json.loads(manifest.read_text()).get("version", ""))
+        return provenance.resolve_commit(provenance.producer_from_version(version))
+    except (ValueError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return None
 
-    prefix = changed_paths(reuse, revision, reuse.PREFIX_INPUTS)
-    if prefix or recipe_changed(reuse, revision, "prefix"):
-        reasons.append("Linux-built Wine prefix")
 
-    linux_inputs = tuple(reuse.linux.INPUTS) + ("check-public-source.py",)
-    linux = changed_paths(reuse, revision, linux_inputs)
-    if linux or recipe_changed(reuse, revision, "linux-userland"):
-        reasons.append("Linux Wine userland")
+def native_fingerprint(provenance) -> str:
+    reuse = provenance.load_reuse()
+    digest = hashlib.sha256()
 
-    graphics = changed_paths(reuse, revision, reuse.COMPONENT_INPUTS["graphics"])
-    if graphics or recipe_changed(reuse, revision, "graphics"):
-        reasons.append("ANGLE graphics frameworks")
-    return reasons
+    def add(label: str, value: str) -> None:
+        digest.update(label.encode())
+        digest.update(b"\0")
+        digest.update(value.encode())
+        digest.update(b"\0")
+
+    for path in provenance.native_contract_inputs(reuse):
+        add("tree:" + path, reuse.git(ROOT, "ls-tree", "HEAD", "--", path))
+
+    workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
+    for component in ("native", "wine", "windows"):
+        add("recipe:" + component, reuse.producer_job(workflow, component))
+
+    for command in (
+        ("xcodebuild", "-version"),
+        ("xcrun", "--sdk", "iphoneos", "--show-sdk-build-version"),
+        ("uname", "-m"),
+    ):
+        add("tool:" + " ".join(command), output(*command))
+
+    # These artifacts are deliberately reused by the local native build. Include
+    # their actual bytes in the fingerprint so replacing one invalidates the
+    # native cache even when git source did not change.
+    for label, path in (("media", MEDIA), ("prefix", PREFIX), ("userland", USERLAND)):
+        add("artifact:" + label, file_digest(path) if path.is_file() else "missing")
+
+    return digest.hexdigest()
+
+
+def read_state() -> dict:
+    try:
+        data = json.loads(STATE.read_text())
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def write_state(fingerprint: str) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "fingerprint": fingerprint,
+        "revision": output("git", "rev-parse", "HEAD"),
+        "runtimeVersion": "local-" + head_short(),
+    }
+    temporary = STATE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(STATE)
 
 
 def ensure_prefix_transfer() -> None:
-    """Reuse the staged prefix when prefix-producing inputs are unchanged."""
     target = ROOT / ".build/prefix-transfer/prefix-template.tar.gz"
-    if target.is_file():
+    if target.is_file() and PREFIX.is_file() and file_digest(target) == file_digest(PREFIX):
         return
-    source = APP / "prefix-template.tar.gz"
-    if not source.is_file():
+    if not PREFIX.is_file():
         raise RuntimeError(
             "No staged Wine prefix is available. Run the full GitHub Actions IPA build once."
         )
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    shutil.copy2(PREFIX, target)
 
 
-def rebuild_native_runtime(revision: str) -> None:
-    userland = RUNTIME_ROOT / "Userland/wine-userland.tar.zst"
-    media = ROOT / "iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a"
-    if not userland.is_file():
+def rebuild_native_runtime(previous: str | None) -> None:
+    if not USERLAND.is_file():
         raise RuntimeError(
             "The staged runtime has no Wine userland to reuse. Run the full GitHub Actions IPA build once."
         )
-    if not media.is_file():
+    if not MEDIA.is_file():
         raise RuntimeError(
             "The staged media SDK is missing. Run the full GitHub Actions IPA build once."
         )
 
     ensure_prefix_transfer()
-
-    # Local source trees persist between builds, unlike a clean Actions runner.
-    # Fetch only missing pinned inputs and preserve already-extracted trees.
     run("python3", "ci/prepare-local-runtime-inputs.py")
 
-    # These build systems are incremental: unchanged objects remain cached while
-    # source changes invalidate only the affected CMake/Ninja/Make/Meson outputs.
+    # CMake/Ninja/Make/Meson keep their local build directories. A refresh is
+    # therefore incremental even though all stages are invoked in dependency order.
     run("bash", "ci/prepare-native-runtime.sh")
     run("bash", "ci/compile-wine.sh")
     run("bash", "ci/compile-windows-modules.sh")
@@ -123,38 +152,33 @@ def rebuild_native_runtime(revision: str) -> None:
     if not TRANSLATOR.is_file():
         raise RuntimeError(f"Native rebuild did not produce translator: {TRANSLATOR}")
 
-    # Repackage the runtime with the freshly rebuilt embedded translator while
-    # preserving the unchanged Linux userland. Build into a temporary directory
-    # so a failed refresh never destroys the last usable staged runtime.
     with tempfile.TemporaryDirectory(dir=ROOT / ".build") as temp_name:
         temp = Path(temp_name)
         saved_userland = temp / "wine-userland.tar.zst"
-        shutil.copy2(userland, saved_userland)
-        output = temp / "iridium-runtime-base"
-        version = "ci-" + subprocess.check_output(
-            ["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"], text=True
-        ).strip()
+        shutil.copy2(USERLAND, saved_userland)
+        rebuilt = temp / "iridium-runtime-base"
         run(
             "bash",
             "iridium-runtime-sdk/scripts/build_runtime_bundle.sh",
             "--bundle-version",
-            version,
+            "local-" + head_short(),
             "--translator",
             str(TRANSLATOR),
             "--userland",
             str(saved_userland),
             "--output-root",
-            str(output),
+            str(rebuilt),
         )
-        if not (output / "manifest.json").is_file():
+        if not (rebuilt / "manifest.json").is_file():
             raise RuntimeError("Runtime bundle rebuild did not produce a manifest")
+
         backup = RUNTIME_ROOT.with_name(RUNTIME_ROOT.name + ".previous")
         if backup.exists():
             shutil.rmtree(backup)
         if RUNTIME_ROOT.exists():
             RUNTIME_ROOT.rename(backup)
         try:
-            shutil.move(str(output), str(RUNTIME_ROOT))
+            shutil.move(str(rebuilt), str(RUNTIME_ROOT))
         except Exception:
             if RUNTIME_ROOT.exists():
                 shutil.rmtree(RUNTIME_ROOT)
@@ -166,45 +190,54 @@ def rebuild_native_runtime(revision: str) -> None:
                 shutil.rmtree(backup)
 
     print(
-        f"Local native runtime refreshed from {revision[:12]} to "
-        + subprocess.check_output(
-            ["git", "-C", str(ROOT), "rev-parse", "--short=12", "HEAD"], text=True
-        ).strip(),
+        "Local native runtime refreshed"
+        + (f" from {previous[:12]}" if previous else "")
+        + f" to {head_short()}",
         flush=True,
     )
 
 
 def main() -> None:
     provenance = load("local_runtime_provenance", CI / "check-local-runtime-provenance.py")
-    reuse = provenance.load_reuse()
-    try:
-        revision = existing_producer(provenance)
-        provenance.verify_native_contract(reuse, revision)
-    except (ValueError, subprocess.CalledProcessError) as stale:
+    fingerprint = native_fingerprint(provenance)
+    state = read_state()
+    producer = existing_producer(provenance)
+
+    contract_ok = False
+    if producer is not None:
         try:
-            revision = existing_producer(provenance)
-        except (ValueError, subprocess.CalledProcessError) as error:
-            raise SystemExit(
-                "Cannot incrementally refresh the local runtime because its producer is unknown: "
-                + str(error)
-                + "\nRun the full GitHub Actions IPA build once to seed local dependencies."
-            ) from error
+            provenance.verify_native_contract(provenance.load_reuse(), producer)
+            contract_ok = True
+        except (ValueError, subprocess.CalledProcessError):
+            contract_ok = False
 
-        blockers = unsupported_changes(reuse, revision)
-        if blockers:
-            raise SystemExit(
-                "Local native runtime is stale, but this revision also changed "
-                + ", ".join(blockers)
-                + ". Those inputs are produced by the full cross-platform pipeline. "
-                "Run python3 ci/dispatch-build.py instead of mixing generations."
-            ) from stale
-
-        print("Local native runtime is stale: " + str(stale), flush=True)
-        rebuild_native_runtime(revision)
-        provenance.verify_native_contract(reuse, existing_producer(provenance))
+    force = os.environ.get("IRIDIUM_FORCE_NATIVE_REBUILD") == "1"
+    if not force and state.get("fingerprint") == fingerprint and contract_ok:
+        print(
+            f"Local native runtime unchanged; reusing {state.get('revision', producer or 'unknown')[:12]}",
+            flush=True,
+        )
         return
 
-    print(f"Local native runtime unchanged; reusing {revision[:12]}", flush=True)
+    if not force and not state and contract_ok:
+        # A compatible Actions/runtime bundle is already staged. Seed the local
+        # fingerprint without recompiling it once merely to create the cache.
+        write_state(fingerprint)
+        print(f"Local native runtime compatible; seeded cache from {producer[:12]}", flush=True)
+        return
+
+    reason = "forced" if force else "native inputs changed or staged runtime is stale"
+    print(f"Refreshing local native runtime: {reason}", flush=True)
+    rebuild_native_runtime(producer)
+
+    # Recompute after rebuilding because staged prefix/userland/media bytes are
+    # part of the cache identity and Windows staging may have refreshed files.
+    fingerprint = native_fingerprint(provenance)
+    write_state(fingerprint)
+    producer = existing_producer(provenance)
+    if producer is None:
+        raise RuntimeError("Rebuilt local runtime does not identify its producer")
+    provenance.verify_native_contract(provenance.load_reuse(), producer)
 
 
 if __name__ == "__main__":
