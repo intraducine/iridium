@@ -50,6 +50,14 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
         self.assertIn("LLVM iOS linker correction already applied", native)
 
+    def test_native_preflight_exposes_pinned_toolchain_before_compiler_checks(self):
+        native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
+        toolchain = native.index('PATH="$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"')
+        compiler_check = native.index('x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc')
+        self.assertLess(toolchain, compiler_check)
+        self.assertIn('echo "Missing native-build tool: $tool"', native)
+        self.assertIn('Missing Homebrew package: $package', native)
+
     def test_fingerprint_tracks_source_toolchain_and_staged_artifacts(self):
         source = (ROOT / "ci/prepare-local-runtime.py").read_text()
         self.assertIn("native_contract_inputs", source)
