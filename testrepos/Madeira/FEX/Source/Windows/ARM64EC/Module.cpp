@@ -1638,6 +1638,10 @@ NTSTATUS ThreadInit() {
   static constexpr size_t EmulatorStackSize = 0x40000;
   const uint64_t EmulatorStack =
     reinterpret_cast<uint64_t>(::VirtualAlloc(nullptr, EmulatorStackSize, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE));
+  if (!EmulatorStack) {
+    FEX::Windows::DeinitCRTThread();
+    return STATUS_NO_MEMORY;
+  }
   CPUArea.EmulatorStackLimit() = EmulatorStack;
   CPUArea.EmulatorStackBase() = EmulatorStack + EmulatorStackSize;
 #ifdef FEX_IOS_HOST
@@ -1700,7 +1704,20 @@ NTSTATUS ThreadInit() {
   }
 #endif
 
-  FEX::Windows::CallRetStack::InitializeThread(Thread);
+  if (!FEX::Windows::CallRetStack::TryInitializeThread(Thread)) {
+    // Nothing has been published to CPUArea or Threads yet. Never enter guest
+    // exception handlers with a half-initialized translator thread.
+    LogMan::Msg::EFmt("[FEX-iOS] thread-init failed: call-return stack allocation; STATUS_NO_MEMORY");
+    delete[] NewSegments;
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = nullptr;
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = nullptr;
+    CTX->DestroyThread(Thread);
+    ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
+    CPUArea.EmulatorStackLimit() = 0;
+    CPUArea.EmulatorStackBase() = 0;
+    FEX::Windows::DeinitCRTThread();
+    return STATUS_NO_MEMORY;
+  }
 #ifdef FEX_IOS_HOST
   IosTiLog("[FEX-iOS] TI:callret\n");
 #endif

@@ -22,13 +22,14 @@ struct CallRetStackInfo {
 };
 
 CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!Thread->CallRetStackBase) return {};
   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
   // Leave some room from the base for the default location to allow for underflows without constant exceptions
   return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
           Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4};
 }
 
-void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+[[nodiscard]] bool TryInitializeThread(FEXCore::Core::InternalThreadState* Thread) {
   // Allocate the call-ret stack with guard pages on both sides
   const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
   const void* CallRetStackAlloc = nullptr;
@@ -65,13 +66,21 @@ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
   }
 #endif
 
+  // Do not publish NULL+PAGE_SIZE or scrub memory until both operations succeed.
+  // ThreadInit runs before the guest exception dispatcher has usable FEX state.
+  if (!CallRetStackAlloc) return false;
+  auto StackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
+  if (::VirtualAlloc(StackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE) != StackBase) {
+    ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
+    return false;
+  }
+
   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
                                   FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
   FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
                                         FEXCore::Allocator::THPControl::Disable);
 
-  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
-  ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
+  Thread->CallRetStackBase = StackBase;
 
   /* iOS-Madeira: VirtualAlloc(MEM_COMMIT) on a previously-MEM_RESERVE'd
    * PAGE_NOACCESS region might not zero-initialize the pages on iOS. The
@@ -132,14 +141,27 @@ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
     }
   }
 #endif
+  return true;
+}
+
+// Preserve the existing void interface for frontends without an NTSTATUS path.
+void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!TryInitializeThread(Thread)) {
+    ERROR_AND_DIE_FMT("Unable to allocate FEX call-return stack");
+  }
 }
 
 void DestroyThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!Thread->CallRetStackBase) return;
   auto CallRetStackInfo = GetInfoThread(Thread);
   ::VirtualFree(reinterpret_cast<void*>(CallRetStackInfo.AllocationBase), 0, MEM_RELEASE);
+  Thread->CallRetStackBase = nullptr;
+  Thread->CurrentFrame->State.callret_sp = 0;
+  Thread->CurrentFrame->State.callret_sp_base = 0;
 }
 
 bool HandleAccessViolation(FEXCore::Core::InternalThreadState* Thread, uint64_t Address, uint64_t& CallRetSPReg) {
+  if (!Thread->CallRetStackBase) return false;
   auto CallRetStackInfo = GetInfoThread(Thread);
   if (Address >= CallRetStackInfo.AllocationBase && Address < CallRetStackInfo.AllocationEnd) {
     LogMan::Msg::DFmt("Call-ret stack inbalance: {:X}", Address);
