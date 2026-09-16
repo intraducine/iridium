@@ -2,8 +2,9 @@
 """Prepare pinned runtime sources for repeated local native builds.
 
 Unlike the clean-runner Actions helper, local builds may already have extracted
-source trees or standalone checkouts at gitlink paths. Preserve those trees,
-initialize only missing submodules, and never clone over local source.
+source trees, parent-managed submodules, or standalone checkouts at gitlink
+paths. Repair only clean submodules owned by this Iridium checkout; preserve
+standalone/local source and initialize only genuinely missing dependencies.
 """
 import json
 from pathlib import Path
@@ -71,8 +72,8 @@ def expected_gitlink(module: str) -> str:
     return fields[2]
 
 
-def standalone_checkout_commit(path: Path) -> str | None:
-    """Return HEAD only when path is its own Git worktree, not the parent repo."""
+def checkout_info(path: Path) -> tuple[str | None, bool]:
+    """Return (HEAD, managed_by_this_superproject) for a standalone Git worktree."""
     try:
         top = subprocess.check_output(
             ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
@@ -80,35 +81,69 @@ def standalone_checkout_commit(path: Path) -> str | None:
             stderr=subprocess.DEVNULL,
         ).strip()
     except subprocess.CalledProcessError:
-        return None
+        return None, False
     if Path(top).resolve() != path.resolve():
-        return None
-    return subprocess.check_output(
+        return None, False
+
+    head = subprocess.check_output(
         ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
     ).strip()
+    superproject = subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "--show-superproject-working-tree"],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+    managed = bool(superproject) and Path(superproject).resolve() == ROOT.resolve()
+    return head, managed
+
+
+def checkout_dirty(path: Path) -> bool:
+    status = subprocess.check_output(
+        ["git", "-C", str(path), "status", "--porcelain"], text=True
+    )
+    return bool(status.strip())
 
 
 def prepare_submodules(modules: list[str]) -> None:
-    missing = []
+    update = []
     for module in modules:
         path = ROOT / module
         if path.is_symlink():
             raise RuntimeError(f"Refusing symlink at local submodule path: {module}")
-        if path.is_dir() and any(path.iterdir()):
-            expected = expected_gitlink(module)
-            actual = standalone_checkout_commit(path)
-            if actual is not None and actual != expected:
-                raise RuntimeError(
-                    f"Existing checkout {module} is at {actual[:12]}, expected {expected[:12]}. "
-                    "Refusing to overwrite local source."
-                )
-            detail = actual[:12] if actual is not None else "existing source tree"
+        if not path.is_dir() or not any(path.iterdir()):
+            update.append(module)
+            continue
+
+        expected = expected_gitlink(module)
+        actual, managed = checkout_info(path)
+        if actual is None:
+            print(f"Reuse local submodule source {module}: existing source tree", flush=True)
+            continue
+        if actual == expected:
+            detail = actual[:12] + (" (local changes preserved)" if checkout_dirty(path) else "")
             print(f"Reuse local submodule source {module}: {detail}", flush=True)
             continue
-        missing.append(module)
 
-    if missing:
-        run("git", "submodule", "update", "--init", "--depth", "1", "--", *missing)
+        if managed:
+            if checkout_dirty(path):
+                raise RuntimeError(
+                    f"Managed submodule {module} is at {actual[:12]}, expected {expected[:12]}, "
+                    "and has local changes. Refusing to overwrite them."
+                )
+            print(
+                f"Repair clean managed submodule {module}: {actual[:12]} -> {expected[:12]}",
+                flush=True,
+            )
+            update.append(module)
+            continue
+
+        raise RuntimeError(
+            f"Standalone checkout {module} is at {actual[:12]}, expected {expected[:12]}. "
+            "Refusing to overwrite local source."
+        )
+
+    if update:
+        run("git", "submodule", "update", "--init", "--depth", "1", "--", *update)
 
 
 def main() -> None:
