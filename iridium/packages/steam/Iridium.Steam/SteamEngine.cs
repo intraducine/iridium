@@ -66,9 +66,11 @@ public sealed class SteamEngine(string root) : IAuthenticator
             if (authenticating)
             {
                 connection?.Dispose();
+                Update(s => s with { Phase = "initializing", Message = "Starting the Steam client…" });
                 connection = new();
-                Update(s => s with { SignedIn = false, Games = [], AccountName = null });
+                Update(s => s with { Phase = "connecting", Message = "Connecting to Steam…", SignedIn = false, Games = [], AccountName = null });
                 await connection.Connect(ct);
+                Update(s => s with { Phase = "authenticating", Message = "Signing in to Steam…" });
                 var saved = await connection.SignIn(command, this,
                     url => Update(s => s with { Phase = "qr", ChallengeUrl = url, Message = "Scan with Steam Mobile to approve sign-in." }), ct);
                 lock (sync) pendingSecret = saved;
@@ -98,12 +100,7 @@ public sealed class SteamEngine(string root) : IAuthenticator
         }
         catch (Exception e)
         {
-            // Never surface arbitrary network/IO exception text; it may contain tokens or private paths.
-            var message = e is SteamFailure ? e.Message
-                : e is TimeoutException ? "Steam did not respond in time. Please retry."
-                : e is AuthenticationException ? "Steam rejected the sign-in. Check your credentials and Steam Guard, then retry."
-                : e is IOException ? "The download could not be saved. Check free storage and resume."
-                : "Steam could not complete this request. Check your connection and retry.";
+            var message = SteamErrors.Describe(e, Read().Phase);
             Update(s => s with { Phase = "failed", Error = message, Message = message });
         }
         finally

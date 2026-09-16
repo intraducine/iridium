@@ -17,6 +17,21 @@ async Task RejectAsync(Func<Task> action, string name)
     throw new Exception("Accepted " + name);
 }
 
+// Client construction is shared by password and QR sign-in. On iOS the upstream
+// Process.StartTime call throws before any network request; exercise construction.
+using (var client = new SteamConnection())
+    Check(!client.IsLoggedOn, "Steam client initializes without OS process inspection on iOS");
+
+var privateDetail = "password=secret /private/account refresh_token=secret";
+var platformFailure = SteamErrors.Describe(new System.Reflection.TargetInvocationException(
+    new PlatformNotSupportedException(privateDetail)), "initializing");
+Check(platformFailure.Contains("steam/initializing/platform/"), "nested iOS platform failure has actionable code");
+Check(!platformFailure.Contains(privateDetail), "platform error text is redacted");
+var unknownFailure = SteamErrors.Describe(new Exception(privateDetail), privateDetail);
+Check(unknownFailure.Contains("steam/request/unexpected/") && !unknownFailure.Contains(privateDetail), "unknown failure and stage never leak data");
+Check(SteamErrors.Describe(new HttpRequestException(privateDetail), "connecting").Contains("steam/connecting/network/"), "network failure identified");
+Check(!SteamErrors.Describe(new IOException(privateDetail), "connecting").Contains("storage"), "connection IO is not misreported as storage");
+
 void Protocol<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>() where T : class, IExtensible, new()
 {
     using var stream = new MemoryStream();
@@ -148,7 +163,8 @@ if (args.Contains("--network"))
     Check(qr.Submit(new() { Action = "qr" }), "QR login starts");
     while (qr.Read().ChallengeUrl == null && qr.Read().Busy)
         await Task.Delay(200, timeout.Token);
-    Check(Uri.TryCreate(qr.Read().ChallengeUrl, UriKind.Absolute, out _), "real Steam QR authentication challenge");
+    Check(Uri.TryCreate(qr.Read().ChallengeUrl, UriKind.Absolute, out _),
+        "real Steam QR authentication challenge: " + (qr.Read().Error ?? "no challenge received"));
     qr.Submit(new() { Action = "cancel" });
     while (qr.Read().Busy) await Task.Delay(200, timeout.Token);
     Check(!qr.Read().SignedIn && qr.TakeSecret() == null, "cancelled QR login does not create a session");

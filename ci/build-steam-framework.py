@@ -6,6 +6,7 @@ import platform
 import plistlib
 import shutil
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'iridium/packages/steam'
@@ -25,6 +26,7 @@ def main():
     if subprocess.check_output(['dotnet', '--version'], cwd=SOURCE, text=True).strip() != '10.0.401':
         parser.error('Use the pinned .NET SDK 10.0.401.')
     host = 'osx-arm64' if platform.machine() == 'arm64' else 'osx-x64'
+    run(sys.executable, ROOT / 'ci/prepare-steamkit.py')
     run('dotnet', 'run', '--project', 'Iridium.Steam.Tests', '-c', 'Release')
     run('dotnet', 'publish', 'Iridium.Steam.Tests', '-c', 'Release', '-r', host,
         '-p:PublishAot=true', '-o', OUTPUT / 'tests')

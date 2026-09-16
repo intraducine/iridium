@@ -145,6 +145,8 @@ textual interface before attempting the app build.
 Added an on-device SteamKit2 3.4.0 module, SwiftUI account/library/download flow,
 device-only Keychain session persistence, verified resumable Windows depot
 downloads, and registration into Iridium's existing runtime library. SteamKit2
-and its dependencies are unmodified; NativeAOT reflection and generic roots are
+3.4.0 is built from its pinned source with `ci/patches/steamkit-ios-process-start.patch`:
+iOS/tvOS use the client creation timestamp for job IDs because Process.StartTime
+is unsupported there. Other runtime dependencies are unmodified; NativeAOT reflection and generic roots are
 owned by the integration. See `iridium/packages/steam/THIRD-PARTY-NOTICES.md` and
 `docs/decisions/native-steam-downloads.md` for dependencies and architecture.

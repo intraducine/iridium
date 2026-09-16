@@ -45,6 +45,8 @@ def collect():
     (output / 'sources.json').write_text(json.dumps(records, indent=2) + '\n')
     shutil.copy2(ROOT / 'iridium/packages/steam/THIRD-PARTY-NOTICES.md', output)
     shutil.copy2(ROOT / 'iridium/packages/steam/Iridium.Steam/packages.lock.json', output)
+    shutil.copy2(ROOT / 'ci/patches/steamkit-ios-process-start.patch', output)
+    shutil.copy2(ROOT / 'ci/prepare-steamkit.py', output)
 
 
 if __name__ == '__main__':

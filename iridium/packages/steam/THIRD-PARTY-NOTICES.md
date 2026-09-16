@@ -21,7 +21,11 @@ https://github.com/protobuf-net/protobuf-net,
 https://github.com/oleg-st/ZstdSharp,
 https://github.com/dotnet/dotnet.
 
-The dependencies are unmodified NuGet packages. No Steam client binaries, game
+SteamKit is built from the pinned source with the local patch
+`ci/patches/steamkit-ios-process-start.patch`. It replaces unsupported iOS/tvOS
+process-start inspection with a timestamp for client job IDs. Run
+`python3 ci/prepare-steamkit.py` before the rebuild commands in README.md.
+Other runtime dependencies are unmodified NuGet packages. No Steam client binaries, game
 assets, Steam credentials, or depot keys are bundled. Retain the original license
 texts and embedded third-party notices, exact corresponding source (including the
 NativeAOT runtime inputs), and the rebuild/relink recipe beside any binary release.

@@ -164,6 +164,8 @@ jobs:
           dotnet-version: '10.0.401'
       - name: Build and test the native Steam framework
         run: python3 ci/build-steam-framework.py --device-only
+      - name: Verify Steam on iOS Simulator
+        run: python3 ci/check-steam-ios.py
       - name: Archive framework without changing executable permissions
         run: tar -czf .build/steam-framework.tar.gz -C iridium/apps/ios/Frameworks IridiumSteam.xcframework
       - name: Retain Steam framework

@@ -31,6 +31,9 @@ class SteamSourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, patch.object(collector, 'ROOT', Path(temp)):
             root = Path(temp)
             (root / 'ci').mkdir()
+            (root / 'ci/patches').mkdir()
+            (root / 'ci/patches/steamkit-ios-process-start.patch').write_text('fixture patch')
+            (root / 'ci/prepare-steamkit.py').write_text('# fixture recipe')
             item = dict(name='fixture', repository='owner/repo', revision='a' * 40)
             (root / 'ci/steam-source-inputs.json').write_text(json.dumps([item]))
             package = root / 'iridium/packages/steam'
@@ -48,6 +51,8 @@ class SteamSourceTests(unittest.TestCase):
             with patch.object(collector.urllib.request, 'urlopen') as network:
                 collector.collect()
                 self.assertEqual(json.loads((output / 'sources.json').read_text())[0]['revision'], 'a' * 40)
+                self.assertEqual((output / 'steamkit-ios-process-start.patch').read_text(), 'fixture patch')
+                self.assertTrue((output / 'prepare-steamkit.py').is_file())
                 network.assert_not_called()
                 archive.write_bytes(b'corrupt')
                 with self.assertRaisesRegex(ValueError, 'checksum'):

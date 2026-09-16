@@ -6,7 +6,9 @@ shell exposes it under **Add Game → Download from Steam**. No PC or API key is
 
 ## Build and test
 
-Use .NET SDK **10.0.401**. From this directory:
+Use .NET SDK **10.0.401**. First run `python3 ci/prepare-steamkit.py` from
+the repository root to fetch the pinned source and apply the iOS compatibility
+patch. Then, from this directory:
 
 ```sh
 dotnet run --project Iridium.Steam.Tests -c Release
@@ -43,10 +45,20 @@ xcodegen generate --spec iridium/apps/ios/stikjit.yml
 
 This creates device and Apple Silicon simulator slices. The manual IPA workflow
 and local IPA script build the device slice before generating Xcode projects.
+The manual workflow also runs `python3 ci/check-steam-ios.py` on an iOS Simulator:
+client construction, offline verification, public metadata, and a real QR
+challenge/cancel. This requires an installed simulator runtime and network access,
+but no personal account. It does not test account ownership, authenticated
+downloads, or physical-device game compatibility.
 The rest of Iridium's runtime prerequisites still apply. Tests and framework
 creation do not sign, publish, or establish device compatibility.
 
 ## Behavior and boundaries
+
+SteamKit's upstream process-start lookup is unsupported on iOS. The pinned local
+patch uses a client timestamp for job IDs on iOS/tvOS. Other platforms retain
+upstream behavior. Failures report a fixed operation/category code without
+including exception messages, passwords, tokens, or local paths.
 
 - Passwords are held only during authentication. Saved sessions go to an iOS
   Keychain item with `WhenUnlockedThisDeviceOnly`; sign-out deletes the item.
