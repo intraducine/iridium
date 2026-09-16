@@ -17,7 +17,7 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
     def test_refresh_uses_incremental_native_build_stages(self):
         source = (ROOT / "ci/prepare-local-runtime.py").read_text()
         for command in (
-            'run("bash", "ci/prepare-runtime-inputs.sh")',
+            'run("python3", "ci/prepare-local-runtime-inputs.py")',
             'run("bash", "ci/prepare-native-runtime.sh")',
             'run("bash", "ci/compile-wine.sh")',
             'run("bash", "ci/compile-windows-modules.sh")',
@@ -27,6 +27,14 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         self.assertIn("Local native runtime unchanged; reusing", source)
         self.assertIn("build_runtime_bundle.sh", source)
         self.assertIn("wine-userland.tar.zst", source)
+
+    def test_local_input_prep_reuses_existing_sources_and_patch(self):
+        source = (ROOT / "ci/prepare-local-runtime-inputs.py").read_text()
+        self.assertIn("if destination.exists()", source)
+        self.assertIn("Reuse local runtime input", source)
+        self.assertIn('"apply", "--reverse", "--check"', source)
+        native = (ROOT / "ci/prepare-native-runtime.sh").read_text()
+        self.assertIn("LLVM iOS linker correction already applied", native)
 
     def test_cross_platform_inputs_never_silently_mix(self):
         source = (ROOT / "ci/prepare-local-runtime.py").read_text()
