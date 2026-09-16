@@ -3,9 +3,9 @@
 
 Unlike the clean-runner Actions helper, local builds may already have extracted
 source trees, parent-managed submodules, or standalone checkouts at gitlink
-paths. Repair only submodules owned by this Iridium checkout when their tracked
-source is clean; preserve standalone/local source and initialize only genuinely
-missing dependencies.
+paths. Repair submodules owned by this Iridium checkout, back up tracked edits
+before repairing a wrong-commit managed checkout, preserve standalone/local
+source, and initialize only genuinely missing dependencies.
 """
 import json
 from pathlib import Path
@@ -15,6 +15,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 MADEIRA = ROOT / "testrepos/Madeira"
 STATE = ROOT / ".build/local-runtime-inputs.json"
+SUBMODULE_BACKUPS = ROOT / ".build/local-submodule-backups"
 
 
 def run(*args: str, cwd: Path = ROOT) -> None:
@@ -99,7 +100,7 @@ def checkout_info(path: Path) -> tuple[str | None, bool]:
 
 
 def checkout_has_tracked_changes(path: Path) -> bool:
-    """Ignore untracked build files; never ignore tracked/index source edits."""
+    """Ignore untracked build files; detect tracked or staged source edits."""
     worktree = subprocess.run(
         ["git", "-C", str(path), "diff", "--quiet", "--ignore-submodules=none", "--"],
         check=False,
@@ -108,7 +109,9 @@ def checkout_has_tracked_changes(path: Path) -> bool:
         ["git", "-C", str(path), "diff", "--cached", "--quiet", "--ignore-submodules=none", "--"],
         check=False,
     )
-    return worktree.returncode != 0 or index.returncode != 0
+    if worktree.returncode not in (0, 1) or index.returncode not in (0, 1):
+        raise RuntimeError(f"Could not inspect tracked changes in {path}")
+    return worktree.returncode == 1 or index.returncode == 1
 
 
 def checkout_has_untracked_files(path: Path) -> bool:
@@ -117,6 +120,26 @@ def checkout_has_untracked_files(path: Path) -> bool:
         text=True,
     )
     return bool(output.strip())
+
+
+def backup_tracked_changes(module: str, path: Path, actual: str, expected: str) -> Path:
+    """Save tracked/index edits before repairing a managed wrong-commit submodule."""
+    patch = subprocess.check_output(
+        ["git", "-C", str(path), "diff", "--binary", "HEAD", "--"]
+    )
+    if not patch:
+        raise RuntimeError(
+            f"{module} reports tracked changes but produced no backup patch; refusing repair."
+        )
+    SUBMODULE_BACKUPS.mkdir(parents=True, exist_ok=True)
+    stem = module.replace("/", "__") + f"-{actual[:12]}-to-{expected[:12]}"
+    destination = SUBMODULE_BACKUPS / (stem + ".patch")
+    counter = 1
+    while destination.exists() and destination.read_bytes() != patch:
+        destination = SUBMODULE_BACKUPS / f"{stem}-{counter}.patch"
+        counter += 1
+    destination.write_bytes(patch)
+    return destination
 
 
 def prepare_submodules(modules: list[str]) -> None:
@@ -146,27 +169,38 @@ def prepare_submodules(modules: list[str]) -> None:
             continue
 
         if managed:
-            if tracked_changes:
-                raise RuntimeError(
-                    f"Managed submodule {module} is at {actual[:12]}, expected {expected[:12]}, "
-                    "and has tracked local changes. Refusing to overwrite them."
-                )
             suffix = "; untracked files will be preserved" if untracked else ""
+            if tracked_changes:
+                backup = backup_tracked_changes(module, path, actual, expected)
+                print(
+                    f"Backed up tracked changes for {module} to {backup.relative_to(ROOT)}",
+                    flush=True,
+                )
+                # This checkout is already owned by the superproject and is at the
+                # wrong gitlink. Preserve its diff outside the submodule, then make
+                # the worktree clean so ordinary `git submodule update` can repair
+                # the interrupted/partial initialization without --force.
+                run("git", "-C", str(path), "reset", "--hard", actual)
             print(
                 f"Repair managed submodule {module}: {actual[:12]} -> {expected[:12]}{suffix}",
                 flush=True,
             )
-            # Do not use --force. Git itself will abort if checkout of the pinned
-            # commit would overwrite an untracked path, preserving local data.
             update.append(module)
             continue
 
+        if tracked_changes:
+            raise RuntimeError(
+                f"Standalone checkout {module} is at {actual[:12]}, expected {expected[:12]}, "
+                "and has tracked local changes. Refusing to overwrite local source."
+            )
         raise RuntimeError(
             f"Standalone checkout {module} is at {actual[:12]}, expected {expected[:12]}. "
             "Refusing to overwrite local source."
         )
 
     if update:
+        # Do not use --force. Git itself will abort if checkout of the pinned
+        # commit would overwrite an untracked path, preserving local data.
         run("git", "submodule", "update", "--init", "--depth", "1", "--", *update)
 
 
