@@ -2,9 +2,8 @@
 """Prepare pinned runtime sources for repeated local native builds.
 
 Unlike the clean-runner Actions helper, local builds may already have extracted
-source trees. Preserve current trees when their pinned input version matches;
-when a pin changes, replace only that generated source destination from the
-verified archive before rebuilding.
+source trees or standalone checkouts at gitlink paths. Preserve those trees,
+initialize only missing submodules, and never clone over local source.
 """
 import json
 from pathlib import Path
@@ -62,6 +61,56 @@ def refresh_pinned_inputs() -> None:
     write_state(state)
 
 
+def expected_gitlink(module: str) -> str:
+    line = subprocess.check_output(
+        ["git", "ls-tree", "HEAD", "--", module], cwd=ROOT, text=True
+    ).strip()
+    fields = line.split()
+    if len(fields) < 3 or fields[0] != "160000":
+        raise RuntimeError(f"Expected gitlink is missing for local dependency: {module}")
+    return fields[2]
+
+
+def standalone_checkout_commit(path: Path) -> str | None:
+    """Return HEAD only when path is its own Git worktree, not the parent repo."""
+    try:
+        top = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return None
+    if Path(top).resolve() != path.resolve():
+        return None
+    return subprocess.check_output(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True
+    ).strip()
+
+
+def prepare_submodules(modules: list[str]) -> None:
+    missing = []
+    for module in modules:
+        path = ROOT / module
+        if path.is_symlink():
+            raise RuntimeError(f"Refusing symlink at local submodule path: {module}")
+        if path.is_dir() and any(path.iterdir()):
+            expected = expected_gitlink(module)
+            actual = standalone_checkout_commit(path)
+            if actual is not None and actual != expected:
+                raise RuntimeError(
+                    f"Existing checkout {module} is at {actual[:12]}, expected {expected[:12]}. "
+                    "Refusing to overwrite local source."
+                )
+            detail = actual[:12] if actual is not None else "existing source tree"
+            print(f"Reuse local submodule source {module}: {detail}", flush=True)
+            continue
+        missing.append(module)
+
+    if missing:
+        run("git", "submodule", "update", "--init", "--depth", "1", "--", *missing)
+
+
 def main() -> None:
     run("xcodebuild", "-downloadComponent", "MetalToolchain")
     run("xcrun", "--sdk", "iphoneos", "metal", "--version")
@@ -73,7 +122,7 @@ def main() -> None:
             modules.append(f"{fork}/External/{module}")
         modules.append(f"{fork}/Source/Common/cpp-optparse")
     modules.append("testrepos/Madeira/research/dxmt/include/native/directx")
-    run("git", "submodule", "update", "--init", "--depth", "1", "--", *modules)
+    prepare_submodules(modules)
 
     allocator = MADEIRA / "FEX/External/rpmalloc"
     patch = ROOT / "ci/patches/rpmalloc-host-arena.patch"
