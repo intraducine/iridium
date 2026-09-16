@@ -20,7 +20,7 @@ def load_reuse():
 
 
 def producer_from_version(version: str) -> str:
-    match = re.fullmatch(r"ci-([0-9a-f]{12})", version or "")
+    match = re.fullmatch(r"(?:ci|local)-([0-9a-f]{12})", version or "")
     if not match:
         raise ValueError(
             "Local runtime manifest does not identify its producer commit. "
@@ -44,7 +44,9 @@ def resolve_commit(short_sha: str) -> str:
 
 def native_contract_inputs(reuse) -> tuple[str, ...]:
     paths = set()
-    for component in ("native", "wine", "windows", "graphics"):
+    # Local native refresh rebuilds these three compiler stages. ANGLE/media,
+    # Linux userland, and prefix artifacts are independently staged inputs.
+    for component in ("native", "wine", "windows"):
         paths.update(reuse.COMPONENT_INPUTS[component])
     # These files are compiled into the app on every local build but define the
     # contract consumed by the staged Wine/FEX binaries. A newer app bridge must
@@ -57,6 +59,8 @@ def native_contract_inputs(reuse) -> tuple[str, ...]:
             "testrepos/Madeira/app/Madeira/WineProcessBridge.m",
             "testrepos/Madeira/app/Madeira/WineServerBridge.m",
             "ci/prepare-legacy-bundle.sh",
+            "ci/prepare-local-runtime.py",
+            "ci/prepare-local-runtime-inputs.py",
         }
     )
     return tuple(sorted(paths))
@@ -71,7 +75,7 @@ def verify_native_contract(reuse, revision: str) -> None:
 
     old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
-    for component in ("native", "wine", "windows", "graphics"):
+    for component in ("native", "wine", "windows"):
         if reuse.producer_job(old_workflow, component) != reuse.producer_job(new_workflow, component):
             raise ValueError(f"{component} compiler recipe changed since {revision[:12]}")
 
@@ -90,7 +94,7 @@ def main() -> None:
             "Stale local native runtime: " + str(error) + "\n"
             "The local IPA build reuses iridium-runtime-sdk/build plus staged Wine/FEX "
             "outputs. Do not package those binaries with newer app/runtime bridge code. "
-            "Refresh native dependencies or use a fresh GitHub Actions IPA build."
+            "Refresh native dependencies before packaging."
         ) from error
     print(f"Local native runtime is source-compatible: {revision[:12]}")
 
