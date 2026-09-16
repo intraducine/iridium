@@ -109,9 +109,12 @@ def rebuild_native_runtime(revision: str) -> None:
 
     ensure_prefix_transfer()
 
-    # Refresh source/submodule inputs first. These build scripts are incremental:
-    # CMake/Ninja/Make/Meson only recompile outputs invalidated by source changes.
-    run("bash", "ci/prepare-runtime-inputs.sh")
+    # Local source trees persist between builds, unlike a clean Actions runner.
+    # Fetch only missing pinned inputs and preserve already-extracted trees.
+    run("python3", "ci/prepare-local-runtime-inputs.py")
+
+    # These build systems are incremental: unchanged objects remain cached while
+    # source changes invalidate only the affected CMake/Ninja/Make/Meson outputs.
     run("bash", "ci/prepare-native-runtime.sh")
     run("bash", "ci/compile-wine.sh")
     run("bash", "ci/compile-windows-modules.sh")
