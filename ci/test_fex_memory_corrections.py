@@ -52,7 +52,10 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             "#define LARGE_SIZE_CLASS_COUNT 12",
             "#define LARGE_PAGE_SIZE_SHIFT 22",
             "#define SPAN_SIZE (4 * 1024 * 1024)",
-            "rpmalloc-span4 compact-spans-v1",
+            "rpmalloc-compact-spans-v1",
+            "RPMALLOC_PROFILE_STR(SPAN_SIZE)",
+            "RPMALLOC_PROFILE_STR(LARGE_PAGE_SIZE)",
+            "RPMALLOC_PROFILE_STR(LARGE_BLOCK_SIZE_LIMIT)",
             "char buf[512]",
             "i < (int)sizeof(buf) - 1",
             "if (bad)",
@@ -106,9 +109,12 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
     def test_build_paths_apply_corrections_and_cache_keys_track_them(self):
         action = (ROOT / "ci/prepare-runtime-inputs.sh").read_text()
         local = (ROOT / "ci/build-local-ipa.sh").read_text()
+        staging = (ROOT / "ci/stage-windows-runtime.py").read_text()
         self.assertIn("apply-fex-runtime-corrections.py", action)
         self.assertLess(local.index("prepare-local-runtime-inputs.py"), local.index("apply-fex-runtime-corrections.py"))
         self.assertLess(local.index("apply-fex-runtime-corrections.py"), local.index("prepare-local-runtime.py"))
+        self.assertIn("COMPACT_PROFILE_MARKER", staging)
+        self.assertIn("if COMPACT_PROFILE_MARKER not in translator_data", staging)
 
         reuse = load("reuse_build_assets", ROOT / "ci/reuse-build-assets.py")
         for component in ("native", "windows"):
