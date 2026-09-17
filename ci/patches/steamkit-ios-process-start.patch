@@ -1,0 +1,24 @@
+diff --git a/SteamKit2/SteamKit2/Steam/SteamClient/SteamClient.cs b/SteamKit2/SteamKit2/Steam/SteamClient/SteamClient.cs
+--- a/SteamKit2/SteamKit2/Steam/SteamClient/SteamClient.cs
++++ b/SteamKit2/SteamKit2/Steam/SteamClient/SteamClient.cs
+@@ -102,9 +102,18 @@ namespace SteamKit2
+ 
+             Debug.Assert( this.handlers.Count == HANDLERS_COUNT );
+ 
+-            using ( var process = Process.GetCurrentProcess() )
++            // Iridium: Process.StartTime is unsupported on iOS/tvOS. This timestamp
++            // seeds per-client job IDs; it does not need OS process inspection.
++            if ( OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() )
+             {
+-                this.processStartTime = process.StartTime;
++                this.processStartTime = DateTime.UtcNow;
++            }
++            else
++            {
++                using ( var process = Process.GetCurrentProcess() )
++                {
++                    this.processStartTime = process.StartTime;
++                }
+             }
+ 
+             jobManager = new AsyncJobManager();

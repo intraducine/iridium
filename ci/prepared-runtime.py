@@ -23,6 +23,10 @@ def load(name, filename):
 reuse = load('reuse', 'reuse-build-assets.py')
 inputs = load('inputs', 'fetch-runtime-inputs.py')
 prerequisites = load('prerequisites', 'check-ipa-prerequisites.py')
+# Steam has its own producer/artifact. Runtime-only archives must remain usable
+# before it is restored; the final IPA prerequisite check still requires both.
+RUNTIME_REQUIRED = {group: paths for group, paths in prerequisites.REQUIRED.items()
+                    if group != 'native Steam framework'}
 M = 'testrepos/Madeira/'
 APP = M + 'app/Madeira/'
 IOS = 'iridium/apps/ios/'
@@ -136,7 +140,7 @@ def check_outputs(root):
     for name in LINK_ARCHIVES:
         if name not in linked:
             raise ValueError('Missing app link archive: ' + name)
-    for group, paths in prerequisites.REQUIRED.items():
+    for group, paths in RUNTIME_REQUIRED.items():
         for name in paths:
             if not (root / name).is_file() or not (root / name).stat().st_size:
                 raise ValueError('Missing prepared dependency: ' + name)

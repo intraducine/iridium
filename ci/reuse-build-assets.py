@@ -8,7 +8,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = 'intraducine/iridium'
+REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
 WORKFLOW = '.github/workflows/build-unsigned-ipa.yml'
 MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/check-media-toolchain.py',
@@ -124,7 +124,7 @@ def validate(run, jobs, stage, branch, allow_other_branch=False):
 
 
 def compatible(root, revision, stage):
-    subprocess.run(['git', '-C', str(root), 'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
+    linux.fetch_revision(root, revision)
     paths = {'media': MEDIA_INPUTS, 'native-runtime': NATIVE_INPUTS,
              'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:

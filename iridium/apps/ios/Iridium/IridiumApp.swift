@@ -59,7 +59,7 @@ struct IridiumApp: App {
                 case .active:
                     viewModel.requestRefresh()
                 case .background:
-                    break
+                    SteamLibraryModel.shared.pauseForBackground()
                 case .inactive:
                     break
                 @unknown default:

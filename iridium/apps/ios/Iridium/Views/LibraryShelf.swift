@@ -108,7 +108,7 @@ struct LibraryShelf: View {
                                     description: Text("Add games through Game Options."))
                             } else {
                                 ContentUnavailableView("Add Your First Game", systemImage: "gamecontroller",
-                                    description: Text("Use Add Game (+) above to choose a Windows game folder. Include its .exe file and game data. Artwork is optional."))
+                                    description: Text("Use Add Game (+) to download from your Steam library or import a Windows game folder. Artwork is optional."))
                             }
                         }
                     }.padding(.horizontal, sideInset).padding(.vertical, 8)

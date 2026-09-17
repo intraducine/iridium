@@ -7,11 +7,27 @@ from test_manual_build import load
 reuse = load('linux_reuse', 'verify-linux-reuse.py')
 
 class LinuxReuseTests(unittest.TestCase):
+    def test_private_fetch_uses_ephemeral_helper_and_rejects_invalid_revision(self):
+        import os
+        with patch.dict(os.environ, {'GH_TOKEN': 'test-credential-value'}), \
+             patch.object(reuse.subprocess, 'run') as run:
+            reuse.fetch_revision(Path('.'), 'a' * 40)
+            command = run.call_args.args[0]
+            self.assertIn('credential.https://github.com.helper=!gh auth git-credential', command)
+            self.assertNotIn('test-credential-value', str(run.call_args))
+            self.assertNotIn('--global', command)
+            self.assertTrue(run.call_args.kwargs['check'])
+            run.reset_mock()
+            for revision in ('--upload-pack=other', 'main', '', 'a' * 39):
+                with self.assertRaises(ValueError):
+                    reuse.fetch_revision(Path('.'), revision)
+            run.assert_not_called()
+
     def test_only_verified_main_producer_is_accepted(self):
         revision = 'a' * 40
         run = {'event': 'workflow_dispatch', 'head_branch': 'main', 'head_sha': revision,
                'path': '.github/workflows/build-unsigned-ipa.yml',
-               'head_repository': {'full_name': 'intraducine/iridium'}}
+               'head_repository': {'full_name': reuse.REPO}}
         jobs = [{'name': 'linux-userland', 'conclusion': 'success'}]
         reuse.validate_run(run, jobs, revision)
         for key, value in [('event', 'pull_request'), ('head_branch', 'untrusted'),
@@ -26,7 +42,7 @@ class LinuxReuseTests(unittest.TestCase):
         revision = 'a' * 40
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature', 'head_sha': revision,
                'path': '.github/workflows/build-unsigned-ipa.yml',
-               'head_repository': {'full_name': 'intraducine/iridium'}}
+               'head_repository': {'full_name': reuse.REPO}}
         jobs = [{'name': 'linux-userland', 'conclusion': 'success'}]
         reuse.validate_run(run, jobs, revision, 'feature')
         with self.assertRaises(ValueError):

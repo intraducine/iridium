@@ -1103,10 +1103,10 @@ final class AppViewModel: ObservableObject {
         }
 
         let allPrefixes = await store.allPrefixes()
-        let visibleGames = allGames.filter { $0.source == .manualImport }
+        let visibleGames = allGames.filter { $0.source == .manualImport || $0.launchProfile.titleFlags.contains("steam-native-download") }
         let hiddenSteamPrefixIDs = Set(
             allGames
-                .filter { $0.source == .steam }
+                .filter { $0.source == .steam && !$0.launchProfile.titleFlags.contains("steam-native-download") }
                 .map(\.launchProfile.prefixID)
         )
         let visiblePrefixes = allPrefixes.filter { !hiddenSteamPrefixIDs.contains($0.id) }
@@ -1135,7 +1135,7 @@ final class AppViewModel: ObservableObject {
         }
         installHistory = []
         compatibilityEvidence = (await store.compatibilityEvidence()).filter {
-            $0.source == .manualImport && visibleGameTitles.contains($0.title)
+            visibleGameTitles.contains($0.title)
         }
         activityFeed = visibleActivityEntries(
             from: await store.activityFeed(),
@@ -1445,6 +1445,37 @@ final class AppViewModel: ObservableObject {
             await refresh()
             await LibraryArtwork.shared.prepare([importedGame])
         }
+    }
+
+    func registerSteamDownload(title: String, appID: String, directory: String, executable: String) async throws {
+        guard UInt32(appID) != nil, !isImportingGame else { throw CocoaError(.fileReadInvalidFileName) }
+        let managedRoot = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false).appendingPathComponent("SteamGames").resolvingSymlinksInPath()
+        let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL
+        let file = root.appendingPathComponent(executable.replacingOccurrences(of: "\\", with: "/"))
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard root.path.hasPrefix(managedRoot.path + "/"), file.path.hasPrefix(root.path + "/"),
+              file.pathExtension.lowercased() == "exe",
+              try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        let inventory = artifactInventory
+        let artifact = try await Task.detached(priority: .utility) {
+            try inventory.makeManagedArtifact(title: title, executablePath: file.path, installPath: root.path)
+        }.value
+        let compatibility = BuiltInCompatibilityProfiles.recommendedCompatibilityProfile(forTitle: title)
+        var game = await store.registerSteamGame(title: title, appID: appID, installPath: root.path,
+            executablePath: file.path, compatibilityProfileName: compatibility.slug,
+            inputProfileName: defaultInputProfileName(for: compatibility), deviceTier: compatibility.minimumDeviceTier,
+            rendererPreset: compatibility.recommendedRenderer, launchArguments: [], titleFlags: ["steam-native-download"],
+            managedArtifactIdentifier: artifact.identifier, executableFingerprint: artifact.checksum,
+            runtimeBundleIdentifier: hostCapabilities.selectedRuntimeBundle?.id,
+            runtimeBundleVersion: hostCapabilities.selectedRuntimeBundle?.version)
+        // Older Steam fixtures synthesize size and readiness summaries; neither is evidence for this download.
+        game.installedSizeGB = nil
+        game.summary = "Downloaded from Steam and verified. Runtime compatibility has not been tested."
+        await store.update(game)
+        await refresh()
     }
 
     func dismissImportScan() {
@@ -2044,7 +2075,8 @@ final class AppViewModel: ObservableObject {
                     launchTicketPath: "", sessionLogPath: prepared.bridgeConfiguration.wineDebugLogPath,
                     telemetryPath: "", state: .running, stateHistory: [.running],
                     statusSummary: "Preparing Madeira. No rendered frame yet.", launchedAt: Date())
-                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launchSession(for: game).arguments) { [weak self] message in
+                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launchSession(for: game).arguments,
+                    steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) }) { [weak self] message in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                     if message.contains("failed") || message.hasPrefix("Cannot") {
                         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")

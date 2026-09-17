@@ -1,0 +1,5 @@
+<linker>
+  <assembly fullname="SteamKit2" preserve="all" />
+  <assembly fullname="protobuf-net" preserve="all" />
+  <assembly fullname="protobuf-net.Core" preserve="all" />
+</linker>

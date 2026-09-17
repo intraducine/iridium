@@ -24,6 +24,8 @@ struct LibraryView: View {
     @State private var importName = ""
     @State private var chooseAnotherFolder = false
     @State private var relocatingGame: GameRecord?
+    @State private var addGameMenu = false
+    @State private var steamLibrary = false
 
     var body: some View {
         Group {
@@ -37,8 +39,8 @@ struct LibraryView: View {
             launchDetail: { viewModel.isLaunchActionDisabled(for: $0) ? viewModel.launchActionDetail(for: $0) : nil },
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
-            importGame: { relocatingGame = nil; requestGameImport() }, settings: { appSettings = true },
-            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && artwork.error == nil)
+            importGame: { addGameMenu = true }, settings: { appSettings = true },
+            acceptsControllerInput: detailGame == nil && !appSettings && !addGameMenu && !steamLibrary && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && artwork.error == nil)
             .toolbar(.hidden, for: .navigationBar)
         }
         }
@@ -48,6 +50,12 @@ struct LibraryView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Add Game", isPresented: $addGameMenu, titleVisibility: .visible) {
+            Button("Download from Steam") { steamLibrary = true }
+            Button("Import a Windows Game Folder") { relocatingGame = nil; requestGameImport() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $steamLibrary) { SteamLibraryView(viewModel: viewModel) }
         .sheet(isPresented: Binding(get: { viewModel.importScanResult != nil }, set: { if !$0 { viewModel.dismissImportScan() } }), onDismiss: {
             if chooseAnotherFolder { chooseAnotherFolder = false; requestGameImport() }
         }) {
