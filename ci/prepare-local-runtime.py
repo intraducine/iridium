@@ -228,6 +228,7 @@ def verify_retained_inputs(reuse, revision: str) -> None:
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
     corrections = load("fex_runtime_corrections", CI / "apply-fex-runtime-corrections.py")
     problems = []
+    details = []
     for stage, paths in stages.items():
         changed = [path for path in paths
                    if reuse.git(ROOT, "ls-tree", revision, "--", path)
@@ -247,12 +248,27 @@ def verify_retained_inputs(reuse, revision: str) -> None:
             dirty = set(filter(None, tracked.split("\0")))
             dirty.update(filter(None, untracked.split("\0")))
 
-        if changed or dirty or reuse.producer_job(old_workflow, stage) != reuse.producer_job(new_workflow, stage):
+        workflow_changed = (
+            reuse.producer_job(old_workflow, stage)
+            != reuse.producer_job(new_workflow, stage)
+        )
+        if changed or dirty or workflow_changed:
             problems.append(stage)
+            reasons = []
+            if changed:
+                reasons.append("committed=" + ",".join(changed))
+            if dirty:
+                reasons.append("working-tree=" + ",".join(sorted(dirty)))
+            if workflow_changed:
+                reasons.append("workflow=changed")
+            details.append(stage + "[" + "; ".join(reasons) + "]")
     if problems:
-        raise RuntimeError("Retained inputs need matching producers: " + ", ".join(problems)
-                           + ". The local native build does not rebuild these components. "
-                             "Restore matching inputs via docs/actions-ipa.md; no compiler work started.")
+        raise RuntimeError(
+            "Retained inputs need matching producers: " + ", ".join(problems)
+            + ". Details: " + "; ".join(details)
+            + ". The local native build does not rebuild these components. "
+              "Restore matching inputs via docs/actions-ipa.md; no compiler work started."
+        )
 
 
 def main() -> None:
