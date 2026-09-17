@@ -1768,5 +1768,3 @@
 @ cdecl wine_get_version()
 @ cdecl wine_get_build_id()
 @ cdecl wine_get_host_version(ptr ptr)
-
-@ extern -private iridium_fex_arena_bounds

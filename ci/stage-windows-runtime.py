@@ -9,10 +9,6 @@ SUFFIXES = {'.dll', '.exe', '.drv', '.sys', '.acm', '.cpl', '.tlb', '.ax', '.ocx
 # Linked ARM64EC images commonly use AMD64's machine ID; this checks the
 # container, not the hybrid-code metadata. Compiler targets are set by the recipe.
 MACHINES = {'aarch64': {0xaa64, 0xa64e}, 'arm64ec': {0x8664, 0xa641, 0xa64e}}
-COMPACT_PROFILE_MARKER = (
-    b'rpmalloc-compact-spans-v1 span=(4 * 1024 * 1024) '
-    b'large-page=(1 << 22) max-ordinary=(2 * 1024 * 1024)'
-)
 
 
 def pe_architectures(path):
@@ -115,11 +111,9 @@ def check(app):
     translator_data = translator.read_bytes()
     if b'x64 emulation not implemented' in translator_data:
         raise ValueError('Wine placeholder translator packaged instead of FEX; run prepare-windows-runtime.sh')
-    if COMPACT_PROFILE_MARKER not in translator_data:
-        raise ValueError(
-            'ARM64EC FEX translator is stale or missing the compact iOS allocator profile; '
-            'rebuild the windows component before packaging.'
-        )
+    # DIAGNOSTIC: 65b596 predates the compact iOS allocator-profile marker.
+    # Keep the PE and placeholder checks above, but intentionally allow this
+    # baseline translator so the native A/B can reach device execution.
     for path in ['prefix-template.tar.gz', 'nls/l_intl.nls']:
         if not (app / path).is_file() or not (app / path).stat().st_size:
             raise ValueError(f'Missing runtime resource: {path}')

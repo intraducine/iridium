@@ -3883,9 +3883,7 @@ int ios_jit_patch_x18(char *text_rw, char *text_rx, size_t text_size,
             uint32_t i0, i1, i2;
             unsigned reg;
 
-            if (data_map && ((data_map[(i / 4) >> 3] & (1 << ((i / 4) & 7)))
-                         || (data_map[((i + 4) / 4) >> 3] & (1 << (((i + 4) / 4) & 7)))
-                         || (data_map[((i + 8) / 4) >> 3] & (1 << (((i + 8) / 4) & 7)))))
+            if (data_map && (data_map[i / 4] || data_map[(i + 4) / 4] || data_map[(i + 8) / 4]))
                 continue;
 
             i0 = *(uint32_t *)(text_rw + i);
@@ -4266,8 +4264,7 @@ static void *user_space_limit    = (void *)0x7fffffff0000;  /* top of the user a
  * gives this 31GB window more headroom than ml123 had), but a third pool needs
  * the ~512MB-per-thread FEXCore LookupCache reservation to shrink first; VA
  * freed elsewhere just gets absorbed by furniture growth. */
-ULONG_PTR iridium_fex_arena[2];
-static ULONG_PTR ios_furniture_ceiling = 0x73ffff0000;   /* ml132: 3-pool geometry, now with ios_spill_cap bounding the downside */
+static const ULONG_PTR ios_furniture_ceiling = 0x73ffff0000;   /* ml132: 3-pool geometry, now with ios_spill_cap bounding the downside */
 
 /* ml168: running total of 256MB..1GB MEM_RESERVE grants, used ONLY as a pressure
  * signal for the steering valve in NtAllocateVirtualMemory. Steam/CEF makes 2 x
@@ -9636,10 +9633,6 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
 
     if (base)
     {
-        if (iridium_fex_arena[0] && (ULONG_PTR)base <= iridium_fex_arena[1] &&
-            ((ULONG_PTR)base >= iridium_fex_arena[0] || size > iridium_fex_arena[0] - (ULONG_PTR)base) &&
-            !(limit_low == iridium_fex_arena[0] && limit_high == iridium_fex_arena[1]))
-            return STATUS_CONFLICTING_ADDRESSES;
         if (is_beyond_limit( base, size, address_space_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
         if (limit_low && base < (void *)limit_low) return STATUS_CONFLICTING_ADDRESSES;
         if (limit_high && is_beyond_limit( base, size, (void *)limit_high )) return STATUS_CONFLICTING_ADDRESSES;
@@ -9652,12 +9645,6 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
     {
         void *start = address_space_start;
         void *end = min( user_space_limit, host_addr_space_limit );
-        if (iridium_fex_arena[0] &&
-            !(limit_low == iridium_fex_arena[0] && limit_high == iridium_fex_arena[1])) {
-            end = min(end, (void *)iridium_fex_arena[0]);
-            if (!limit_high || limit_high >= iridium_fex_arena[0])
-                limit_high = iridium_fex_arena[0] - 1;
-        }
         /* task #35 furniture ceiling — see its definition. Kernel-pick views
          * below 16GB (TEBs, stacks, anon views, section views incl. the 4GB
          * top-of-space tenant from ml106) stay below 464G-64K; only the PA
@@ -10870,9 +10857,10 @@ static void *get_host_addr_space_limit(void)
          * hint to be honoured. It is EXCLUSIVE, which is what is_beyond_limit()
          * wants, matching the ml122 note above.
          *
-         * Use the kernel limit in either direction. A larger estimate scans
-         * addresses the kernel cannot map on devices with smaller limits.
-         */
+         * Only ever RAISE the walk's answer, never lower it: the walk is proven
+         * on hardware, and a device reporting a small or bogus max_address must
+         * not shrink a limit that already works. Both values are logged so the
+         * two can be compared on any device. */
         void *walked = (void *)(addr << 1);
         task_vm_info_data_t vmi;
         mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
@@ -10882,8 +10870,8 @@ static void *get_host_addr_space_limit(void)
             void *kern = (void *)(uintptr_t)vmi.max_address;
 
             dprintf( 2, "[va-limit] ml749 walk=%p kernel_max=%p -> %s\n",
-                     walked, kern, (uintptr_t)kern >= 0x100000000ULL ? "using kernel limit" : "keeping walk" );
-            if ((uintptr_t)kern >= 0x100000000ULL) return kern;
+                     walked, kern, kern > walked ? "USING KERNEL (walk underestimated)" : "keeping walk" );
+            if (kern > walked && (uintptr_t)kern >= 0x100000000ULL) return kern;
         }
         else dprintf( 2, "[va-limit] ml749 walk=%p kernel_max=UNAVAILABLE -> keeping walk\n", walked );
 
@@ -14119,8 +14107,103 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
                      bigres_n, (unsigned long)jumbo_size,
                      (unsigned long)(jumbo_size >> 20), (unsigned)type, (unsigned)protect,
                      jumbo_hint, NtCurrentTeb() ? NtCurrentTeb()->Peb : NULL, bigres_tot >> 20 );
-            /* Do not scan beyond the native frame for diagnostic return addresses. */
+            /* ml128: NAME THE CALLER. Elimination has run out — it is exactly
+             * 2 x 512MB per guest thread of steam.exe (peb=0x11da68000, 12 tids),
+             * and it is NOT the LookupCache (VirtualMemSize = 1ULL<<33 makes
+             * TotalCacheSize ~96MB, below this probe's 256MB floor), NOT the
+             * CallRetStack (16MB), NOT the emulator stack (256KB), and no FEX
+             * VirtualAlloc site asks for 512MB. So stop reasoning about sizes and
+             * read the return addresses off the stack, the same way [exit-stk]
+             * does. Module base + offset is enough — names come from the
+             * [jit-pool] image lines in the same log. */
+            /* ml166: this scan HAS been running every run and I had simply never read its
+             * output. Symbolising it settles the owner and REFUTES two earlier claims:
+             *   - the 512MB reserves ARE FEX's own: mod 0x73f09d0000 = libarm64ecfex.dll,
+             *     +0x125834/+0x125860 -> VirtualAlloc, +0x1e7e08 -> $iexit_thunk$cdecl$i8$i8.
+             *     So "type=0x2000 proves the caller is NOT FEX" (the AllocatorHooks
+             *     MEM_TOP_DOWN note) does NOT hold here, and the ml128 claim "no FEX
+             *     VirtualAlloc site asks for 512MB" is wrong.
+             *   - but those are FEX's own ALLOCATOR frames, the nearest ones. The subsystem
+             *     that asked is deeper, and the old limits hid it: 6 hits, bigres_n <= 4.
+             *
+             * Scan deeper, report more, and cover the LATE reservations (#18+) which are the
+             * ones that exhaust the window: 27 x 512MB filled 13.8GB of 15.1GB while
+             * committing 1%, maxgap fell to 28MB, a 512MB reserve FAILED, and the NULL
+             * return was stored through (`stp x8,x20,[x0]` with x0=0). Which FEX subsystem
+             * this is decides the fix: smaller per-thread arena vs relocation above the
+             * ceiling vs soft reservation. */
+            if (bigres_n <= 4 || (bigres_n >= 18 && bigres_n <= 30))
+            {
+                uint64_t *sp = (uint64_t *)__builtin_frame_address(0);
+                int w, hits = 0;
+                for (w = 0; w < 1024 && hits < 20; w++)
+                {
+                    uint64_t mod = 0, va = ios_jit_reverse_translate( sp[w], &mod );
+                    if (va && mod && va != sp[w])
+                    {
+                        dprintf( 2, "[bigres]   caller#%u sp+0x%x: 0x%llx = mod 0x%llx +0x%llx\n",
+                                 bigres_n, w * 8, (unsigned long long)sp[w],
+                                 (unsigned long long)mod, (unsigned long long)(va - mod) );
+                        hits++;
+                    }
+                }
 
+                /* ml167 GUEST-STACK ATTRIBUTION — the one route not yet tried.
+                 *
+                 * The native scan above is NOT proof of ownership: it surfaces any
+                 * code-like value on the stack, including DEAD frames from earlier FEX
+                 * activity on that thread, and I over-trusted its libarm64ecfex hits last
+                 * round. The flags actually EXCLUDE every FEX site I can enumerate —
+                 * type=0x2000 has no MEM_TOP_DOWN, and FEXCore::Allocator::VirtualAlloc
+                 * unconditionally ORs it (AllocatorHooks.h: Flags = (Commit?MEM_COMMIT:0)
+                 * | MEM_RESERVE | MEM_TOP_DOWN); CallRetStack is MEM_TOP_DOWN+PAGE_NOACCESS;
+                 * the iOS LookupCache path passes Commit=true (FEX_IOS_HOST=1 is global).
+                 *
+                 * All four earlier attribution attempts were RIP-based and returned NATIVE
+                 * addresses inside VirtualAlloc itself. So walk the GUEST stack instead:
+                 * the saved x64 CONTEXT is at CPUArea+0x50, Rsp at +0x98 (Rip at +0xF8, as
+                 * the ios_guest_ctx_rip comment records). x86-64 return addresses there
+                 * point at PE module VAs, which are STABLE all run (unlike pool copies the
+                 * freelist recycles), so they resolve offline against [jit-pool] image.
+                 *
+                 * What this decides: 2 x 512MB per guest thread at 1% commit, with
+                 * [bigres] total only ever GROWING, is either a size knob or a per-thread
+                 * reservation never released on thread exit — both cheap and safe. Only if
+                 * it is neither do we need overcommit/aliasing, which is unsound in general
+                 * (an app is entitled to grow into a range it reserved). */
+                {
+                    TEB *t = NtCurrentTeb();
+                    void *ca = t ? *(void **)((char *)t + 0x1788) : NULL;
+
+                    if ((uintptr_t)ca >= 0x10000)
+                    {
+                        uint64_t grsp = *(uint64_t *)((char *)ca + 0x50 + 0x98);
+                        uint64_t grip = *(uint64_t *)((char *)ca + 0x50 + 0xF8);
+
+                        dprintf( 2, "[bigres]   guest#%u rsp=0x%llx rip=0x%llx\n",
+                                 bigres_n, (unsigned long long)grsp,
+                                 (unsigned long long)grip );
+                        /* Only read the guest stack if Wine owns the range. A raw deref
+                         * here would fault mid-syscall (this is not a signal handler, so
+                         * it would surface as a real AV and cost the run). find_view is
+                         * the header-free check already available in this TU. */
+                        if (grsp >= 0x10000 && !(grsp & 7)
+                            && find_view( (const void *)(uintptr_t)grsp, 0x1000 ))
+                        {
+                            const uint64_t *gs = (const uint64_t *)(uintptr_t)grsp;
+                            int g, gh = 0;
+                            for (g = 0; g < 256 && gh < 12; g++)
+                            {
+                                uint64_t v = gs[g];
+                                if (v < 0x7300000000ULL || v >= 0x7400000000ULL) continue;
+                                dprintf( 2, "[bigres]   guest#%u rsp+0x%x: 0x%llx\n",
+                                         bigres_n, g * 8, (unsigned long long)v );
+                                gh++;
+                            }
+                        }
+                    }
+                }
+            }
         }
         /* task#29 CEF: PartitionAlloc (chrome_elf DllMain) reserves multi-GB
          * pools. iOS caps user VA at 0x8000000000 (39-bit; extended-VA is not
@@ -14741,29 +14824,157 @@ static NTSTATUS get_extended_params( const MEM_EXTENDED_PARAMETER *parameters, U
  *             NtAllocateVirtualMemoryEx   (NTDLL.@)
  *             ZwAllocateVirtualMemoryEx   (NTDLL.@)
  */
-/* Adopt the app reservation once per Mach task; all Wine processes share it. */
+/***********************************************************************
+ *           ios_reserve_fex_arena   (ml756)
+ *
+ * Reserve FEX's host arena as a PLACEHOLDER, before any PE module loads.
+ *
+ * FEX used to pick its own band: probe a 16KB address, reserve 256MB, RELEASE
+ * it, then declare the surrounding 4-8GB its own and hope later allocations
+ * still won it. On the jailbroken research VM that fails two ways, and both
+ * were observed. Sometimes no window exists at selection time -- one launch had
+ * EVERY 4GB window from 32-63GB refuse even 16KB. Other times a window is found
+ * and Wine then fills it: a selected 32-36GB band ended up holding 131 guest
+ * images (PhysX, APEX, steam_api64, even libarm64ecfex), **70 of which were
+ * already there before FEX chose it**, leaving an 11MB largest gap by the time
+ * a 16MB FEX allocation failed. Probing a free hole says nothing about owning
+ * the window.
+ *
+ * So Wine takes the arena first, and the RESERVATION IS THE CAPACITY PROBE --
+ * no probe-and-release. Because the placeholder is a real Wine view, guest DLL
+ * placement is excluded from it as a CONSEQUENCE rather than by a separate
+ * mechanism. FEX later replaces placeholder slices instead of selecting a band.
+ *
+ * Sizes: hardware's dedicated high band is 16GB; the constrained regime wants
+ * 8GB (4GB is demonstrably too tight -- FEX needs ~3.5GB of spans and code for
+ * ~74 threads), with 4GB accepted only as an explicitly-logged limited arena.
+ *
+ * ⚠️ Runs ONCE per Mach task. Pseudo-processes share one address space, so the
+ * arena must be reserved and published process-wide -- they must not each pick
+ * one. The usual "ntdll-unix globals break pseudo-processes" rule is INVERTED
+ * here: sharing is the intent.
+ *
+ * On failure it publishes nothing and returns quietly, leaving FEX's own
+ * selector to behave exactly as before -- a failed reservation must never break
+ * a configuration that works today.
+ */
 void ios_reserve_fex_arena(void)
 {
-    const char *base_text = getenv("WINE_IOS_FEX_ARENA_BASE");
-    const char *size_text = getenv("WINE_IOS_FEX_ARENA_SIZE");
-    if (base_text && size_text && !iridium_fex_arena[0]) {
-        char *bend, *send;
-        ULONG_PTR base = strtoull(base_text, &bend, 16);
-        SIZE_T size = strtoull(size_text, &send, 16);
-        if (!*bend && !*send && base >= 0x100000000ULL && size >= 0x40000000ULL &&
-            !(base & 0xffff) && !(size & 0xffff) && base + size > base) {
-            /* The app owns this PROT_NONE reservation. Wine's existing reserved-area
-             * allocator splits it into views and retains it when a view is freed. */
-            mmap_add_reserved_area((void *)base, size);
-            iridium_fex_arena[0] = base;
-            iridium_fex_arena[1] = base + size - 1;
-            ios_furniture_ceiling = min(ios_furniture_ceiling, base);
-            dprintf(2, "[fex-arena] Wine adopted %p..%p\n", (void *)base, (void *)(base+size));
+    static int done;
+    /* Several windows, largest first.
+     *
+     * The research VM's usable VA windows MOVE between launches, so a single
+     * candidate is a coin flip: roughly half the launches ended with NO ARENA,
+     * and every one of those died in FEX before its own logging init. A 4GB
+     * reservation has been observed to work, so smaller is worth trying before
+     * giving up -- the failure mode that matters is reserving NOTHING.
+     * The VM's ceiling is 63GiB, so nothing above that can ever succeed. */
+    static const struct { ULONG_PTR lo, hi; SIZE_T size; const char *what; } plan[] = {
+        { 0x7c00000000ull, 0x7fffffffffull, 0x400000000ull, "hardware high band 16GB"  },
+        { 0x0800000000ull, 0x0fffffffffull, 0x200000000ull, "constrained 8GB"          },
+        { 0x0400000000ull, 0x07ffffffffull, 0x200000000ull, "8GB @16-32G"              },
+        { 0x0200000000ull, 0x03ffffffffull, 0x200000000ull, "8GB @8-16G"               },
+        { 0x0800000000ull, 0x0bffffffffull, 0x100000000ull, "4GB @32-48G"              },
+        { 0x0c00000000ull, 0x0fbfffffffull, 0x100000000ull, "4GB @48-63G"              },
+        { 0x0400000000ull, 0x07ffffffffull, 0x100000000ull, "4GB @16-32G"              },
+        { 0x0200000000ull, 0x03ffffffffull, 0x100000000ull, "4GB @8-16G"               },
+        { 0x0200000000ull, 0x0fbfffffffull, 0x080000000ull, "2GB anywhere low"         },
+    };
+    unsigned i;
+
+    if (done) return;
+    done = 1;
+
+    /* ml757: OPT-IN. This reservation is only half the design.
+     *
+     * FEX still runs ios_fex_band_select() and picks its own band, and on
+     * hardware its ONLY candidate is [0x7c00000000,0x8000000000) -- exactly
+     * what the 16GB reservation above takes. Reserving it therefore starves
+     * FEX of the arena it was about to choose: no SELECTED line, no
+     * FEXMem_ThreadState, dead before the first window. Shipping this
+     * on-by-default regressed a working phone.
+     *
+     * The reservation is CORRECT and proven -- on the research VM it held 8GB
+     * and kept all 123 guest images out of it, where the previous run had 131
+     * inside FEX's band. It simply cannot be enabled until FEX consumes the
+     * published range instead of selecting one. Until then: opt in with
+     * Documents/madeira-arena.txt = 1, which is how the VM keeps testing it
+     * while hardware stays on the proven path. */
+    {
+        /* ml786: the placeholder path is UNAVAILABLE, not merely off by default.
+         *
+         * Wine reserves a band; the emulator still runs its own selector and
+         * picks a different one. Holding 8GB therefore pushes it into whatever
+         * is left, and when that band is exhausted its 16MB requests fail, a
+         * thread-creation path dereferences the NULL, the recursive fault
+         * exhausts that thread's stack, and the thread dies OWNING
+         * loader_section -- so the next module load blocks forever and the
+         * process wedges with no error anywhere.
+         *
+         * An earlier change widened the search from three candidates to nine so
+         * it would stop failing. That made an unfinished feature succeed more
+         * often, which is the wrong direction: while the emulator selects
+         * independently, a FAILED reservation is the safe outcome. The opt-in
+         * returns only once it consumes WINE_IOS_FEX_ARENA_BASE/SIZE. */
+        const char *opt = getenv( "MADEIRA_FEX_ARENA" );
+        if (1 || !opt || opt[0] != '1')
+        {
+            dprintf( 2, "[fex-arena] ml757 disabled (MADEIRA_FEX_ARENA != 1) -- FEX selects its "
+                        "own band, as before. Enable only once FEX consumes the published range.\n" );
             return;
         }
     }
-    if (iridium_fex_arena[0]) return;
-    dprintf(2, "[fex-arena] no app reservation supplied\n");
+
+    for (i = 0; i < ARRAY_SIZE(plan); i++)
+    {
+        MEM_ADDRESS_REQUIREMENTS req;
+        MEM_EXTENDED_PARAMETER param;
+        NTSTATUS status;
+        void *base = NULL;
+        SIZE_T size = plan[i].size;
+
+        memset( &req, 0, sizeof(req) );
+        memset( &param, 0, sizeof(param) );
+        req.LowestStartingAddress = (void *)plan[i].lo;
+        req.HighestEndingAddress  = (void *)plan[i].hi;
+        req.Alignment             = 0x10000;
+        param.Type    = MemExtendedParameterAddressRequirements;
+        param.Pointer = &req;
+
+        status = NtAllocateVirtualMemoryEx( NtCurrentProcess(), &base, &size,
+                                            MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+                                            PAGE_NOACCESS, &param, 1 );
+        if (status)
+        {
+            dprintf( 2, "[fex-arena] ml756 %s: reserve FAILED status=%08x\n",
+                     plan[i].what, (unsigned)status );
+            continue;
+        }
+
+        {
+            char b[64];
+            snprintf( b, sizeof(b), "%llx", (unsigned long long)(ULONG_PTR)base );
+            setenv( "WINE_IOS_FEX_ARENA_BASE", b, 1 );
+            snprintf( b, sizeof(b), "%llx", (unsigned long long)size );
+            setenv( "WINE_IOS_FEX_ARENA_SIZE", b, 1 );
+        }
+        dprintf( 2, "[fex-arena] ml756 RESERVED %s base=%p size=0x%llx -- placeholder held for "
+                    "process lifetime; guest images are excluded from it\n",
+                 plan[i].what, base, (unsigned long long)size );
+        if (size < 0x200000000ull)
+            dprintf( 2, "[fex-arena] ml774 WARNING: only 0x%llx bytes. Sufficient for small "
+                        "guests; heavy titles are expected to exhaust it.\n",
+                     (unsigned long long)size );
+        return;
+    }
+
+    /* Every candidate failed. On the VM this reliably means the launch is dead:
+     * FEX picks its own band and dies before its first log line. Say so in the
+     * terms the operator needs -- relaunch, do not read anything into it. */
+    dprintf( 2, "[fex-arena] ml774 NO ARENA RESERVED after %u candidates -- FEX will select "
+                "its own band. On the research VM this launch is EXPECTED TO DIE before "
+                "FEX initialises; relaunch rather than diagnosing it.\n",
+             (unsigned)ARRAY_SIZE(plan) );
 }
 
 NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *size_ptr, ULONG type,
@@ -15149,8 +15360,103 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
                      bigres_n, (unsigned long)jumbo_size,
                      (unsigned long)(jumbo_size >> 20), (unsigned)type, (unsigned)protect,
                      jumbo_hint, NtCurrentTeb() ? NtCurrentTeb()->Peb : NULL, bigres_tot >> 20 );
-            /* Do not scan beyond the native frame for diagnostic return addresses. */
+            /* ml128: NAME THE CALLER. Elimination has run out — it is exactly
+             * 2 x 512MB per guest thread of steam.exe (peb=0x11da68000, 12 tids),
+             * and it is NOT the LookupCache (VirtualMemSize = 1ULL<<33 makes
+             * TotalCacheSize ~96MB, below this probe's 256MB floor), NOT the
+             * CallRetStack (16MB), NOT the emulator stack (256KB), and no FEX
+             * VirtualAlloc site asks for 512MB. So stop reasoning about sizes and
+             * read the return addresses off the stack, the same way [exit-stk]
+             * does. Module base + offset is enough — names come from the
+             * [jit-pool] image lines in the same log. */
+            /* ml166: this scan HAS been running every run and I had simply never read its
+             * output. Symbolising it settles the owner and REFUTES two earlier claims:
+             *   - the 512MB reserves ARE FEX's own: mod 0x73f09d0000 = libarm64ecfex.dll,
+             *     +0x125834/+0x125860 -> VirtualAlloc, +0x1e7e08 -> $iexit_thunk$cdecl$i8$i8.
+             *     So "type=0x2000 proves the caller is NOT FEX" (the AllocatorHooks
+             *     MEM_TOP_DOWN note) does NOT hold here, and the ml128 claim "no FEX
+             *     VirtualAlloc site asks for 512MB" is wrong.
+             *   - but those are FEX's own ALLOCATOR frames, the nearest ones. The subsystem
+             *     that asked is deeper, and the old limits hid it: 6 hits, bigres_n <= 4.
+             *
+             * Scan deeper, report more, and cover the LATE reservations (#18+) which are the
+             * ones that exhaust the window: 27 x 512MB filled 13.8GB of 15.1GB while
+             * committing 1%, maxgap fell to 28MB, a 512MB reserve FAILED, and the NULL
+             * return was stored through (`stp x8,x20,[x0]` with x0=0). Which FEX subsystem
+             * this is decides the fix: smaller per-thread arena vs relocation above the
+             * ceiling vs soft reservation. */
+            if (bigres_n <= 4 || (bigres_n >= 18 && bigres_n <= 30))
+            {
+                uint64_t *sp = (uint64_t *)__builtin_frame_address(0);
+                int w, hits = 0;
+                for (w = 0; w < 1024 && hits < 20; w++)
+                {
+                    uint64_t mod = 0, va = ios_jit_reverse_translate( sp[w], &mod );
+                    if (va && mod && va != sp[w])
+                    {
+                        dprintf( 2, "[bigres]   caller#%u sp+0x%x: 0x%llx = mod 0x%llx +0x%llx\n",
+                                 bigres_n, w * 8, (unsigned long long)sp[w],
+                                 (unsigned long long)mod, (unsigned long long)(va - mod) );
+                        hits++;
+                    }
+                }
 
+                /* ml167 GUEST-STACK ATTRIBUTION — the one route not yet tried.
+                 *
+                 * The native scan above is NOT proof of ownership: it surfaces any
+                 * code-like value on the stack, including DEAD frames from earlier FEX
+                 * activity on that thread, and I over-trusted its libarm64ecfex hits last
+                 * round. The flags actually EXCLUDE every FEX site I can enumerate —
+                 * type=0x2000 has no MEM_TOP_DOWN, and FEXCore::Allocator::VirtualAlloc
+                 * unconditionally ORs it (AllocatorHooks.h: Flags = (Commit?MEM_COMMIT:0)
+                 * | MEM_RESERVE | MEM_TOP_DOWN); CallRetStack is MEM_TOP_DOWN+PAGE_NOACCESS;
+                 * the iOS LookupCache path passes Commit=true (FEX_IOS_HOST=1 is global).
+                 *
+                 * All four earlier attribution attempts were RIP-based and returned NATIVE
+                 * addresses inside VirtualAlloc itself. So walk the GUEST stack instead:
+                 * the saved x64 CONTEXT is at CPUArea+0x50, Rsp at +0x98 (Rip at +0xF8, as
+                 * the ios_guest_ctx_rip comment records). x86-64 return addresses there
+                 * point at PE module VAs, which are STABLE all run (unlike pool copies the
+                 * freelist recycles), so they resolve offline against [jit-pool] image.
+                 *
+                 * What this decides: 2 x 512MB per guest thread at 1% commit, with
+                 * [bigres] total only ever GROWING, is either a size knob or a per-thread
+                 * reservation never released on thread exit — both cheap and safe. Only if
+                 * it is neither do we need overcommit/aliasing, which is unsound in general
+                 * (an app is entitled to grow into a range it reserved). */
+                {
+                    TEB *t = NtCurrentTeb();
+                    void *ca = t ? *(void **)((char *)t + 0x1788) : NULL;
+
+                    if ((uintptr_t)ca >= 0x10000)
+                    {
+                        uint64_t grsp = *(uint64_t *)((char *)ca + 0x50 + 0x98);
+                        uint64_t grip = *(uint64_t *)((char *)ca + 0x50 + 0xF8);
+
+                        dprintf( 2, "[bigres]   guest#%u rsp=0x%llx rip=0x%llx\n",
+                                 bigres_n, (unsigned long long)grsp,
+                                 (unsigned long long)grip );
+                        /* Only read the guest stack if Wine owns the range. A raw deref
+                         * here would fault mid-syscall (this is not a signal handler, so
+                         * it would surface as a real AV and cost the run). find_view is
+                         * the header-free check already available in this TU. */
+                        if (grsp >= 0x10000 && !(grsp & 7)
+                            && find_view( (const void *)(uintptr_t)grsp, 0x1000 ))
+                        {
+                            const uint64_t *gs = (const uint64_t *)(uintptr_t)grsp;
+                            int g, gh = 0;
+                            for (g = 0; g < 256 && gh < 12; g++)
+                            {
+                                uint64_t v = gs[g];
+                                if (v < 0x7300000000ULL || v >= 0x7400000000ULL) continue;
+                                dprintf( 2, "[bigres]   guest#%u rsp+0x%x: 0x%llx\n",
+                                         bigres_n, g * 8, (unsigned long long)v );
+                                gh++;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         st = allocate_virtual_memory( ret, size_ptr, type, protect,

@@ -44,122 +44,16 @@ void iridium_profile_present(void) {
 }
 uint64_t iridium_profile_take_gap(void) { return atomic_exchange(&combat_peak_gap, 0); }
 
-/* Keep the known-good Madeira/Winios device reservation available. */
-extern int winios_reserve_fex_memory(void);
-
-/* Host arena policy: reserve translator memory AND verify guest headroom. */
-static vm_address_t iridium_fex_reserved;
-
-static int iridium_release_fex_probe(vm_address_t base, vm_size_t size)
-{
-    kern_return_t kr = vm_deallocate(mach_task_self(), base, size);
-    if (kr == KERN_SUCCESS) return 1;
-    fprintf(stderr, "[fex-arena] probe cleanup failed kr=%d; refusing to launch\n", kr);
-    return 0;
-}
-
-static int iridium_publish_fex_arena(vm_address_t base, vm_size_t size,
-                                     vm_address_t kernel_limit, vm_size_t guest_headroom)
-{
-    char base_text[32], size_text[32];
-    snprintf(base_text, sizeof(base_text), "%llx", (unsigned long long)base);
-    snprintf(size_text, sizeof(size_text), "%llx", (unsigned long long)size);
-    if (setenv("WINE_IOS_FEX_ARENA_BASE", base_text, 1) ||
-        setenv("WINE_IOS_FEX_ARENA_SIZE", size_text, 1)) {
-        unsetenv("WINE_IOS_FEX_ARENA_BASE");
-        unsetenv("WINE_IOS_FEX_ARENA_SIZE");
-        iridium_release_fex_probe(base, size);
-        return 0;
-    }
-    iridium_fex_reserved = base;
-    fprintf(stderr,
-            "[fex-arena] reserved base=0x%s size=0x%s kernel-limit=0x%llx "
-            "mode=guest-budgeted guest-headroom=0x%llx\n",
-            base_text, size_text, (unsigned long long)kernel_limit,
-            (unsigned long long)guest_headroom);
-    return 1;
-}
-
-/* Returns 1 on success, 0 when no hole fits, -1 after a setup/cleanup error. */
-static int iridium_try_budgeted_fex_range(vm_address_t kernel_limit,
-                                          vm_address_t floor, vm_size_t size)
-{
-    const vm_address_t step = 0x10000000ULL; /* 256 MB scan stride. */
-    const vm_size_t minimum_guest = 4ULL << 30;
-    vm_size_t guest_headroom = size * 3;
-    if (guest_headroom < minimum_guest) guest_headroom = minimum_guest;
-    vm_size_t total = guest_headroom + size;
-    if (kernel_limit < floor || kernel_limit - floor < total) return 0;
-
-    /* A Mach map walk can advertise holes beyond the task's permitted range,
-     * or inside a CPU-inaccessible carveout. A FIXED allocation WITHOUT
-     * OVERWRITE proves this entire interval is actually usable and unoccupied.
-     * No pages are touched. Retain only the upper FEX portion and release the
-     * lower portion for Wine images, guest heaps, stacks and reservations.
-     * This is a startup headroom check, not a promise about future allocations. */
-    vm_address_t candidate = (kernel_limit - total) & ~0xffffULL;
-    for (;;) {
-        vm_address_t probe = candidate;
-        if (vm_allocate(mach_task_self(), &probe, total, VM_FLAGS_FIXED) == KERN_SUCCESS) {
-            if (probe != candidate) {
-                if (!iridium_release_fex_probe(probe, total)) return -1;
-            } else if (vm_protect(mach_task_self(), probe, total, FALSE, VM_PROT_NONE) != KERN_SUCCESS) {
-                iridium_release_fex_probe(probe, total);
-                fprintf(stderr, "[fex-arena] cannot protect reservation; refusing to launch\n");
-                return -1;
-            } else {
-                vm_address_t base = probe + guest_headroom;
-                if (vm_deallocate(mach_task_self(), probe, guest_headroom) != KERN_SUCCESS) {
-                    iridium_release_fex_probe(probe, total);
-                    fprintf(stderr, "[fex-arena] cannot release guest headroom; refusing to launch\n");
-                    return -1;
-                }
-                return iridium_publish_fex_arena(base, size, kernel_limit, guest_headroom) ? 1 : -1;
-            }
-        }
-        if (candidate < floor + step) break;
-        candidate -= step;
-    }
-    return 0;
-}
-
+/*
+ * Diagnostic hybrid: the 65b596 runtime predates Iridium's app-owned FEX
+ * reservation handoff. Keep the current host ABI, but deliberately supply no
+ * WINE_IOS_FEX_ARENA_* reservation so the restored FEX/Wine allocator sources
+ * select their own placement exactly as that generation did.
+ */
 int iridium_reserve_fex_memory(void)
 {
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-    /* Restore the device-tested launch behavior that existed before 1f7706d.
-     * That commit replaced Madeira's Winios reservation with this experimental
-     * allocator; subsequent device logs showed 4 GiB guest starvation, then
-     * 1 GiB translator starvation, while disabling the reservation entirely
-     * left FEX with no usable band. Keep the wrapper for source compatibility,
-     * but use the original Madeira/Winios reservation policy on device. */
-    fprintf(stderr, "[fex-arena] using restored Madeira/Winios reservation policy\n");
-    return winios_reserve_fex_memory();
-#endif
-
-    if (iridium_fex_reserved) return 1;
-    /* Inherited strings are not proof that this process owns a reservation. */
     unsetenv("WINE_IOS_FEX_ARENA_BASE");
     unsetenv("WINE_IOS_FEX_ARENA_SIZE");
-
-    task_vm_info_data_t info = {0};
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) {
-        fprintf(stderr, "[fex-arena] cannot read task VM limit; refusing to launch\n");
-        return 0;
-    }
-    const vm_address_t floor = 1ULL << 32;
-    const vm_size_t preferred_sizes[] = {
-        16ULL << 30, 8ULL << 30, 4ULL << 30, 2ULL << 30, 1ULL << 30
-    };
-    /* Largest-hole-only selection starved the guest: in a 6 GB usable window,
-     * the old direct 4 GB reservation left about 2 GB for everything else.
-     * Keep at least 3x the FEX size (and at least 4 GB) available below the arena.
-     * This policy uses actual allocation success, never a model/game/OS check. */
-    for (unsigned i = 0; i < sizeof(preferred_sizes) / sizeof(*preferred_sizes); ++i) {
-        int result = iridium_try_budgeted_fex_range(info.max_address, floor, preferred_sizes[i]);
-        if (result != 0) return result > 0;
-    }
-    /* The old fallback has no guest budget and would undo this safety check. */
-    fprintf(stderr, "[fex-arena] no reservation with sufficient guest headroom; refusing to launch\n");
-    return 0;
+    fprintf(stderr, "[fex-arena] DIAGNOSTIC 65b596 hybrid: no app reservation supplied\n");
+    return 1;
 }

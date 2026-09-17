@@ -2020,11 +2020,6 @@ static void load_ntdll_functions( HMODULE module )
         if (pios_teb_tsd_offset)
         {
             *pios_teb_tsd_offset = (unsigned int)ios_teb_tls_slot_offset;
-            {
-                extern ULONG_PTR iridium_fex_arena[2];
-                ULONG_PTR *bounds = (void *)find_named_export(module, exports, "iridium_fex_arena_bounds");
-                if (bounds) { bounds[0] = iridium_fex_arena[0]; bounds[1] = iridium_fex_arena[1]; }
-            }
             ERR("[teb-tsd] published offset=0x%x to ntdll export at %p\n",
                 *pios_teb_tsd_offset, pios_teb_tsd_offset);
         }
@@ -2368,11 +2363,6 @@ static int ios_load_child_ec_ntdll( PEB *child_peb )
             if (pios_teb_tsd_offset)
             {
                 *pios_teb_tsd_offset = (unsigned int)ios_teb_tls_slot_offset;
-            {
-                extern ULONG_PTR iridium_fex_arena[2];
-                ULONG_PTR *bounds = (void *)find_named_export(module, exports, "iridium_fex_arena_bounds");
-                if (bounds) { bounds[0] = iridium_fex_arena[0]; bounds[1] = iridium_fex_arena[1]; }
-            }
                 dprintf(2, "[teb-tsd] ec-child published offset=0x%x\n", *pios_teb_tsd_offset);
             }
             else dprintf(2, "[teb-tsd] ec-child export ios_teb_tsd_offset NOT FOUND\n");
