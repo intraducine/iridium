@@ -226,13 +226,25 @@ def verify_retained_inputs(reuse, revision: str) -> None:
     }
     old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
+    corrections = load("fex_runtime_corrections", CI / "apply-fex-runtime-corrections.py")
     problems = []
     for stage, paths in stages.items():
         changed = [path for path in paths
                    if reuse.git(ROOT, "ls-tree", revision, "--", path)
                    != reuse.git(ROOT, "ls-tree", "HEAD", "--", path)]
-        dirty = reuse.git(ROOT, "diff", "--name-only", "HEAD", "--", *paths)
-        dirty += reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "--", *paths)
+        tracked = reuse.git(ROOT, "diff", "--name-only", "-z", "HEAD", "--", *paths)
+        untracked = reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+        dirty = set(filter(None, tracked.split("\0")))
+        dirty.update(filter(None, untracked.split("\0")))
+
+        # fex-thread-init-failure.patch intentionally edits Madeira Wine source,
+        # while PREFIX_INPUTS conservatively covers the whole Wine tree. Ignore
+        # only files proven to be byte-for-byte HEAD plus that managed patch.
+        # Any extra edit, mode change, deletion, symlink, or unrelated Wine file
+        # remains dirty and still invalidates retained prefix provenance.
+        dirty.difference_update(
+            corrections.exact_managed_patch_changes(ROOT, corrections.THREAD_PATCH, dirty)
+        )
         if changed or dirty or reuse.producer_job(old_workflow, stage) != reuse.producer_job(new_workflow, stage):
             problems.append(stage)
     if problems:
