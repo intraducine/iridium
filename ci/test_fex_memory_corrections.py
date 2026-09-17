@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -106,13 +107,112 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 helper.apply_patch_idempotent(repo, patch, "sample")
 
+    def test_exact_managed_patch_detection_rejects_extra_edits_and_modes(self):
+        helper = load("apply_fex_runtime_corrections_exact", HELPER)
+        with tempfile.TemporaryDirectory() as name:
+            repo = Path(name) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Iridium Tests"], cwd=repo, check=True)
+            target = repo / "sample.txt"
+            target.write_text("before\n")
+            subprocess.run(["git", "add", "sample.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+            patch = Path(name) / "sample.patch"
+            patch.write_text(
+                "diff --git a/sample.txt b/sample.txt\n"
+                "--- a/sample.txt\n+++ b/sample.txt\n"
+                "@@ -1 +1 @@\n-before\n+after\n"
+            )
+            subprocess.run(["git", "apply", str(patch)], cwd=repo, check=True)
+            self.assertEqual(
+                helper.exact_managed_patch_changes(repo, patch, {"sample.txt"}),
+                {"sample.txt"},
+            )
+            target.write_text("after\nextra local edit\n")
+            self.assertEqual(helper.exact_managed_patch_changes(repo, patch, {"sample.txt"}), set())
+            target.write_text("after\n")
+            target.chmod(0o755)
+            self.assertEqual(helper.exact_managed_patch_changes(repo, patch, {"sample.txt"}), set())
+
+    def test_retained_prefix_accepts_only_exact_managed_wine_delta(self):
+        helper = load("apply_fex_runtime_corrections_prefix", HELPER)
+        prepare = load("prepare_local_runtime_managed_patch", ROOT / "ci/prepare-local-runtime.py")
+        with tempfile.TemporaryDirectory() as name:
+            repo = Path(name) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Iridium Tests"], cwd=repo, check=True)
+
+            for relative in helper.patch_paths(THREAD_PATCH):
+                source = ROOT / relative
+                destination = repo / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            workflow = repo / prepare.WORKFLOW
+            workflow.parent.mkdir(parents=True, exist_ok=True)
+            workflow.write_text("name: fixture\n")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+            revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            subprocess.run(["git", "apply", str(THREAD_PATCH)], cwd=repo, check=True)
+
+            class FakeLinux:
+                INPUTS = ()
+
+            class FakeReuse:
+                MEDIA_INPUTS = ()
+                PREFIX_INPUTS = ("testrepos/Madeira/wine",)
+                linux = FakeLinux()
+                COMPONENT_INPUTS = {"graphics": (), "jit": ()}
+
+                @staticmethod
+                def git(root, *args):
+                    return subprocess.check_output(
+                        ["git", "-C", str(root), *args], text=True
+                    ).strip()
+
+                @staticmethod
+                def producer_job(text, stage):
+                    return text
+
+            old_root, old_ci = prepare.ROOT, prepare.CI
+            prepare.ROOT = repo
+            prepare.CI = ROOT / "ci"
+            try:
+                prepare.verify_retained_inputs(FakeReuse, revision)
+
+                wine_target = next(
+                    relative for relative in helper.patch_paths(THREAD_PATCH)
+                    if relative.startswith("testrepos/Madeira/wine/")
+                )
+                target = repo / wine_target
+                patched = target.read_bytes()
+                target.write_bytes(patched + b"\n/* unrelated local edit */\n")
+                with self.assertRaisesRegex(RuntimeError, "prefix"):
+                    prepare.verify_retained_inputs(FakeReuse, revision)
+
+                target.write_bytes(patched)
+                unrelated = repo / "testrepos/Madeira/wine/unrelated-local-edit.txt"
+                unrelated.write_text("local\n")
+                with self.assertRaisesRegex(RuntimeError, "prefix"):
+                    prepare.verify_retained_inputs(FakeReuse, revision)
+            finally:
+                prepare.ROOT = old_root
+                prepare.CI = old_ci
+
     def test_build_paths_apply_corrections_and_cache_keys_track_them(self):
         action = (ROOT / "ci/prepare-runtime-inputs.sh").read_text()
         local = (ROOT / "ci/build-local-ipa.sh").read_text()
         staging = (ROOT / "ci/stage-windows-runtime.py").read_text()
+        prepare = (ROOT / "ci/prepare-local-runtime.py").read_text()
         self.assertIn("apply-fex-runtime-corrections.py", action)
         self.assertLess(local.index("prepare-local-runtime-inputs.py"), local.index("apply-fex-runtime-corrections.py"))
         self.assertLess(local.index("apply-fex-runtime-corrections.py"), local.index("prepare-local-runtime.py"))
+        self.assertIn("exact_managed_patch_changes", prepare)
+        self.assertIn("corrections.THREAD_PATCH", prepare)
         self.assertIn("COMPACT_PROFILE_MARKER", staging)
         self.assertIn("if COMPACT_PROFILE_MARKER not in translator_data", staging)
 
