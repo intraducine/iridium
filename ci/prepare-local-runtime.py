@@ -232,19 +232,21 @@ def verify_retained_inputs(reuse, revision: str) -> None:
         changed = [path for path in paths
                    if reuse.git(ROOT, "ls-tree", revision, "--", path)
                    != reuse.git(ROOT, "ls-tree", "HEAD", "--", path)]
-        tracked = reuse.git(ROOT, "diff", "--name-only", "-z", "HEAD", "--", *paths)
-        untracked = reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
-        dirty = set(filter(None, tracked.split("\0")))
-        dirty.update(filter(None, untracked.split("\0")))
 
-        # fex-thread-init-failure.patch intentionally edits Madeira Wine source,
-        # while PREFIX_INPUTS conservatively covers the whole Wine tree. Ignore
-        # only files proven to be byte-for-byte HEAD plus that managed patch.
-        # Any extra edit, mode change, deletion, symlink, or unrelated Wine file
-        # remains dirty and still invalidates retained prefix provenance.
-        dirty.difference_update(
-            corrections.exact_managed_patch_changes(ROOT, corrections.THREAD_PATCH, dirty)
-        )
+        if stage == "prefix":
+            # The runtime correction intentionally edits two tracked Wine files,
+            # but the retained prefix conservatively depends on the whole Wine
+            # tree. Inspect prefix dirtiness with only those exact managed hunks
+            # subtracted. Any unrelated tracked/untracked edit remains visible.
+            dirty = corrections.worktree_changes_excluding_patch(
+                ROOT, corrections.THREAD_PATCH, paths
+            )
+        else:
+            tracked = reuse.git(ROOT, "diff", "--name-only", "-z", "HEAD", "--", *paths)
+            untracked = reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+            dirty = set(filter(None, tracked.split("\0")))
+            dirty.update(filter(None, untracked.split("\0")))
+
         if changed or dirty or reuse.producer_job(old_workflow, stage) != reuse.producer_job(new_workflow, stage):
             problems.append(stage)
     if problems:
