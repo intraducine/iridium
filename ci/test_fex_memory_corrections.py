@@ -223,7 +223,7 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
         self.assertIn("apply-fex-runtime-corrections.py", action)
         self.assertLess(local.index("prepare-local-runtime-inputs.py"), local.index("apply-fex-runtime-corrections.py"))
         self.assertLess(local.index("apply-fex-runtime-corrections.py"), local.index("prepare-local-runtime.py"))
-        self.assertIn("exact_managed_patch_changes", prepare)
+        self.assertIn("worktree_changes_excluding_patch", prepare)
         self.assertIn("corrections.THREAD_PATCH", prepare)
         self.assertIn("COMPACT_PROFILE_MARKER", staging)
         self.assertIn("if COMPACT_PROFILE_MARKER not in translator_data", staging)
