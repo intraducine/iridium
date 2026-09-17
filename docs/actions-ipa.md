@@ -232,34 +232,58 @@ establish either. They are not a claim that all replacement variants were tested
 
 ## Local incremental app builds
 
-With the runtime dependencies staged, run from the repository root:
+On an Apple Silicon Mac, with Python 3.12+, Xcode 27 and the initial runtime
+dependencies staged, run this same command for both first builds and retries:
 
 ```sh
 bash ci/build-local-ipa.sh
 ```
 
-This local setup targets iOS 27 because its retained media SDK requires iOS 27.
-Do not use its output as an iOS 26 compatibility build.
+The script prepares missing host tools, checks retained inputs, refreshes native
+components when their inputs or outputs changed, restores extracted Wine files,
+and validates the actual Xcode staging contract before compiling the app. A
+second build in the same checkout is rejected before shared files are modified.
+No manual extraction, clean build, or cache deletion is needed after a native
+refresh or a missing extracted-userland failure.
 
-The script uses Xcode beta by default. Set `DEVELOPER_DIR` to choose another
-installed Xcode. It builds without signing and checks the package before writing
-a new `.build/local-ipa-output.XXXXXX/Iridium-unsigned.ipa` and its checksum.
-The command prints the output path and preserves earlier IPAs.
+The local build targets iOS 27 because its retained media SDK requires iOS 27.
+It is not an iOS 18/26 compatibility build. Xcode beta is selected by default;
+set `DEVELOPER_DIR` to select another suitable full Xcode installation.
+`IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0` reports missing host tools without installing
+them. Keep the existing source trees, compiler build directories and
+`.build/local-ipa` to retain incremental compilation.
 
-Keep `.build/local-ipa` between builds. Xcode reuses unchanged compilation outputs;
-the script does not run a clean build. Packaging failures leave those outputs
-available. To retry packaging alone after correcting a packaging issue:
+Native reuse checks committed and working-tree source inputs, compiler recipes,
+toolchain identity, staged input bytes and the presence/metadata of native
+outputs. A rebuild invalidates its success record before it starts. Failed or
+interrupted refreshes are retried; only validated completed outputs receive a
+new success record. The original retained-producer revision stays separate from
+the new native bundle version. Changing Linux Wine, media, prefix, ANGLE or JIT
+producer inputs requires matching component inputs from the procedures above;
+the native refresh does not silently relabel these old binaries as newly built.
 
-```sh
-python3 ci/check-ipa-prerequisites.py --package
-output=$(mktemp -d "$PWD/.build/local-ipa-output.XXXXXX")
-python3 ci/package-unsigned-ipa.py \
-  .build/local-ipa/Build/Products/Release-iphoneos/Iridium.app "$output"
+Wine userland is restored from the canonical manifest-checked archive into:
+
+```text
+iridium-runtime-sdk/build/wine-userland-linux-x86_64/staged-root
 ```
 
-This command rebuilds the app, not its precompiled runtime dependencies. After
-changing Wine, FEX, DXMT, media, or the dependency toolchain, rebuild and stage
-those inputs with the component instructions above before running it. Missing
-inputs stop the build. The presence check does not prove that existing libraries
-match changed dependency source. Keep matching source and notices for any IPA
-that you distribute. Device testing remains separate.
+This build-only cache lives outside `iridium-runtime-base`. It survives native
+bundle replacement and is not copied into SwiftPM resources. Unchanged valid
+extractions are reused; damaged or missing trees are reconstructed and checked
+before replacing the old tree. Xcode receives the same explicitly selected root
+and will not fall back to another stale tree. SwiftPM gets only the manifest
+fallback; the app stage supplies the runtime and one extracted userland copy.
+
+Logs are kept in `.build/local-build-logs`. Successful package audits produce a
+new `.build/local-ipa-output.XXXXXX/Iridium-unsigned.ipa` and its checksum. Earlier
+IPAs remain intact. Rerun the same build command after fixing an error; completed
+native compiler outputs remain cached even when Xcode or packaging fails.
+
+A missing initial Linux/media/prefix/graphics/JIT input is reported with its
+path before native compilation. A fresh checkout still needs the initial
+cross-platform dependencies described above. This command does not download a
+complete runtime from an unspecified Actions run, sign an app, trigger Actions,
+or bypass source/license/package checks. Keep matching source and notices for
+any IPA distributed. Successful source tests do not prove an Xcode build or
+device compatibility.
