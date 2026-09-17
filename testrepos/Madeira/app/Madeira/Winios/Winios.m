@@ -516,6 +516,7 @@ void winios_post_touch_up(int x, int y) {
 /* Key press bridge. vk = Windows virtual-key code, down = 1 for press,
  * 0 for release. Queued like mouse events; drained in pProcessEvents. */
 void winios_post_key(int vk, int down) {
+    fprintf(stderr, "[winios] post_key vk=0x%x down=%d\n", vk, down); fflush(stderr);
     winios_q_push_ev(WINIOS_EV_KEY, vk, 0, down ? 0 : KEYEVENTF_KEYUP, 0);
 }
 
@@ -1213,28 +1214,10 @@ static UIImage *winios_cursor_image(void) {
 /* Wine cursor image state (px). w==0 → builtin arrow fallback. */
 static int g_cur_w, g_cur_h, g_cur_hx, g_cur_hy;
 static CGPoint g_cursor_pos_px;
-static __weak CAMetalLayer *g_game_cursor_host;
-static BOOL g_cursor_visible;
-static void winios_cursor_place(void);
-
-/* Main-thread player attachment. Keep the desktop compositor out of game mode. */
-void winios_cursor_attach(CAMetalLayer *host) {
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    if (g_game_cursor_host != host) {
-        g_game_cursor_host = host;
-        [g_cursor_layer removeFromSuperlayer];
-        if (host && g_cursor_layer) [host addSublayer:g_cursor_layer];
-    }
-    winios_cursor_place();
-    [CATransaction commit];
-}
-
 
 /* main thread only */
 static void winios_ensure_cursor_layer(void) {
-    CALayer *host = g_game_cursor_host ?: g_compositor_view.layer;
-    if (g_cursor_layer || !host) return;
+    if (g_cursor_layer || !g_compositor_view) return;
     UIImage *img = winios_cursor_image();
     g_cursor_layer = [CALayer layer];
     g_cursor_layer.zPosition = 10000;   /* above every window layer */
@@ -1242,8 +1225,7 @@ static void winios_ensure_cursor_layer(void) {
     g_cursor_layer.contents = (id)img.CGImage;
     g_cursor_layer.bounds = CGRectMake(0, 0, img.size.width, img.size.height);
     g_cursor_layer.magnificationFilter = kCAFilterNearest;
-    g_cursor_layer.hidden = !g_cursor_visible;
-    [host addSublayer:g_cursor_layer];
+    [g_compositor_view.layer addSublayer:g_cursor_layer];
 }
 
 /* main thread only — place (and size) the cursor at its stored px pos,
@@ -1251,14 +1233,6 @@ static void winios_ensure_cursor_layer(void) {
 static void winios_cursor_place(void) {
     if (!g_cursor_layer) return;
     CGFloat x = g_cursor_pos_px.x, y = g_cursor_pos_px.y;
-    if (g_game_cursor_host) {
-        CGSize pixels = g_game_cursor_host.drawableSize;
-        CGFloat sx = g_game_cursor_host.bounds.size.width / MAX(1, pixels.width);
-        CGFloat sy = g_game_cursor_host.bounds.size.height / MAX(1, pixels.height);
-        g_cursor_layer.bounds = CGRectMake(0, 0, g_cur_w * sx, g_cur_h * sy);
-        g_cursor_layer.position = CGPointMake((x - g_cur_hx) * sx, (y - g_cur_hy) * sy);
-        return;
-    }
     if (g_cur_w > 0) {
         g_cursor_layer.bounds = CGRectMake(0, 0, g_cur_w * g_px_to_pt, g_cur_h * g_px_to_pt);
         g_cursor_layer.position = CGPointMake(g_desk_origin.x + (x - g_cur_hx) * g_px_to_pt,
@@ -1271,8 +1245,8 @@ static void winios_cursor_place(void) {
 
 void winios_cursor_move(int x, int y) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!g_game_cursor_host) winios_ensure_compositor();
-        if (!g_game_cursor_host && !g_compositor_view) return;
+        winios_ensure_compositor();
+        if (!g_compositor_view) return;
         winios_ensure_cursor_layer();
         g_cursor_pos_px = CGPointMake(x, y);
         [CATransaction begin];
@@ -1286,11 +1260,11 @@ void winios_cursor_move(int x, int y) {
  * BGRA image + hotspot whenever the wine cursor changes (arrow → I-beam
  * → resize arrows → app cursors). Copy before returning. */
 void winios_cursor_set(unsigned int cur_id, int w, int h, int hot_x, int hot_y, const void *bgra) {
-    if (w <= 0 || h <= 0 || w > 256 || h > 256 || !bgra) return;
+    if (w <= 0 || h <= 0 || !bgra) return;
     NSData *data = [NSData dataWithBytes:bgra length:(size_t)w * h * 4];
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!g_game_cursor_host) winios_ensure_compositor();
-        if (!g_game_cursor_host && !g_compositor_view) return;
+        winios_ensure_compositor();
+        if (!g_compositor_view) return;
         winios_ensure_cursor_layer();
         CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
         CGDataProviderRef dp = CGDataProviderCreateWithCFData((__bridge CFDataRef)data);
@@ -1313,8 +1287,7 @@ void winios_cursor_set(unsigned int cur_id, int w, int h, int hot_x, int hot_y, 
 
 void winios_cursor_show(int show) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        g_cursor_visible = show != 0;
-        if (g_cursor_layer) g_cursor_layer.hidden = !g_cursor_visible;
+        if (g_cursor_layer) g_cursor_layer.hidden = !show;
     });
 }
 
@@ -1322,7 +1295,12 @@ void winios_cursor_show(int show) {
  * engine owns the cursor position. */
 void winios_pointer(int x, int y, unsigned int flags, unsigned int data) {
     winios_q_push_ev(WINIOS_EV_MOUSE, x, y, flags, data);
-
+    /* ml641: ONLY an ABSOLUTE move carries a position. A relative move carries a
+     * DELTA, so handing it to the cursor layer would fling the drawn arrow to the
+     * top-left corner on every event. Relative mode is mouse-look, where the game
+     * has hidden the cursor anyway — there is nothing to draw, and skipping this
+     * also drops a dispatch_async to the main queue per touch sample. */
+    if ((flags & MOUSEEVENTF_MOVE) && (flags & MOUSEEVENTF_ABSOLUTE)) winios_cursor_move(x, y);
 }
 
 /* ============================================================ *
@@ -1336,47 +1314,4 @@ void winios_pSetCursor(HWND hwnd, HCURSOR cursor) {
 
 void winios_pDestroyCursorIcon(HCURSOR cursor) {
     /* nothing to release; we never allocated anything for the cursor */
-}
-
-/* Reserve address space, not physical RAM. Never replace an existing mapping. */
-int winios_reserve_fex_memory(void) {
-    static vm_address_t reserved;
-    if (reserved) return 1;
-    task_vm_info_data_t info = {0};
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
-        return 0;
-    const vm_address_t floor = 1ULL << 32; // Preserve the 32-bit guest address range.
-    /* Probe both halves. Retain the upper half for FEX and leave the lower
-     * half available to Wine. Successful reservations establish usable space. */
-    const vm_size_t sizes[] = { 16ULL<<30, 8ULL<<30, 4ULL<<30, 2ULL<<30, 1ULL<<30 };
-    for (unsigned n = 0; n < sizeof(sizes)/sizeof(*sizes); n++) {
-        vm_size_t size = sizes[n];
-        if (info.max_address < floor || (info.max_address - floor) / 2 < size) continue;
-        vm_address_t candidate = (info.max_address - 2 * size) & ~0xffffULL;
-        for (; candidate >= floor; candidate -= 0x10000000ULL) {
-            vm_address_t base = candidate;
-            kern_return_t kr = vm_allocate(mach_task_self(), &base, 2 * size, VM_FLAGS_FIXED);
-            if (kr != KERN_SUCCESS) continue;
-            vm_deallocate(mach_task_self(), base, size);
-            base += size;
-            if (vm_protect(mach_task_self(), base, size, FALSE, VM_PROT_NONE) != KERN_SUCCESS) {
-                vm_deallocate(mach_task_self(), base, size);
-                continue;
-            }
-            char b[32], z[32];
-            snprintf(b, sizeof(b), "%llx", (unsigned long long)base);
-            snprintf(z, sizeof(z), "%llx", (unsigned long long)size);
-            if (setenv("WINE_IOS_FEX_ARENA_BASE", b, 1) || setenv("WINE_IOS_FEX_ARENA_SIZE", z, 1)) {
-                unsetenv("WINE_IOS_FEX_ARENA_BASE"); unsetenv("WINE_IOS_FEX_ARENA_SIZE");
-                vm_deallocate(mach_task_self(), base, size);
-                return 0;
-            }
-            reserved = base;
-            fprintf(stderr, "[fex-arena] reserved base=0x%s size=0x%s kernel-limit=0x%llx\n",
-                    b, z, (unsigned long long)info.max_address);
-            return 1;
-        }
-    }
-    return 0;
 }

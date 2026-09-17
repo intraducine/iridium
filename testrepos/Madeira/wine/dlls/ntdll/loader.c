@@ -84,7 +84,6 @@ void *__wine_syscall_dispatcher = NULL;
  * instead of hardcoding a slot they do not own. Zero means "not yet
  * discovered" and must never be used as an offset. */
 unsigned int ios_teb_tsd_offset = 0;
-ULONG_PTR iridium_fex_arena_bounds[2];
 unixlib_handle_t __wine_unixlib_handle = 0;
 
 /* windows directory */

@@ -1,4 +1,0 @@
-WINE REGISTRY Version 2
-;; All keys relative to \Registry\User\.Default
-
-#arch=win64

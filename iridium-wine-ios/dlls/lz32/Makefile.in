@@ -1,9 +1,0 @@
-MODULE    = lz32.dll
-IMPORTLIB = lz32
-
-EXTRADLLFLAGS = -Wb,--data-only
-
-VER_PRODUCTVERSION = 5,1,2600,2180
-
-SOURCES = \
-	lz32.spec

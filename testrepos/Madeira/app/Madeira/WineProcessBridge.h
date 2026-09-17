@@ -13,9 +13,6 @@ int wine_process_start(const char *prefix_path);
 // Check if Wine process is running
 int wine_process_is_running(void);
 
-// Root process exit status; -1 until a terminal status is recorded.
-int wine_process_exit_code(void);
-
 // Steam S0 net-test VPN gate: write C:\madeira-continue.flag into the
 // prefix's drive_c so the paused winhttp-test.exe resumes to the Steam
 // stage. Called by the "Continue Net Test" UI button after the user has
