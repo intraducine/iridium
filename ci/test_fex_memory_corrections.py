@@ -219,12 +219,18 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
                 prepare.ROOT = old_root
                 prepare.CI = old_ci
 
-    def test_build_paths_apply_corrections_and_cache_keys_track_them(self):
+    def test_historical_ci_excludes_modern_patches_and_cache_keys_track_them(self):
         action = (ROOT / "ci/prepare-runtime-inputs.sh").read_text()
         local = (ROOT / "ci/build-local-ipa.sh").read_text()
         staging = (ROOT / "ci/stage-windows-runtime.py").read_text()
         prepare = (ROOT / "ci/prepare-local-runtime.py").read_text()
-        self.assertIn("apply-fex-runtime-corrections.py", action)
+        # This branch tests old FEX: applying the modern correction would
+        # invalidate the experiment. Local builds retain their current recipe
+        # and are deliberately rejected by the historical packaging profile.
+        self.assertNotIn("apply-fex-runtime-corrections.py", action)
+        self.assertNotIn("rpmalloc-host-arena.patch", action)
+        self.assertIn("preserving 65b596 Madeira/FEX/Wine sources", action)
+        self.assertIn("REQUIRE_COMPACT_PROFILE = False", staging)
         self.assertLess(local.index("prepare-local-runtime-inputs.py"), local.index("apply-fex-runtime-corrections.py"))
         self.assertLess(local.index("apply-fex-runtime-corrections.py"), local.index("prepare-local-runtime.py"))
         self.assertIn("worktree_changes_excluding_patch", prepare)

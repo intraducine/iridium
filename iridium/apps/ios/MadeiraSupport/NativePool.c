@@ -44,8 +44,10 @@ void iridium_profile_present(void) {
 }
 uint64_t iridium_profile_take_gap(void) { return atomic_exchange(&combat_peak_gap, 0); }
 
-/* Keep the known-good Madeira/Winios device reservation available. */
-extern int winios_reserve_fex_memory(void);
+/* The historical 65b596 runtime predates this app-side reservation API.
+ * Keep it optional only on this diagnostic branch; newer Winios still owns
+ * its reservation and its failure result must be propagated unchanged. */
+extern int winios_reserve_fex_memory(void) __attribute__((weak_import));
 
 /* Host arena policy: reserve translator memory AND verify guest headroom. */
 static vm_address_t iridium_fex_reserved;
@@ -126,6 +128,13 @@ static int iridium_try_budgeted_fex_range(vm_address_t kernel_limit,
 int iridium_reserve_fex_memory(void)
 {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (!winios_reserve_fex_memory) {
+        /* 65b596 FEX selects its own band. Do not reserve an unconsumed arena. */
+        unsetenv("WINE_IOS_FEX_ARENA_BASE");
+        unsetenv("WINE_IOS_FEX_ARENA_SIZE");
+        fprintf(stderr, "[hybrid-native] 65b596 reservation API absent; FEX selects its own band\n");
+        return 1;
+    }
     /* Restore the device-tested launch behavior that existed before 1f7706d.
      * That commit replaced Madeira's Winios reservation with this experimental
      * allocator; subsequent device logs showed 4 GiB guest starvation, then

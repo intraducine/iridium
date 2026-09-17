@@ -14,6 +14,17 @@ COMPACT_PROFILE_MARKER = (
     b'large-page=(1 << 22) max-ordinary=(2 * 1024 * 1024)'
 )
 
+# This diagnostic branch intentionally tests the pre-compact translator.
+REQUIRE_COMPACT_PROFILE = False
+
+
+def check_translator_profile(translator_data, require_compact):
+    if COMPACT_PROFILE_MARKER not in translator_data:
+        if require_compact:
+            raise ValueError('FEX translator is missing the compact iOS allocator profile')
+    elif not require_compact:
+        raise ValueError('Hybrid experiment requires the pre-compact 65b596 FEX translator')
+
 
 def pe_architectures(path):
     data = path.read_bytes()
@@ -106,7 +117,7 @@ def stage(build, app, source=None):
             shutil.copyfile(path, app / folder / path.name)
 
 
-def check(app):
+def check(app, *, require_compact=REQUIRE_COMPACT_PROFILE):
     for architecture in MACHINES:
         for name in ['apisetschema.dll', 'ntdll.dll', 'kernel32.dll', 'kernelbase.dll', 'user32.dll', 'd3d11.dll', 'dxgi.dll', 'winemetal.dll']:
             check_pe(app / f'{architecture}-windows' / name, architecture)
@@ -115,9 +126,7 @@ def check(app):
     translator_data = translator.read_bytes()
     if b'x64 emulation not implemented' in translator_data:
         raise ValueError('Wine placeholder translator packaged instead of FEX; run prepare-windows-runtime.sh')
-    # Hybrid regression branch: the test intentionally packages the pre-compact
-    # 65b596 FEX translator, so do not reject it for lacking the newer allocator
-    # marker. Keep the placeholder-translator and PE/resource checks above intact.
+    check_translator_profile(translator_data, require_compact)
     for path in ['prefix-template.tar.gz', 'nls/l_intl.nls']:
         if not (app / path).is_file() or not (app / path).stat().st_size:
             raise ValueError(f'Missing runtime resource: {path}')

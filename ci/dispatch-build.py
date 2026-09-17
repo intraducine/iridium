@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import uuid
 
@@ -53,6 +54,7 @@ def main():
     args = parser.parse_args()
     if args.check:
         check_commit(os.environ.get("EXPECTED_SHA", ""), os.environ.get("GITHUB_SHA", ""))
+        subprocess.run([sys.executable, str(ROOT / "ci/check-hybrid-runtime.py")], check=True)
         return
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     ref = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, text=True).strip()
