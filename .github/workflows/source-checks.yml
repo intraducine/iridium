@@ -22,7 +22,13 @@ jobs:
       - name: Check touch controller wiring
         run: python3 iridium/apps/ios/MadeiraSupportTests/TouchControllerCheck.py
       - name: Check FEX arena reservation
+        if: github.ref_name != 'test/native-65b596-hybrid'
         run: python3 iridium/apps/ios/MadeiraSupportTests/HostArenaCheck.py
+      - name: Check diagnostic native baseline
+        if: github.ref_name == 'test/native-65b596-hybrid'
+        run: |
+          grep -Fq 'DIAGNOSTIC 65b596 hybrid: no app reservation supplied' iridium/apps/ios/MadeiraSupport/NativePool.c
+          grep -Fq 'skipping post-65b596 FEX/Wine correction patches' ci/prepare-runtime-inputs.sh
       - name: Check LiveContainer startup JIT policy
         run: python3 iridium/apps/ios/MadeiraSupportTests/LiveContainerStartupJITCheck.py
       - name: Check startup JIT status reporting
