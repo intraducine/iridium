@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 // From Madeira FEXBridge.mm, GPL-3.0-or-later; adapted to C.
 void __clear_cache(void *start, void *end) {
@@ -119,6 +122,19 @@ static int iridium_try_budgeted_fex_range(vm_address_t kernel_limit,
 
 int iridium_reserve_fex_memory(void)
 {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    /* Match current Madeira on device: do not hold a host arena before FEX
+     * initializes. FEX can consume Iridium's published bounds, but a bounded
+     * reservation still caps all translator allocations to that range. The
+     * 1 GiB policy reproduced a 0x1002000 call-ret reservation failure after
+     * 28 threads. With no published bounds, the existing Madeira/FEX selector
+     * runs normally instead of being forced into the app's retained window. */
+    unsetenv("WINE_IOS_FEX_ARENA_BASE");
+    unsetenv("WINE_IOS_FEX_ARENA_SIZE");
+    fprintf(stderr, "[fex-arena] host reservation disabled; using Madeira/FEX allocator selection\n");
+    return 1;
+#endif
+
     if (iridium_fex_reserved) return 1;
     /* Inherited strings are not proof that this process owns a reservation. */
     unsetenv("WINE_IOS_FEX_ARENA_BASE");
