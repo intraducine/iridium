@@ -120,7 +120,11 @@ def _dirty_paths(repo: Path, paths) -> set[str]:
     )
     dirty = set(filter(None, tracked.split("\0")))
     dirty.update(filter(None, untracked.split("\0")))
-    return dirty
+    # The imported Wine tree contains a tracked .DS_Store. Finder may rewrite it
+    # on macOS, but it cannot affect Wine, prefix generation, or native outputs.
+    # Ignore only this metadata basename; all source/configuration files remain
+    # provenance inputs and continue to fail closed when locally modified.
+    return {relative for relative in dirty if Path(relative).name != ".DS_Store"}
 
 
 def _path_is_within(relative: str, roots) -> bool:
