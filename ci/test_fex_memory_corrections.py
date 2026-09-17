@@ -151,6 +151,15 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
                 destination = repo / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
+            for relative in (
+                "fixture/media.txt",
+                "fixture/linux.txt",
+                "fixture/graphics.txt",
+                "fixture/jit.txt",
+            ):
+                destination = repo / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(relative + "\n")
             workflow = repo / prepare.WORKFLOW
             workflow.parent.mkdir(parents=True, exist_ok=True)
             workflow.write_text("name: fixture\n")
@@ -160,13 +169,16 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             subprocess.run(["git", "apply", str(THREAD_PATCH)], cwd=repo, check=True)
 
             class FakeLinux:
-                INPUTS = ()
+                INPUTS = ("fixture/linux.txt",)
 
             class FakeReuse:
-                MEDIA_INPUTS = ()
+                MEDIA_INPUTS = ("fixture/media.txt",)
                 PREFIX_INPUTS = ("testrepos/Madeira/wine",)
                 linux = FakeLinux()
-                COMPONENT_INPUTS = {"graphics": (), "jit": ()}
+                COMPONENT_INPUTS = {
+                    "graphics": ("fixture/graphics.txt",),
+                    "jit": ("fixture/jit.txt",),
+                }
 
                 @staticmethod
                 def git(root, *args):
