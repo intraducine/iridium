@@ -108,6 +108,101 @@ def exact_managed_patch_changes(repo: Path, patch: Path, candidates) -> set[str]
     return managed
 
 
+def _dirty_paths(repo: Path, paths) -> set[str]:
+    paths = tuple(paths)
+    tracked = subprocess.check_output(
+        ["git", "-C", str(repo), "diff", "--name-only", "-z", "HEAD", "--", *paths],
+        text=True,
+    )
+    untracked = subprocess.check_output(
+        ["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard", "-z", "--", *paths],
+        text=True,
+    )
+    dirty = set(filter(None, tracked.split("\0")))
+    dirty.update(filter(None, untracked.split("\0")))
+    return dirty
+
+
+def _path_is_within(relative: str, roots) -> bool:
+    for root in roots:
+        root = str(root).rstrip("/")
+        if relative == root or relative.startswith(root + "/"):
+            return True
+    return False
+
+
+def worktree_changes_excluding_patch(repo: Path, patch: Path, paths) -> set[str]:
+    """Return stage dirtiness after subtracting an exactly reversible managed patch.
+
+    The filename-oriented detector above is useful for diagnostics, but a real local
+    checkout can report a conservative parent path for a dirty source tree. For the
+    retained-artifact gate, validate the stage itself instead: reverse only managed
+    patch hunks that fall under the requested stage, inspect the remaining tracked
+    and untracked changes, then restore the patch immediately.
+
+    No reset, checkout, clean, or stash is used. If the managed patch cannot be
+    reversed exactly, if any touched file is staged, or if restoration fails, the
+    provenance check fails closed. Unrelated edits in the same file survive the
+    temporary reverse and therefore remain dirty.
+    """
+    paths = tuple(paths)
+    original = _dirty_paths(repo, paths)
+    if not original:
+        return set()
+
+    touched = tuple(relative for relative in patch_paths(patch)
+                    if _path_is_within(relative, paths))
+    if not touched:
+        return original
+
+    staged = subprocess.check_output(
+        ["git", "-C", str(repo), "diff", "--cached", "--name-only", "-z", "HEAD", "--", *touched],
+        text=True,
+    )
+    if any(filter(None, staged.split("\0"))):
+        return original
+
+    include_args = []
+    for relative in touched:
+        include_args.extend(("--include", relative))
+
+    reverse_check = subprocess.run(
+        ["git", "-C", str(repo), "apply", "--reverse", "--check", *include_args, str(patch)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if reverse_check.returncode:
+        return original
+
+    reversed_patch = False
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo), "apply", "--reverse", *include_args, str(patch)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        reversed_patch = True
+        return _dirty_paths(repo, paths)
+    finally:
+        if reversed_patch:
+            restored = subprocess.run(
+                ["git", "-C", str(repo), "apply", *include_args, str(patch)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if restored.returncode:
+                raise RuntimeError(
+                    "Failed to restore the managed FEX/Wine patch after provenance inspection; "
+                    "the checkout was not reset or cleaned. git apply said: "
+                    + restored.stderr.strip()
+                )
+
+
 def apply_patch_idempotent(repo: Path, patch: Path, label: str) -> None:
     if check(repo, "apply", "--reverse", "--check", str(patch)):
         print(f"{label} already applied", flush=True)
