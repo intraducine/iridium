@@ -1,7 +1,7 @@
 diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
 --- a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
 +++ b/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
-@@ -23,12 +23,14 @@
+@@ -23,12 +23,15 @@
  
  CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
 +  if (!Thread) return {};
@@ -18,7 +18,7 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testre
    // Allocate the call-ret stack with guard pages on both sides
    const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
    const void* CallRetStackAlloc = nullptr;
-@@ -65,13 +67,28 @@
+@@ -65,13 +68,25 @@
    }
  #endif
  
@@ -46,7 +46,7 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testre
  
    /* iOS-Madeira: VirtualAlloc(MEM_COMMIT) on a previously-MEM_RESERVE'd
     * PAGE_NOACCESS region might not zero-initialize the pages on iOS. The
-@@ -132,14 +149,24 @@
+@@ -132,14 +147,24 @@
      }
    }
  #endif
@@ -84,7 +84,7 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp b/testrepos
  #ifdef FEX_IOS_HOST
    IosTiLog("[FEX-iOS] TI:lock\n");
  #endif
-@@ -1620,14 +1620,33 @@ NTSTATUS ThreadInit() {
+@@ -1620,13 +1620,28 @@ NTSTATUS ThreadInit() {
    static constexpr size_t EmulatorStackSize = 0x40000;
    const uint64_t EmulatorStack =
      reinterpret_cast<uint64_t>(::VirtualAlloc(nullptr, EmulatorStackSize, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE));
@@ -113,7 +113,7 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp b/testrepos
  #ifdef FEX_IOS_HOST
    IosTiLog("[FEX-iOS] TI:createthread\n");
  #endif
-@@ -1698,7 +1717,29 @@ NTSTATUS ThreadInit() {
+@@ -1698,7 +1713,28 @@ NTSTATUS ThreadInit() {
    }
  #endif
  
