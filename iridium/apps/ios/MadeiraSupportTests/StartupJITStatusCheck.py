@@ -11,6 +11,8 @@ assert "if jit_check_debugged() { return true }" in helper
 assert "CS_DEBUGGED is the" in helper
 assert "if jit_check_debugged() && StikJITHelper.persistentScriptRequested" in view_model
 assert "#if defined(__APPLE__) && TARGET_OS_IPHONE" in native_pool
-assert "[fex-arena] host reservation disabled; using Madeira/FEX allocator selection" in native_pool
+assert "return winios_reserve_fex_memory();" in native_pool
+assert "[fex-arena] using restored Madeira/Winios reservation policy" in native_pool
+assert "[fex-arena] host reservation disabled; using Madeira/FEX allocator selection" not in native_pool
 
-print("Startup JIT status: CS_DEBUGGED is recognized without an in-app request marker; iOS leaves FEX arena selection to Madeira")
+print("Startup JIT status: CS_DEBUGGED is recognized without an in-app request marker; iOS restores Madeira/Winios FEX reservation")
