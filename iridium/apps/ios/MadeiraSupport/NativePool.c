@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 // From Madeira FEXBridge.mm, GPL-3.0-or-later; adapted to C.
 void __clear_cache(void *start, void *end) {
@@ -40,6 +43,9 @@ void iridium_profile_present(void) {
     iridium_profile_record((uint64_t)now.tv_sec * 1000000000 + now.tv_nsec);
 }
 uint64_t iridium_profile_take_gap(void) { return atomic_exchange(&combat_peak_gap, 0); }
+
+/* Keep the known-good Madeira/Winios device reservation available. */
+extern int winios_reserve_fex_memory(void);
 
 /* Host arena policy: reserve translator memory AND verify guest headroom. */
 static vm_address_t iridium_fex_reserved;
@@ -119,6 +125,17 @@ static int iridium_try_budgeted_fex_range(vm_address_t kernel_limit,
 
 int iridium_reserve_fex_memory(void)
 {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    /* Restore the device-tested launch behavior that existed before 1f7706d.
+     * That commit replaced Madeira's Winios reservation with this experimental
+     * allocator; subsequent device logs showed 4 GiB guest starvation, then
+     * 1 GiB translator starvation, while disabling the reservation entirely
+     * left FEX with no usable band. Keep the wrapper for source compatibility,
+     * but use the original Madeira/Winios reservation policy on device. */
+    fprintf(stderr, "[fex-arena] using restored Madeira/Winios reservation policy\n");
+    return winios_reserve_fex_memory();
+#endif
+
     if (iridium_fex_reserved) return 1;
     /* Inherited strings are not proof that this process owns a reservation. */
     unsetenv("WINE_IOS_FEX_ARENA_BASE");
