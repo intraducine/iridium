@@ -226,19 +226,49 @@ def verify_retained_inputs(reuse, revision: str) -> None:
     }
     old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
+    corrections = load("fex_runtime_corrections", CI / "apply-fex-runtime-corrections.py")
     problems = []
+    details = []
     for stage, paths in stages.items():
         changed = [path for path in paths
                    if reuse.git(ROOT, "ls-tree", revision, "--", path)
                    != reuse.git(ROOT, "ls-tree", "HEAD", "--", path)]
-        dirty = reuse.git(ROOT, "diff", "--name-only", "HEAD", "--", *paths)
-        dirty += reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "--", *paths)
-        if changed or dirty or reuse.producer_job(old_workflow, stage) != reuse.producer_job(new_workflow, stage):
+
+        if stage == "prefix":
+            # The runtime correction intentionally edits two tracked Wine files,
+            # but the retained prefix conservatively depends on the whole Wine
+            # tree. Inspect prefix dirtiness with only those exact managed hunks
+            # subtracted. Any unrelated tracked/untracked edit remains visible.
+            dirty = corrections.worktree_changes_excluding_patch(
+                ROOT, corrections.THREAD_PATCH, paths
+            )
+        else:
+            tracked = reuse.git(ROOT, "diff", "--name-only", "-z", "HEAD", "--", *paths)
+            untracked = reuse.git(ROOT, "ls-files", "--others", "--exclude-standard", "-z", "--", *paths)
+            dirty = set(filter(None, tracked.split("\0")))
+            dirty.update(filter(None, untracked.split("\0")))
+
+        workflow_changed = (
+            reuse.producer_job(old_workflow, stage)
+            != reuse.producer_job(new_workflow, stage)
+        )
+        if changed or dirty or workflow_changed:
             problems.append(stage)
+            reasons = []
+            if changed:
+                reasons.append("committed=" + ",".join(changed))
+            if dirty:
+                reasons.append("working-tree=" + ",".join(sorted(dirty)))
+            if workflow_changed:
+                reasons.append("workflow=changed")
+            details.append(stage + "[" + "; ".join(reasons) + "]")
     if problems:
-        raise RuntimeError("Retained inputs need matching producers: " + ", ".join(problems)
-                           + ". The local native build does not rebuild these components. "
-                             "Restore matching inputs via docs/actions-ipa.md; no compiler work started.")
+        raise RuntimeError(
+            "Retained inputs need matching producers: " + ", ".join(problems)
+            + ". Details: " + "; ".join(details)
+            + ". The local native build does not rebuild these components. "
+              "Restore matching inputs via docs/actions-ipa.md; no compiler work started."
+        )
 
 
 def main() -> None:
