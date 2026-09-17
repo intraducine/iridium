@@ -151,6 +151,9 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
                 destination = repo / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
+            metadata = repo / "testrepos/Madeira/wine/.DS_Store"
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_bytes(b"tracked macOS metadata\n")
             for relative in (
                 "fixture/media.txt",
                 "fixture/linux.txt",
@@ -167,6 +170,7 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
             revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
             subprocess.run(["git", "apply", str(THREAD_PATCH)], cwd=repo, check=True)
+            metadata.write_bytes(b"Finder rewrote this metadata\n")
 
             class FakeLinux:
                 INPUTS = ("fixture/linux.txt",)
