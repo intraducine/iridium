@@ -20,16 +20,8 @@ done
 modules+=(testrepos/Madeira/research/dxmt/include/native/directx)
 git submodule update --init --depth 1 -- "${modules[@]}"
 
-# Keep the local allocator changes reproducible without changing the upstream gitlink.
-allocator="$MADEIRA/FEX/External/rpmalloc"
-patch="$ROOT/ci/patches/rpmalloc-host-arena.patch"
-if git -C "$allocator" apply --reverse --check "$patch" 2>/dev/null; then
-    : # Already applied.
-else
-    git -C "$allocator" apply --check "$patch"
-    git -C "$allocator" apply "$patch"
-fi
-
-# Apply the compact allocator profile only after the host-arena correction, then
-# patch the checked FEX/Wine failure path. The helper preserves conflicting edits.
-python3 "$ROOT/ci/apply-fex-runtime-corrections.py"
+# Diagnostic branch only: test the exact Madeira/FEX/Wine source state from
+# 65b596 under the current e62 app/JIT/LiveContainer/controller code. Do not
+# apply the newer Iridium allocator/FEX/Wine correction patches, because doing
+# so would silently turn this back into the current native runtime.
+echo "Hybrid old-native regression: preserving 65b596 Madeira/FEX/Wine sources without current correction patches"
