@@ -3483,12 +3483,20 @@ static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DW
     process_driver_events( QS_ALLINPUT, wake_mask, changed_mask );
     if (!(changed_mask & QS_SMRESULT) && (event = get_user_thread_info()->idle_event)) NtSetEvent( event, NULL );
 
-    /* The iOS input ring has no driver fd to wake a sleeping message thread.
-     * Poll it at a bounded interval for games as well as desktop windows.
-     * WaitAll must keep its original semantics: queue activity alone cannot
-     * satisfy the other handles. Caller deadlines remain absolute below. */
+    /* iOS desktop mode: trackpad events sit in the app-side ring until a
+     * wine thread runs pProcessEvents — a thread sleeping here (e.g. the
+     * SC_MOVE / menu modal loops via NtUserGetMessage) never drains it,
+     * so drags advanced only when winemine's 1Hz timer woke the queue.
+     * Wake every 16ms to poll driver events; only surface WAIT_TIMEOUT
+     * when the CALLER's own deadline expires. Games path unchanged. */
     {
-        if (type == WaitAll)
+        static int ios_slice = -1;
+        if (ios_slice < 0)
+        {
+            const char *d = getenv( "MADEIRA_DESKTOP" );
+            ios_slice = (d && *d == '1');
+        }
+        if (!ios_slice)
         {
             do ret = NtWaitForMultipleObjects( count, handles, type, !!(flags & MWMO_ALERTABLE), abs );
             while (ret == count - 1 && !process_driver_events( QS_ALLINPUT, wake_mask, changed_mask ));

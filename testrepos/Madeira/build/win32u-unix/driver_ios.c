@@ -67,42 +67,9 @@ static struct user_driver_funcs winios_user_driver;
  * types). Call this from pProcessEvents drain or directly from a
  * deferred Swift dispatch — it just packages an INPUT_MOUSE event and
  * hands it to NtUserSendHardwareInput. */
-extern void winios_cursor_move(int x, int y) __attribute__((weak));
-static int winios_desktop_mode(void);
-
-/* Record delivery and focus changes throughout a session, without logging every move. */
-static void winios_log_input(const char *kind, unsigned int code, NTSTATUS status)
-{
-    static unsigned int count[2], failures[2];
-    static HWND previous_foreground;
-    HWND foreground = NtUserGetForegroundWindow();
-    unsigned int channel = kind[0] == 'k';
-    GUITHREADINFO info = { .cbSize = sizeof(info) };
-    BOOL changed = foreground != previous_foreground;
-    previous_foreground = foreground;
-    count[channel]++;
-    if (status) failures[channel]++;
-    if (changed || status || count[channel] <= 8 || !(count[channel] & 255))
-    {
-        BOOL have_info = NtUserGetGUIThreadInfo(0, &info);
-        dprintf(2, "[winios-input] %s count=%u code=0x%x status=0x%x failures=%u "
-                   "foreground=%p gui=%d active=%p focus=%p capture=%p\n",
-                kind, count[channel], code, (unsigned int)status, failures[channel],
-                foreground, have_info, info.hwndActive, info.hwndFocus, info.hwndCapture);
-    }
-}
-
 void winios_drv_post_mouse(int x, int y, unsigned int flags, unsigned int mouse_data, HWND hwnd)
 {
     INPUT input;
-    HWND target = winios_desktop_mode() ? NULL : NtUserGetForegroundWindow();
-    if (target && (flags & MOUSEEVENTF_ABSOLUTE))
-    {
-        POINT position = {x, y};
-        map_window_points(target, NULL, &position, 1, get_thread_dpi());
-        x = position.x;
-        y = position.y;
-    }
     input.type           = INPUT_MOUSE;
     input.mi.dx          = x;
     input.mi.dy          = y;
@@ -119,13 +86,12 @@ void winios_drv_post_mouse(int x, int y, unsigned int flags, unsigned int mouse_
      * of the NtUserCallHwndParam inline — we get the raw NTSTATUS and skip
      * a dispatch layer that can fail for its own reasons. */
     NTSTATUS st = send_hardware_message( NULL, 0, &input, 0 );
-    POINT position;
-    if (!st && winios_cursor_move && NtUserGetCursorPos(&position))
     {
-        if (target) screen_to_client(target, &position);
-        winios_cursor_move(position.x, position.y);
+        static unsigned cnt;
+        if (cnt++ < 40)
+            dprintf(2, "[winios] drv_post_mouse hwnd=%p flags=0x%x x=%d y=%d -> status=0x%x\n",
+                    hwnd, flags, x, y, (unsigned)st);
     }
-    winios_log_input("mouse", flags, st);
 }
 
 /* Keyboard sibling of winios_drv_post_key: packages an INPUT_KEYBOARD
@@ -139,14 +105,29 @@ void winios_drv_post_key(unsigned short vk, unsigned int flags)
     NTSTATUS st;
     UINT scan;
 
-    /* The layout lookup can choose the non-extended keypad alias for navigation
-     * keys. Preserve dedicated navigation keys for Raw Input and DirectInput. */
+    /* ml647: DERIVE THE SCAN CODE. This used to hardcode wScan = 0 while the
+     * comment above claimed it was "derived via the default layout" — the
+     * comment described an intent the code never implemented.
+     *
+     * Nothing downstream fills it in for us. wineserver passes our value
+     * straight through, twice:
+     *     rawkeyboard_init(): RAWKEYBOARD.MakeCode = scan      (queue_ios.c:2093)
+     *     queue_keyboard_message(): lparam = scan << 16        (queue_ios.c:2356)
+     * so with 0 every synthetic key arrived with MakeCode 0 and an empty
+     * scan-code field in WM_KEYDOWN's lParam. No real keyboard can do that.
+     *
+     * Wine's own UI never noticed, because dialogs read the VK out of wParam.
+     * A GAME does notice: Unity reads the keyboard through raw input and
+     * DirectInput identifies keys by scan code (DIK_W is 0x11, not 'W'), so
+     * W/A/S/D were delivered, accepted with STATUS_SUCCESS, and then discarded
+     * as unidentifiable. That is why the on-screen stick moved nothing.
+     *
+     * MAPVK_VK_TO_VSC_EX returns 0xE0xx for the extended keys — arrows, the nav
+     * cluster, right ctrl/alt, numpad enter and divide. Those MUST carry
+     * KEYEVENTF_EXTENDEDKEY, or a scan-code reader sees the numpad twin
+     * instead: without E0, "up arrow" is numpad 8. */
     scan = NtUserMapVirtualKeyEx( vk, MAPVK_VK_TO_VSC_EX, NtUserGetKeyboardLayout(0) );
-    if ((scan & 0xe000) || (vk >= VK_PRIOR && vk <= VK_DOWN) ||
-        vk == VK_INSERT || vk == VK_DELETE || vk == VK_DIVIDE ||
-        vk == VK_RCONTROL || vk == VK_RMENU || vk == VK_LWIN ||
-        vk == VK_RWIN || vk == VK_APPS || vk == VK_SNAPSHOT)
-        flags |= KEYEVENTF_EXTENDEDKEY;
+    if (scan & 0xe000) flags |= KEYEVENTF_EXTENDEDKEY;
 
     input.type           = INPUT_KEYBOARD;
     input.ki.wVk         = vk;
@@ -156,7 +137,20 @@ void winios_drv_post_key(unsigned short vk, unsigned int flags)
     input.ki.dwExtraInfo = 0;
 
     st = send_hardware_message( NULL, 0, &input, 0 );
-    winios_log_input("key", vk, st);
+    {
+        /* ml647: COUNT EVENTS, and never let a cap masquerade as absence. The
+         * old "first 40 lines" cap was exhausted by arrow keys early in the
+         * session, so the WASD presses that prompted this fix left no trace at
+         * all and the log looked like they were never sent. Log the first few,
+         * then one line per 256 with a running total that is always truthful. */
+        static unsigned cnt, bad;
+        if (st) bad++;
+        cnt++;
+        if (cnt <= 8 || (cnt & 0xff) == 0)
+            dprintf(2, "[winios] ml647 drv_post_key #%u vk=0x%x scan=0x%x flags=0x%x "
+                       "-> status=0x%x (failures=%u)\n",
+                    cnt, vk, scan, flags, (unsigned)st, bad);
+    }
 }
 
 /* [winios-tree] window-tree dump: every top-level window with class,
@@ -281,7 +275,7 @@ static void winios_drv_set_cursor( HWND hwnd, HCURSOR cursor )
     char bmibuf[sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD)];
     BITMAPINFO *bmi = (BITMAPINFO *)bmibuf;
 
-    if (!winios_cursor_set) return;
+    if (!winios_desktop_mode() || !winios_cursor_set) return;
     if (!cursor)
     {
         if (winios_cursor_show) winios_cursor_show( 0 );
@@ -1194,13 +1188,6 @@ static BOOL nulldrv_GetCursorPos( LPPOINT pt )
 
 static BOOL nulldrv_SetCursorPos( INT x, INT y )
 {
-    if (winios_cursor_move)
-    {
-        POINT position = {x, y};
-        HWND target = winios_desktop_mode() ? NULL : NtUserGetForegroundWindow();
-        if (target) screen_to_client(target, &position);
-        winios_cursor_move(position.x, position.y);
-    }
     return TRUE;
 }
 
@@ -1578,7 +1565,8 @@ static void load_display_driver(void)
         if (winios_pCreateWindow)        winios_user_driver.pCreateWindow        = winios_pCreateWindow;
         if (winios_pDestroyWindow)       winios_user_driver.pDestroyWindow       = winios_pDestroyWindow;
         if (winios_pProcessEvents)       winios_user_driver.pProcessEvents       = winios_pProcessEvents;
-        winios_user_driver.pSetCursor = winios_drv_set_cursor;
+        if (winios_desktop_mode())       winios_user_driver.pSetCursor           = winios_drv_set_cursor;
+        else if (winios_pSetCursor)      winios_user_driver.pSetCursor           = winios_pSetCursor;
         if (winios_pDestroyCursorIcon)   winios_user_driver.pDestroyCursorIcon   = winios_pDestroyCursorIcon;
         if (winios_pShowWindow)          winios_user_driver.pShowWindow          = winios_pShowWindow;
         /* window-pos wrapper dereferences window_rects on this side and

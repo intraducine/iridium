@@ -66,30 +66,6 @@
  *
  * Scope is much wider than one crash: any zero-store into an alias-backed page
  * was corrupting memory this way. */
-/* Integer store pairs share decoding across Mach and POSIX fault delivery. */
-static int ios_store_pair(uint32_t insn, uintptr_t target, uint64_t first,
-                          uint64_t second, uint64_t *base)
-{
-    if ((insn & 0x7e400000u) != 0x28000000u) return 0;
-    unsigned width = (insn & 0x80000000u) ? 8 : 4;
-    unsigned mode = (insn >> 23) & 3;
-    int offset = (int)((insn >> 15) & 127);
-    if (offset & 64) offset -= 128;
-    if (width == 8)
-    {
-        memcpy((void *)target, &first, 8);
-        memcpy((void *)(target + 8), &second, 8);
-    }
-    else
-    {
-        uint32_t low_first = first, low_second = second;
-        memcpy((void *)target, &low_first, 4);
-        memcpy((void *)(target + 4), &low_second, 4);
-    }
-    if (mode == 1 || mode == 3) *base += (int64_t)offset * width;
-    return 1;
-}
-
 #define IOS_STORE_SRC(r) ((r) == 31 ? 0ULL : state.__x[r])
 
 #include <mach/mach_vm.h>
@@ -2715,18 +2691,23 @@ static void *ios_mach_exception_thread( void *arg )
                         *(uint16_t *)rw_addr = (uint16_t)IOS_STORE_SRC(rt);
                         emulated = 1;
                     }
-                    /* Integer STP: offset, pre-index, post-index, and STNP. */
-                    else if ((insn & 0x7e400000u) == 0x28000000u)
+                    /* STP (signed offset, 64-bit): 10101001 00 imm7 Rt2 Rn Rt */
+                    else if ((insn & 0xffc00000) == 0xa9000000)
                     {
-                        int rt = insn & 31, rt2 = (insn >> 10) & 31, rn = (insn >> 5) & 31;
-                        uint64_t base = rn == 31 ? state.__sp : rn == 30 ? state.__lr : rn == 29 ? state.__fp : state.__x[rn];
-                        uint64_t first = rt == 31 ? 0 : rt == 30 ? state.__lr : rt == 29 ? state.__fp : state.__x[rt];
-                        uint64_t second = rt2 == 31 ? 0 : rt2 == 30 ? state.__lr : rt2 == 29 ? state.__fp : state.__x[rt2];
-                        emulated = ios_store_pair(insn, rw_addr, first, second, &base);
-                        if (rn == 31) state.__sp = base;
-                        else if (rn == 30) state.__lr = base;
-                        else if (rn == 29) state.__fp = base;
-                        else state.__x[rn] = base;
+                        int rt = insn & 0x1f;
+                        int rt2 = (insn >> 10) & 0x1f;
+                        *(uint64_t *)rw_addr = IOS_STORE_SRC(rt);
+                        *(uint64_t *)(rw_addr + 8) = IOS_STORE_SRC(rt2);
+                        emulated = 1;
+                    }
+                    /* STP (signed offset, 32-bit): 00101001 00 imm7 Rt2 Rn Rt */
+                    else if ((insn & 0xffc00000) == 0x29000000)
+                    {
+                        int rt = insn & 0x1f;
+                        int rt2 = (insn >> 10) & 0x1f;
+                        *(uint32_t *)rw_addr = (uint32_t)IOS_STORE_SRC(rt);
+                        *(uint32_t *)(rw_addr + 4) = (uint32_t)IOS_STORE_SRC(rt2);
+                        emulated = 1;
                     }
                     /* STR (register, 64-bit): 1111 1000 001 Rm option S 10 Rn Rt */
                     else if ((insn & 0xffe00c00) == 0xf8200800)
@@ -9022,16 +9003,23 @@ static int ios_emulate_store(ucontext_t *ctx, uint32_t insn, uintptr_t rw_addr)
         }
     }
 
-    /* Share integer pair decoding and writeback with Mach exception delivery. */
-    if ((insn & 0x7e400000u) == 0x28000000u)
+    /* STP (signed offset / pre-index / post-index):
+     * opc[31:30] 101 0 0xx 0 imm7 Rt2 Rn Rt
+     * Matching bits [29:25,22] = 10100_0, various x bits for variant */
+    if ((insn & 0x3E400000) == 0x28000000)
     {
-        int rn = (insn >> 5) & 31;
-        uint64_t base = rn == 31 ? SP_sig(ctx) : ios_get_reg(ctx, rn);
-        int result = ios_store_pair(insn, rw_addr, rt_val,
-                                   ios_get_reg(ctx, (insn >> 10) & 31), &base);
-        if (rn == 31) SP_sig(ctx) = base;
-        else REGn_sig(rn, ctx) = base;
-        return result;
+        int opc = (insn >> 30) & 3;
+        int rt2 = (insn >> 10) & 0x1F;
+        uint64_t rt2_val = ios_get_reg(ctx, rt2);
+
+        if (opc & 2) {  /* 64-bit */
+            *(uint64_t *)rw_addr = rt_val;
+            *(uint64_t *)(rw_addr + 8) = rt2_val;
+        } else {  /* 32-bit */
+            *(uint32_t *)rw_addr = (uint32_t)rt_val;
+            *(uint32_t *)(rw_addr + 4) = (uint32_t)rt2_val;
+        }
+        return 1;
     }
 
     /* STR (register offset):
