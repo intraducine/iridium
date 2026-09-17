@@ -19,16 +19,31 @@ def load(name, path):
 
 
 class RuntimeCorrectionContractTests(unittest.TestCase):
+    def test_patch_files_are_well_formed(self):
+        for patch in (RPMALLOC_PATCH, THREAD_PATCH):
+            result = subprocess.run(
+                ["git", "apply", "--numstat", str(patch)],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"Malformed patch {patch.name}:\n{result.stderr}",
+            )
+
     def test_fex_patch_matches_checkout_or_is_already_applied(self):
         forward = subprocess.run(
             ["git", "-C", str(ROOT), "apply", "--check", str(THREAD_PATCH)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        ).returncode == 0
+            capture_output=True, text=True,
+        )
         reverse = subprocess.run(
             ["git", "-C", str(ROOT), "apply", "--reverse", "--check", str(THREAD_PATCH)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        ).returncode == 0
-        self.assertTrue(forward or reverse, "FEX/Wine correction patch no longer matches the checked-out source")
+            capture_output=True, text=True,
+        )
+        self.assertTrue(
+            forward.returncode == 0 or reverse.returncode == 0,
+            "FEX/Wine correction patch no longer matches the checked-out source\n"
+            f"forward:\n{forward.stderr}\nreverse:\n{reverse.stderr}",
+        )
 
     def test_compact_profile_and_allocator_containment_are_coupled(self):
         text = RPMALLOC_PATCH.read_text()
