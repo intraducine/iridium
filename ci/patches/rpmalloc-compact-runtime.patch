@@ -1,0 +1,194 @@
+diff --git a/rpmalloc/rpmalloc.c b/rpmalloc/rpmalloc.c
+--- a/rpmalloc/rpmalloc.c
++++ b/rpmalloc/rpmalloc.c
+@@ -168,11 +168,19 @@
+ 
+ #define SMALL_BLOCK_SIZE_LIMIT (4 * 1024)
+ #define MEDIUM_BLOCK_SIZE_LIMIT (256 * 1024)
++#ifdef FEX_IOS_HOST
++#define LARGE_BLOCK_SIZE_LIMIT (2 * 1024 * 1024)
++#else
+ #define LARGE_BLOCK_SIZE_LIMIT (8 * 1024 * 1024)
++#endif
+ 
+ #define SMALL_SIZE_CLASS_COUNT 73
+ #define MEDIUM_SIZE_CLASS_COUNT 24
++#ifdef FEX_IOS_HOST
++#define LARGE_SIZE_CLASS_COUNT 12
++#else
+ #define LARGE_SIZE_CLASS_COUNT 20
++#endif
+ #define SIZE_CLASS_COUNT (SMALL_SIZE_CLASS_COUNT + MEDIUM_SIZE_CLASS_COUNT + LARGE_SIZE_CLASS_COUNT)
+ 
+ #define SMALL_PAGE_SIZE_SHIFT 16
+@@ -182,11 +190,9 @@
+ #define MEDIUM_PAGE_SIZE (1 << MEDIUM_PAGE_SIZE_SHIFT)
+ #define MEDIUM_PAGE_MASK (~((uintptr_t)MEDIUM_PAGE_SIZE - 1))
+ #ifdef FEX_IOS_HOST
+-/* iOS-Mythic ml436 (#73): dropped 26 -> 24 to legalise 16MB spans (see the
+- * SPAN_SIZE note below). Large-class ceiling falls 64MB -> 16MB; blocks in
+- * (16MB, 64MB] shift to the huge path, which maps them at exact size — a VA
+- * IMPROVEMENT over carving them from a 64MB span. */
+-#define LARGE_PAGE_SIZE_SHIFT 24
++/* Keep the largest ordinary block below the page payload. Larger allocations
++ * use the existing exact-sized huge path instead of an empty size class. */
++#define LARGE_PAGE_SIZE_SHIFT 22
+ #else
+ #define LARGE_PAGE_SIZE_SHIFT 26
+ #endif
+@@ -194,31 +200,22 @@
+ #define LARGE_PAGE_MASK (~((uintptr_t)LARGE_PAGE_SIZE - 1))
+ 
+ #ifdef FEX_IOS_HOST
+-/* iOS-Mythic ml332: 256MB spans are unaffordable in a 39-bit shared address space.
+- *
+- * os_mmap reserves size+alignment, so every span costs 512MB of VA, and rpmalloc's
+- * per-thread heaps map one span per page type -- ml330 measured 69 spans / 35GB
+- * reserved (~1% committed) inside the same 64GB window that CEF's PartitionAlloc
+- * needs, until FEXCore CreateThread's aligned_alloc returned NULL (#43). Releasing
+- * dead threads' spans is NOT the fix: the heap is shared across threads, and doing
+- * so corrupted live containers (#54, ml329/ml331).
+- *
+- * 64MB is the floor (SPAN_SIZE / LARGE_PAGE_SIZE must be >= 1; LARGE_PAGE_SIZE_SHIFT
+- * is 26) and cuts per-span VA 4x to 128MB. SPAN_MASK derives, span lookup arithmetic
+- * is unchanged. */
+-/* iOS-Mythic ml436 (#73): 64MB -> 16MB, paired with LARGE_PAGE_SIZE_SHIFT 26 -> 24
+- * above to keep SPAN_SIZE / LARGE_PAGE_SIZE >= 1. ml435's [span-census] proved the
+- * FEX band fills by LIVE DEMAND, not leaks: 74 live guest threads x ~200MB
+- * (2-3 x 64MB spans + code buffers) ~= the whole 16GB band, code-buffer allocation
+- * then fails and Crashpad kills the webhelper AFTER BrowserReady. 16MB spans cut
+- * the per-thread span footprint 4x (~48MB worst case); with the ml389 VA diet and
+- * db 5392 exact-aligned maps this puts 74 threads at ~3.5GB. Exit-leak (12 heaps,
+- * ~2GB) is secondary and partially covered by the ml435 ThreadTerm hardening. */
+-static const char ios_span16_marker[] __attribute__((used)) = "rpmalloc-span16 rev=ml436";
+-#define SPAN_SIZE (16 * 1024 * 1024)
++/* Keep sparse per-thread reservations small enough for the constrained FEX
++ * arena without changing call-return-stack geometry or borrowing guest VA. */
++static const char ios_span4_marker[] __attribute__((used)) =
++    "rpmalloc-span4 compact-spans-v1";
++#define SPAN_SIZE (4 * 1024 * 1024)
+ #else
+ #define SPAN_SIZE (256 * 1024 * 1024)
+ #endif
++_Static_assert((SPAN_SIZE & (SPAN_SIZE - 1)) == 0, "Span must be a power of two");
++_Static_assert(SPAN_SIZE >= LARGE_PAGE_SIZE, "Span must contain a large page");
++_Static_assert((SPAN_SIZE % SMALL_PAGE_SIZE) == 0, "Invalid small-page geometry");
++_Static_assert((SPAN_SIZE % MEDIUM_PAGE_SIZE) == 0, "Invalid medium-page geometry");
++_Static_assert((SPAN_SIZE % LARGE_PAGE_SIZE) == 0, "Invalid large-page geometry");
++_Static_assert(LARGE_BLOCK_SIZE_LIMIT <= LARGE_PAGE_SIZE - PAGE_HEADER_SIZE,
++               "Largest ordinary block must fit the page payload");
+ #define SPAN_MASK (~((uintptr_t)(SPAN_SIZE - 1)))
+ 
+ ////////////
+@@ -613,8 +610,12 @@
+     MCLASS(2048),   MCLASS(2560),   MCLASS(3072),   MCLASS(3584),   MCLASS(4096),   MCLASS(5120),   MCLASS(6144),
+     MCLASS(7168),   MCLASS(8192),   MCLASS(10240),  MCLASS(12288),  MCLASS(14336),  MCLASS(16384),  LCLASS(20480),
+     LCLASS(24576),  LCLASS(28672),  LCLASS(32768),  LCLASS(40960),  LCLASS(49152),  LCLASS(57344),  LCLASS(65536),
+-    LCLASS(81920),  LCLASS(98304),  LCLASS(114688), LCLASS(131072), LCLASS(163840), LCLASS(196608), LCLASS(229376),
+-    LCLASS(262144), LCLASS(327680), LCLASS(393216), LCLASS(458752), LCLASS(524288)};
++    LCLASS(81920),  LCLASS(98304),  LCLASS(114688), LCLASS(131072)
++#ifndef FEX_IOS_HOST
++    , LCLASS(163840), LCLASS(196608), LCLASS(229376), LCLASS(262144),
++    LCLASS(327680), LCLASS(393216), LCLASS(458752), LCLASS(524288)
++#endif
++};
+ 
+ //! Threshold number of pages for when free pages are decommitted
+ static uint32_t global_page_free_overflow[4] = {0, 0, 0, 0};
+@@ -1768,20 +1769,20 @@
+ 		return bad;
+ 
+ 	{
+-		char buf[256];
++		char buf[512];
+ 		const char* hexd = "0123456789abcdef";
+ 		int i = 0, j;
+ 		unsigned long w;
+ #define RPM_STR(s)                                     \
+ 	do {                                               \
+ 		const char* _s = (s);                          \
+-		while (*_s)                                    \
++		while (*_s && i < (int)sizeof(buf) - 1)       \
+ 			buf[i++] = *_s++;                          \
+ 	} while (0)
+ #define RPM_HEX(v)                                     \
+ 	do {                                               \
+ 		unsigned long long _v = (unsigned long long)(v); \
+-		for (j = 60; j >= 0; j -= 4)                   \
++		for (j = 60; j >= 0 && i < (int)sizeof(buf) - 1; j -= 4) \
+ 			buf[i++] = hexd[(_v >> j) & 0xf];          \
+ 	} while (0)
+ 		RPM_STR("[rpm-avail] ml607 CORRUPT op=");
+@@ -1794,7 +1795,7 @@
+ 		RPM_HEX((uintptr_t)page);
+ 		RPM_STR(" heap=0x");
+ 		RPM_HEX((uintptr_t)heap);
+-		if (page) {
++		if (page && !(bad & (2u | 128u))) {
+ 			RPM_STR(" p.class=0x");
+ 			RPM_HEX(page->size_class);
+ 			RPM_STR(" p.heap=0x");
+@@ -1824,23 +1825,22 @@
+ 	rpmalloc_assert(page->is_full == 0, "Page full flag internal failure");
+ 	rpmalloc_assert(page->is_decommitted == 0, "Page decommitted flag internal failure");
+ 	heap_t* heap = page->heap;
+-	if (bad) {
+-		/* Only detach the head if this page genuinely is it; otherwise leave the
+-		 * list alone entirely rather than trust either link. */
+-		if (page->size_class < SIZE_CLASS_COUNT && heap->page_available[page->size_class] == page)
+-			heap->page_available[page->size_class] = 0;
+-	} else if (heap->page_available[page->size_class] == page) {
++	/* Unknown list metadata is not recoverable here. Do not place a rejected
++	 * page on a second allocator list or follow any suspect neighbour link. */
++	if (bad)
++		return;
++	if (heap->page_available[page->size_class] == page) {
+ 		heap->page_available[page->size_class] = page->next;
++		if (page->next)
++			page->next->prev = 0;
+ 	} else {
+ 		page->prev->next = page->next;
+ 		if (page->next)
+ 			page->next->prev = page->prev;
+ 	}
+ 	page->is_free = 1;
+ 	page->is_zero = 0;
++	page->prev = 0;
+ 	page->next = heap->page_free[page->page_type];
+ 	heap->page_free[page->page_type] = page;
+ 	if (++heap->page_free_commit_count[page->page_type] >= global_page_free_overflow[page->page_type])
+@@ -1853,6 +1853,7 @@
+ 	rpmalloc_assert(page->is_full == 1, "Page full flag internal failure");
+ 	rpmalloc_assert(page->is_decommitted == 0, "Page decommitted flag internal failure");
+ 	heap_t* heap = page->heap;
++	page->prev = 0;
+ 	page->next = heap->page_available[page->size_class];
+ 	if (page->next)
+ 		page->next->prev = page;
+@@ -1882,11 +1883,15 @@
+ 	heap_t* heap = page->heap;
+ 	if (heap->page_available[page->size_class] == page) {
+ 		heap->page_available[page->size_class] = page->next;
++		if (page->next)
++			page->next->prev = 0;
+ 	} else {
+ 		page->prev->next = page->next;
+ 		if (page->next)
+ 			page->next->prev = page->prev;
+ 	}
++	page->prev = 0;
++	page->next = 0;
+ 	page->is_full = 1;
+ 	page->is_zero = 0;
+ 	page->generic_free = 1;
+@@ -2595,7 +2600,8 @@
+ static page_t*
+ heap_get_page(heap_t* heap, uint32_t size_class) {
+ 	// Fast path, available page for given size class
+ 	page_t* page = heap->page_available[size_class];
+-	rpm_avail_check(heap, size_class, page, /*is_head=*/1, "consume");
++	if (UNEXPECTED(rpm_avail_check(heap, size_class, page, /*is_head=*/1, "consume") != 0))
++		return 0;
+ 	if (EXPECTED(page != 0))
+ 		return page;
+ 	return heap_get_page_generic(heap, size_class);
