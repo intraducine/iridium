@@ -20,9 +20,9 @@ match Iridium.
 
 Use titles such as `Fix controller reconnect handling`, not `Updates`. A strict
 commit-prefix taxonomy is not required. Explain decisions in the PR rather than
-writing a history of abandoned attempts. For a change to runtime architecture,
-save formats, dependency licensing, or trust boundaries, record the decision,
-alternatives, migration, and rollback in `docs/decisions/` before merging.
+writing a history of abandoned attempts. For changes to runtime architecture,
+save formats, dependency licensing, or trust boundaries, explain the choice,
+migration, and rollback in the PR when they apply.
 
 Third-party directories may require sign-off or reject AI-generated changes.
 Read their contribution rules before editing or proposing an upstream change.

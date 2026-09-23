@@ -9,6 +9,8 @@ xcuserdata
 *.xcuserstate
 apps/ios/Iridium.xcodeproj
 .vscode
+.codex/
+.codex-iridium-fex-ios-bridge-tests
 build-device-ptinterp/
 packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime/iridium-runtime-base/Userland/extracted/
 codedb.snapshot
