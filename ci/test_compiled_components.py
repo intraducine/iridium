@@ -10,10 +10,35 @@ from unittest.mock import patch
 from test_manual_build import load
 
 components = load('components_tests', 'compiled-components.py')
+space = load('build_space_tests', 'free-build-space.py')
 reuse = components.reuse
 
 
 class CompiledComponentsTests(unittest.TestCase):
+    def test_uploaded_transfers_are_removed_without_touching_runtime(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            build = root / '.build'
+            for name in space.TRANSFERS:
+                path = build / (name + '-transfer')
+                path.mkdir(parents=True)
+                (path / 'archive').write_bytes(b'uploaded')
+            runtime = build / 'corresponding-source/source.tar.gz'
+            runtime.parent.mkdir()
+            runtime.write_bytes(b'needed')
+            space.cleanup(root)
+            self.assertEqual(runtime.read_bytes(), b'needed')
+            self.assertTrue(all(not (build / (name + '-transfer')).exists() for name in space.TRANSFERS))
+            outside = root / 'outside'
+            outside.mkdir()
+            for name in space.TRANSFERS[1:]:
+                (build / (name + '-transfer')).mkdir()
+            (build / 'media-transfer').symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'regular build transfer'):
+                space.cleanup(root)
+            self.assertTrue(outside.is_dir())
+            self.assertTrue((build / 'native-compiled-transfer').is_dir())
+
     def test_toolchain_ignores_metal_mount_but_checks_version(self):
         def fingerprint(version, mount):
             def output(command, **kwargs):
