@@ -109,7 +109,6 @@ let package = Package(
                 "ExternalJITProviders.swift",
                 "JITBootstrapAssets.swift",
                 "LiveContainerIntegration.swift",
-                "ProductExperience.swift",
             ]
         ),
         .testTarget(
@@ -138,7 +137,6 @@ let package = Package(
                 "ExternalJITProviders.swift",
                 "JITBootstrapAssets.swift",
                 "LiveContainerIntegration.swift",
-                "ProductExperience.swift",
                 "Views",
             ],
             sources: ["RuntimeLogCapture.swift"]
