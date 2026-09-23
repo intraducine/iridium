@@ -92,6 +92,7 @@ Also restored nine fork-specific templates and required text .spec/.in inputs fr
 
 Restored the remaining legacy Wine .spec export definitions and removed their incorrect ignore rule after the next clean build identified an implicit MODULE dependency. Source checks now cover implicit module export definitions, not only explicitly listed sources.
 - Cerbero 1.28.6: select C++14 for the gperf 3.1 host-tool recipe. Its legacy `register` declarations fail with the newer compiler's C++17 default. The exact recipe patch is retained in `ci/patches/cerbero-gperf-cxx14.patch`; codec language settings are unchanged.
+- Cerbero 1.28.6: fetch spandsp 0.0.6 from GStreamer's source mirror after the original host began redirecting to a domain-sale page. The original SHA-256 remains pinned in `ci/patches/cerbero-spandsp-mirror.patch`.
 - Cerbero source packaging includes a MANIFEST.in patch to retain recipes, nested patches, configuration, package definitions, tools and the launcher. This changes the source archive, not codec compilation.
 - Cerbero restores nested Meson source and patch archives from its supplied cache after checksum verification. The patch is retained in `ci/patches/cerbero-meson-source-cache.patch` so offline WebRTC/Abseil builds do not need a network download.
 

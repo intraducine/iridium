@@ -1,0 +1,12 @@
+diff --git a/recipes/spandsp.recipe b/recipes/spandsp.recipe
+--- a/recipes/spandsp.recipe
++++ b/recipes/spandsp.recipe
+@@ -7,7 +7,7 @@ class Recipe(recipe.Recipe):
+     version = '0.0.6'
+     stype = SourceType.TARBALL
+     btype = BuildType.MESON
+-    url = 'https://www.soft-switch.org/downloads/spandsp/spandsp-%(version)s.tar.gz'
++    url = 'https://gstreamer.freedesktop.org/src/mirror/spandsp-%(version)s.tar.gz'
+     tarball_checksum = 'cc053ac67e8ac4bb992f258fd94f275a7872df959f6a87763965feabfdcc9465'
+     licenses = [License.LGPLv2_1Plus]
+     deps = ['tiff']
