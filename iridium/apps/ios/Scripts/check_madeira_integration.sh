@@ -24,6 +24,7 @@ xcrun swiftc "$root/MadeiraSupport/MadeiraExternalJITRouting.swift" \
   "$root/MadeiraSupportTests/ExternalJITRoutingCheck.swift" -o "$check_binary"
 "$check_binary"
 python3 "$root/MadeiraSupportTests/HardwareKeyboardCheck.py"
+python3 "$root/MadeiraSupportTests/TouchControllerCheck.py"
 python3 "$root/MadeiraSupportTests/CursorCheck.py"
 python3 "$root/MadeiraSupportTests/InputDeliveryCheck.py"
 python3 "$root/MadeiraSupportTests/InputWaitCheck.py"

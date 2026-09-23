@@ -17,7 +17,10 @@ GPLv3 and AGPLv3 section 13 permit combining the covered components under their 
 
 Keep the supplied licenses and attribution files with redistributed copies. Modification information is recorded in CHANGES-FROM-UPSTREAM.md.
 
-An IPA release needs the corresponding source for the exact binary, build scripts, required license notices, and clear source-download instructions beside the IPA. Keep that source available, including any modified dependencies. A moving upstream branch URL is not a replacement for exact corresponding source.
+If you publish an IPA, also publish the matching source code, including changes
+to third-party libraries, and the instructions needed to rebuild it. Include
+the required license notices. Keep these files available with that release;
+a branch that changes later is not enough.
 
 CI replaces StikJIT's opaque idevice archive with a pinned source build. The script comparison and AGPL notice are recorded in StikJITNotices/SOURCES.md. Resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
 
@@ -215,12 +218,6 @@ permit LGPL replacement/relinking, and packaged binaries have component owners.
 The accepted inventory covers 2,423 binaries and 24 static archives. Reuse it;
 do not require prose for each binary, intermediate-object hashes, reproducible
 builds, or per-library marker tests. Runtime testing is a separate release task.
-
-Ship the IPA with the required source archive or fixed complete repository,
-build/relink instructions, license texts, third-party notices, and component
-manifest. Temporary local audit paths are not a permanent source delivery method.
-The archive must include corrected source inputs and modifications, not just the
-older archive used before those corrections.
 
 Residual risks: Apple compiler-runtime grant coverage remains uncertain; the
 public unsigned-IPA route has a separately acknowledged contractual risk. These
