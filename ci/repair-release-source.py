@@ -95,4 +95,4 @@ if __name__ == '__main__':
     print('Restored Cargo source files:', repair_cargo(output / 'idevice.tar.gz'))
     print('Restored Cerbero build files:', repair_cerbero(
         output / 'cerbero-1.28.6.tar.xz', root / '.build/runtime-sources/cerbero',
-        [root / 'ci/patches' / name for name in ('cerbero-gperf-cxx14.patch', 'cerbero-assets-library.patch', 'cerbero-source-manifest.patch')]))
+        [root / 'ci/patches' / name for name in ('cerbero-gperf-cxx14.patch', 'cerbero-assets-library.patch', 'cerbero-source-manifest.patch', 'cerbero-spandsp-mirror.patch')]))

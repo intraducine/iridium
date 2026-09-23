@@ -386,6 +386,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash ci/prepare-legacy-bundle.sh
+      - name: Free verified transfer copies
+        run: python3 ci/free-build-space.py
       - name: Collect exact repository and dependency source
         run: |
           python3 ci/collect-release-source.py repository
