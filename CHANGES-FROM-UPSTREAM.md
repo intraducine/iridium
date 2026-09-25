@@ -1,8 +1,23 @@
 # Changes from upstream
 
+## Moonlight iOS touch input
+
+Source: https://github.com/moonlight-stream/moonlight-ios/blob/85af0f75622bb2636481afda8b0fc5cc33d5956e/Limelight/Input/OnScreenControls.m
+Original by Diego Waxemberg; copyright (c) 2014 Moonlight Stream.
+
+`TouchControllerOverlay.swift` uses a separate UIKit touch target for each
+control, following Moonlight's touch-down, move, release, and cancellation
+pattern. It does not port Moonlight's `OnScreenControls` class. The controller
+images in `iridium/apps/ios/Iridium/Assets.xcassets/` are copied from
+Moonlight iOS at the same revision. Iridium retains its saved positions and
+uses its own XInput bridge; it does not use Moonlight's streaming transport.
+The GPL-3.0 license is retained in
+`iridium/apps/ios/MadeiraSupport/Notices/Moonlight-LICENSE.txt`.
+
 ## Launch and shutdown corrections
 
 - `WineProcessBridge.m`: accept bounded JSON argv arrays from Iridium without space splitting; expose the root process exit code and use atomic liveness state. Preserve the older Madeira developer argument interface.
+- `WineProcessBridge.m`: set Wine's profile user to `madeira` before startup, repair existing `users\mobile` registry paths, and merge legacy profile files without overwriting saves or following directory links.
 - `Winios/Winios.m`: remove the direct per-keystroke trace, including software-keyboard input.
 - `WineServerBridge.m`: publish atomic liveness and clear it on thread cleanup, including fatal startup exits. No forced thread cancellation is added.
 

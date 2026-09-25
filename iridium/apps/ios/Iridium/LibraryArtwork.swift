@@ -276,6 +276,7 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
             struct Details: Decodable {
                 struct Game: Decodable {
                     struct Screenshot: Decodable { let path_full: URL }
+                    let steam_appid: Int?
                     let type: String
                     let name: String?
                     let header_image: URL?
@@ -286,7 +287,9 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
                 let data: Game?
             }
             let result: [String: Details] = try await storeRequest("appdetails?appids=\(match.id)")
-            guard let result = result[String(match.id)], result.success, let game = result.data, game.type == "game" else {
+            let details = result[String(match.id)] ?? result.values.first { $0.data?.steam_appid == match.id }
+            guard let details, details.success, let game = details.data, game.type == "game",
+                  game.steam_appid == nil || game.steam_appid == match.id else {
                 throw ArtworkError.message("This catalog entry is not an available game. Choose another match or keep your local entry.")
             }
             // Steam supplies these larger library assets for many, but not all, games.

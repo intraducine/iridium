@@ -183,7 +183,8 @@ extension ArtworkTests {
             if request.request.url!.path.contains("storesearch") {
                 request.respond(#"{"items":[{"id":123,"name":"Custom Game","type":"app"},{"id":456,"name":"Bundle","type":"sub"}]}"#)
             } else {
-                request.respond(#"{"123":{"success":true,"data":{"type":"game"}}}"#)
+                XCTAssertTrue(request.request.url!.absoluteString.contains("appids=123"))
+                request.respond(#"{"999":{"success":true,"data":{"type":"game","steam_appid":123}}}"#)
             }
         }
         let matches = try await store.search("Custom Game")

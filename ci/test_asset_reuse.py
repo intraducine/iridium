@@ -1,15 +1,64 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from test_manual_build import load
 
 reuse = load('asset_reuse_tests', 'reuse-build-assets.py')
+local = load('local_runtime_media_reuse_tests', 'prepare-local-runtime.py')
 
 
 class AssetReuseTests(unittest.TestCase):
+    def test_spandsp_mirror_only_reuses_retained_media(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            workflow = root / reuse.WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text('jobs:\n  media:\n    runs-on: xcode-27\n    steps:\n      - run: build\n')
+            script = root / 'ci/prepare-media-sdk.sh'
+            script.parent.mkdir(parents=True)
+            current = (reuse.ROOT / 'ci/prepare-media-sdk.sh').read_text()
+            script.write_text(current.replace(reuse.SPANDSP_NEW_LOOP, reuse.SPANDSP_OLD_LOOP))
+            git('add', '.')
+            git('commit', '-qm', 'old media source')
+            previous = git('rev-parse', 'HEAD')
+            script.write_text(current)
+            mirror = root / reuse.SPANDSP_MIRROR_PATCH
+            mirror.parent.mkdir(parents=True)
+            shutil.copy2(reuse.ROOT / reuse.SPANDSP_MIRROR_PATCH, mirror)
+            git('add', '.')
+            git('commit', '-qm', 'mirror only')
+
+            fake = SimpleNamespace(
+                MEDIA_INPUTS=('ci/prepare-media-sdk.sh', reuse.SPANDSP_MIRROR_PATCH),
+                PREFIX_INPUTS=(), linux=SimpleNamespace(INPUTS=()),
+                COMPONENT_INPUTS={'graphics': (), 'jit': ()},
+                SPANDSP_MIRROR_PATCH=reuse.SPANDSP_MIRROR_PATCH,
+                media_mirror_transport_only=reuse.media_mirror_transport_only,
+                git=reuse.git, producer_job=lambda text, stage: text)
+            self.assertTrue(reuse.media_mirror_transport_only(root, previous))
+            reuse.compatible(root, previous, 'media')
+            with patch.object(local, 'ROOT', root), patch.object(local, 'CI', reuse.ROOT / 'ci'):
+                local.verify_retained_inputs(fake, previous)
+                mirror.write_text(mirror.read_text().replace('cc053ac67', 'bad53ac67'))
+                with self.assertRaisesRegex(RuntimeError, 'media'):
+                    local.verify_retained_inputs(fake, previous)
+                git('add', '.')
+                git('commit', '-qm', 'changed source checksum')
+                self.assertFalse(reuse.media_mirror_transport_only(root, previous))
+                with self.assertRaisesRegex(ValueError, 'producer input'):
+                    reuse.compatible(root, previous, 'media')
+
     def test_reviewed_action_upgrade_preserves_inputs(self):
         old = 'uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4\nwith:\n  path: source\n'
         new = old.replace('ea165f8d65b6e75b540449e92b4886f43607fa02 # v4',

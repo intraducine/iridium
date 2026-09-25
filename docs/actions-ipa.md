@@ -246,9 +246,10 @@ second build in the same checkout is rejected before shared files are modified.
 No manual extraction, clean build, or cache deletion is needed after a native
 refresh or a missing extracted-userland failure.
 
-The local build targets iOS 27 because its retained media SDK requires iOS 27.
-It is not an iOS 18/26 compatibility build. Xcode beta is selected by default;
-set `DEVELOPER_DIR` to select another suitable full Xcode installation.
+The local build targets iOS 18. Its media link check rejects a retained SDK
+whose linked objects require a newer iOS version. Restore or rebuild the media
+SDK from the current source revision if that check fails. Xcode beta is selected
+by default; set `DEVELOPER_DIR` to select another suitable full Xcode installation.
 `IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0` reports missing host tools without installing
 them. Keep the existing source trees, compiler build directories and
 `.build/local-ipa` to retain incremental compilation.

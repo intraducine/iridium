@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -147,10 +146,9 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             subprocess.run(["git", "config", "user.name", "Iridium Tests"], cwd=repo, check=True)
 
             for relative in helper.patch_paths(THREAD_PATCH):
-                source = ROOT / relative
                 destination = repo / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, destination)
+                destination.write_bytes(subprocess.check_output(["git", "show", "HEAD:" + relative], cwd=ROOT))
             metadata = repo / "testrepos/Madeira/wine/.DS_Store"
             metadata.parent.mkdir(parents=True, exist_ok=True)
             metadata.write_bytes(b"tracked macOS metadata\n")

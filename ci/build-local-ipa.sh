@@ -17,6 +17,7 @@ source .build/local-build-tools.env
 # fingerprint so a changed patch cannot be hidden by a previous cache state.
 python3 ci/prepare-local-runtime-inputs.py
 python3 ci/apply-fex-runtime-corrections.py
+python3 ci/check-media-link.py iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a
 python3 ci/prepare-local-runtime.py
 python3 ci/check-local-runtime-provenance.py
 python3 ci/local_runtime_staging.py
@@ -40,7 +41,7 @@ xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
   PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
   IRIDIUM_WINE_STAGED_ROOT="$IRIDIUM_WINE_STAGED_ROOT" \
   IRIDIUM_RUNTIME_BUNDLE_ROOT="$IRIDIUM_RUNTIME_BUNDLE_ROOT" \
-  IPHONEOS_DEPLOYMENT_TARGET=27.0 LD_GENERATE_MAP_FILE=YES build
+  LD_GENERATE_MAP_FILE=YES build
 app=.build/local-ipa/Build/Products/Release-iphoneos/Iridium.app
 objcopy="$(brew --prefix llvm)/bin/llvm-objcopy"
 echo 'Removing Windows debug sections from the packaged app copy.'

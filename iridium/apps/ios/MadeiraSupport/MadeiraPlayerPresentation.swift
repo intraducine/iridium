@@ -97,8 +97,12 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
             return wantsPointerCapture
         }
         private var wantsPointerCapture: Bool {
+            #if INTERFACE_PREVIEW
+            false
+            #else
             captureRequested && !MadeiraHardwareInput.softwareKeyboardActive && UIApplication.shared.applicationState == .active
                 && !UIAccessibility.isAssistiveTouchRunning && !GCMouse.mice().isEmpty
+            #endif
         }
 
         override func viewDidLoad() {
