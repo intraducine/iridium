@@ -2423,6 +2423,34 @@ private:
   // XCHG ops that would patch code are replaced with a hook that performs the write and manually invalidates
   // the target address.
   bool IsMonoBackpatcherBlock {false};
+
+  /* iOS-Madeira ml1057: inline sub-floor address translation.
+   *
+   * An image whose preferred base is below 4 GB cannot be mapped there on iOS, so
+   * it runs from a high "real" mapping while its own absolute pointers still name
+   * the low window. Every access through one faulted and was emulated in the Mach
+   * exception handler: 12,029,953 of them in one 11-minute run (~18,000 a second,
+   * a fifth of all running CPU samples in mach_msg, and each one stalls the guest
+   * thread for a kernel round trip). The accessor is that image's own code, which
+   * the frontend already knows at compile time -- so for blocks that live in such
+   * an image, and only those, memory operands get
+   *     addr += ((addr - Low) < Size) ? (Real - Low) : 0
+   * computed without touching NZCV (guest flags live there). Blocks of every other
+   * image are untouched. Paths this does not cover (string ops, atomics) still
+   * fault into the old emulation, so partial coverage is slower, never wrong. */
+  struct {
+    bool On {false};
+    uint64_t Low {0}, Size {0}, Delta {0};
+  } IosXl;
+  Ref IosXlate(Ref EA) {
+    if (!IosXl.On) return EA;
+    Ref T = Sub(OpSize::i64Bit, EA, Constant(IosXl.Low));          // >= 2^63 when EA < Low
+    Ref U = Sub(OpSize::i64Bit, T, Constant(IosXl.Size));          // top bit set when T < Size (or T huge)
+    Ref M = _Andn(OpSize::i64Bit, U, T);                           // U & ~T: top bit set only for 0 <= T < Size
+    Ref S = _Ashr(OpSize::i64Bit, M, Constant(63));                // all ones inside the window, else zero
+    Ref D = _And(OpSize::i64Bit, S, Constant(IosXl.Delta));
+    return Add(OpSize::i64Bit, EA, D);
+  }
   IROp_IRHeader* CurrentHeader {};
 
   [[nodiscard]]
@@ -2439,6 +2467,7 @@ private:
   }
 
   Ref _StoreMemAutoTSO(RegClass Class, OpSize Size, Ref Addr, Ref Value, OpSize Align = OpSize::i8Bit) {
+    Addr = IosXlate(Addr);
     if (IsTSOEnabled(Class)) {
       return _StoreMemTSO(Class, Size, Value, Addr, Invalid(), Align, MemOffsetType::SXTX, 1);
     } else {
@@ -2453,6 +2482,7 @@ private:
   }
 
   Ref _LoadMemAutoTSO(RegClass Class, OpSize Size, Ref ssa0, OpSize Align = OpSize::i8Bit) {
+    ssa0 = IosXlate(ssa0);
     if (IsTSOEnabled(Class)) {
       return _LoadMemTSO(Class, Size, ssa0, Invalid(), Align, MemOffsetType::SXTX, 1);
     } else {
@@ -2468,6 +2498,11 @@ private:
 
   Ref _LoadMemAutoTSO(RegClass Class, OpSize Size, const AddressMode& A, OpSize Align = OpSize::i8Bit) {
     const bool AtomicTSO = IsTSOEnabled(Class) && !A.NonTSO;
+    if (IosXl.On) {   // ml1057: the window test needs the EFFECTIVE address, so materialise it
+      Ref EA = IosXlate(LoadEffectiveAddress(this, A, GetGPROpSize(), true));
+      return AtomicTSO ? _LoadMemTSO(Class, Size, EA, Invalid(), Align, MemOffsetType::SXTX, 1)
+                       : _LoadMem(Class, Size, EA, Invalid(), Align, MemOffsetType::SXTX, 1);
+    }
     const auto B = SelectAddressMode(this, A, GetGPROpSize(), CTX->HostFeatures.SupportsTSOImm9, AtomicTSO, Class != RegClass::GPR, Size);
 
     if (AtomicTSO) {
@@ -2531,6 +2566,11 @@ private:
 
   Ref _StoreMemAutoTSO(RegClass Class, OpSize Size, const AddressMode& A, Ref Value, OpSize Align = OpSize::i8Bit) {
     const bool AtomicTSO = IsTSOEnabled(Class) && !A.NonTSO;
+    if (IosXl.On) {   // ml1057
+      Ref EA = IosXlate(LoadEffectiveAddress(this, A, GetGPROpSize(), true));
+      return AtomicTSO ? _StoreMemTSO(Class, Size, Value, EA, Invalid(), Align, MemOffsetType::SXTX, 1)
+                       : _StoreMem(Class, Size, Value, EA, Invalid(), Align, MemOffsetType::SXTX, 1);
+    }
     const auto B = SelectAddressMode(this, A, GetGPROpSize(), CTX->HostFeatures.SupportsTSOImm9, AtomicTSO, Class != RegClass::GPR, Size);
 
     if (AtomicTSO) {

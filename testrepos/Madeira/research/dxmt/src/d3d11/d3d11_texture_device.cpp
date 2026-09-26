@@ -532,8 +532,18 @@ HRESULT CreateDeviceTextureInternal(MTLD3D11Device *pDevice,
 
     mach_port_t mach_port = allocation->machPort;
     if (!mach_port) {
-      ERR("DeviceTexture: Failed to get mach port for shared texture");
-      return E_FAIL;
+      /* ml866: no shareable port means sharing is unavailable here (the
+       * remote backend cannot pass IOSurfaces between machines). The texture
+       * itself exists, so keep it and carry on unshared: an engine asking for
+       * a shared flag it will never exercise loses nothing, while E_FAIL was
+       * a fatal in the caller. */
+      static bool said = false;
+      if (!said) { said = true; ERR("DeviceTexture: no mach port for a shared texture; continuing unshared"); }
+      initialize(std::move(allocation));
+      auto *tex = ref(new DeviceTexture<tag>(&finalDesc, std::move(texture), pDevice));
+      tex->SetMipBias(mip_bias);
+      *ppTexture = reinterpret_cast<typename tag::COM_IMPL *>(tex);
+      return S_OK;
     }
     SharedResourceData runtimeData;
     MakeUniqueSharedName(runtimeData.mach_port_name);

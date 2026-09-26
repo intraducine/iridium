@@ -8,7 +8,7 @@ implementa chamadas da API do Windows usando os equivalentes do Unix
 ou do X11. A biblioteca também pode ser usada para portar código
 Win32 em executáveis nativos Unix.
 
-Wine é software livre, liberado segundo a GNU GPL; veja o arquivo
+Wine é software livre, liberado segundo a GNU LGPL; veja o arquivo
 LICENSE para detalhes.
 
 

@@ -284,9 +284,9 @@ of the authors, please see the file
 .I AUTHORS
 in the top-level directory of the source distribution.
 .SH COPYRIGHT
-Wine can be distributed under the terms of the GPL license. A copy of the
+Wine can be distributed under the terms of the LGPL license. A copy of the
 license is in the file
-.I COPYING
+.I COPYING.LIB
 in the top-level directory of the source distribution.
 .SH BUGS
 .PP

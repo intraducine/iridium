@@ -5,16 +5,16 @@
  * Copyright 2002 Dmitry Timoshkov for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -85,6 +85,19 @@ void *__wine_syscall_dispatcher = NULL;
  * discovered" and must never be used as an offset. */
 unsigned int ios_teb_tsd_offset = 0;
 ULONG_PTR iridium_fex_arena_bounds[2];
+
+/* iOS-Madeira ml797: the FEX arena, published by ntdll-unix and handed to the
+ * emulator from arm64ec_process_init_dispatchers().
+ *
+ * It cannot travel as an environment variable. The consumer is rpmalloc's band
+ * selector, which runs before the ARM64EC TEB exists and before ucrtbase's
+ * DllMain -- so getenv() recurses in _lock(17) and GetEnvironmentVariableA
+ * faults reading the TEB. Both were shipped and both killed every launch. A
+ * plain data export is the only channel that costs no call at all.
+ *
+ * Zero means "no arena published"; the emulator then selects its own band. */
+ULONG_PTR ios_fex_arena_base = 0;
+ULONG_PTR ios_fex_arena_end = 0;   /* exclusive */
 unixlib_handle_t __wine_unixlib_handle = 0;
 
 /* windows directory */
@@ -1321,6 +1334,52 @@ void ios_eager_delay_resolve( const char *when )
 }
 #endif
 
+#ifdef __arm64ec__
+/* Candidate: preserve the x64-facing side of public import forwarders.
+ * An EC image is mixed-ISA; its primary IAT is not necessarily native-only.
+ * The linker-provided auxiliary import checker remains available to EC callers.
+ * Keep this separate from any broad auxiliary-IAT or call-checker redesign.
+ */
+#include "arm64ec_x64_export_iat.c"
+
+static BOOL arm64ec_iat_is_exported_x64( HMODULE module, const IMAGE_THUNK_DATA *slot )
+{
+    const IMAGE_ARM64EC_METADATA *metadata = arm64ec_get_module_metadata( module );
+    const IMAGE_NT_HEADERS *nt = RtlImageNtHeader( module );
+    const IMAGE_EXPORT_DIRECTORY *exports;
+    ULONG export_size;
+    ULONG_PTR slot_rva = (ULONG_PTR)slot - (ULONG_PTR)module;
+
+    BOOL selected;
+
+    if (!metadata || !nt || slot_rva > nt->OptionalHeader.SizeOfImage) return FALSE;
+    exports = RtlImageDirectoryEntryToData( module, TRUE, IMAGE_DIRECTORY_ENTRY_EXPORT, &export_size );
+    if (!exports) return FALSE;
+    selected = arm64ec_iat_slot_is_x64_export( module, nt->OptionalHeader.SizeOfImage, slot_rva,
+                                               (const char *)exports - (const char *)module, export_size,
+                                               metadata->CodeMap, metadata->CodeMapCount );
+    /* ml943: this IS the canary Astra asked for, folded into the real run so one
+     * launch answers both questions. A selected slot must end up holding the
+     * x64-visible FFS of the imported export, NOT its native ARM64 body -- the
+     * body is what a hook resolver was reaching through the FF25 stub and
+     * overwriting with x64 instructions. Print the slot and the value we are
+     * preserving; cross-check the value against the [jit-pool] image lines to
+     * confirm it lands in .hexpthk and not in .text. Capped: import binding is
+     * hot and there are ~1565 selected slots across the shipped DLL set. */
+    if (selected)
+    {
+        static int x64_iat_log;
+        if (x64_iat_log < 40)
+        {
+            x64_iat_log++;
+            ERR( "ml943 [x64-iat] %p slot rva %#x: KEEPING x64 target %p (public FF25 export stub, no native redirect)\n",
+                 module, (unsigned int)slot_rva, (void *)slot->u1.Function );
+        }
+    }
+    return selected;
+}
+#endif
+
 static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, LPCWSTR load_path, WINE_MODREF **pwm )
 {
     HMODULE module = wm->ldr.DllBase;
@@ -1440,7 +1499,7 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
                      (void *)thunk_list->u1.Function );
             }
 #ifdef __arm64ec__
-            else if (imp_metadata)
+            else if (imp_metadata && !arm64ec_iat_is_exported_x64( module, thunk_list ))
                 thunk_list->u1.Function = (ULONG_PTR)arm64ec_redirect_ptr( imp_mod,
                                                                            (void *)thunk_list->u1.Function,
                                                                            imp_metadata );
@@ -1463,7 +1522,7 @@ static BOOL import_dll( WINE_MODREF *wm, const IMAGE_IMPORT_DESCRIPTOR *descr, L
                      (void *)thunk_list->u1.Function );
             }
 #ifdef __arm64ec__
-            else if (imp_metadata)
+            else if (imp_metadata && !arm64ec_iat_is_exported_x64( module, thunk_list ))
             {
                 void *pre = (void *)thunk_list->u1.Function;
 
@@ -4841,6 +4900,69 @@ void WINAPI LdrShutdownThread(void)
     /* don't do any detach calls if process is exiting */
     if (process_detaching) return;
 
+    /* iOS-Madeira ml843 [detach-probe]: is the FEX emulator stack top already
+     * sitting in this thread's TLS BEFORE any detach cleanup runs?
+     *
+     * Two fresh UE5 runs died in the engine allocator freeing exactly this
+     * thread's EmulatorStackBase during thread detach. If the value is already
+     * in a TLS slot, an FLS slot or the static TLS block here, the allocator was
+     * handed it by whoever wrote that slot; if it is absent here and present at
+     * the fatal, the detach path itself introduced it. Placed ABOVE the FLS
+     * pass on purpose: that is the first cleanup that runs per-thread
+     * destructors. Passive, bounded, fault-safe reads only. */
+    {
+        static LONG probed;
+        if (InterlockedIncrement( &probed ) <= 12)
+        {
+            CHPE_V2_CPU_AREA_INFO *area = NtCurrentTeb()->ChpeV2CpuAreaInfo;
+            ULONG_PTR top = area ? (ULONG_PTR)area->EmulatorStackBase : 0;
+            ULONG_PTR alo = (ULONG_PTR)area, ahi = alo + 0x58;
+            unsigned hits = 0, k, b;
+            void **blocks = NtCurrentTeb()->ThreadLocalStoragePointer;
+
+#define IOS_DP_CHECK(val, fmt, ...) do { ULONG_PTR v_ = (ULONG_PTR)(val); \
+                if (v_ && (v_ == top || (area && v_ >= alo && v_ < ahi))) { hits++; \
+                    ERR( "[detach-probe] ml843   " fmt " = %p %s\n", __VA_ARGS__, (void *)v_, \
+                         v_ == top ? "== EMULATOR STACK TOP" : "points INTO the CPU area" ); } } while (0)
+
+            for (k = 0; k < 64; k++) IOS_DP_CHECK( NtCurrentTeb()->TlsSlots[k], "TlsSlots[%u]", k );
+            if (NtCurrentTeb()->TlsExpansionSlots)
+                for (k = 0; k < 1024; k++)
+                    IOS_DP_CHECK( NtCurrentTeb()->TlsExpansionSlots[k], "TlsExpansionSlots[%u]", k );
+            if (NtCurrentTeb()->FlsSlots)
+                for (k = 0; k < 128; k++)
+                    IOS_DP_CHECK( ((void **)NtCurrentTeb()->FlsSlots)[k], "FlsSlots[%u]", k );
+            for (b = 0; blocks && b < tls_module_count && b < 8; b++)
+            {
+                ULONG_PTR blk[128];
+                SIZE_T got = 0;
+                if (!blocks[b]) continue;
+                if (NtReadVirtualMemory( GetCurrentProcess(), blocks[b], blk, sizeof(blk), &got ))
+                    continue;
+                for (k = 0; k < got / sizeof(ULONG_PTR); k++)
+                    IOS_DP_CHECK( blk[k], "static TLS block %u +0x%x", b, (unsigned)(k * 8) );
+            }
+#undef IOS_DP_CHECK
+            ERR( "[detach-probe] ml843 tid=%04x top=%p area=%p tls-blocks=%u hits=%u (before FLS/detach cleanup)\n",
+                 (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread, (void *)top, (void *)area,
+                 blocks ? (unsigned)tls_module_count : 0u, hits );
+            /* ml844: the object at +0x38 is 16 bytes with a destructor that frees
+             * its first word. If +0x40 carries a small count pair the engine's own
+             * array growth stored the pointer (the allocator RETURNED it); if it
+             * is zero, only the pointer word was written -- a stray write. */
+            if (blocks && blocks[0])
+            {
+                ULONG64 q[12]; SIZE_T got = 0;
+                if (!NtReadVirtualMemory( GetCurrentProcess(), blocks[0], q, sizeof(q), &got ) && got == sizeof(q))
+                    ERR( "[detach-probe] ml844   tls0[+00..+58] = %llx %llx %llx %llx %llx %llx | %llx %llx %llx | %llx %llx %llx\n",
+                         (unsigned long long)q[0], (unsigned long long)q[1], (unsigned long long)q[2],
+                         (unsigned long long)q[3], (unsigned long long)q[4], (unsigned long long)q[5],
+                         (unsigned long long)q[6], (unsigned long long)q[7], (unsigned long long)q[8],
+                         (unsigned long long)q[9], (unsigned long long)q[10], (unsigned long long)q[11] );
+            }
+        }
+    }
+
     RtlProcessFlsData( NtCurrentTeb()->FlsSlots, 1 );
 
     RtlEnterCriticalSection( &loader_section );
@@ -5584,7 +5706,21 @@ void loader_init( CONTEXT *context, void **entry )
         if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
 #endif
 #ifdef __arm64ec__
-        arm64ec_thread_init();
+        {
+            /* The emulator can fail to start a thread -- its address band is
+             * finite, and a title with enough threads exhausts it. This status
+             * used to be discarded, and the emulator then faulted its way to a
+             * stack overflow and died HOLDING loader_section, so the next
+             * module load blocked forever and the process sat inert with
+             * nothing logged. Release the lock and end only this thread. */
+            NTSTATUS ec_status = arm64ec_thread_init();
+            if (ec_status)
+            {
+                ERR( "arm64ec_thread_init failed %lx -- terminating this thread only\n", ec_status );
+                RtlLeaveCriticalSection( &loader_section );
+                for (;;) NtTerminateThread( GetCurrentThread(), ec_status );
+            }
+        }
 #endif
 
         if (NtCurrentTeb()->SkipThreadAttach)

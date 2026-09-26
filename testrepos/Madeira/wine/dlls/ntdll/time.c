@@ -9,16 +9,16 @@
  * Copyright 2007 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -379,11 +379,89 @@ LONGLONG WINAPI RtlGetSystemTimePrecise( void )
 /******************************************************************************
  *  RtlQueryPerformanceCounter   [NTDLL.@]
  */
+#if defined(__aarch64__) || defined(__arm64ec__)
+/* iOS-Madeira ml1117: QueryPerformanceCounter in user mode, as Windows on ARM64
+ * does. It used to be a full system call (EC->unix transition, syscall
+ * dispatcher, mach_continuous_time) on every read, and RDR2 reads it several
+ * times per job: QueryPerformanceCounter was 5-13 % of running guest samples.
+ *
+ * The generic timer counts at CNTFRQ in user mode. The syscall's counter is
+ * mach_continuous_time in 100 ns units, which runs at the same rate but has a
+ * different origin and also advances while the device sleeps, so the offset
+ * between the two is measured against the syscall and re-checked about once a
+ * second of counter time. The offset only ever moves forward, and only by more
+ * than 1 ms (a real sleep), so it is constant while the game runs and the
+ * counter stays monotonic within and across threads. */
+static ULONGLONG qpc_freq, qpc_last_sync;
+static LONGLONG qpc_offset;
+static LONG qpc_disabled;
+
+static inline ULONGLONG qpc_read_cntvct(void)
+{
+    ULONGLONG v;
+    __asm__ __volatile__( "isb\n\tmrs %0, cntvct_el0" : "=r"(v) :: "memory" );
+    return v;
+}
+
+static inline ULONGLONG qpc_to_ticks( ULONGLONG c )
+{
+    return (c / qpc_freq) * TICKSPERSEC + (c % qpc_freq) * TICKSPERSEC / qpc_freq;
+}
+
+BOOL WINAPI DECLSPEC_HOTPATCH RtlQueryPerformanceCounter( LARGE_INTEGER *counter )
+{
+    ULONGLONG c;
+
+    if (qpc_disabled) goto slow;
+    if (!qpc_freq)
+    {
+        ULONGLONG f;
+        __asm__ __volatile__( "mrs %0, cntfrq_el0" : "=r"(f) );
+        if (!f) { qpc_disabled = 1; goto slow; }
+        qpc_freq = f;
+    }
+    c = qpc_read_cntvct();
+    if (!qpc_last_sync || c - qpc_last_sync >= qpc_freq)
+    {
+        LARGE_INTEGER sys;
+        ULONGLONG c0 = qpc_read_cntvct(), c1;
+        LONGLONG off;
+        NtQueryPerformanceCounter( &sys, NULL );
+        c1 = qpc_read_cntvct();
+        off = sys.QuadPart - (LONGLONG)qpc_to_ticks( c0 + (c1 - c0) / 2 );
+        if (!qpc_last_sync || off > qpc_offset + TICKSPERSEC / 1000) qpc_offset = off;
+        qpc_last_sync = c1;
+        c = c1;
+    }
+    counter->QuadPart = (LONGLONG)qpc_to_ticks( c ) + qpc_offset;
+    {   /* ml1131: per-thread gap between successive reads (spin loop or not?).
+         * Plain stores into the calling thread's slot; a tid-hash collision only
+         * blurs the histogram. Buckets: < 1, 10, 100 us, < 1 ms, >= 1 ms. */
+        static ULONGLONG t1, t10, t100, t1000;
+        DWORD tid = GetCurrentThreadId();
+        struct ios_xp_nt_qpc *q = &ios_xp_nt.qpc[(tid >> 2) & 255];
+        if (!t1) { ios_xp_nt_init(); t1 = qpc_freq / 1000000; t10 = t1 * 10; t100 = t1 * 100; t1000 = t1 * 1000; }
+        if (q->tid != tid) { q->tid = tid; q->last = c; q->calls = 0; memset( q->hist, 0, sizeof(q->hist) ); }
+        else
+        {
+            ULONGLONG d = c - q->last;
+            q->hist[d < t1 ? 0 : d < t10 ? 1 : d < t100 ? 2 : d < t1000 ? 3 : 4]++;
+            q->last = c;
+        }
+        q->calls++;
+    }
+    return TRUE;
+slow:
+    NtQueryPerformanceCounter( counter, NULL );
+    return TRUE;
+}
+#else
 BOOL WINAPI DECLSPEC_HOTPATCH RtlQueryPerformanceCounter( LARGE_INTEGER *counter )
 {
     NtQueryPerformanceCounter( counter, NULL );
     return TRUE;
 }
+#endif
 
 /******************************************************************************
  *  RtlQueryPerformanceFrequency   [NTDLL.@]

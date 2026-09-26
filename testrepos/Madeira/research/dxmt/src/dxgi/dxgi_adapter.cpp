@@ -8,6 +8,12 @@
 #include "dxgi_object.hpp"
 #include "d3d10_1.h"
 #include "Metal.hpp"
+#include <cstdio>     /* ml1007 */
+#include <cstdlib>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace dxmt {
 
@@ -165,10 +171,11 @@ public:
 
     pDesc->SubSysId = 0;
     pDesc->Revision = 0;
-    if (device_.hasUnifiedMemory())
-      pDesc->DedicatedVideoMemory = device_.recommendedMaxWorkingSetSize() / 2; // FIXME: use a more appropriate value
-    else
-      pDesc->DedicatedVideoMemory = device_.recommendedMaxWorkingSetSize();
+    // ml1042: the unix side now returns an honest per-process video budget (see
+    // winemetal_unix.c), so report it whole. The old "/2 on unified memory" was a
+    // guess compensating for a number that was far too large; halving a correct
+    // number would just starve the application of half its real budget.
+    pDesc->DedicatedVideoMemory = device_.recommendedMaxWorkingSetSize();
     pDesc->DedicatedSystemMemory = 0;
     pDesc->SharedSystemMemory = 0;
     pDesc->AdapterLuid = GetAdapterLuid(device_);
@@ -214,15 +221,35 @@ public:
     return hr;
   }
 
+  /* ml1007: the same defect as the budget-notification pair below -- both were
+   * `assert(0 && "TODO")` with no return, compiling to a single `brk #1`. The
+   * compiler says so plainly ("non-void function does not return a value"), and
+   * rdr76 died on the sibling method, so this one is the same landmine one
+   * vtable slot away.
+   *
+   * Unlike the budget notification, this is genuinely UNAVAILABLE rather than
+   * merely static: there is no hardware content-protection path on this
+   * platform, so there is no teardown to be notified about. DXGI_ERROR_UNSUPPORTED
+   * is the truthful answer -- returning S_OK would promise a notification that
+   * could never arrive and would mislead a caller that depends on it. */
   HRESULT STDMETHODCALLTYPE
   RegisterHardwareContentProtectionTeardownStatusEvent(HANDLE event,
                                                        DWORD *cookie) override {
-    assert(0 && "TODO");
+    (void)event;
+    if (!cookie)
+      return E_INVALIDARG;
+    *cookie = 0;
+    Logger::warn("DXGI: RegisterHardwareContentProtectionTeardownStatusEvent -- "
+                 "no hardware content protection on this platform, returning "
+                 "DXGI_ERROR_UNSUPPORTED");
+    return DXGI_ERROR_UNSUPPORTED;
   }
 
   void STDMETHODCALLTYPE
   UnregisterHardwareContentProtectionTeardownStatus(DWORD cookie) override {
-    assert(0 && "TODO");
+    /* Nothing was ever registered; the method returns void and cannot report. */
+    Logger::warn(str::format("DXGI: UnregisterHardwareContentProtectionTeardownStatus "
+                             "cookie=", cookie, " -- nothing was registered, ignored"));
   }
 
   HRESULT STDMETHODCALLTYPE QueryVideoMemoryInfo(
@@ -258,25 +285,110 @@ public:
     return S_OK;
   }
 
+  /* ml1007: implement budget-change notification registration.
+   *
+   * These two were `assert(0 && "TODO")`. The Register variant additionally had
+   * no return statement at all, so even with NDEBUG it falls off the end of a
+   * non-void function. Compiled, the body is a single `brk #1`, and rdr76
+   * traps there: RDR2 reaches DXGI adapter setup, calls this method through the
+   * IDXGIAdapter3 vtable, and the process takes STATUS_ILLEGAL_INSTRUCTION
+   * (c000001d) which nothing handles.
+   *
+   * Contract: register `event` to be signalled when the video-memory budget
+   * changes, hand back a cookie that Unregister accepts. Registration is done
+   * for real -- a unique cookie, the handle retained, and Unregister actually
+   * removing it -- so the bookkeeping the caller observes is truthful.
+   *
+   * We do NOT fabricate notifications. QueryVideoMemoryInfo reports Budget from
+   * the Metal device's recommended working-set size, which does not change
+   * during a run on this platform, so no budget-change event is due and an
+   * event that never fires is the accurate outcome rather than a missing
+   * feature. If Budget ever becomes dynamic, signal the registered handles at
+   * the point it changes -- that is the only correct place for it.
+   *
+   * ⛔ MEASURED, rdr77 vs rdr78 -- a clean single-variable A/B on the same
+   * build, flipping only the file below:
+   *   S_OK + event never fires  -> RDR2 HUNG on an auto-reset Event, infinite
+   *                                wait, 8 minutes, no window
+   *   DXGI_ERROR_UNSUPPORTED    -> swapchain created, 240 GPU flush cycles, the
+   *                                game window appeared
+   * So the caller really does wait on this event, and "register successfully and
+   * never signal" is NOT an acceptable reading of a static budget -- Astra's
+   * warning against returning fake success was correct and my first
+   * implementation was wrong. DEFAULT IS THEREFORE THE HONEST FAILURE.
+   *
+   * Documents/madeira-dxgi-budget.txt = 1 re-enables real registration, for
+   * when Budget becomes dynamic and we can actually signal the handles. Do not
+   * enable it before there is a signalling path. */
   HRESULT STDMETHODCALLTYPE RegisterVideoMemoryBudgetChangeNotificationEvent(
       HANDLE event, DWORD *cookie) override {
-    assert(0 && "TODO");
+    if (!cookie)
+      return E_INVALIDARG;
+
+    if (!budget_notify_enabled()) {
+      Logger::warn("DXGI: RegisterVideoMemoryBudgetChangeNotificationEvent "
+                   "disabled by madeira-dxgi-budget.txt -> DXGI_ERROR_UNSUPPORTED");
+      return DXGI_ERROR_UNSUPPORTED;
+    }
+
+    std::lock_guard<std::mutex> lock(budget_mutex_);
+    DWORD assigned = ++budget_cookie_seq_;
+    budget_events_.emplace_back(assigned, event);
+    *cookie = assigned;
+    Logger::warn(str::format("DXGI: registered video-memory budget notification "
+                             "cookie=", assigned, " (budget is static on this "
+                             "platform, so no notification is expected)"));
+    return S_OK;
   }
 
   void STDMETHODCALLTYPE
   UnregisterVideoMemoryBudgetChangeNotification(DWORD cookie) override {
-    assert(0 && "TODO");
+    std::lock_guard<std::mutex> lock(budget_mutex_);
+    for (auto it = budget_events_.begin(); it != budget_events_.end(); ++it) {
+      if (it->first == cookie) {
+        budget_events_.erase(it);
+        Logger::warn(str::format("DXGI: unregistered video-memory budget "
+                                 "notification cookie=", cookie));
+        return;
+      }
+    }
+    /* Windows ignores an unknown cookie here (the method returns void and
+     * cannot report). Say so rather than silently doing nothing. */
+    Logger::warn(str::format("DXGI: UnregisterVideoMemoryBudgetChangeNotification "
+                             "for unknown cookie=", cookie, " -- ignored"));
   }
 
   WMT::Device STDMETHODCALLTYPE GetMTLDevice() final { return device_; }
   D3DKMT_HANDLE STDMETHODCALLTYPE GetLocalD3DKMT() final { return local_kmt_; }
 
 private:
+  /* ml1007: read once. Absent file (the normal case) leaves this enabled. */
+  static bool budget_notify_enabled() {
+    /* Default FALSE: see the A/B in the comment above. Only an explicit "1"
+     * turns real registration back on. */
+    static const bool enabled = [] {
+      const char *docs = std::getenv("MADEIRA_DOCS_DIR");
+      if (!docs || !*docs)
+        return false;
+      std::string path = std::string(docs) + "/madeira-dxgi-budget.txt";
+      FILE *f = std::fopen(path.c_str(), "r");
+      if (!f)
+        return false;
+      int c = std::fgetc(f);
+      std::fclose(f);
+      return c == '1';
+    }();
+    return enabled;
+  }
+
   WMT::Reference<WMT::Device> device_;
   D3DKMT_HANDLE local_kmt_ = 0;
   Com<IDXGIFactory> factory_;
   DxgiOptions options_;
   uint64_t mem_reserved_[2] = {0, 0};
+  std::mutex budget_mutex_;
+  std::vector<std::pair<DWORD, HANDLE>> budget_events_;
+  DWORD budget_cookie_seq_ = 0;
 };
 
 Com<IMTLDXGIAdapter> CreateAdapter(WMT::Device Device,

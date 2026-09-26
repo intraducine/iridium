@@ -9,7 +9,7 @@ Verwendung der entsprechenden Unix- oder X11-Gegenstücke implementiert.
 Winelib kann auch benutzt werden, um Windows-Code nativ nach Unix
 zu portieren.
 
-Wine ist Freie Software, die unter der GNU GPL veröffentlicht wird;
+Wine ist Freie Software, die unter der GNU LGPL veröffentlicht wird;
 Bitte lesen Sie die Details in der Datei LICENSE nach.
 
 

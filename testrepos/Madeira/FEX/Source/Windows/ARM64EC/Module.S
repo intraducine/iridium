@@ -18,6 +18,18 @@
 // registers, and an unmatched sequence silently keeps reading the wrong slot.
 // The JIT emitters read the same offset at runtime via IosTebTsdOffset.
 #ifdef FEX_IOS_HOST
+.arch_extension lse   // ml1131: stadd/ldadd for the transition probe counters
+// ml1131: add 1 to the sp-sharded counter at IosXpFex + \off. Clobbers \a, \b.
+.macro IOS_XP_COUNT off, a, b
+  adrp \a, IosXpFex
+  add \a, \a, #:lo12:IosXpFex
+  mov \b, sp
+  ubfx \b, \b, #16, #4
+  add \a, \a, \b, lsl #6
+  add \a, \a, #\off
+  mov \b, #1
+  stadd \b, [\a]
+.endm
 .macro IOS_LOAD_TEB reg
   mrs \reg, TPIDRRO_EL0
   and \reg, \reg, #~7
@@ -113,20 +125,34 @@ ExitToX64:
   // x4/x9 are spilled to free loop registers; restored on every exit path.
   // (Native EC callers keep sp 16-aligned at call boundaries per AAPCS.)
   stp x4, x9, [sp, #-16]!
-  adrp x16, IosAliasEntries
-  add x16, x16, #:lo12:IosAliasEntries
-  adrp x9, IosAliasCount
-  ldr w9, [x9, #:lo12:IosAliasCount]
-ios_ffs_xlate_loop:
-  cbz w9, ios_ffs_xlate_done
+  // ml1116: last-hit entry first, then the table newest-first.
+  adrp x16, IosAliasLast
+  ldr x16, [x16, #:lo12:IosAliasLast]
+  cbz x16, ios_ffs_xlate_walk
   ldr x4, [x16, #8]      // Entry.JitBase
   sub x4, x17, x4
   ldr x23, [x16, #16]    // Entry.Size
   cmp x4, x23
   b.lo ios_ffs_xlate_hit
-  add x16, x16, #32
+ios_ffs_xlate_walk:
+  adrp x9, IosAliasCount
+  ldr w9, [x9, #:lo12:IosAliasCount]
+  adrp x16, IosAliasEntries
+  add x16, x16, #:lo12:IosAliasEntries
+  add x16, x16, x9, lsl #5   // one past the last entry
+ios_ffs_xlate_loop:
+  cbz w9, ios_ffs_xlate_done
+  sub x16, x16, #32
   sub w9, w9, #1
+  ldr x4, [x16, #8]      // Entry.JitBase
+  sub x4, x17, x4
+  ldr x23, [x16, #16]    // Entry.Size
+  cmp x4, x23
+  b.lo ios_ffs_xlate_hit_walk
   b ios_ffs_xlate_loop
+ios_ffs_xlate_hit_walk:
+  adrp x23, IosAliasLast
+  str x16, [x23, #:lo12:IosAliasLast]
 ios_ffs_xlate_hit:
   ldr x23, [x16]         // Entry.PeBase
   add x17, x23, x4       // target in PE space
@@ -161,6 +187,7 @@ ios_ffs_reject:
   str x23, [x16, #16]    // [2] = matched-but-rejected count
   str x17, [x16, #24]    // [3] = last rejected (PE-space) target
 ios_ffs_no_bypass:
+  IOS_XP_COUNT 2112, x16, x17   // ml1131: EC->x64 call (callback) emulated
 #endif
   str lr, [sp, #-8]! // Push return address to stack, this will be popped by the x86 RET instr.
 
@@ -240,10 +267,40 @@ BeginSimulation:
 .global ExitFunctionEC
 ExitFunctionEC:
   // Clear any the AFP NEP and AH bits in FPCR as native code won't expect their behaviour.
+  // ml1125: only WRITE FPCR when a bit actually has to change. An FPCR write is
+  // expensive on Apple cores (the samples pile up on the instruction after it,
+  // ph-rdr74/75), and with AFP disabled (FEX_HOSTFEATURES=disableafp) the bits
+  // are never set, so every x64->EC call paid for a no-op write. NZCV is free
+  // here: the cmp at check_thunk clobbers it on every path anyway.
   mrs x17, fpcr
+  tst x17, #6
+  b.eq 1f
   and x17, x17, #~6 // NEP + AH
   msr fpcr, x17
 #ifdef FEX_IOS_HOST
+  IOS_XP_COUNT 1088, x16, x23   // ml1131: FPCR writes actually performed
+#endif
+1:
+#ifdef FEX_IOS_HOST
+  // ml1131: count this x64->EC call (x9 = target as the caller addressed it) and
+  // append every 64th target of a shard to the ring. x4 (x64 R10, volatile at a
+  // call boundary), x16, x17 and x23 are clobbered on every path below anyway.
+  adrp x16, IosXpFex
+  add x16, x16, #:lo12:IosXpFex
+  mov x23, sp
+  ubfx x23, x23, #16, #4
+  add x17, x16, x23, lsl #6
+  add x17, x17, #64
+  mov x4, #1
+  ldadd x4, x23, [x17]
+  tst x23, #63
+  b.ne 2f
+  add x17, x16, #3136
+  ldadd x4, x23, [x17]
+  and x23, x23, #4095
+  add x17, x16, #3200
+  str x9, [x17, x23, lsl #3]
+2:
   IOS_LOAD_TEB x17
   ldr x17, [x17, #0x1788] // TEB->ChpeV2CpuAreaInfo
 #else
@@ -267,20 +324,34 @@ ExitFunctionSuspendResumePoint:
   // x64 R10 (volatile at this call/ret boundary) and is clobbered by the
   // entry-thunk path below. NZCV is clobbered by the cmp at check_thunk
   // regardless.
-  adrp x16, IosAliasEntries
-  add x16, x16, #:lo12:IosAliasEntries
+  // ml1116: last-hit entry first, then the table newest-first.
+  adrp x16, IosAliasLast
+  ldr x16, [x16, #:lo12:IosAliasLast]
+  cbz x16, ios_ec_xlate_walk
+  ldr x23, [x16]        // Entry.PeBase
+  sub x23, x9, x23
+  ldr x4, [x16, #16]    // Entry.Size
+  cmp x23, x4
+  b.lo ios_ec_xlate_hit
+ios_ec_xlate_walk:
   adrp x17, IosAliasCount
   ldr w17, [x17, #:lo12:IosAliasCount]
+  adrp x16, IosAliasEntries
+  add x16, x16, #:lo12:IosAliasEntries
+  add x16, x16, x17, lsl #5   // one past the last entry
 ios_ec_xlate_loop:
   cbz w17, ios_ec_xlate_done
+  sub x16, x16, #32
+  sub w17, w17, #1
   ldr x23, [x16]        // Entry.PeBase
   sub x23, x9, x23      // offset into image (unsigned-wraps huge if below base)
   ldr x4, [x16, #16]    // Entry.Size
   cmp x23, x4
-  b.lo ios_ec_xlate_hit
-  add x16, x16, #32
-  sub w17, w17, #1
+  b.lo ios_ec_xlate_hit_walk
   b ios_ec_xlate_loop
+ios_ec_xlate_hit_walk:
+  adrp x4, IosAliasLast
+  str x16, [x4, #:lo12:IosAliasLast]
 ios_ec_xlate_hit:
   ldr x4, [x16, #8]     // Entry.JitBase
   add x9, x4, x23

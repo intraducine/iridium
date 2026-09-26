@@ -7,7 +7,7 @@ Microsoft Windows, e uma livraria (chamada Winelib) que implementa
 Windows API calls usando o Unix ou X11 equivalentes. A livraria também
 pode ser usada para "porting" Win32 código para executáveis do nativo Unix .
 
-Wine é software grátis,autorizado segundo a GNU GPL; ver o ficheiro
+Wine é software grátis,autorizado segundo a GNU LGPL; ver o ficheiro
 LICENÇA para os detalhes.
 
 ## ARRANQUE RÁPIDO

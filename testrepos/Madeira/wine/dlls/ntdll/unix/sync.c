@@ -7,16 +7,16 @@
  * Copyright 2003 Eric Pouech
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -26,6 +26,7 @@
 #endif
 
 #include "config.h"
+#include "../../../../build/madeira_cfg.h"   /* Before Wine API headers, which ban strncpy. */
 
 #include <assert.h>
 #include <errno.h>
@@ -545,8 +546,69 @@ struct inproc_sync
 #define INPROC_SYNC_CACHE_BLOCK_SIZE  (65536 / sizeof(struct inproc_sync))
 #define INPROC_SYNC_CACHE_ENTRIES     128
 
+#ifdef WINE_IOS
+/* iOS-Madeira ml1058: this cache is indexed by HANDLE VALUE, and on iOS every
+ * pseudo-process shares this one copy of ntdll's unix side while owning its own
+ * handle table. One global cache would hand process B the object behind process
+ * A's handle 0x44. Same rule as the fd cache (ml571): one cache per PEB, dropped
+ * when that pseudo-process dies so a recycled PEB address starts clean. */
+struct ios_inproc_cache
+{
+    void *peb;
+    struct inproc_sync *blocks[INPROC_SYNC_CACHE_ENTRIES];
+    struct inproc_sync  initial[INPROC_SYNC_CACHE_BLOCK_SIZE];
+};
+#define IOS_MAX_INPROC_CACHES 64
+static struct ios_inproc_cache *ios_inproc_caches[IOS_MAX_INPROC_CACHES];
+static pthread_mutex_t ios_inproc_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct ios_inproc_cache ios_inproc_cache_fallback;
+
+static struct ios_inproc_cache *ios_get_inproc_cache(void)
+{
+    void *peb = NtCurrentTeb()->Peb;
+    struct ios_inproc_cache *c = NULL;
+    int i, free_slot = -1;
+
+    for (i = 0; i < IOS_MAX_INPROC_CACHES; i++)      /* lock-free hit: entries only appear/disappear under the lock */
+    {
+        struct ios_inproc_cache *e = ios_inproc_caches[i];
+        if (e && e->peb == peb) return e;
+    }
+    pthread_mutex_lock( &ios_inproc_cache_lock );
+    for (i = 0; i < IOS_MAX_INPROC_CACHES; i++)
+    {
+        if (ios_inproc_caches[i] && ios_inproc_caches[i]->peb == peb) { c = ios_inproc_caches[i]; break; }
+        if (!ios_inproc_caches[i] && free_slot < 0) free_slot = i;
+    }
+    if (!c && free_slot >= 0 && (c = calloc( 1, sizeof(*c) )))
+    {
+        c->peb = peb;
+        ios_inproc_caches[free_slot] = c;
+    }
+    pthread_mutex_unlock( &ios_inproc_cache_lock );
+    return c ? c : &ios_inproc_cache_fallback;
+}
+
+/* Called when a pseudo-process dies (next to ios_fd_cache_release). The blocks
+ * are deliberately NOT freed: a laggard thread may still be inside a lookup. */
+void ios_inproc_cache_release( void *peb )
+{
+    int i;
+    pthread_mutex_lock( &ios_inproc_cache_lock );
+    for (i = 0; i < IOS_MAX_INPROC_CACHES; i++)
+        if (ios_inproc_caches[i] && ios_inproc_caches[i]->peb == peb)
+        {
+            ios_inproc_caches[i]->peb = (void *)~(uintptr_t)0;   /* never matches again */
+            ios_inproc_caches[i] = NULL;
+        }
+    pthread_mutex_unlock( &ios_inproc_cache_lock );
+}
+#define inproc_sync_cache               (ios_get_inproc_cache()->blocks)
+#define inproc_sync_cache_initial_block (ios_get_inproc_cache()->initial)
+#else
 static struct inproc_sync *inproc_sync_cache[INPROC_SYNC_CACHE_ENTRIES];
 static struct inproc_sync inproc_sync_cache_initial_block[INPROC_SYNC_CACHE_BLOCK_SIZE];
+#endif
 
 static inline unsigned int inproc_sync_handle_to_index( HANDLE handle, unsigned int *entry )
 {
@@ -673,10 +735,17 @@ static NTSTATUS get_server_inproc_sync( HANDLE handle, struct inproc_sync *sync 
         req->handle = wine_server_obj_handle( handle );
         if (!(ret = wine_server_call( req )))
         {
-            obj_handle_t fd_handle;
             sync->refcount = 1;
+#ifdef WINE_IOS
+            /* ml1058: the descriptor is a pseudo fd handed over in-process; see
+             * build/madsync. Nothing travels over the socket. */
+            sync->fd = madsync_take( GetCurrentProcessId(), wine_server_obj_handle( handle ) );
+            if (sync->fd < 0) ret = STATUS_INVALID_HANDLE;
+#else
+            obj_handle_t fd_handle;
             sync->fd = wine_server_receive_fd( &fd_handle );
             assert( wine_server_ptr_handle(fd_handle) == handle );
+#endif
             sync->access = reply->access;
             sync->type = reply->type;
             sync->closed = 0;
@@ -884,8 +953,13 @@ static int get_inproc_alert_fd(void)
         {
             if (!server_call_unlocked( req ))
             {
+#ifdef WINE_IOS
+                (void)token;
+                data->alert_fd = fd = madsync_take( GetCurrentProcessId(), reply->handle );
+#else
                 data->alert_fd = fd = wine_server_receive_fd( &token );
                 assert( token == reply->handle );
+#endif
             }
         }
         SERVER_END_REQ;
@@ -1148,11 +1222,69 @@ NTSTATUS WINAPI NtOpenEvent( HANDLE *handle, ACCESS_MASK access, const OBJECT_AT
 /******************************************************************************
  *              NtSetEvent (NTDLL.@)
  */
+/* ml1131: [xp-api] counters for the sync syscalls (read by server_ios.c). */
+volatile long long ios_xp_set_event, ios_xp_reset_event, ios_xp_pulse_event;
+volatile long long ios_xp_wait_single, ios_xp_wait_multi, ios_xp_wait_zero, ios_xp_wait_zero_timeout;
+volatile long long ios_xp_yield, ios_xp_yield_slept, ios_xp_delay, ios_xp_delay_hist[6];
+
+/* ml1133: ECO QoS. Across ph-rdr82..88 the SoC clamped the CPU clock after the
+ * same ~250 J of CPU energy spent above ~2.3 W (six runs within +-3 %). The
+ * loading screen spent 89-96 % of that at 4.5-5.6 W before gameplay began, so
+ * gameplay kept its full clock for only 5-39 s. While eco is on, every guest
+ * thread runs at a low QoS class (madeira.cfg eco-qos = utility (default),
+ * background or initiated). The scheduler then prefers the efficiency cores
+ * and lower clocks: the same work takes longer but costs much less energy.
+ * Eco is toggled from the app (the ECO pill), or starts on with madeira.cfg
+ * eco = 1. QoS can only be set by a thread on itself, so each thread applies
+ * a change the next time it waits, sleeps or yields, which every guest thread
+ * does many times a second. */
+volatile int ios_eco_gen = 1;          /* bumped on every toggle; 1 so a thread's first poll applies */
+static volatile int ios_eco_on = -1;   /* -1 = madeira.cfg not read yet */
+static qos_class_t ios_eco_class = QOS_CLASS_UTILITY;
+static __thread int ios_eco_seen;      /* generation this thread last applied */
+
+static void ios_eco_init(void)
+{
+    char v[32];
+    if (ios_eco_on >= 0) return;
+    if (madeira_cfg_get( "eco-qos", v, sizeof(v) ))
+    {
+        if (!strcmp( v, "background" )) ios_eco_class = QOS_CLASS_BACKGROUND;
+        else if (!strcmp( v, "initiated" )) ios_eco_class = QOS_CLASS_USER_INITIATED;
+    }
+    __atomic_store_n( &ios_eco_on, madeira_cfg_bool( "eco", 0 ) ? 1 : 0, __ATOMIC_RELEASE );
+}
+
+/* Called by every guest thread when it starts (thread_ios.c) and from the
+ * wait/sleep/yield entry points below when the generation moved. */
+void ios_eco_apply_self(void)
+{
+    ios_eco_init();
+    ios_eco_seen = __atomic_load_n( &ios_eco_gen, __ATOMIC_ACQUIRE );
+    pthread_set_qos_class_self_np( ios_eco_on > 0 ? ios_eco_class : QOS_CLASS_USER_INTERACTIVE, 0 );
+}
+#define IOS_ECO_POLL() do { if (__builtin_expect( ios_eco_seen != ios_eco_gen, 0 )) ios_eco_apply_self(); } while (0)
+
+void madeira_set_eco( int on )   /* the app's ECO pill */
+{
+    struct timespec ts; struct tm tm;
+    ios_eco_init();
+    __atomic_store_n( &ios_eco_on, on ? 1 : 0, __ATOMIC_RELEASE );
+    __atomic_add_fetch( &ios_eco_gen, 1, __ATOMIC_RELEASE );
+    clock_gettime( CLOCK_REALTIME, &ts ); localtime_r( &ts.tv_sec, &tm );
+    fprintf( stderr, "[eco] ml1133 %02d:%02d:%02d.%03ld eco %s (guest threads -> %s)\n",
+             tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000, on ? "ON" : "OFF",
+             !on ? "user-interactive" : ios_eco_class == QOS_CLASS_BACKGROUND ? "background"
+             : ios_eco_class == QOS_CLASS_USER_INITIATED ? "user-initiated" : "utility" );
+}
+int madeira_get_eco(void) { ios_eco_init(); return ios_eco_on > 0; }
+
 NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
 {
     unsigned int ret;
 
     TRACE( "handle %p, prev_state %p\n", handle, prev_state );
+    __sync_fetch_and_add( &ios_xp_set_event, 1 );   /* ml1131 */
 
     if ((ret = inproc_set_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
         return ret;
@@ -1186,6 +1318,7 @@ NTSTATUS WINAPI NtResetEvent( HANDLE handle, LONG *prev_state )
     unsigned int ret;
 
     TRACE( "handle %p, prev_state %p\n", handle, prev_state );
+    __sync_fetch_and_add( &ios_xp_reset_event, 1 );   /* ml1131 */
 
     if ((ret = inproc_reset_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
         return ret;
@@ -1220,6 +1353,7 @@ NTSTATUS WINAPI NtPulseEvent( HANDLE handle, LONG *prev_state )
     unsigned int ret;
 
     TRACE( "handle %p, prev_state %p\n", handle, prev_state );
+    __sync_fetch_and_add( &ios_xp_pulse_event, 1 );   /* ml1131 */
 
     if ((ret = inproc_pulse_event( handle, prev_state )) != STATUS_NOT_IMPLEMENTED)
         return ret;
@@ -2308,6 +2442,8 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, WA
     UINT i, flags = SELECT_INTERRUPTIBLE;
     unsigned int ret;
 
+    IOS_ECO_POLL();   /* ml1133 */
+
     if (!count || count > MAXIMUM_WAIT_OBJECTS) return STATUS_INVALID_PARAMETER_1;
     if (type != WaitAll && type != WaitAny) FIXME( "Unsupported wait type %u\n", type );
 
@@ -2324,8 +2460,14 @@ NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles, WA
         if (is_pseudo_handle( handles[i] )) return STATUS_INVALID_HANDLE;
     }
 
+    __sync_fetch_and_add( &ios_xp_wait_multi, 1 );   /* ml1131 */
     if ((ret = inproc_wait( count, handles, type, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
     {
+        if (timeout && !timeout->QuadPart)   /* ml1131: a poll */
+        {
+            __sync_fetch_and_add( &ios_xp_wait_zero, 1 );
+            if (ret == STATUS_TIMEOUT) __sync_fetch_and_add( &ios_xp_wait_zero_timeout, 1 );
+        }
         TRACE( "-> %#x\n", ret );
         return ret;
     }
@@ -2348,10 +2490,18 @@ NTSTATUS WINAPI NtWaitForSingleObject( HANDLE handle, BOOLEAN alertable, const L
     UINT flags = SELECT_INTERRUPTIBLE;
     unsigned int ret;
 
+    IOS_ECO_POLL();   /* ml1133 */
+
     TRACE( "handle %p, alertable %u, timeout %s\n", handle, alertable, debugstr_timeout(timeout) );
 
+    __sync_fetch_and_add( &ios_xp_wait_single, 1 );   /* ml1131 */
     if ((ret = inproc_wait( 1, &handle, WaitAny, alertable, timeout )) != STATUS_NOT_IMPLEMENTED)
     {
+        if (timeout && !timeout->QuadPart)   /* ml1131: a poll */
+        {
+            __sync_fetch_and_add( &ios_xp_wait_zero, 1 );
+            if (ret == STATUS_TIMEOUT) __sync_fetch_and_add( &ios_xp_wait_zero_timeout, 1 );
+        }
         TRACE( "-> %#x\n", ret );
         return ret;
     }
@@ -2395,6 +2545,44 @@ NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE signal, HANDLE wait,
  */
 NTSTATUS WINAPI NtYieldExecution(void)
 {
+    IOS_ECO_POLL();   /* ml1133 */
+#ifdef WINE_IOS
+    /* iOS-Madeira ml1063: ADAPTIVE YIELD. A game thread that spins
+     * WaitForSingleObject(h, 0) / SwitchToThread() waiting for work keeps a whole
+     * core at 100 % (sampled: one such thread pegged for the entire benchmark,
+     * ~290M empty polls in one run), because sched_yield with nothing else
+     * runnable returns at once. On a 16-thread desktop that is harmless; on a
+     * phone with two performance cores it takes one of them from the critical
+     * thread and heats the package into throttling. After a burst of back-to-back
+     * yields the thread is put to sleep for 100 us instead: the same forward
+     * progress with a bounded latency cost. Streaks reset after a 2 ms gap. */
+    {
+        static __thread unsigned long long ios_last_yield_ns;
+        static __thread unsigned ios_yield_streak;
+        struct timespec ts;
+        unsigned long long now;
+        clock_gettime( CLOCK_MONOTONIC, &ts );
+        now = (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+        static long long ios_ysleep = -1, ios_ystreak = 256;   /* ml1124: madeira.cfg yield-sleep-us (default 100, 0 = never sleep), yield-streak (256) */
+        if (ios_ysleep < 0)
+        {
+            ios_ystreak = madeira_cfg_int( "yield-streak", 256 );
+            ios_ysleep = madeira_cfg_int( "yield-sleep-us", 100 );
+            if (ios_ysleep < 0) ios_ysleep = 0;
+            fprintf( stderr, "[sync-census] ml1124 adaptive yield: sleep %lld us after %lld back-to-back yields%s\n",
+                     ios_ysleep, ios_ystreak, ios_ysleep ? "" : " (DISABLED)" );
+        }
+        if (now - ios_last_yield_ns < 2000000ull) ios_yield_streak++; else ios_yield_streak = 0;
+        ios_last_yield_ns = now;
+        __sync_fetch_and_add( &ios_xp_yield, 1 );   /* ml1131 */
+        if (ios_ysleep && ios_yield_streak > ios_ystreak)
+        {
+            __sync_fetch_and_add( &ios_xp_yield_slept, 1 );
+            usleep( (useconds_t)ios_ysleep );
+            return STATUS_SUCCESS;
+        }
+    }
+#endif
 #ifdef HAVE_SCHED_YIELD
 #ifdef RUSAGE_THREAD
     struct rusage u1, u2;
@@ -2420,6 +2608,15 @@ NTSTATUS WINAPI NtYieldExecution(void)
 NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
     unsigned int status = STATUS_SUCCESS;
+
+    IOS_ECO_POLL();   /* ml1133 */
+
+    {   /* ml1131: requested delay: 0, < 1 ms, < 5 ms, < 20 ms, >= 20 ms, infinite */
+        long long d = (!timeout || timeout->QuadPart == TIMEOUT_INFINITE) ? -1
+                      : timeout->QuadPart < 0 ? -timeout->QuadPart : 0;   /* relative in 100 ns; absolute counted as 0 */
+        __sync_fetch_and_add( &ios_xp_delay, 1 );
+        __sync_fetch_and_add( &ios_xp_delay_hist[d < 0 ? 5 : d == 0 ? 0 : d < 10000 ? 1 : d < 50000 ? 2 : d < 200000 ? 3 : 4], 1 );
+    }
 
     /* if alertable, we need to query the server */
     if (alertable)
@@ -2469,8 +2666,10 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
 /******************************************************************************
  *              NtQueryPerformanceCounter (NTDLL.@)
  */
+volatile long long ios_qpc_syscalls;   /* ml1117 */
 NTSTATUS WINAPI NtQueryPerformanceCounter( LARGE_INTEGER *counter, LARGE_INTEGER *frequency )
 {
+    __sync_fetch_and_add( &ios_qpc_syscalls, 1 );
     counter->QuadPart = monotonic_counter();
     if (frequency) frequency->QuadPart = TICKSPERSEC;
     return STATUS_SUCCESS;
@@ -3915,9 +4114,26 @@ void ios_orphan_check( const unsigned long long *live_stamps, int nstamps )
 /***********************************************************************
  *             NtAlertThreadByThreadId (NTDLL.@)
  */
+/* iOS-Madeira ml1115: how many thread alerts flow per second (the futex path
+ * behind every contended critical section, condition variable and
+ * WaitOnAddress); read by the thread sampler's periodic line. */
+volatile long long ios_alert_wakes, ios_alert_waits, ios_alert_wait_timeouts;
+/* ml1122: alert -> waiter-running latency, and the alert-spin-us experiment. */
+#include <mach/mach_time.h>
+volatile long long ios_alert_lat_n, ios_alert_lat_ticks, ios_alert_lat_hist[6], ios_alert_spin_tries, ios_alert_spin_hits;
+static volatile unsigned long long ios_alert_stamp[4096];
+static inline unsigned ios_alert_slot( const void *entry ) { return (unsigned)(((ULONG_PTR)entry >> 2) & 4095); }
+static unsigned long long ios_alert_spin_ticks; static int ios_alert_spin_loaded;
+static double ios_ticks_per_us(void)
+{
+    static double v;
+    if (!v) { mach_timebase_info_data_t tb; mach_timebase_info( &tb ); v = 1000.0 * tb.denom / tb.numer; }
+    return v;
+}
 NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
 {
     union tid_alert_entry *entry = get_tid_alert_entry( tid );
+    __sync_fetch_and_add( &ios_alert_wakes, 1 );
 
     TRACE( "%p\n", tid );
 
@@ -3951,6 +4167,7 @@ NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
                 ERR( "[alert-unix] ALERT-SENT from=%04x -> pump tid=%04x futex=%p rev=ml482\n",
                      (int)self_tid, (int)(ULONG_PTR)tid, entry ); }
         }
+        ios_alert_stamp[ios_alert_slot( futex )] = mach_absolute_time();   /* ml1122 */
         if (!InterlockedExchange( futex, 1 ))
             futex_wake_one( futex );
         return STATUS_SUCCESS;
@@ -4003,6 +4220,8 @@ static LONGLONG update_timeout( ULONGLONG end )
  */
 NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEGER *timeout )
 {
+    IOS_ECO_POLL();   /* ml1133 */
+    __sync_fetch_and_add( &ios_alert_waits, 1 );   /* ml1115 */
     union tid_alert_entry *entry = get_tid_alert_entry( NtCurrentTeb()->ClientId.UniqueThread );
     /* iOS-Madeira ml406 (task #60): unix-side tap for beacon-marked threads
      * (TEB->Instrumentation[10] == 'PUMP', stamped by the EC chrome-ipc
@@ -4060,8 +4279,24 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             ios_alert_waiters[ios_wslot].addr = address ? address : (const void *)0x1;
         }
 
+        if (!ios_alert_spin_loaded)   /* ml1122: madeira.cfg alert-spin-us (default 0) */
+        {
+            long long us = madeira_cfg_int( "alert-spin-us", 0 );
+            if (us < 0) us = 0; if (us > 200) us = 200;
+            ios_alert_spin_ticks = (unsigned long long)(us * ios_ticks_per_us());
+            ios_alert_spin_loaded = 1;
+            fprintf( stderr, "[sync-census] ml1122 alert spin before sleeping: %lld us\n", us );
+        }
+        if (ios_alert_spin_ticks && !*(volatile LONG *)futex)
+        {
+            unsigned long long spin_end = mach_absolute_time() + ios_alert_spin_ticks;
+            __sync_fetch_and_add( &ios_alert_spin_tries, 1 );
+            while (!*(volatile LONG *)futex && mach_absolute_time() < spin_end) __asm__ __volatile__( "yield" );
+            if (*(volatile LONG *)futex) __sync_fetch_and_add( &ios_alert_spin_hits, 1 );
+        }
         while (!InterlockedExchange( futex, 0 ))
         {
+            unsigned long long ios_woke;
             if (timeout)
             {
                 LONGLONG timeleft = update_timeout( end );
@@ -4073,6 +4308,18 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             }
             else
                 ret = futex_wait( futex, 0, NULL );
+            ios_woke = mach_absolute_time();   /* ml1122 */
+            if (*(volatile LONG *)futex)
+            {
+                unsigned long long st = ios_alert_stamp[ios_alert_slot( futex )];
+                if (st && ios_woke > st)
+                {
+                    unsigned long long d = ios_woke - st; double us = d / ios_ticks_per_us();
+                    int b = us < 5 ? 0 : us < 20 ? 1 : us < 50 ? 2 : us < 100 ? 3 : us < 500 ? 4 : 5;
+                    __sync_fetch_and_add( &ios_alert_lat_n, 1 ); __sync_fetch_and_add( &ios_alert_lat_ticks, d );
+                    __sync_fetch_and_add( &ios_alert_lat_hist[b], 1 );
+                }
+            }
 
             if (ret == -1 && errno == ETIMEDOUT)
             {

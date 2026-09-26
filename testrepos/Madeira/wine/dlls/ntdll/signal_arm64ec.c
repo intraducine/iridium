@@ -4,16 +4,16 @@
  * Copyright 1999, 2005, 2023 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -108,7 +108,46 @@ struct ec_stack_window
     ULONG     repeats;
     BOOL      on_emu;      /* which segment the baseline refers to */
 };
-static __thread struct ec_stack_window ec_win;
+/* iOS-Madeira ml848: NOT a thread-local. THE FIX FOR THE UE5 THREAD-EXIT FATAL.
+ *
+ * ml617 declared this window as static TLS. An ntdll with static TLS is a
+ * design error on this port: the loader assigns TLS slots only to modules it
+ * maps through the normal path, never to ntdll itself, so ntdll's `_tls_index`
+ * stayed at its zero initial value and `ThreadLocalStoragePointer[0]` -- THE
+ * GAME EXECUTABLE'S OWN THREAD-LOCAL BLOCK -- was where this struct actually
+ * lived. Every exception dispatch zeroed and then filled it on top of the
+ * exe's thread-locals at +0x20..+0x60: `emu_hi` (the FEX emulator stack top)
+ * landed on a UE5 thread-local whose destructor frees its first word, and the
+ * engine allocator refused our stack top with "FMallocBinned2 Attempt to free
+ * an unrecognized block" at every thread exit. Six probe rounds, a page write
+ * watch and offline disassembly of the executable converged on the pool copy
+ * of ec_stack_window_begin as the writer.
+ *
+ * The TEB has no contiguous 64 free bytes (Instrumentation[1,6,7,8,9,10] are
+ * taken), and nothing may allocate in a fault path. What every EC thread does
+ * own is the CHPE CPU-area page: thread_ios.c places the 0x58-byte area at the
+ * base of a committed 0x40000 region with the x64 context inline at +0x50, and
+ * FEX then replaces that region's stack with its own, leaving the bytes after
+ * the context unused. The state lives there, aligned, never allocated, never
+ * aliased. A thread with no CPU area (not an EC thread) gets a static fallback,
+ * i.e. the pre-ml617 permissive behaviour. */
+struct ec_thread_state
+{
+    struct ec_stack_window win;
+    int root_used;          /* ml633: terminal root frame accepted once per walk */
+};
+static struct ec_thread_state ec_state_fallback;
+static inline struct ec_thread_state *ec_state( void )
+{
+    CHPE_V2_CPU_AREA_INFO *area = get_arm64ec_cpu_area();
+    ULONG_PTR p;
+    if (!area) return &ec_state_fallback;
+    p = (ULONG_PTR)area + FIELD_OFFSET( CHPE_V2_CPU_AREA_INFO, EmulatorDataInline ) + sizeof(ARM64EC_NT_CONTEXT);
+    p = (p + 15) & ~(ULONG_PTR)15;
+    return (struct ec_thread_state *)p;
+}
+#define ec_win          (ec_state()->win)
+#define ml633_root_used (ec_state()->root_used)
 
 static void ec_stack_window_begin( ULONG_PTR rsp )
 {
@@ -637,6 +676,86 @@ NTSTATUS arm64ec_process_init_dispatchers( HMODULE module )
                  "(len=%p log=%p) -- band selection has not run yet\n", len, log );
     }
 
+    /* ml797: hand the arena to the emulator's band selector as PLAIN DATA.
+     *
+     * The selector cannot fetch it for itself. It runs during rpmalloc init,
+     * before the ARM64EC TEB exists and before ucrtbase's DllMain, so getenv()
+     * recurses forever in _lock(17) and GetEnvironmentVariableA faults reading
+     * the TEB -- ml793 and its attempted fix each killed every launch, x64 cube
+     * included. Writing its globals from here costs the selector no call at all.
+     *
+     * This is the right site for it, for the same reason the log above is read
+     * here: it runs BEFORE the selector (the else-branch above says so), and it
+     * holds the module handle for THIS pseudo-process, which carries its own
+     * libarm64ecfex mapping inside the shared Mach task.
+     *
+     * Validation belongs here too, not in the selector -- this side can name the
+     * reason in the log. A published-but-invalid arena zeroes the band, which
+     * the selector reports as "no band" rather than silently selecting one and
+     * recreating the overlap the arena exists to prevent. */
+    {
+        /* ml800: ask the UNIX side, never an ntdll global.
+         *
+         * ml799 read `extern ULONG_PTR ios_fex_arena_base` here and got zero on
+         * every run, while the unix side had demonstrably published the right
+         * value moments earlier. ntdll's image is copied into the JIT pool
+         * BEFORE that publication -- the [jit-pool] line precedes it in the log
+         * -- so the linked read resolved inside a stale duplicate of ntdll's
+         * .data. FEX then selected its own band while an 8GB arena sat held,
+         * which is precisely the ml757 configuration, and rendering stopped.
+         *
+         * ios_teb_tsd_offset avoids this only because its reader goes through
+         * GetProcAddress on the live module. The unix side has one copy per
+         * Mach task and cannot be duplicated, so it is the authoritative source. */
+        struct ios_get_fex_arena_params arena_params = { 0, 0 };
+        ULONG_PTR ios_fex_arena_base = 0, ios_fex_arena_end = 0;
+        ULONG_PTR *band_base = RtlFindExportedRoutineByName( module, "ios_fex_band_base" );
+        ULONG_PTR *band_end  = RtlFindExportedRoutineByName( module, "ios_fex_band_end" );
+
+        if (!WINE_UNIX_CALL( unix_ios_get_fex_arena, &arena_params ))
+        {
+            ios_fex_arena_base = (ULONG_PTR)arena_params.base;
+            ios_fex_arena_end  = (ULONG_PTR)arena_params.end;
+        }
+        else
+            ERR( "[fex-arena] ml800 unix_ios_get_fex_arena FAILED -- cannot learn the arena; "
+                 "the emulator will select its own band\n" );
+
+        if (!band_base || !band_end)
+            ERR( "[fex-arena] ml797 emulator exports ios_fex_band_base/end NOT FOUND "
+                 "(base=%p end=%p) -- arena cannot be handed over\n", band_base, band_end );
+        else if (!ios_fex_arena_base && !ios_fex_arena_end)
+            ERR( "[fex-arena] ml797 no arena published this run -- emulator selects its own "
+                 "band, as before\n" );
+        else
+        {
+            const char *why = NULL;
+            ULONG_PTR b = ios_fex_arena_base, e = ios_fex_arena_end;
+
+            if (!b || !e)                     why = "zero base or end";
+            else if (e <= b)                  why = "end is not above base";
+            else if (b & 0xffff)              why = "base is not 64K aligned";
+            else if (e & 0xffff)              why = "end is not 64K aligned";
+            else if (e - b < 0x40000000ull)   why = "range is under the 1GB minimum";
+
+            if (why)
+            {
+                *band_base = 0;
+                *band_end  = 0;
+                ERR( "[fex-arena] ml797 PUBLISHED ARENA REJECTED [%p,%p): %s -- band zeroed; the "
+                     "emulator will report no band rather than select one\n",
+                     (void *)b, (void *)e, why );
+            }
+            else
+            {
+                *band_base = b;
+                *band_end  = e - 1;   /* the selector's end is INCLUSIVE */
+                ERR( "[fex-arena] ml797 ARENA HANDED OVER base=%p end=%p (inclusive) -- the "
+                     "selector must not run\n", (void *)*band_base, (void *)*band_end );
+            }
+        }
+    }
+
 #define GET_PTR(name) p ## name = arm64ec_redirect_ptr( module, \
                                       RtlFindExportedRoutineByName( module, #name ), metadata )
     GET_PTR( BTCpu64FlushInstructionCache );
@@ -785,9 +904,12 @@ NTSTATUS arm64ec_process_init( HMODULE module )
         ERR( "arm64ec_process_init: pThreadInit -> %lx\n", status );
     }
     leave_syscall_callback();
-    __os_arm64x_check_call = arm64x_check_call;
-    __os_arm64x_check_icall = arm64x_check_call;
-    __os_arm64x_check_icall_cfg = arm64x_check_call;
+    if (!status)
+    {
+        __os_arm64x_check_call = arm64x_check_call;
+        __os_arm64x_check_icall = arm64x_check_call;
+        __os_arm64x_check_icall_cfg = arm64x_check_call;
+    }
     return status;
 }
 
@@ -1852,6 +1974,7 @@ static void notify_map_view_of_section( HANDLE handle, void *addr, SIZE_T size, 
 void arm64ec_notify_image_map( void *base )
 {
     static unsigned int n_map;
+    BOOL entered;
 
     /* ml710: must be the intervals-only entry point, NEVER NotifyMapViewOfSection.
      * The latter also drives ImageTracker, which takes FEX's CodeInvalidationMutex
@@ -1864,7 +1987,13 @@ void arm64ec_notify_image_map( void *base )
     n_map++;
     if (n_map <= 64)
         ERR( "[ldr-image] ml710 MAP #%u base=%p peb=%p\n", n_map, base, RtlGetCurrentPeb() );
+    /* FEX may allocate or decommit its own memory while holding IntervalsLock.
+     * Suppress recursive memory notifications during that work. Still deliver
+     * the image notification if already inside a callback, and preserve that
+     * caller's state instead of clearing its guard. */
+    entered = enter_syscall_callback();
     pNotifyImageMap( base );
+    if (entered) leave_syscall_callback();
 }
 
 /* ml709b: UNUSED, deliberately. The loader must not call this -- see the long comment
@@ -2519,8 +2648,194 @@ static void ios_seh_xlate_note( PEXCEPTION_ROUTINE orig, PEXCEPTION_ROUTINE fina
  *
  * Call the SEH handlers.
  */
+/* iOS-Madeira ml812: bounded, fault-safe string dump for exception parameters.
+ *
+ * ml811 proved the fatal arrives as a SOFTWARE exception, not a C++ throw:
+ * PoolThread 5 raised OutputDebugStringW (0x4001000a), then OutputDebugStringA
+ * (0x40010006), then the game's own report code 0x4000 -- and that same thread
+ * owns the deadlocked allocator lock. The failure TEXT is sitting in those
+ * parameters; ml811 logged that they existed but not what they said.
+ *
+ * Reads go through NtReadVirtualMemory so a bad pointer returns a status
+ * instead of faulting inside exception dispatch. No allocation, no locks. */
+static int ios_exc_dump_str( const char *what, ULONG_PTR addr, SIZE_T len, int wide )
+{
+    char out[224];
+    SIZE_T got = 0, n, i;
+
+    if (!addr || !len) return 0;
+    memset( out, 0, sizeof(out) );
+    n = len;
+    if (wide)
+    {
+        WCHAR wbuf[110];
+        if (n > 110) n = 110;
+        if (NtReadVirtualMemory( GetCurrentProcess(), (void *)addr, wbuf, n * sizeof(WCHAR), &got ) || !got)
+        {
+            ERR( "[exc] ml812   %s UNREADABLE at %p\n", what, (void *)addr );
+            return 0;
+        }
+        n = got / sizeof(WCHAR);
+        for (i = 0; i < n && i < sizeof(out) - 1; i++)
+        {
+            WCHAR c = wbuf[i];
+            if (!c) break;
+            out[i] = (c >= 32 && c < 127) ? (char)c : '.';
+        }
+        out[i] = 0;
+    }
+    else
+    {
+        if (n > sizeof(out) - 1) n = sizeof(out) - 1;
+        if (NtReadVirtualMemory( GetCurrentProcess(), (void *)addr, out, n, &got ) || !got)
+        {
+            ERR( "[exc] ml812   %s UNREADABLE at %p\n", what, (void *)addr );
+            return 0;
+        }
+        for (i = 0; i < got && i < sizeof(out) - 1; i++)
+        {
+            if (!out[i]) break;
+            if (out[i] < 32 || (unsigned char)out[i] >= 127) out[i] = '.';
+        }
+        out[i] = 0;
+    }
+    ERR( "[exc] ml812   %s: \"%s\"\n", what, out );
+    return strstr( out, "LowLevelFatalError" ) != NULL;
+}
+
+/* ---------------------------------------------------------------------------
+ * iOS-Madeira ml843 [fatal-probe]: WHO handed the emulator stack top to the
+ * engine allocator?
+ *
+ * Two fresh UE5 runs both died in FMallocBinned2::Free with a pointer that was
+ * exactly the failing thread's own FEX EmulatorStackBase (CPU area +0x8),
+ * during thread-detach cleanup. Provenance is settled; the PATH is not. The
+ * fatal reaches us as a debug-string exception with the guest context intact,
+ * so this is the one place the guest call chain can still be read.
+ *
+ * Reads are bounded and go through NtReadVirtualMemory; the module list is
+ * walked WITHOUT the loader lock because the failing thread is mid-detach and
+ * may hold it, or be blocked on it -- a probe that deadlocks the thread it is
+ * observing tells us nothing. Return addresses are CALL-validated the way the
+ * unix-side ml660 scanner does it, so a code-like value that merely sits on
+ * the stack is marked '?' rather than reported as a frame. */
+static const char *ios_probe_module( ULONG_PTR addr, ULONG_PTR *base, char *buf, size_t buflen )
+{
+    LIST_ENTRY *mark, *e;
+    unsigned n = 0;
+    PEB *peb = NtCurrentTeb()->Peb;
+
+    if (!peb || !peb->LdrData) return NULL;
+    mark = &peb->LdrData->InLoadOrderModuleList;
+    for (e = mark->Flink; e && e != mark && n < 512; e = e->Flink, n++)
+    {
+        LDR_DATA_TABLE_ENTRY *m = CONTAINING_RECORD( e, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks );
+        ULONG_PTR b = (ULONG_PTR)m->DllBase;
+        if (addr >= b && addr < b + m->SizeOfImage)
+        {
+            unsigned i;
+            for (i = 0; i + 1 < buflen && i < m->BaseDllName.Length / sizeof(WCHAR); i++)
+            {
+                WCHAR c = m->BaseDllName.Buffer[i];
+                buf[i] = (c >= 32 && c < 127) ? (char)c : '?';
+            }
+            buf[i] = 0;
+            *base = b;
+            return buf;
+        }
+    }
+    return NULL;
+}
+
+static void ios_fatal_probe( const CONTEXT *ctx )
+{
+    static LONG fired;
+    CHPE_V2_CPU_AREA_INFO *area;
+    ULONG_PTR top, lim, sp;
+    ULONG_PTR stk[256];
+    SIZE_T got = 0, i;
+    unsigned printed = 0, hits = 0;
+
+    if (InterlockedIncrement( &fired ) > 2) return;
+    area = get_arm64ec_cpu_area();
+    top = area ? (ULONG_PTR)area->EmulatorStackBase : 0;
+    lim = area ? (ULONG_PTR)area->EmulatorStackLimit : 0;
+    sp = ctx ? (ULONG_PTR)ctx->Rsp : 0;
+
+    ERR( "[fatal-probe] ml843 tid=%04x Rip=%p Rsp=%p emulator-stack=[%p..%p) area=%p\n",
+         (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread,
+         ctx ? (void *)ctx->Rip : NULL, (void *)sp, (void *)lim, (void *)top, (void *)area );
+    if (ctx)
+        ERR( "[fatal-probe]   Rcx=%p Rdx=%p R8=%p Rax=%p Rbx=%p Rsi=%p Rdi=%p\n",
+             (void *)ctx->Rcx, (void *)ctx->Rdx, (void *)ctx->R8, (void *)ctx->Rax,
+             (void *)ctx->Rbx, (void *)ctx->Rsi, (void *)ctx->Rdi );
+
+    /* Is the stack-top value sitting in a TLS slot right now? */
+    for (i = 0; i < 64; i++)
+    {
+        ULONG_PTR v = (ULONG_PTR)NtCurrentTeb()->TlsSlots[i];
+        if (!v) continue;
+        if (v == top)
+            ERR( "[fatal-probe]   TlsSlots[%u] = %p == EMULATOR STACK TOP\n", (unsigned)i, (void *)v );
+        else if (area && v >= (ULONG_PTR)area && v < (ULONG_PTR)area + 0x58)
+            ERR( "[fatal-probe]   TlsSlots[%u] = %p points INTO the CPU area (+0x%x)\n",
+                 (unsigned)i, (void *)v, (unsigned)(v - (ULONG_PTR)area) );
+    }
+    if (NtCurrentTeb()->TlsExpansionSlots)
+        for (i = 0; i < 1024; i++)
+        {
+            ULONG_PTR v = (ULONG_PTR)NtCurrentTeb()->TlsExpansionSlots[i];
+            if (v && (v == top || (area && v >= (ULONG_PTR)area && v < (ULONG_PTR)area + 0x58)))
+                ERR( "[fatal-probe]   TlsExpansionSlots[%u] = %p %s\n", (unsigned)i, (void *)v,
+                     v == top ? "== EMULATOR STACK TOP" : "points INTO the CPU area" );
+        }
+    else
+        ERR( "[fatal-probe]   TlsExpansionSlots = NULL\n" );
+
+    /* Guest stack: the argument to the failing free was spilled somewhere
+     * between FMallocBinned2::Free and the fatal, and the return addresses
+     * name the callers. */
+    if (!sp || NtReadVirtualMemory( GetCurrentProcess(), (void *)sp, stk, sizeof(stk), &got ) || got < 8)
+    {
+        ERR( "[fatal-probe]   guest stack at %p unreadable\n", (void *)sp );
+        return;
+    }
+    for (i = 0; i < got / sizeof(ULONG_PTR) && printed < 48; i++)
+    {
+        ULONG_PTR v = stk[i], base = 0;
+        char name[40];
+        if (v == top)
+        {
+            ERR( "[fatal-probe]   sp+%03x = %p  <== EMULATOR STACK TOP on the guest stack\n",
+                 (unsigned)(i * 8), (void *)v );
+            hits++; printed++;
+            continue;
+        }
+        if (v < 0x10000 || !ios_probe_module( v, &base, name, sizeof(name) )) continue;
+        {
+            unsigned char b[6];
+            SIZE_T g2 = 0;
+            const char *tag = "?";
+            if (!NtReadVirtualMemory( GetCurrentProcess(), (void *)(v - 6), b, sizeof(b), &g2 ) && g2 == 6)
+            {
+                if (b[1] == 0xE8) tag = "CALL";                                   /* E8 rel32      */
+                else if (b[0] == 0xFF && b[1] == 0x15) tag = "CALL";              /* FF 15 disp32  */
+                else if (b[4] == 0xFF && (b[5] & 0xF8) == 0xD0) tag = "CALL";     /* FF D0..D7     */
+                else if (b[3] == 0xFF && (b[4] & 0xF8) == 0x50) tag = "CALL";     /* FF 50..57 d8  */
+            }
+            ERR( "[fatal-probe]   sp+%03x: %-4s %s+0x%llx\n", (unsigned)(i * 8), tag, name,
+                 (unsigned long long)(v - base) );
+            printed++;
+        }
+    }
+    ERR( "[fatal-probe]   scanned %u qwords, %u stack-top hit(s), %u code-like\n",
+         (unsigned)(got / sizeof(ULONG_PTR)), hits, printed - hits );
+}
+
+static void ios_tlswatch_pe_arm( const char *where );
 NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
 {
+    if (rec && rec->ExceptionCode == 0x406D1388) ios_tlswatch_pe_arm( "call_seh_handlers entry" );
     EXCEPTION_REGISTRATION_RECORD *teb_frame = NtCurrentTeb()->Tib.ExceptionList;
     DISPATCHER_CONTEXT_NONVOLREG_ARM64 nonvol_regs;
     UNWIND_HISTORY_TABLE table;
@@ -2576,6 +2891,155 @@ NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
             ERR( "[SEH_RATE] n=%d code=%08x addr=%p flags=%x\n",
                  (int)n, (int)rec->ExceptionCode, rec->ExceptionAddress,
                  (int)rec->ExceptionFlags );
+    }
+
+    /* iOS-Madeira ml811: name EVERY non-benign exception, and decode C++ throws.
+     *
+     * A game died with "Unhandled Exception: 0x20474343" -- the LLVM/mingw C++
+     * exception code -- raised from inside our own d3d11.dll's unwinder. Nothing
+     * in our logs showed it: [SEH_RATE] above prints only dispatch #1 and every
+     * 1024th, so the only exception ever logged was the benign thread-naming
+     * one. This closes that gap.
+     *
+     * Deliberately NOT limited to 0x20474343: the run that produced that code is
+     * not necessarily the run being diagnosed, and a fatal error may arrive
+     * under a different code entirely. Rate limiting is PER CODE so a storm of
+     * one kind cannot hide a single occurrence of another.
+     *
+     * ⛔ This runs inside exception dispatch. It must not allocate, must not
+     * lock, must not recurse, and must not fault -- an earlier probe died
+     * formatting its own log text. Every guest pointer is read through
+     * NtReadVirtualMemory, which returns a status instead of faulting. */
+    if (rec->ExceptionCode != 0x406d1388)   /* thread naming: genuinely benign, and constant */
+    {
+        static LONG seen_code[16], seen_hits[16];
+        static LONG seen_n, in_probe;
+        LONG i, slot = -1;
+
+        /* Recursion guard: if decoding ever raises, do not decode again. */
+        if (InterlockedCompareExchange( &in_probe, 1, 0 ) == 0)
+        {
+            for (i = 0; i < seen_n && i < 16; i++)
+                if (seen_code[i] == (LONG)rec->ExceptionCode) { slot = i; break; }
+            if (slot < 0 && seen_n < 16)
+            {
+                slot = seen_n++;
+                seen_code[slot] = (LONG)rec->ExceptionCode;
+            }
+            if (slot >= 0 && ++seen_hits[slot] <= 4)
+            {
+                ERR( "[exc] ml811 code=%08x addr=%p flags=%x nparams=%u tid=%04x hit=%d\n",
+                     (int)rec->ExceptionCode, rec->ExceptionAddress, (int)rec->ExceptionFlags,
+                     (unsigned)rec->NumberParameters,
+                     (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread,
+                     (int)seen_hits[slot] );
+
+                /* 0x20474343 == 'GCC ' is the code BOTH libstdc++ and LLVM's
+                 * libunwind raise for a C++ throw on Windows. The runtime that
+                 * threw is identified by the 8-byte exception_class, not by the
+                 * status code -- this build is libc++abi, whose class is
+                 * "CLNGC++\0"; a GNUCC++-only check would reject exactly the
+                 * exception we need to see. */
+                /* ml812: OutputDebugString carries UE4's failure text verbatim.
+                 * ANSI form is (len, ptr); the wide form appends (len, ptr). */
+                if (rec->ExceptionCode == 0x40010006 && rec->NumberParameters >= 2)
+                {
+                    if (ios_exc_dump_str( "OutputDebugStringA", rec->ExceptionInformation[1],
+                                          rec->ExceptionInformation[0], 0 ))
+                        ios_fatal_probe( orig_context );
+                }
+                if (rec->ExceptionCode == 0x4001000a && rec->NumberParameters >= 4)
+                {
+                    ios_exc_dump_str( "OutputDebugStringA", rec->ExceptionInformation[1],
+                                      rec->ExceptionInformation[0], 0 );
+                    ios_exc_dump_str( "OutputDebugStringW", rec->ExceptionInformation[3],
+                                      rec->ExceptionInformation[2], 1 );
+                }
+                /* ml812: the game's own software-report codes. Its reporter reads
+                 * the single parameter as a pointer to { const WCHAR *msg; int
+                 * skip; } -- so the parameter is NOT the string, and printing it
+                 * as one would show garbage. Follow both levels safely. */
+                if ((rec->ExceptionCode == 0x00004000 || rec->ExceptionCode == 0x00008000)
+                    && rec->NumberParameters >= 1)
+                {
+                    ULONG_PTR msg = 0;
+                    SIZE_T g2 = 0;
+                    if (!NtReadVirtualMemory( GetCurrentProcess(),
+                                              (void *)rec->ExceptionInformation[0],
+                                              &msg, sizeof(msg), &g2 )
+                        && g2 == sizeof(msg) && msg)
+                        ios_exc_dump_str( "FATAL report message", msg, 200, 1 );
+                    else
+                        ERR( "[exc] ml812   report struct at %p unreadable\n",
+                             (void *)rec->ExceptionInformation[0] );
+                }
+
+                if (rec->ExceptionCode == 0x20474343 && rec->NumberParameters >= 1)
+                {
+                    ULONG_PTR ue = rec->ExceptionInformation[0];
+                    ULONG64 cls = 0;
+                    SIZE_T got = 0;
+
+                    if (!NtReadVirtualMemory( GetCurrentProcess(), (void *)ue, &cls, sizeof(cls), &got )
+                        && got == sizeof(cls))
+                    {
+                        char cbuf[9];
+                        int k;
+                        for (k = 0; k < 8; k++)
+                        {
+                            unsigned char c = (unsigned char)(cls >> (56 - 8 * k));
+                            cbuf[k] = (c >= 32 && c < 127) ? (char)c : '.';
+                        }
+                        cbuf[8] = 0;
+
+                        /* Layout verified against BOTH the libc++abi source and
+                         * the shipped binary: unwindHeader sits at the END of
+                         * __cxa_exception (+0x60), so exceptionType is at
+                         * unwind-0x50. Do NOT subtract sizeof(__cxa_exception). */
+                        if ((cls >> 8) == (0x434C4E47432B2Bull) ||    /* CLNGC++ */
+                            (cls >> 8) == (0x474E5543432B2Bull))      /* GNUCC++ */
+                        {
+                            ULONG_PTR ti = 0, namep = 0;
+                            char nm[96];
+
+                            if (!NtReadVirtualMemory( GetCurrentProcess(), (void *)(ue - 0x50),
+                                                      &ti, sizeof(ti), &got ) && got == sizeof(ti) && ti
+                                && !NtReadVirtualMemory( GetCurrentProcess(), (void *)(ti + 8),
+                                                         &namep, sizeof(namep), &got ) && got == sizeof(namep)
+                                && namep)
+                            {
+                                memset( nm, 0, sizeof(nm) );
+                                if (!NtReadVirtualMemory( GetCurrentProcess(), (void *)namep,
+                                                          nm, sizeof(nm) - 1, &got ) && got)
+                                {
+                                    SIZE_T j;
+                                    for (j = 0; j < sizeof(nm) - 1; j++)
+                                        if (nm[j] && (nm[j] < 32 || (unsigned char)nm[j] >= 127)) { nm[j] = 0; break; }
+                                    nm[sizeof(nm) - 1] = 0;
+                                    ERR( "[exc] ml811   C++ throw class=\"%s\" type=\"%s\" "
+                                         "(mangled; _ZSt9bad_alloc etc) unwind=%p\n",
+                                         cbuf, nm, (void *)ue );
+                                }
+                                else
+                                    ERR( "[exc] ml811   C++ throw class=\"%s\" type-name UNREADABLE "
+                                         "(ti=%p namep=%p)\n", cbuf, (void *)ti, (void *)namep );
+                            }
+                            else
+                                ERR( "[exc] ml811   C++ throw class=\"%s\" but exceptionType "
+                                     "UNREADABLE at unwind-0x50 (ue=%p)\n", cbuf, (void *)ue );
+                        }
+                        else
+                            ERR( "[exc] ml811   C++-coded exception with UNKNOWN runtime class "
+                                 "\"%s\" (%016llx) -- not decoding its layout\n",
+                                 cbuf, (unsigned long long)cls );
+                    }
+                    else
+                        ERR( "[exc] ml811   param[0]=%p is not readable as an unwind header\n",
+                             (void *)ue );
+                }
+            }
+            InterlockedExchange( &in_probe, 0 );
+        }
     }
 
     context.AMD64_Context = *orig_context;
@@ -2723,7 +3187,6 @@ NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
          * the frame must be EXACTLY hi, the unwound Rsp must ALSO be exactly hi, and it
          * is honoured at most once per walk, so a loop cannot exploit it. */
         {
-            static __thread int ml633_root_used;
             if (walk_steps <= 1) ml633_root_used = 0;   /* new walk */
             if (ec_win.hi && !ml633_root_used &&
                 dispatch.EstablisherFrame == (ULONG64)ec_win.hi &&
@@ -3234,16 +3697,56 @@ static void * __attribute__((used)) prepare_exception_arm64ec( EXCEPTION_RECORD 
                                 WINE_UNIX_CALL( unix_ios_jit_alias_probe, &pp );
                             }
                             {
+                                /* ml948: THIS DUMP USED TO CRASH THE HANDLER.
+                                 *
+                                 * It dereferenced (grip - 32) directly. `lim` was clipped only
+                                 * when the alias probe returned an `end`, so whenever the probe
+                                 * found NOTHING mapped -- exactly the case for a wild
+                                 * reconstructed RIP, which is when this telemetry matters most --
+                                 * it read 64 bytes from an unmapped address INSIDE exception
+                                 * dispatch and faulted recursively.
+                                 *
+                                 * Measured: a run whose guest RIP became 0x204d5241 then showed
+                                 * a native fault at 0x204d5221 = RIP-32, i.e. this loop, and the
+                                 * faulting `ldrb w2,[x25],#1` is the byte-formatting read. That
+                                 * artefact was mistaken for a guest string parser and cost a
+                                 * whole line of investigation. Same recurrence at 0x48d28a41-32.
+                                 *
+                                 * Copy through NtReadVirtualMemory instead: it returns a status
+                                 * and cannot fault us. An alias-probe hit is NOT a lifetime
+                                 * guarantee, so the probe's `end` is now only a clip hint, never
+                                 * the safety check -- do not go back to query-then-dereference.
+                                 * Underflow is handled explicitly. */
                                 unsigned lim = 64;
+                                unsigned char buf[64];
+                                SIZE_T got = 0;
+                                NTSTATUS rst;
+
                                 if (pp.end && grip - 32 < pp.end && pp.end - (grip - 32) < 64)
                                     lim = (unsigned)(pp.end - (grip - 32));
-                                for (i = 0; i < lim; i++)
-                                    off += sprintf( line + off, "%02x ", rx[i] );
-                                /* ml637: `lim - 32 - 1` wrapped when lim==32 and printed
-                                 * "+4294967295". Print the byte count, not a signed range. */
-                                ERR( "[guest-bytes] ml631 #%d RIP=0x%I64x RX from -32, %u bytes: %s%s\n",
-                                     gb_n, grip, lim, line,
-                                     lim < 64 ? "   (clipped at mapping end)" : "" );
+                                if (grip < 32)
+                                {
+                                    ERR( "[guest-bytes] ml948 #%d RIP=0x%I64x < 32 — no window to dump\n",
+                                         gb_n, grip );
+                                }
+                                else if (!NT_SUCCESS( (rst = NtReadVirtualMemory( GetCurrentProcess(),
+                                                                (const void *)(ULONG_PTR)(grip - 32),
+                                                                buf, lim, &got )) ) || !got)
+                                {
+                                    ERR( "[guest-bytes] ml948 #%d RIP=0x%I64x window [-32,+%u) UNREADABLE "
+                                         "(status %08x, got %u) — dump skipped, handler intact\n",
+                                         gb_n, grip, lim, (unsigned int)rst, (unsigned)got );
+                                }
+                                else
+                                {
+                                    for (i = 0; i < (unsigned)got; i++)
+                                        off += sprintf( line + off, "%02x ", buf[i] );
+                                    /* ml637: `lim - 32 - 1` wrapped when lim==32 and printed
+                                     * "+4294967295". Print the byte count, not a signed range. */
+                                    ERR( "[guest-bytes] ml631 #%d RIP=0x%I64x RX from -32, %u of %u bytes: %s%s\n",
+                                         gb_n, grip, (unsigned)got, lim, line,
+                                         (unsigned)got < 64 ? "   (short read / clipped)" : "" );
+                                }
                             }
                             if (pp.base)
                             {
@@ -3901,6 +4404,36 @@ void CDECL RtlRestoreContext( CONTEXT *context, EXCEPTION_RECORD *rec )
 }
 
 
+/* iOS-Madeira ml846 [tlswatch]: arm the unix-side write watch from PE code.
+ * The engine's thread-naming exception is dispatched entirely PE-side, so the
+ * unix NtRaiseException hook never saw it (ml845: zero arm lines). The one
+ * channel from here into the unix fault handler that needs no new syscall is
+ * NtProtectVirtualMemory itself: a size no real caller could pass marks the
+ * request, and the unix side arms the watch on the block instead of
+ * protecting anything. Idle unless the slot is still zero. */
+static void ios_tlswatch_pe_arm( const char *where )
+{
+    static LONG lines;
+    void **blocks = NtCurrentTeb()->ThreadLocalStoragePointer;
+    void *addr; SIZE_T size = 0x0BAD0038; ULONG old = 0; ULONG_PTR now; NTSTATUS st;
+    if (!blocks || !blocks[0]) return;
+    now = ((ULONG_PTR *)blocks[0])[7];
+    if (now)
+    {
+        /* ml847: say so. ml846 returned silently here, which made "the write
+         * came earlier" indistinguishable from "the mark never arrived". */
+        if (InterlockedIncrement( &lines ) <= 24)
+            ERR( "[tlswatch-pe] ml847 %s: slot ALREADY SET (%p) tid=%04x -- the write precedes this point\n",
+                 where, (void *)now, (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread );
+        return;
+    }
+    addr = blocks[0];
+    st = NtProtectVirtualMemory( GetCurrentProcess(), &addr, &size, PAGE_READONLY, &old );
+    if (InterlockedIncrement( &lines ) <= 24)
+        ERR( "[tlswatch-pe] ml847 %s: slot=0, sent mark for block %p -> status %08x tid=%04x\n",
+             where, blocks[0], (int)st, (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread );
+}
+
 /*******************************************************************
  *		RtlUnwindEx (NTDLL.@)
  */
@@ -3919,6 +4452,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
 
     RtlCaptureContext( context );
     new_context.AMD64_Context = *context;
+    if (rec && rec->ExceptionCode == 0x406D1388) ios_tlswatch_pe_arm( "RtlUnwindEx entry" );
 
     /* build an exception record, if we do not have one */
     if (!rec)
@@ -3973,6 +4507,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         if (!dispatch.EstablisherFrame) break;
 
         {
+            if (rec && rec->ExceptionCode == 0x406D1388) ios_tlswatch_pe_arm( "RtlUnwindEx step" );
             const char *why = ec_stack_window_step( dispatch.EstablisherFrame,
                                                     (ULONG_PTR)dispatch.ControlPc );
             if (why)
@@ -4259,6 +4794,44 @@ static void __attribute__((naked)) arm64x_check_call(void)
           * So: correct-but-unlandable until that false positive is found. The fixed version
           * is preserved in the task notes. Do not "fix" this without re-running the CEF
           * check -- verifying IsEcCode flips 0->1 does NOT prove the outcome still works. */
+         /* iOS-Madeira ml975: BOUNDS-CHECK THE TARGET BEFORE INDEXING THE BITMAP.
+          *
+          * RtlIsEcCode (the C reader, same file) already does this, and its comment
+          * records why: alloc_arm64ec_map() sizes EcCodeBitMap from
+          * min(address_space_limit, host_addr_space_limit) rather than Windows'
+          * 128TB, because one bit per 4KB page over the full range would cost a
+          * 4.06GB reservation. On iOS that yields 0x8000000000 (512GB) of coverage
+          * in a 16MB view. Steam hit the unchecked case in ml161:
+          * RtlIsEcCode(0x7300ffffffff) indexed 0x74d6ddfff8, past the view, and
+          * segfaulted. This asm fast path never received the same guard.
+          *
+          * rdr38/rdr39 is the same failure from a different caller: the guest made
+          * an indirect call to a garbage target (x11 = 0xc0be0f4800b60f00, eight
+          * bytes that disassemble as x86 -- read out of an instruction stream), the
+          * `ldr x16,[x16,x17,lsl #3]` below indexed 0x1817c1e900168 past the bitmap
+          * base and faulted at 0x1818775d80168. x18, the PEB and the bitmap pointer
+          * were all VALID; only the target was bad.
+          *
+          * iOS user VA is 39-bit (512GB), which is also exactly the bitmap's
+          * coverage, so one shift tests both: any bit at or above 2^39 means the
+          * address can be neither legitimate code nor representable in the map.
+          * Branch to .Lexit -- the "not EC code, use the x64 exit thunk" path, which
+          * is the same answer RtlIsEcCode gives for an out-of-range pointer, and the
+          * only exit that does NOT dereference x11 (both .Ljmp and the
+          * fast-forward/syscall checks load from [x11], so they would fault too).
+          * The guest's bad call then faults in the guest, attributed to the guest,
+          * instead of killing a thread inside ntdll.
+          *
+          * Deliberately does NOT touch the `ldr x16,[x18,#0x60]` line below: ml246
+          * A/B-proved over 8 runs that "correcting" that read breaks CEF. This only
+          * changes addresses that currently crash, and it moves them in the same
+          * direction ml246 documents as safe (more targets taking the exit thunk).
+          *
+          * Not covered, deliberately, to keep the scope to the observed fault: a
+          * NULL or small-but-invalid target still reaches `ldr x16,[x11]` below and
+          * faults there, which is what Windows would also do. */
+         "lsr x16, x11, #39\n\t"            /* ml975: beyond 39-bit VA / map coverage? */
+         "cbnz x16, .Lexit\n\t"             /*        -> not EC code, exit thunk */
          "ldr x16, [x18, #0x60]\n\t"        /* peb -- see above, intentionally x18 */
          "lsr x17, x11, #18\n\t"            /* dest / page_size / 64 */
          "ldr x16, [x16, #0x368]\n\t"       /* peb->EcCodeBitMap */

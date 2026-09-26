@@ -26,7 +26,11 @@ namespace CPU {
   // exhausted it in ml436 (head 708MB of DLL copies + tail collided; 10 honest
   // refusals, 123 degraded threads). Cap growth at 32MB — hot threads clear
   // and recompile more often, but every thread gets a REAL buffer.
-  static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 32;
+  // ml1052: 32MB made a large game retranslate forever (56% hit rate, 390
+  // rotations of the one shared buffer). The pool-side allocator now grants
+  // what the pool can afford and refuses the rest, and the ctor's halving
+  // ladder handles a refusal, so the ceiling here is FEX's own branch range.
+  static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
 #else
   // We don't want to move above 128MB atm because that means we will have to encode longer jumps
   static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
@@ -333,16 +337,52 @@ namespace CPU {
    * few pointer ops. NOT recursive: RegisterForSignalHandler is only called
    * from already-guarded scopes and must not re-acquire. */
   namespace {
+    /* ml1035: OWNER-AWARE. This was a plain non-recursive test-and-set, on the
+     * stated assumption that "all critical sections are a few pointer ops".
+     * GetEmptyCodeBuffer breaks that assumption: it holds the lock across
+     * StartLargerCodeBuffer() -- a pool allocation plus mprotect -- and across
+     * shared_ptr releases that free old buffers. On iOS those touch pool pages
+     * that FAULT as a matter of routine (W^X via Mach exceptions), and the
+     * exception path calls IsAddressInCodeBuffer(), which takes this same lock.
+     *
+     * iPhone 18 Pro, RDR2 loading screen: tid 00c8 sat at 100% CPU on ONE pc,
+     * CPUBackend::IsAddressInCodeBuffer+0x10 (the exchange loop below), same sp
+     * in every sample, while owning the JIT write lock at depth 7002. Every
+     * other thread queued behind it ([fexlock] STUCK x17), footprint went flat,
+     * and iOS eventually killed the app. A thread waiting for itself.
+     *
+     * The low word of the lock now carries the owner's TEB (x18, which is the
+     * TEB in ARM64EC PE code; 0 is never a valid owner because bit 0 is set on
+     * every held value). Re-entry by the owner neither spins nor releases: the
+     * interrupted critical section still owns the lock and will drop it. The
+     * re-entrant reader may see CurrentCodeBuffer mid-swap, which is the same
+     * best-effort answer an exception path got before ml460 added the lock --
+     * strictly better than never returning. */
     struct IosMigrateLockGuard {
-      std::atomic<uint32_t>& Lock;
-      explicit IosMigrateLockGuard(std::atomic<uint32_t>& Lock)
+      std::atomic<uint64_t>& Lock;
+      bool Reentered {false};
+      static uint64_t Me() {
+        uint64_t Teb = 0;
+        __asm volatile("mov %0, x18" : "=r"(Teb));
+        return Teb | 1;   /* never 0, even for a thread with no TEB */
+      }
+      explicit IosMigrateLockGuard(std::atomic<uint64_t>& Lock)
         : Lock(Lock) {
-        while (Lock.exchange(1, std::memory_order_acquire) != 0) {
+        const uint64_t Self = Me();
+        if (Self != 1 && Lock.load(std::memory_order_acquire) == Self) {
+          Reentered = true;
+          return;
+        }
+        uint64_t Expected = 0;
+        while (!Lock.compare_exchange_weak(Expected, Self, std::memory_order_acquire, std::memory_order_relaxed)) {
+          Expected = 0;
           __asm volatile("yield");
         }
       }
       ~IosMigrateLockGuard() {
-        Lock.store(0, std::memory_order_release);
+        if (!Reentered) {
+          Lock.store(0, std::memory_order_release);
+        }
       }
     };
   } // namespace
@@ -610,7 +650,14 @@ namespace CPU {
     }
 
     auto NewCodeBufferSize = GetLatest()->AllocatedSize;
+#ifdef FEX_IOS_HOST
+    // ml1052: tail carves are fixed-size and never coalesce, so a 16->32->64->128
+    // ladder strands 112MB of odd-sized carves. A process that fills its first
+    // buffer is hot: go straight to the maximum (refusal halves it down).
+    NewCodeBufferSize = MAX_CODE_SIZE;
+#else
     NewCodeBufferSize = std::min<size_t>(NewCodeBufferSize * 2, MAX_CODE_SIZE);
+#endif
     return AllocateNew(NewCodeBufferSize);
   }
 
@@ -693,13 +740,39 @@ namespace CPU {
     }
   }
 
+  /* ml1106: BOUNDED RETRY. The sweep ran ONCE per generation and marked it
+   * swept even when it skipped threads that were in simulation or pinned by a
+   * signal frame. A thread that then ran only cached code never migrated, so it
+   * kept the outgoing generation's buffer alive -- ph-rdr59: the 128 MB
+   * generation stayed pinned (prev_use_count=63) for ~90 s while every
+   * successor was refused down to 16-32 MB and rotated (2.1 M recompiles,
+   * 400-900 ms frames); the moment it was freed (log line 95018) the next
+   * generation got 128 MB again and the frame rate recovered. Retry the sweep
+   * for the same generation while the last pass skipped anyone: every 16th
+   * trigger (a compile), at most 256 times per generation. Threads leave
+   * simulation on every syscall, so a retry catches them native-side. */
+  static std::atomic<uint32_t> IosSweepRetryLeft {0};
+  static std::atomic<uint32_t> IosSweepThrottle {0};
+  static std::atomic<int> IosSweepLastSkipped {0};
   extern "C" void IosMaybeSweepCodeBuffers(FEXCore::Core::InternalThreadState* CallerThread) {
     const uint64_t Gen = IosCodeBufferGenCounter.load(std::memory_order_acquire);
+    bool Retry = false;
     if (Gen == IosSweepLastGen.load(std::memory_order_relaxed)) {
-      return;
+      if (IosSweepLastSkipped.load(std::memory_order_relaxed) == 0 || IosSweepRetryLeft.load(std::memory_order_relaxed) == 0) {
+        return;
+      }
+      if ((IosSweepThrottle.fetch_add(1, std::memory_order_relaxed) & 15) != 15) {
+        return;
+      }
+      Retry = true;
+    } else {
+      IosSweepRetryLeft.store(256, std::memory_order_relaxed);
     }
     if (IosSweepBusy.exchange(1, std::memory_order_acq_rel) != 0) {
       return; // another sweep in flight; it covers this generation or the next trigger will
+    }
+    if (Retry) {
+      IosSweepRetryLeft.fetch_sub(1, std::memory_order_relaxed);
     }
     auto Latest = CallerThread->CPUBackend->GetCodeBufferManager().GetLatest();
 
@@ -734,12 +807,13 @@ namespace CPU {
     std::atomic_thread_fence(std::memory_order_seq_cst);
     __atomic_store_n(&IosCodeBufferSweepGate, 0, __ATOMIC_SEQ_CST);
     IosSweepLastGen.store(Gen, std::memory_order_relaxed);
+    IosSweepLastSkipped.store(InSimSkip + SigPinSkip + Raced, std::memory_order_relaxed);   /* ml1106 */
     IosSweepBusy.store(0, std::memory_order_release);
 
     static std::atomic<int> SweepLogCount {0};
-    if ((Migrated || SigPinSkip || Raced) && SweepLogCount.fetch_add(1, std::memory_order_relaxed) < 64) {
-      LogMan::Msg::EFmt("[gen-sweep] gen={} threads={} migrated={} in_sim={} sig_pin={} raced={} rev=ml460", Gen, SnapCount, Migrated,
-                        InSimSkip, SigPinSkip, Raced);
+    if ((Migrated || SigPinSkip || Raced) && SweepLogCount.fetch_add(1, std::memory_order_relaxed) < 128) {
+      LogMan::Msg::EFmt("[gen-sweep] gen={} threads={} migrated={} in_sim={} sig_pin={} raced={} retry={} left={} rev=ml1106", Gen, SnapCount, Migrated,
+                        InSimSkip, SigPinSkip, Raced, Retry ? 1 : 0, IosSweepRetryLeft.load(std::memory_order_relaxed));
     }
   }
 #endif

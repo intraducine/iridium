@@ -204,6 +204,25 @@ IREffect store_at_vec4_array_masked(
   };
 };
 
+/* ml1031: zero an input register whose interpolant the paired vertex stage does
+ * not write. D3D leaves such a read undefined, so zero is a legal value -- and
+ * declaring the stage_in entry instead would make Metal reject the pipeline. */
+IREffect init_input_reg_zero(uint32_t to_reg, uint32_t mask, bool is_int) {
+  return make_effect_bind([=](context ctx) {
+    auto const_index =
+      llvm::ConstantInt::get(ctx.llvm, llvm::APInt{32, to_reg, false});
+    if (is_int)
+      return store_at_vec4_array_masked(
+        ctx.resource.input.ptr_int4, const_index,
+        llvm::ConstantAggregateZero::get(ctx.types._int4), mask
+      );
+    return store_at_vec4_array_masked(
+      ctx.resource.input.ptr_float4, const_index,
+      llvm::ConstantAggregateZero::get(ctx.types._float4), mask
+    );
+  });
+};
+
 IREffect init_input_reg(
   uint32_t with_fnarg_at, uint32_t to_reg, uint32_t mask,
   bool fix_w_component
@@ -305,6 +324,39 @@ pop_output_reg(uint32_t from_reg, uint32_t mask, uint32_t to_element) {
                  return ctx.builder.CreateInsertValue(ret, value, {to_element});
                };
       };
+    });
+  };
+}
+
+/* ml1109: a render-target output whose register the shader only partly writes
+ * (RDR2's emissive sprites write o1.x into a blended R16F "transparent depth"
+ * target). The unwritten lanes used to be shuffled in as UNDEF, and LLVM folded
+ * the blend equation around an undef source alpha to a constant 0 -- so the
+ * flames landed at depth 0 and the depth-of-field drew a maximal disc around
+ * every lamp. D3D leaves the lanes undefined; the hardware the game was built
+ * against exports (0,0,0,1) for unexported channels, which is what makes the
+ * game's own idiom (blend with the source alpha the shader never wrote) do
+ * what its authors saw. Same convention here. */
+std::function<IRValue(pvalue)> pop_output_reg_fill(uint32_t from_reg, uint32_t mask, uint32_t to_element) {
+  return [=](pvalue ret) {
+    return make_irvalue_bind([=](context ctx) -> IRValue {
+      auto const_index = llvm::ConstantInt::get(ctx.llvm, llvm::APInt{32, from_reg, false});
+      auto ivec4 = co_yield load_from_array_at(ctx.resource.output.ptr_int4, const_index);
+      auto desired_type = ctx.function->getReturnType()->getStructElementType(to_element);
+      if (!llvm::isa<llvm::FixedVectorType>(desired_type) ||
+          llvm::cast<llvm::FixedVectorType>(desired_type)->getNumElements() != 4) {
+        auto value = co_yield to_desired_type_from_int_vec4(ivec4, desired_type, mask);
+        co_return ctx.builder.CreateInsertValue(ret, value, {to_element});
+      }
+      auto value = co_yield to_desired_type_from_int_vec4(ivec4, desired_type, 0xf);
+      auto elem = llvm::cast<llvm::FixedVectorType>(desired_type)->getElementType();
+      for (unsigned i = 0; i < 4; i++) {
+        if (mask & (1u << i)) continue;
+        llvm::Constant *c = elem->isFloatingPointTy() ? llvm::ConstantFP::get(elem, i == 3 ? 1.0 : 0.0)
+                                                      : llvm::ConstantInt::get(elem, i == 3 ? 1 : 0);
+        value = ctx.builder.CreateInsertElement(value, c, (uint64_t)i);
+      }
+      co_return ctx.builder.CreateInsertValue(ret, value, {to_element});
     });
   };
 }

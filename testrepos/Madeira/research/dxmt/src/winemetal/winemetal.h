@@ -935,6 +935,8 @@ struct wmtcmd_blit_copy_from_texture_to_buffer {
   uint64_t offset;
   uint32_t bytes_per_row;
   uint32_t bytes_per_image;
+  uint32_t options;   /* ml1098: MTLBlitOption bits (1 = depth from depth/stencil, 2 = stencil from depth/stencil) */
+  uint32_t reserved2;
 };
 
 struct wmtcmd_blit_generate_mipmaps {
@@ -1854,5 +1856,99 @@ WINEMETAL_API obj_handle_t MTLDevice_newSharedEventWithMachPort(obj_handle_t dev
 WINEMETAL_API uint64_t MTLDevice_registryID(obj_handle_t device);
 
 WINEMETAL_API bool MTLSharedEvent_waitUntilSignaledValue(obj_handle_t event, uint64_t value, uint64_t timeout);
+
+
+/* madeira-d3d12: convert application DXIL to a metallib on this machine.
+ * `args` is a struct madeira_ir_convert_args; see madeira_ir_abi.h. Runs
+ * locally in both backends because it touches no Metal object. */
+WINEMETAL_API void MadeiraIRConvert(void *args);
+
+/* madeira-d3d12 (ml859): a render pipeline with a Metal vertex descriptor.
+ * DXMT fetches vertices in shader code and never needed one; shaders from the
+ * Metal Shader Converter take vertex input through [[stage_in]], so the
+ * pipeline must describe the attributes. `format` is the raw MTLVertexFormat
+ * value, `step_function` the raw MTLVertexStepFunction value (0 constant,
+ * 1 per vertex, 2 per instance). Masks say which entries are populated.
+ * Slot 128; remote mode carries the descriptor as a trailing block on the
+ * pipeline-info payload, which older hosts ignore. */
+struct WMTVertexAttributeInfo {
+  uint32_t format;
+  uint32_t offset;
+  uint32_t buffer_index;
+  uint32_t reserved;
+};
+struct WMTVertexBufferLayoutInfo {
+  uint32_t stride;
+  uint32_t step_function;
+  uint32_t step_rate;
+  uint32_t reserved;
+};
+struct WMTVertexDescriptorInfo {
+  struct WMTVertexAttributeInfo attributes[31];
+  struct WMTVertexBufferLayoutInfo layouts[31];
+  uint32_t attribute_mask;
+  uint32_t layout_mask;
+};
+WINEMETAL_API obj_handle_t
+MTLDevice_newRenderPipelineStateVD(obj_handle_t device, const struct WMTRenderPipelineInfo *info,
+                                   const struct WMTVertexDescriptorInfo *vd, obj_handle_t *err_out);
+
+/* ml880: residency sets (slots 129-132). */
+WINEMETAL_API obj_handle_t MTLDevice_newResidencySet(obj_handle_t device, uint64_t initial_capacity);
+WINEMETAL_API void MTLResidencySet_addAllocation(obj_handle_t set, obj_handle_t allocation);
+WINEMETAL_API void MTLResidencySet_commit(obj_handle_t set);
+/* ml1050: staged like addAllocation; takes effect at the next commit. */
+WINEMETAL_API void MTLResidencySet_removeAllocation(obj_handle_t set, obj_handle_t allocation);
+/* ml1072: placement heaps. size/align a texture would need inside a heap; a
+ * private placement heap; a texture placed at an offset in it. Remote mode
+ * returns 0 for all three (callers fall back to standalone allocations). */
+WINEMETAL_API void MTLDevice_heapTextureSizeAndAlign(obj_handle_t device, const struct WMTTextureInfo *info, uint64_t *size, uint64_t *align);
+WINEMETAL_API obj_handle_t MTLDevice_newPlacementHeap(obj_handle_t device, uint64_t size, enum WMTResourceOptions options);
+WINEMETAL_API obj_handle_t MTLHeap_newTextureAtOffset(obj_handle_t heap, struct WMTTextureInfo *info, uint64_t offset);
+/* ml1145: slots 139-140. Buffers placed in a placement heap, so a D3D12 placed
+ * resource in a DEFAULT heap aliases the heap's memory the way D3D12 does.
+ * Remote mode returns 0 for both (callers fall back to standalone buffers). */
+WINEMETAL_API void MTLDevice_heapBufferSizeAndAlign(obj_handle_t device, uint64_t length, enum WMTResourceOptions options, uint64_t *size, uint64_t *align);
+WINEMETAL_API obj_handle_t MTLHeap_newBufferAtOffset(obj_handle_t heap, struct WMTBufferInfo *info, uint64_t offset);
+
+/* ml1098: madeira runtime control, slot 138. A PE-side runtime has no reach
+ * into the app's sandbox; this is its one door. Ops:
+ *   0  capture poll: ret = frames requested from the UI since the last poll (cleared)
+ *   1  write file: Documents/capture/<name> from ptr/len; ret = 1 on success
+ *   2  config get: madeira.cfg value of key <name> copied into ptr/len (NUL-terminated); ret = 1 when set
+ * Local in both backends: it never touches a Metal object. */
+struct madeira_ctl_args {
+  uint32_t op;
+  uint32_t ret;
+  uint64_t ptr;
+  uint64_t len;
+  char name[160];
+};
+WINEMETAL_API void MadeiraCtl(struct madeira_ctl_args *args);
+WINEMETAL_API void MTLCommandQueue_addResidencySet(obj_handle_t queue, obj_handle_t set);
+
+/* ml927 (slot 133): a geometry-shader pipeline through the Metal Shader
+ * Converter's mesh emulation. The converter turns the vertex shader into an
+ * OBJECT function (named "<vertex_function>.dxil_irconverter_object_shader",
+ * function constant "tessellationEnabled" = false, with the synthesized
+ * stage-in function LINKED into the object stage) and the geometry shader into
+ * a MESH function (function constant "vertex_shader_output_size_fc" = the
+ * vertex shader's output size). `info` supplies the attachments exactly as for
+ * MTLDevice_newMeshRenderPipelineState; its function handles are ignored. */
+struct WMTGeometryEmulationInfo {
+  obj_handle_t stagein_library;
+  obj_handle_t vertex_library;
+  obj_handle_t geometry_library;
+  obj_handle_t fragment_library;
+  char vertex_function[64];
+  char geometry_function[64];
+  char fragment_function[64];
+  uint32_t gs_vertex_size_bytes;
+  uint32_t gs_max_input_primitives;
+  uint32_t reserved[6];
+};
+WINEMETAL_API obj_handle_t
+MTLDevice_newGeometryEmulationPipelineState(obj_handle_t device, const struct WMTMeshRenderPipelineInfo *info,
+                                            const struct WMTGeometryEmulationInfo *ge, obj_handle_t *err_out);
 
 #endif

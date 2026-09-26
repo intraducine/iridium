@@ -256,7 +256,7 @@ void winios_dump_window_tree(void)
 /* Implemented in app/Madeira/Winios/Winios.m (weak, same pattern as the
  * driver hooks below). Called on wine threads — the app side copies the
  * bits before returning and uploads on the main thread. */
-extern void winios_surface_present( HWND hwnd, int dirty_x, int dirty_y, int dirty_w, int dirty_h,
+extern int winios_surface_present( HWND hwnd, int dirty_x, int dirty_y, int dirty_w, int dirty_h,
                                     int surf_w, int surf_h, int stride, const void *bits ) __attribute__((weak));
 extern void winios_window_frame( HWND hwnd, int x, int y, int w, int h, int visible,
                                  int cx, int cy, int cw, int ch ) __attribute__((weak));
@@ -425,10 +425,15 @@ static BOOL winios_surface_flush( struct window_surface *surface, const RECT *re
         int surf_w = color_info->bmiHeader.biWidth;
         int surf_h = color_info->bmiHeader.biHeight;
         if (surf_h < 0) surf_h = -surf_h;
-        winios_surface_present( surface->hwnd,
-                                dirty->left, dirty->top,
-                                dirty->right - dirty->left, dirty->bottom - dirty->top,
-                                surf_w, surf_h, surf_w * 4, color_bits );
+        /* ml1028: propagate the snapshot allocation result. dce.c only calls
+         * reset_bounds() when we return TRUE, so returning FALSE keeps the
+         * dirty region and the frame is repainted on a later flush instead of
+         * the copy throwing an uncaught ObjC exception and killing us. */
+        if (!winios_surface_present( surface->hwnd,
+                                     dirty->left, dirty->top,
+                                     dirty->right - dirty->left, dirty->bottom - dirty->top,
+                                     surf_w, surf_h, surf_w * 4, color_bits ))
+            return FALSE;
     }
     return TRUE;
 }
@@ -522,6 +527,29 @@ static void winios_drv_window_pos_changed( HWND hwnd, HWND insert_after, HWND ow
             dprintf( 2, "[win-pos] #%u hwnd=%p after=%p flags=%08x vis={%d,%d,%d,%d} "
                      "surface=%p rev=ml505\n", n, hwnd, insert_after, (unsigned)swp_flags,
                      (int)v->left, (int)v->top, (int)v->right, (int)v->bottom, surface );
+            /* ml853: name the window. A dialog nobody can see (nothing is
+             * presenting) is otherwise just a rectangle; the class and the
+             * text of every window, children included, make it readable
+             * from the log. Static controls carry a message box's body. */
+            {
+                WCHAR clsW[64], txtW[200];
+                char cls[64], txt[200];
+                UNICODE_STRING us = { 0, sizeof(clsW), clsW };
+                int j, tn;
+                cls[0] = 0;
+                if (NtUserGetClassName( hwnd, FALSE, &us ) > 0)
+                {
+                    for (j = 0; j < us.Length / (int)sizeof(WCHAR) && j < 63; j++)
+                        cls[j] = (clsW[j] >= 32 && clsW[j] < 127) ? (char)clsW[j] : '?';
+                    cls[j] = 0;
+                }
+                tn = NtUserInternalGetWindowText( hwnd, txtW, ARRAY_SIZE(txtW) );
+                for (j = 0; j < tn && j < 199; j++)
+                    txt[j] = (txtW[j] >= 32 && txtW[j] < 127) ? (char)txtW[j] : '?';
+                txt[j] = 0;
+                if (cls[0] || txt[0])
+                    dprintf( 2, "[win-name] #%u hwnd=%p class='%s' text=\"%s\" rev=ml853\n", n, hwnd, cls, txt );
+            }
         }
     }
 
@@ -2047,4 +2075,98 @@ static const struct client_surface_funcs nulldrv_surface_funcs =
 struct client_surface *nulldrv_client_surface_create( HWND hwnd )
 {
     return client_surface_create( sizeof(struct client_surface), &nulldrv_surface_funcs, hwnd );
+}
+
+/* ml1920: same-task controller snapshots supplied by the app. */
+#include "../../app/Madeira/Winios/WiniosGamepad.h"
+
+/* Byte-for-byte XINPUT_STATE (a DWORD packet number followed by
+ * XINPUT_GAMEPAD). Not #included from xinput.h: that is a PE-side SDK header
+ * and this is the unix half of win32u. */
+struct ios_xinput_gamepad
+{
+    WORD  buttons;
+    BYTE  left_trigger;
+    BYTE  right_trigger;
+    SHORT thumb_lx, thumb_ly, thumb_rx, thumb_ry;
+};
+
+struct ios_xinput_state
+{
+    DWORD packet_number;
+    struct ios_xinput_gamepad gamepad;
+};
+
+/* Byte-for-byte XINPUT_CAPABILITIES. */
+struct ios_xinput_caps
+{
+    BYTE  type;
+    BYTE  sub_type;
+    WORD  flags;
+    struct ios_xinput_gamepad gamepad;
+    WORD  left_motor_speed, right_motor_speed;
+};
+
+C_ASSERT( sizeof(struct ios_xinput_state) == 16 );
+C_ASSERT( sizeof(struct ios_xinput_caps) == 20 );
+C_ASSERT( sizeof(struct winios_gamepad) == 20 );
+
+/***********************************************************************
+ *           ios_gamepad_query
+ *
+ * The body of NtUserCallTwoParam_GetGamepadState. `index` is the XInput user
+ * index (0-3) and `op` selects the payload; see NtUserGamepadOp_* in
+ * wine/include/ntuser.h. Returns 1 when a pad is connected in that slot and
+ * `buffer` was filled, 0 otherwise — which is also what an upstream,
+ * non-Madeira win32u returns for a code it does not know, so xinput1_3's
+ * runtime probe falls back to the existing HID path.
+ */
+ULONG_PTR ios_gamepad_query( UINT index, UINT op, void *buffer )
+{
+    struct winios_gamepad pad;
+
+    if (!buffer || index >= 4) return 0;
+    if (!winios_gamepad_get_state( index, &pad )) return 0;
+
+    switch (op)
+    {
+    case 0:   /* NtUserGamepadOp_State */
+    {
+        struct ios_xinput_state *state = buffer;
+
+        state->packet_number        = pad.packet;
+        state->gamepad.buttons      = pad.buttons;
+        state->gamepad.left_trigger  = pad.left_trigger;
+        state->gamepad.right_trigger = pad.right_trigger;
+        state->gamepad.thumb_lx     = pad.lx;
+        state->gamepad.thumb_ly     = pad.ly;
+        state->gamepad.thumb_rx     = pad.rx;
+        state->gamepad.thumb_ry     = pad.ry;
+        return 1;
+    }
+    case 1:   /* NtUserGamepadOp_Caps */
+    {
+        struct ios_xinput_caps *caps = buffer;
+
+        /* XINPUT_DEVTYPE_GAMEPAD / XINPUT_DEVSUBTYPE_GAMEPAD. The `gamepad`
+         * member of XINPUT_CAPABILITIES is not a reading — it is a MASK of
+         * what the device can report, which is why every field is saturated
+         * rather than copied from `pad`. 0xf3ff is every XINPUT_GAMEPAD_* bit
+         * except the two reserved gaps; the thumbs report 16-bit resolution
+         * (low bits clear, as real XInput reports them) and the triggers 8. */
+        caps->type     = 1;
+        caps->sub_type = 1;
+        /* Controller rumble is not implemented by this transport. */
+        caps->flags    = 0;
+        caps->gamepad.buttons       = 0xf3ff;
+        caps->gamepad.left_trigger  = 0xff;
+        caps->gamepad.right_trigger = 0xff;
+        caps->gamepad.thumb_lx = caps->gamepad.thumb_ly = (SHORT)0xffc0;
+        caps->gamepad.thumb_rx = caps->gamepad.thumb_ry = (SHORT)0xffc0;
+        caps->left_motor_speed = caps->right_motor_speed = 0;
+        return 1;
+    }
+    default:
+        return 0;
+    }
 }

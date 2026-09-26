@@ -7,7 +7,7 @@ bibliotek (kallat Winelib) som implementerar Windows API-anrop med hjälp
 av motsvarande Unix-, X11- eller Mac-anrop. Biblioteket kan också användas
 till att porta Windows-kod till vanliga Unix-program.
 
-Wine är fri programvara, utgett under villkoren i GNU GPL; se
+Wine är fri programvara, utgett under villkoren i GNU LGPL; se
 filen LICENSE för detaljer.
 
 

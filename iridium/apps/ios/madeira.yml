@@ -19,6 +19,7 @@ targets:
           - PrefixExtractor.c
           - wine_stubs.c
           - Winios/Winios.m
+          - Winios/WiniosGamepad.c
       - path: MadeiraSupport/MadeiraNative.h
         headerVisibility: public
       - path: MadeiraSupport/NativePool.c
@@ -113,7 +114,13 @@ targets:
       - path: ../../../testrepos/Madeira/app/Madeira/arm64ec-windows
         type: folder
         buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/d3d12
+        type: folder
+        buildPhase: resources
       - path: ../../../testrepos/Madeira/app/Madeira/nls
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/licenses
         type: folder
         buildPhase: resources
       - path: ../../../testrepos/Madeira/app/Madeira/legal

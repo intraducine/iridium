@@ -8,7 +8,7 @@ Winelib) qui implémente les appels de l'API de Windows à l'aide de leurs
 équivalents Unix, X11 ou Mac. Cette bibliothèque peut également être
 utilisée pour porter du code Windows vers un exécutable Unix natif.
 
-Wine est un logiciel libre, distribué sous GNU GPL ; lisez le fichier
+Wine est un logiciel libre, distribué sous GNU LGPL ; lisez le fichier
 LICENSE pour plus de détails.
 
 

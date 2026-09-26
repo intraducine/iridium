@@ -4,16 +4,16 @@
  * Copyright (C) 2020 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -120,6 +120,20 @@ struct ios_jit_alias_probe_params
     unsigned int dup_end;     /* OUT: ml639 live entries sharing this end */
 };
 
+/* ml800: the FEX arena, fetched from the unix side.
+ *
+ * It cannot be read from an ntdll global. ntdll's image is copied into the JIT
+ * pool BEFORE the unix side publishes into it (the [jit-pool] line precedes the
+ * publication in every log), so a linked-global read resolves inside a stale
+ * copy and returns zero -- which is exactly what ml799 did, silently, leaving
+ * FEX to select its own band while an 8GB arena sat held. ntdll-unix has one
+ * copy per Mach task and no image duplicates, so ask it directly. */
+struct ios_get_fex_arena_params
+{
+    ULONG64 base;   /* OUT: 0 when no arena was reserved */
+    ULONG64 end;    /* OUT: exclusive */
+};
+
 enum ntdll_unix_funcs
 {
     unix_load_so_dll,
@@ -136,6 +150,7 @@ enum ntdll_unix_funcs
     unix_ios_register_hold_release,
     unix_ios_jit_alias_probe,   /* ml631 — APPEND ONLY (see note above) */
     unix_ios_mono_bridge_ptr,   /* ml648 — APPEND ONLY: inserting renumbers every later ordinal */
+    unix_ios_get_fex_arena,     /* ml800 — APPEND ONLY */
 };
 
 extern unixlib_handle_t __wine_unixlib_handle;

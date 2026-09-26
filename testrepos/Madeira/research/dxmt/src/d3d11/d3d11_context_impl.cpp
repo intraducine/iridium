@@ -7,6 +7,7 @@ since it is for internal use only
 (and I don't want to deal with several thousands line of code)
 */
 #include "Metal.hpp"
+#include "config/config.hpp"   /* ml869 */
 #include "d3d11_annotation.hpp"
 #include "d3d11_context.hpp"
 #include "d3d11_device_child.hpp"
@@ -48,6 +49,23 @@ inline unsigned int BCCensusFormatOf(ID3D11Resource *r) {
 
 
 namespace dxmt {
+
+/* ml869: with d3d11.noMeshShaders=1 a geometry-shader or tessellated draw is
+ * dropped before anything is encoded. ml754 skipped the mesh BINDINGS and
+ * ml867 the mesh PIPELINE COMPILE, but the mesh draw record itself still went
+ * out with an ordinary pipeline bound, and Metal's driver dereferenced the
+ * mesh pipeline it never had (host SIGSEGV in drawMeshThreadgroups). Reported
+ * once; real devices keep the default and are untouched. */
+static inline bool dxmt_no_mesh_draws() {
+  static const int no_mesh = Config::getInstance().getOption<int>("d3d11.noMeshShaders", 0);
+  if (!no_mesh) return false;
+  static std::atomic<uint32_t> dropped{0};
+  uint32_t n = dropped.fetch_add(1, std::memory_order_relaxed) + 1;
+  if (n == 1 || (n & 0x3FF) == 0)
+    ERR("[mesh-skip] ml869 dropped ", n, " geometry/tessellation draw(s) (d3d11.noMeshShaders=1)");
+  return true;
+}
+
 
 template<typename Object> Rc<Object> forward_rc(Rc<Object>& obj);
 
@@ -4583,6 +4601,7 @@ public:
   template <bool IndexedDraw>
   DrawCallStatus
   FinalizeTessellationRenderPipeline() {
+    if (dxmt_no_mesh_draws()) return DrawCallStatus::Invalid;   /* ml869 */
     if (cmdbuf_state == CommandBufferState::TessellationRenderPipelineReady)
       return DrawCallStatus::Tessellation;
     auto HS = GetManagedShader<PipelineStage::Hull>();
@@ -4663,6 +4682,7 @@ public:
   template <bool IndexedDraw>
   DrawCallStatus
   FinalizeGeometryRenderPipeline() {
+    if (dxmt_no_mesh_draws()) return DrawCallStatus::Invalid;   /* ml869 */
     if (cmdbuf_state == CommandBufferState::GeometryRenderPipelineReady)
       return DrawCallStatus::Geometry;
     if (!SwitchToRenderEncoder()) {

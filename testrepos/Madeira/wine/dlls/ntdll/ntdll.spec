@@ -1755,6 +1755,10 @@
 @ extern -private -arch=arm64ec p_ios_jit_translate_addr
 @ extern -private -arch=arm64,arm64ec p_ios_jit_reverse_translate_addr
 @ extern -private ios_teb_tsd_offset
+# ml1131: [xp-api] probe counters (sync.c), read by ntdll-unix
+@ extern -private ios_xp_nt
+@ extern -private ios_fex_arena_base
+@ extern -private ios_fex_arena_end
 @ extern -private __wine_unixlib_handle
 
 # Debugging

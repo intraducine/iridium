@@ -1,8 +1,68 @@
+diff --git a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp b/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
+--- a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
++++ b/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
+@@ -1785,7 +1785,7 @@
+     }
+   }
+ #endif
+-  std::scoped_lock Lock(ThreadCreationMutex);
++  std::unique_lock<std::recursive_mutex> Lock(ThreadCreationMutex);
+ #ifdef FEX_IOS_HOST
+   IosTiLog("[FEX-iOS] TI:lock\n");
+ #endif
+@@ -1798,6 +1798,11 @@
+   static constexpr size_t EmulatorStackSize = 0x40000;
+   const uint64_t EmulatorStack =
+     reinterpret_cast<uint64_t>(::VirtualAlloc(nullptr, EmulatorStackSize, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE));
++  if (!EmulatorStack) {
++    Lock.unlock();
++    FEX::Windows::DeinitCRTThread();
++    return STATUS_NO_MEMORY;
++  }
+   CPUArea.EmulatorStackLimit() = EmulatorStack;
+   CPUArea.EmulatorStackBase() = EmulatorStack + EmulatorStackSize;
+ #ifdef FEX_IOS_HOST
+@@ -1813,11 +1818,16 @@
+     LogMan::Msg::EFmt("[FEX-iOS] ThreadInit: thread state unavailable -- unwinding thread {:#x} "
+                       "and returning STATUS_NO_MEMORY", (unsigned long long)GetCurrentThreadId());
+     CPUArea.StateFrame() = nullptr;
++    CPUArea.ThreadState() = nullptr;
++    CPUArea.DispatcherLoopTopEnterEC() = 0;
++    CPUArea.DispatcherLoopTopEnterECFillSRA() = 0;
++    CPUArea.Area->SuspendDoorbell = nullptr;
+     CPUArea.EmulatorStackLimit() = 0;
+     CPUArea.EmulatorStackBase() = 0;
+     if (EmulatorStack) {
+       ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
+     }
++    Lock.unlock();
+     FEX::Windows::DeinitCRTThread();
+     return STATUS_NO_MEMORY;
+   }
+@@ -1898,12 +1908,17 @@
+     /* Clear the CPU-area fields before freeing what they point at, so nothing
+      * can observe a stale pointer while the thread winds down. */
+     CPUArea.StateFrame() = nullptr;
++    CPUArea.ThreadState() = nullptr;
++    CPUArea.DispatcherLoopTopEnterEC() = 0;
++    CPUArea.DispatcherLoopTopEnterECFillSRA() = 0;
++    CPUArea.Area->SuspendDoorbell = nullptr;
+     CPUArea.EmulatorStackLimit() = 0;
+     CPUArea.EmulatorStackBase() = 0;
+     if (EmulatorStack) {
+       ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
+     }
+
++    Lock.unlock();
+     FEX::Windows::DeinitCRTThread();
+     return STATUS_NO_MEMORY;
+   }
 diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
 --- a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
 +++ b/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h
-@@ -23,12 +23,15 @@
- 
+@@ -22,7 +22,9 @@
+ };
+
  CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
 +  if (!Thread) return {};
    uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
@@ -10,49 +70,30 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testre
    // Leave some room from the base for the default location to allow for underflows without constant exceptions
    return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
            Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4};
+@@ -77,7 +79,8 @@
  }
- 
--void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+ #endif
+
+-bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
 +[[nodiscard]] bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
 +  if (!Thread || Thread->CallRetStackBase) return false;
-   // Allocate the call-ret stack with guard pages on both sides
-   const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
-   const void* CallRetStackAlloc = nullptr;
-@@ -65,13 +68,25 @@
-   }
+ #ifdef FEX_IOS_HOST
+   unsigned InjectTarget = 0;
+   const CallRetInject InjectMode = GetInjectMode(InjectTarget);
+@@ -158,8 +161,8 @@
+ #ifdef FEX_IOS_HOST
+       InjectCommit ||
  #endif
- 
-+  if (!CallRetStackAlloc) {
-+    LogMan::Msg::EFmt("[callret-alloc] reserve failed size={:#x}", CallRetStackAllocSize);
-+    return false;
-+  }
-+
-+  auto* StackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
-+  if (::VirtualAlloc(StackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE,
-+                     MEM_COMMIT, PAGE_READWRITE) != StackBase) {
-+    const BOOL Released = ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
-+    LogMan::Msg::EFmt("[callret-alloc] commit failed size={:#x} cleanup={}", CallRetStackAllocSize, Released != FALSE);
-+    return false;
-+  }
-+
-   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
-                                   FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
-   FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
-                                         FEXCore::Allocator::THPControl::Disable);
- 
--  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
--  ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
-+  Thread->CallRetStackBase = StackBase;
- 
-   /* iOS-Madeira: VirtualAlloc(MEM_COMMIT) on a previously-MEM_RESERVE'd
-    * PAGE_NOACCESS region might not zero-initialize the pages on iOS. The
-@@ -132,14 +147,24 @@
-     }
-   }
- #endif
-+  return true;
+-      !::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT,
+-                      PAGE_READWRITE)) {
++      ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT,
++                     PAGE_READWRITE) != Thread->CallRetStackBase) {
+     LogMan::Msg::EFmt("[callret] COMMIT FAILED: {:#x} bytes at {} -- releasing the reservation",
+                       (unsigned long long)FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE,
+                       Thread->CallRetStackBase);
+@@ -232,11 +235,20 @@
  }
- 
+
  void DestroyThread(FEXCore::Core::InternalThreadState* Thread) {
 +  if (!Thread || !Thread->CallRetStackBase) return;
    auto CallRetStackInfo = GetInfoThread(Thread);
@@ -66,99 +107,28 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testre
 +    Thread->CurrentFrame->State.callret_sp_base = 0;
 +  }
  }
- 
+
  bool HandleAccessViolation(FEXCore::Core::InternalThreadState* Thread, uint64_t Address, uint64_t& CallRetSPReg) {
 +  if (!Thread || !Thread->CallRetStackBase) return false;
    auto CallRetStackInfo = GetInfoThread(Thread);
    if (Address >= CallRetStackInfo.AllocationBase && Address < CallRetStackInfo.AllocationEnd) {
      LogMan::Msg::DFmt("Call-ret stack inbalance: {:X}", Address);
-diff --git a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp b/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
---- a/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
-+++ b/testrepos/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp
-@@ -1608,7 +1608,7 @@ NTSTATUS ThreadInit() {
-     }
-   }
- #endif
--  std::scoped_lock Lock(ThreadCreationMutex);
-+  std::unique_lock<std::recursive_mutex> Lock(ThreadCreationMutex);
- #ifdef FEX_IOS_HOST
-   IosTiLog("[FEX-iOS] TI:lock\n");
- #endif
-@@ -1620,13 +1620,28 @@ NTSTATUS ThreadInit() {
-   static constexpr size_t EmulatorStackSize = 0x40000;
-   const uint64_t EmulatorStack =
-     reinterpret_cast<uint64_t>(::VirtualAlloc(nullptr, EmulatorStackSize, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE));
-+  if (!EmulatorStack) {
-+    LogMan::Msg::EFmt("[thread-init] emulator stack allocation failed size={:#x}", EmulatorStackSize);
-+    Lock.unlock();
-+    FEX::Windows::DeinitCRTThread();
-+    return STATUS_NO_MEMORY;
-+  }
-   CPUArea.EmulatorStackLimit() = EmulatorStack;
-   CPUArea.EmulatorStackBase() = EmulatorStack + EmulatorStackSize;
- #ifdef FEX_IOS_HOST
-   IosTiLog("[FEX-iOS] TI:stack\n");
- #endif
- 
-   auto* Thread = CTX->CreateThread(0, 0);
-+  if (!Thread) {
-+    ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
-+    CPUArea.EmulatorStackLimit() = 0;
-+    CPUArea.EmulatorStackBase() = 0;
-+    LogMan::Msg::EFmt("[thread-init] FEX thread allocation failed");
-+    Lock.unlock();
-+    FEX::Windows::DeinitCRTThread();
-+    return STATUS_NO_MEMORY;
-+  }
- #ifdef FEX_IOS_HOST
-   IosTiLog("[FEX-iOS] TI:createthread\n");
- #endif
-@@ -1698,7 +1713,28 @@ NTSTATUS ThreadInit() {
-   }
- #endif
- 
--  FEX::Windows::CallRetStack::InitializeThread(Thread);
-+  if (!FEX::Windows::CallRetStack::InitializeThread(Thread)) {
-+    /* GDT and LDT alias the same allocation. Do not publish a partially
-+     * initialized translator thread or enter guest exception handling. */
-+    delete[] NewSegments;
-+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = nullptr;
-+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = nullptr;
-+    CTX->DestroyThread(Thread);
-+    ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
-+    CPUArea.EmulatorStackLimit() = 0;
-+    CPUArea.EmulatorStackBase() = 0;
-+    CPUArea.StateFrame() = nullptr;
-+    CPUArea.ThreadState() = nullptr;
-+    CPUArea.DispatcherLoopTopEnterEC() = 0;
-+    CPUArea.DispatcherLoopTopEnterECFillSRA() = 0;
-+    CPUArea.Area->SuspendDoorbell = nullptr;
-+#ifdef FEX_IOS_HOST
-+    IosTiLog("[FEX-iOS] TI:callret-failed\n");
-+#endif
-+    Lock.unlock();
-+    FEX::Windows::DeinitCRTThread();
-+    return STATUS_NO_MEMORY;
-+  }
- #ifdef FEX_IOS_HOST
-   IosTiLog("[FEX-iOS] TI:callret\n");
- #endif
 diff --git a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp b/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
 --- a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
 +++ b/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
-@@ -603,7 +603,7 @@ void BTCpuProcessTerm(HANDLE Handle, BOOL After, ULONG Status) {}
- 
+@@ -587,7 +587,7 @@
+
  void BTCpuThreadInit() {
    static constexpr size_t DefaultWow64CS {4};
 -  std::scoped_lock Lock(ThreadCreationMutex);
 +  std::unique_lock<std::mutex> Lock(ThreadCreationMutex);
    FEX::Windows::InitCRTThread();
    auto* Thread = CTX->CreateThread(0, 0);
- 
-@@ -627,7 +627,17 @@ void BTCpuThreadInit() {
+
+@@ -609,7 +609,17 @@
    Frame->State.cs_idx = DefaultWow64CS << 3;
    Frame->State.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(GDT);
- 
+
 -  FEX::Windows::CallRetStack::InitializeThread(Thread);
 +  if (!FEX::Windows::CallRetStack::InitializeThread(Thread)) {
 +    delete[] NewSegments;
@@ -171,13 +141,13 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp b/testrepos/M
 +     * can observe a zero call-return stack. */
 +    RtlExitUserThread(STATUS_NO_MEMORY);
 +  }
- 
+
    const auto TLS = GetTLS();
    TLS.ThreadState() = Thread;
 diff --git a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
 --- a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
 +++ b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
-@@ -787,9 +787,12 @@ NTSTATUS arm64ec_process_init( HMODULE module )
+@@ -904,9 +904,12 @@
          ERR( "arm64ec_process_init: pThreadInit -> %lx\n", status );
      }
      leave_syscall_callback();
@@ -192,32 +162,8 @@ diff --git a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c b/testrepos/Made
 +    }
      return status;
  }
- 
-diff --git a/testrepos/Madeira/wine/dlls/ntdll/loader.c b/testrepos/Madeira/wine/dlls/ntdll/loader.c
---- a/testrepos/Madeira/wine/dlls/ntdll/loader.c
-+++ b/testrepos/Madeira/wine/dlls/ntdll/loader.c
-@@ -4435,7 +4435,15 @@ void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3, ULONG_PTR unk4 )
-         if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
- #endif
- #ifdef __arm64ec__
--        arm64ec_thread_init();
-+        {
-+            NTSTATUS arm64ec_status = arm64ec_thread_init();
-+            if (arm64ec_status)
-+            {
-+                ERR( "arm64ec_thread_init failed, status %lx; terminating native thread before guest attach\n",
-+                     arm64ec_status );
-+                RtlExitUserThread( arm64ec_status );
-+            }
-+        }
- #endif
- 
-         if (NtCurrentTeb()->SkipThreadAttach)
-diff --git a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
-index 1e9b581d..1adc82c0 100644
---- a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
-+++ b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
-@@ -1852,6 +1855,7 @@ static void notify_map_view_of_section( HANDLE handle, void *addr, SIZE_T size,
+
+@@ -1971,6 +1974,7 @@
  void arm64ec_notify_image_map( void *base )
  {
      static unsigned int n_map;
@@ -225,7 +171,7 @@ index 1e9b581d..1adc82c0 100644
 
      /* ml710: must be the intervals-only entry point, NEVER NotifyMapViewOfSection.
       * The latter also drives ImageTracker, which takes FEX's CodeInvalidationMutex
-@@ -1864,7 +1868,13 @@ void arm64ec_notify_image_map( void *base )
+@@ -1983,7 +1987,13 @@
      n_map++;
      if (n_map <= 64)
          ERR( "[ldr-image] ml710 MAP #%u base=%p peb=%p\n", n_map, base, RtlGetCurrentPeb() );

@@ -7,7 +7,7 @@ Wine 是能够使 Microsoft Windows 程序（包括 DOS、Windows 3.x、Win32
 （名称为 Winelib）。这个库也可用来将 Windows 代码移植为原生 Unix
 可执行程序。
 
-Wine 是自由软件，在 GNU GPL 协议下发布；请查看 LICENSE 文件以了解
+Wine 是自由软件，在 GNU LGPL 协议下发布；请查看 LICENSE 文件以了解
 详情。
 
 

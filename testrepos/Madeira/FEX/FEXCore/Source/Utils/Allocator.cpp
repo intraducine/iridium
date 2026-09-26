@@ -380,3 +380,66 @@ void SetupHooks(size_t PageSize, HookPtrs Ptrs) {
 }
 } // namespace FEXCore::Allocator
 #endif
+
+#ifdef FEX_IOS_HOST
+extern "C" {
+extern uintptr_t ios_fex_band_base;
+extern uintptr_t ios_fex_band_end;
+}
+#endif
+
+namespace fextl {
+/* iOS-Madeira ml798: name a failed container allocation, then stop.
+ *
+ * Deliberately allocation-free and format-free. This runs BECAUSE an allocation
+ * just failed, so anything that allocates to describe the failure can fail in
+ * turn -- an earlier probe died formatting its own log text and reported the
+ * message as an exception code. Everything here is a fixed stack buffer and
+ * manual hex, in the same style the VA band selector uses for the same reason.
+ *
+ * The band is reported alongside the request because the two together are the
+ * whole diagnosis: a request that fits comfortably inside an exhausted band is
+ * a different bug from a request larger than the band ever was. */
+[[noreturn]] void ReportAllocationFailure(std::size_t Alignment, std::size_t Bytes) {
+  char Buf[224];
+  size_t i = 0;
+  auto Cat = [&](const char* S) {
+    while (*S && i < sizeof(Buf) - 1) {
+      Buf[i++] = *S++;
+    }
+  };
+  auto Hex = [&](unsigned long long V) {
+    const char* D = "0123456789abcdef";
+    Cat("0x");
+    int Shift = 60, Started = 0;
+    for (; Shift >= 0; Shift -= 4) {
+      int Nib = (int)((V >> Shift) & 0xf);
+      if (Nib || Started || !Shift) {
+        if (i < sizeof(Buf) - 1) {
+          Buf[i++] = D[Nib];
+        }
+        Started = 1;
+      }
+    }
+  };
+
+  Cat("[alloc-fail] ml798 FEXAlloc could not allocate bytes=");
+  Hex(Bytes);
+  Cat(" align=");
+  Hex(Alignment);
+#ifdef FEX_IOS_HOST
+  Cat(" band=");
+  Hex((unsigned long long)ios_fex_band_base);
+  Cat("..");
+  Hex((unsigned long long)ios_fex_band_end);
+#endif
+  Cat(" -- no value can be returned that a caller could act on (FEXCore is "
+      "-fno-exceptions), so stopping here instead of letting the NULL be "
+      "written through\n");
+  Buf[i] = 0;
+
+  LogMan::Msg::EFmt("{}", Buf);
+  FEX_TRAP_EXECUTION;
+  __builtin_unreachable();
+}
+} // namespace fextl

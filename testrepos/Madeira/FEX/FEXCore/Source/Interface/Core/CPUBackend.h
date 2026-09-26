@@ -215,7 +215,7 @@ namespace CPU {
      * SignalHandlerCodeBuffers (self compile paths, exception-path queries,
      * the sweeper). Lock order where nested: LookupCache write lock, THEN
      * IosMigrateLock. LatestMutex is never held around either. */
-    mutable std::atomic<uint32_t> IosMigrateLock {0};
+    mutable std::atomic<uint64_t> IosMigrateLock {0};   /* ml1035: holds the owner's TEB|1 */
     // Returns 1 = migrated, 0 = nothing to do, -1 = skipped (signal frames
     // in flight), -2 = raced out. Caller must have established via the sweep
     // gate that this thread is outside emitted code (InSimulation == 0).

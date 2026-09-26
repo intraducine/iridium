@@ -88,5 +88,12 @@
     "sha256": "76c19fa25f219b72a6c51d4c2edabee8f0529b3998540ce8a18b86187fefde1a",
     "destination": ".build/compiler-runtime-sources/llvm-mingw-build.tar.gz",
     "license": "ISC; retain upstream build-script notices"
+  },
+  {
+    "name": "metal-shader-converter",
+    "url": "https://github.com/intraducine/iridium/releases/download/deps-metal-shader-converter-4.0-beta2/metal-shader-converter-4.0-beta2-apple.tar.gz",
+    "sha256": "f61c5bf4eadb993430642bb32c5642b1ddf2479a97b22ac307564967a4ff69d4",
+    "destination": "testrepos/Madeira/.build/metal-shader-converter.tar.gz",
+    "license": "Apple Metal Shader Converter agreement (dynamic libraries); Apache-2.0 (headers); included acknowledgements"
   }
 ]

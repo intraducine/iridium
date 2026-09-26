@@ -117,8 +117,22 @@ inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Co
     AddrParam.Pointer = &AddrReq;
     // No MEM_TOP_DOWN here: Windows rejects it in combination with address requirements.
     void* Ret = ::VirtualAlloc2(nullptr, nullptr, Size, (Commit ? MEM_COMMIT : 0) | MEM_RESERVE, PAGE_READWRITE, &AddrParam, 1);
-    // Never spill host structures into guest address space when the arena is full.
-    return Ret;
+    if (Ret) {
+      return Ret;
+    }
+    /* ml799: an exhausted arena must FAIL, not fall through.
+     *
+     * The unconstrained VirtualAlloc2 below places the allocation wherever the
+     * kernel likes -- which, once the arena exists, means FEX memory landing
+     * outside the range Wine is holding for it, i.e. in guest address space.
+     * That is the collision the arena was built to end, and it would reappear
+     * only under exhaustion: the hardest case to reproduce and the easiest to
+     * misread as corruption.
+     *
+     * Callers already handle nullptr (see the thread-state and call/ret-stack
+     * paths, which report and refuse to start a thread), so failing here is
+     * both honest and survivable. */
+    return nullptr;
   }
 #endif
   MEM_EXTENDED_PARAMETER Parameter {};

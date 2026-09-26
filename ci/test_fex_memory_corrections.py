@@ -69,7 +69,18 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
         self.assertNotIn("CALLRET_STACK_SIZE", text)
 
     def test_thread_failure_is_transactional_and_stops_guest_attach(self):
-        text = THREAD_PATCH.read_text()
+        helper = load("thread_failure_source", HELPER)
+        with tempfile.TemporaryDirectory() as name:
+            repo = Path(name)
+            subprocess.run(["git", "init", "-q", name], check=True)
+            paths = set(helper.patch_paths(THREAD_PATCH))
+            paths.add("testrepos/Madeira/wine/dlls/ntdll/loader.c")
+            for relative in paths:
+                target = repo / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((ROOT / relative).read_bytes())
+            helper.apply_patch_idempotent(repo, THREAD_PATCH, "thread failure source")
+            text = "\n".join((repo / relative).read_text() for relative in paths)
         for required in (
             "[[nodiscard]] bool InitializeThread",
             "if (!CallRetStackAlloc)",
@@ -78,8 +89,9 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             "CPUArea.ThreadState() = nullptr",
             "return STATUS_NO_MEMORY",
             "RtlExitUserThread(STATUS_NO_MEMORY)",
-            "NTSTATUS arm64ec_status = arm64ec_thread_init()",
-            "RtlExitUserThread( arm64ec_status )",
+            "NTSTATUS ec_status = arm64ec_thread_init()",
+            "RtlLeaveCriticalSection( &loader_section )",
+            "NtTerminateThread( GetCurrentThread(), ec_status )",
         ):
             self.assertIn(required, text)
         self.assertNotIn("CALLRET_STACK_SIZE =", text)
@@ -148,7 +160,11 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             for relative in helper.patch_paths(THREAD_PATCH):
                 destination = repo / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(subprocess.check_output(["git", "show", "HEAD:" + relative], cwd=ROOT))
+                destination.write_bytes((ROOT / relative).read_bytes())
+            # Build a clean baseline from either patched or unpatched working source.
+            reverse = ["git", "apply", "--reverse", str(THREAD_PATCH)]
+            if subprocess.run(reverse + ["--check"], cwd=repo, capture_output=True).returncode == 0:
+                subprocess.run(reverse, cwd=repo, check=True)
             metadata = repo / "testrepos/Madeira/wine/.DS_Store"
             metadata.parent.mkdir(parents=True, exist_ok=True)
             metadata.write_bytes(b"tracked macOS metadata\n")

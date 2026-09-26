@@ -587,7 +587,7 @@ void BTCpuProcessTerm(HANDLE Handle, BOOL After, ULONG Status) {}
 
 void BTCpuThreadInit() {
   static constexpr size_t DefaultWow64CS {4};
-  std::scoped_lock Lock(ThreadCreationMutex);
+  std::unique_lock<std::mutex> Lock(ThreadCreationMutex);
   FEX::Windows::InitCRTThread();
   auto* Thread = CTX->CreateThread(0, 0);
 
@@ -609,7 +609,17 @@ void BTCpuThreadInit() {
   Frame->State.cs_idx = DefaultWow64CS << 3;
   Frame->State.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(GDT);
 
-  FEX::Windows::CallRetStack::InitializeThread(Thread);
+  if (!FEX::Windows::CallRetStack::InitializeThread(Thread)) {
+    delete[] NewSegments;
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = nullptr;
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = nullptr;
+    CTX->DestroyThread(Thread);
+    Lock.unlock();
+    FEX::Windows::DeinitCRTThread();
+    /* Keep the exported void ABI. Terminate natively before any guest callback
+     * can observe a zero call-return stack. */
+    RtlExitUserThread(STATUS_NO_MEMORY);
+  }
 
   const auto TLS = GetTLS();
   TLS.ThreadState() = Thread;

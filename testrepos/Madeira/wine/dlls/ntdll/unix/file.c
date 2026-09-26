@@ -6,16 +6,16 @@
  * Copyright 1996, 2004 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -4838,9 +4838,17 @@ NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBU
             if (w) while (k < wl && k < sizeof(nb) - 1) { nb[k] = (w[k] < 32 || w[k] > 126) ? '?' : (char)w[k]; k++; }
             nb[k] = 0;
             ios_file_wfail_logged++;
-            dprintf( 2, "[file-wfail] ml669 #%d status=0x%08x disp=%u access=0x%08x options=0x%08x "
-                     "unix=%s name=%s\n",
-                     ios_file_wfail_logged, status, disposition, access, options,
+            /* ml959: log the SHARE MODE too. rdr23's real blocker is a
+             * STATUS_SHARING_VIOLATION (0xc0000043) on EMP.dll's own state file
+             * %APPDATA%\\EMPRESS\\15a3.bin, opened FILE_OVERWRITE_IF for write --
+             * which is why that file sits at 0 bytes on disk. A sharing
+             * violation means a conflicting open handle exists, and without the
+             * requested share mode there is no way to tell whether wineserver's
+             * verdict is correct (a genuinely exclusive holder) or whether we
+             * are rejecting an open Windows would allow. */
+            dprintf( 2, "[file-wfail] ml669 #%d status=0x%08x disp=%u access=0x%08x sharing=0x%08x "
+                     "options=0x%08x unix=%s name=%s\n",
+                     ios_file_wfail_logged, status, disposition, access, sharing, options,
                      unix_name ? unix_name : "(none)", nb );
         }
     }
@@ -6351,6 +6359,60 @@ NTSTATUS WINAPI NtReadFile( HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, vo
     if (status && status != STATUS_BAD_DEVICE_TYPE) return status;
 
     if (!virtual_check_buffer_for_write( buffer, length )) return STATUS_ACCESS_VIOLATION;
+
+#ifdef WINE_IOS
+    /* ml955: WHAT IS THE ANTI-TAMPER BLOCKING READ ON?
+     *
+     * Measured: with the sub-floor work in place a game's protection layer sits
+     * for the whole run in kernelbase!ReadFile+0xac at 0% CPU, called from its
+     * own low-address code. Its spawned launcher is still alive, so this is not
+     * a read on a dead peer's handle. The handle is the missing fact, and each
+     * answer points somewhere different -- a socket implies online
+     * authentication, a pipe implies launcher IPC, a plain file implies
+     * something about the install.
+     *
+     * server_get_unix_fd above already returns the SERVER'S object type, so the
+     * classification is free -- no extra round trip, no fstat.
+     *
+     * Keyed on the HANDLE, one line each, not a flat call cap: Wine performs
+     * thousands of reads during startup and a flat budget is spent long before
+     * the interesting handle appears. (That exact mistake cost a run earlier in
+     * this investigation -- probe the value in question, not the call count.) */
+    {
+        static HANDLE ml955_seen[48];
+        static int ml955_n;
+        int ml955_i, ml955_dup = 0;
+
+        for (ml955_i = 0; ml955_i < ml955_n; ml955_i++)
+            if (ml955_seen[ml955_i] == handle) { ml955_dup = 1; break; }
+        if (!ml955_dup && ml955_n < (int)(sizeof(ml955_seen)/sizeof(ml955_seen[0])))
+        {
+            /* ml955 fix: this table was invented, not read. enum server_fd_type
+             * (include/wine/server_protocol.h) has no PIPE and no MAILSLOT --
+             * it is INVALID, FILE, DIR, SOCKET, SERIAL, CHAR, DEVICE -- so the
+             * old table reported CHAR as "PIPE" and DEVICE as "MAILSLOT".
+             * Indexed by the enum constants so it cannot drift again. Note a
+             * named pipe end reports FD_TYPE_DEVICE (server/named_pipe.c), and
+             * an fd class names neither the peer nor any protocol. */
+            static const char *ml955_types[FD_TYPE_NB_TYPES];
+            ml955_types[FD_TYPE_INVALID] = "INVALID";
+            ml955_types[FD_TYPE_FILE]    = "FILE";
+            ml955_types[FD_TYPE_DIR]     = "DIR";
+            ml955_types[FD_TYPE_SOCKET]  = "SOCKET";
+            ml955_types[FD_TYPE_SERIAL]  = "SERIAL";
+            ml955_types[FD_TYPE_CHAR]    = "CHAR";
+            ml955_types[FD_TYPE_DEVICE]  = "DEVICE";
+            ml955_seen[ml955_n++] = handle;
+            ERR( "ml955 [read-src] #%d handle=%p type=%s(%d) options=%08x len=%u offset=%s%I64x async=%d\n",
+                 ml955_n, handle,
+                 ((int)type >= 0 && (int)type < FD_TYPE_NB_TYPES && ml955_types[(int)type])
+                     ? ml955_types[(int)type] : "?",
+                 (int)type, options, length,
+                 offset ? "" : "(none) ", offset ? offset->QuadPart : 0,
+                 !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) );
+        }
+    }
+#endif
 
     if (status == STATUS_BAD_DEVICE_TYPE)
         return server_read_file( handle, event, apc, apc_user, io, buffer, length, offset, key );

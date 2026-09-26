@@ -99,6 +99,17 @@ public:
     ~Block() {
       mem_census_sub(MEMOWN_STAGING_RING, census_bytes);   /* ml677 */
       census_bytes = 0;
+      /* ml789: RELEASE THE BUFFER BEFORE FREEING ITS MEMORY.
+       *
+       * mapped_address is handed to newBuffer as WMTBufferInfo.memory, so a
+       * backend may hold it for the buffer's whole lifetime -- the remote
+       * backend keeps it as the shadow it uploads from, and hashes it every
+       * frame. Freeing it first left that backend reading a dead allocation
+       * from another thread, which faulted mid-frame on an unmapped address.
+       *
+       * Member destruction would release `buffer` AFTER this body runs, which
+       * is exactly the wrong order, so release it explicitly first. */
+      buffer = nullptr;
       if (mapped_address) {
         free(mapped_address);
         mapped_address = nullptr;

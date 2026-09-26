@@ -4,16 +4,16 @@
  * Copyright (C) 1998 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -22,6 +22,8 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <sys/types.h>
@@ -149,11 +151,38 @@ static int event_sync_signal( struct object *obj, unsigned int access, int signa
     return 1;
 }
 
+/* iOS-Madeira ml807: per-object history.
+ *
+ * The global ring answers cross-object ordering but WRAPS: a run produced 478
+ * "no operations" verdicts that were all unsafe, because traffic on unrelated
+ * events had overwritten the only history that mattered. Lifetime counters
+ * cannot be overwritten at all, so "was this event EVER signalled" is answerable
+ * however long the run goes; the small per-object ring adds detail for the
+ * recent past. */
+#define IOS_EVT_OBJ_RING 16
+struct ios_evt_obj_rec
+{
+    unsigned int seq;
+    unsigned int tid;
+    unsigned int status;      /* wait-end status, else 0 */
+    unsigned char op;
+};
+struct ios_evt_stats
+{
+    unsigned int n_create, n_set, n_reset, n_pulse;
+    unsigned int n_wait_begin, n_wait_end, n_wait_timeout, n_wait_success;
+    unsigned int last_set_tid, last_set_seq;
+    unsigned int last_reset_tid, last_reset_seq;
+    unsigned int ring_pos, ring_wrapped;
+    struct ios_evt_obj_rec ring[IOS_EVT_OBJ_RING];
+};
+
 struct event
 {
     struct object      obj;             /* object header */
     struct object     *sync;            /* event sync object */
     struct list        kernel_object;   /* list of kernel object pointers */
+    struct ios_evt_stats ios;           /* ml807: never-overwritten lifetime history */
 };
 
 static void event_dump( struct object *obj, int verbose );
@@ -249,6 +278,18 @@ struct event *create_event( struct object *root, const struct unicode_str *name,
             /* initialize it if it didn't already exist */
             event->sync = NULL;
             list_init( &event->kernel_object );
+            /* ml809: MUST zero the stats block here.
+             *
+             * alloc_object() uses mem_alloc(), not calloc, and initialises only
+             * the struct object header -- everything a subclass adds is garbage
+             * until it assigns it. ml807/ml808 left this block uninitialised, so
+             * ring_pos started as a random value and the first recorded
+             * operation wrote ring[garbage], off the end of the object and into
+             * the server heap. The wineserver then stopped answering and every
+             * client blocked forever in wine_server_call, the first being
+             * NtCreateEvent in unix_init_startup_info -- i.e. the desktop never
+             * came up, which looked nothing like an event-probe bug. */
+            memset( &event->ios, 0, sizeof(event->ios) );
 
             if (!(event->sync = create_event_sync( manual_reset, initial_state )))
             {
@@ -265,13 +306,193 @@ struct event *get_event_obj( struct process *process, obj_handle_t handle, unsig
     return (struct event *)get_handle_obj( process, handle, access, &event_ops );
 }
 
+
+/* iOS-Madeira ml805: a bounded history of what happens to each event object.
+ *
+ * The question this exists to answer: RenderThread 0 waits ~60s on a manual
+ * event that is never signalled, then exits while still owning a critical
+ * section, and eight threads deadlock behind it forever. Nothing so far
+ * distinguishes "the producer never ran" from "it signalled a different object"
+ * from "the event was reset or closed underneath the waiter".
+ *
+ * Keyed by OBJECT IDENTITY, never by handle or by a pointer captured from a
+ * previous run -- both change. queue_ios.c's [srv-stuck] already resolves the
+ * object a stuck thread waits on, and latches onto whatever that turns out to
+ * be, so this needs no prior knowledge of which event matters.
+ *
+ * Bounded and overwriting: a hang produces unbounded operations on OTHER
+ * events, and a probe that allocates or grows under a fault is how an earlier
+ * one died on its own log text. */
+#define IOS_EVT_RING_N 1024
+struct ios_evt_rec
+{
+    void         *obj;        /* event wrapper -- the identity queue_ios.c resolves */
+    void         *sync;       /* its sync object, which is what waiters queue on */
+    unsigned int  tid;        /* thread that performed the operation */
+    unsigned int  seq;
+    unsigned char op;         /* ios_evt_op */
+    signed char   state;      /* signalled state BEFORE the op, -1 unknown */
+};
+enum ios_evt_op { IOS_EVT_CREATE = 0, IOS_EVT_SET, IOS_EVT_RESET, IOS_EVT_PULSE,
+                  IOS_EVT_DUP, IOS_EVT_CLOSE, IOS_EVT_WAIT_BEGIN, IOS_EVT_WAIT_END };
+static const char * const ios_evt_op_name[] = { "create", "SET", "reset", "pulse", "dup", "close",
+                                                "wait-begin", "wait-end" };
+
+static struct ios_evt_rec ios_evt_ring[IOS_EVT_RING_N];
+static unsigned int ios_evt_pos, ios_evt_seq, ios_evt_wrapped;
+
+void ios_evt_record( void *obj, void *sync, int op, int state );   /* ml807: fwd decl */
+
+/* ml807: called from thread.c's wait_on/end_wait.
+ *
+ * This is the record Sol asked for and the one most likely to settle the case:
+ * when the first lock timeouts appear the render thread's CURRENT event wait is
+ * only 8.7s old, while other threads have already blocked 60s on the section it
+ * holds. Either it times out and re-enters the wait repeatedly, or this wait is
+ * downstream of an earlier stall. A begin/end count with statuses separates
+ * those; a single age sample cannot. */
+void ios_evt_note_wait( struct object *obj, int begin, unsigned int status )
+{
+    if (!obj || obj->ops != &event_ops) return;
+    ios_evt_record( obj, ((struct event *)obj)->sync,
+                    begin ? IOS_EVT_WAIT_BEGIN : IOS_EVT_WAIT_END, (int)status );
+}
+
+/* ml805: identity test for handle.c, which cannot see event_ops. */
+int ios_obj_is_event( struct object *obj )
+{
+    return obj && obj->ops == &event_ops;
+}
+
+/* ml805: the sync object a waiter would actually queue on. */
+void *ios_evt_sync_of( struct object *obj )
+{
+    return ios_obj_is_event( obj ) ? ((struct event *)obj)->sync : NULL;
+}
+
+/* ml807: update the per-object stats that cannot be overwritten. */
+static void ios_evt_stat( struct event *event, int op, unsigned int status, unsigned int seq )
+{
+    struct ios_evt_stats *st;
+    struct ios_evt_obj_rec *rec;
+    unsigned int tid = current ? current->id : 0;
+
+    if (!event) return;
+    st = &event->ios;
+    switch (op)
+    {
+    case IOS_EVT_CREATE:     st->n_create++; break;
+    case IOS_EVT_SET:        st->n_set++;   st->last_set_tid = tid;   st->last_set_seq = seq;   break;
+    case IOS_EVT_RESET:      st->n_reset++; st->last_reset_tid = tid; st->last_reset_seq = seq; break;
+    case IOS_EVT_PULSE:      st->n_pulse++; break;
+    case IOS_EVT_WAIT_BEGIN: st->n_wait_begin++; break;
+    case IOS_EVT_WAIT_END:
+        st->n_wait_end++;
+        if (status == STATUS_TIMEOUT) st->n_wait_timeout++; else st->n_wait_success++;
+        break;
+    default: break;
+    }
+    /* ml809: belt and braces. The out-of-bounds write above cost a build and a
+     * run to find; a bounds check here makes any future uninitialised path
+     * merely lose a record instead of corrupting the server heap. */
+    if (st->ring_pos >= IOS_EVT_OBJ_RING) st->ring_pos = 0;
+    rec = &st->ring[st->ring_pos];
+    rec->seq = seq; rec->tid = tid; rec->status = status; rec->op = (unsigned char)op;
+    if (++st->ring_pos == IOS_EVT_OBJ_RING) { st->ring_pos = 0; st->ring_wrapped = 1; }
+}
+
+void ios_evt_record( void *obj, void *sync, int op, int state )
+{
+    struct ios_evt_rec *r = &ios_evt_ring[ios_evt_pos];
+
+    r->obj   = obj;
+    r->sync  = sync;
+    r->tid   = current ? current->id : 0;
+    r->seq   = ++ios_evt_seq;
+    r->op    = (unsigned char)op;
+    r->state = (signed char)state;
+    if (++ios_evt_pos == IOS_EVT_RING_N) { ios_evt_pos = 0; ios_evt_wrapped = 1; }
+    ios_evt_stat( (struct event *)obj, op, (unsigned int)(state < 0 ? 0 : state), r->seq );
+}
+
+/* Print every recorded operation on ONE object, oldest first. Called from
+ * [srv-stuck] with the object it independently resolved. */
+int ios_evt_dump_for( void *obj )
+{
+    unsigned int i, n = 0;
+
+    /* ml806: raw write, not stdio. The ml805 build proved (by disassembly) that
+     * this function is CALLED, yet not one of its fprintf lines reached the log
+     * while [srv-stuck]'s fprintfs from the same thread did. Until that is
+     * explained, nothing here may depend on stdio: write(2) has no buffer, no
+     * lock of its own and no FILE* to be wrong about. */
+    { static const char m[] = "[evt-entry]\n"; ssize_t w = write( 2, m, sizeof(m) - 1 ); (void)w; }
+
+    for (i = 0; i < IOS_EVT_RING_N; i++)
+    {
+        unsigned int idx = (ios_evt_pos + i) % IOS_EVT_RING_N;
+        struct ios_evt_rec *r = &ios_evt_ring[idx];
+
+        if (!r->seq || r->obj != obj) continue;
+        fprintf( stderr, "[evt-hist] obj=%p sync=%p seq=%u tid=%04x %s state_before=%d\n",
+                 r->obj, r->sync, r->seq, r->tid,
+                 r->op < 6 ? ios_evt_op_name[r->op] : "?", r->state );
+        n++;
+    }
+    /* ml807: lifetime counters FIRST -- these cannot wrap, so they answer
+     * "was this event ever signalled" regardless of how long the run went. */
+    if (((struct object *)obj)->ops == &event_ops)
+    {
+        struct ios_evt_stats *st = &((struct event *)obj)->ios;
+        unsigned int k, shown = 0;
+
+        fprintf( stderr, "[evt-life] obj=%p create=%u SET=%u reset=%u pulse=%u | "
+                         "wait begin=%u end=%u timeout=%u success=%u | "
+                         "last_set tid=%04x seq=%u | last_reset tid=%04x seq=%u%s\n",
+                 obj, st->n_create, st->n_set, st->n_reset, st->n_pulse,
+                 st->n_wait_begin, st->n_wait_end, st->n_wait_timeout, st->n_wait_success,
+                 st->last_set_tid, st->last_set_seq, st->last_reset_tid, st->last_reset_seq,
+                 st->n_set ? "" : "   <-- NEVER SET BY ANYONE, for the whole life of this object" );
+
+        for (k = 0; k < IOS_EVT_OBJ_RING; k++)
+        {
+            unsigned int idx = (st->ring_pos + k) % IOS_EVT_OBJ_RING;
+            struct ios_evt_obj_rec *rec = &st->ring[idx];
+            if (!rec->seq) continue;
+            fprintf( stderr, "[evt-life]   seq=%u tid=%04x %s status=%08x\n",
+                     rec->seq, rec->tid,
+                     rec->op < 8 ? ios_evt_op_name[rec->op] : "?", rec->status );
+            shown++;
+        }
+        if (shown && st->ring_wrapped)
+            fprintf( stderr, "[evt-life]   (per-object ring wrapped; counters above are still exact)\n" );
+    }
+
+    if (!n)
+        fprintf( stderr, "[evt-hist] obj=%p: no recorded operations in the GLOBAL ring (%u entries%s). "
+                         "%s\n",
+                 obj, ios_evt_wrapped ? IOS_EVT_RING_N : ios_evt_pos,
+                 ios_evt_wrapped ? ", WRAPPED" : "",
+                 ios_evt_wrapped
+                     ? "The ring WRAPPED, so this does NOT mean the producer never ran -- older "
+                       "operations were overwritten and this verdict is UNSAFE"
+                     : "The ring never wrapped, so this event genuinely was never set, reset, "
+                       "duplicated or closed by anyone" );
+    else
+        fprintf( stderr, "[evt-hist] obj=%p: %u operations above%s\n", obj, n,
+                 ios_evt_wrapped ? " (ring WRAPPED -- older history lost)" : "" );
+    return (int)n;
+}
+
 void set_event( struct event *event )
 {
+    ios_evt_record( event, event->sync, IOS_EVT_SET, -1 );
     signal_sync( event->sync );
 }
 
 void reset_event( struct event *event )
 {
+    ios_evt_record( event, event->sync, IOS_EVT_RESET, -1 );
     reset_sync( event->sync );
 }
 
@@ -387,6 +608,9 @@ DECL_HANDLER(create_event)
     if ((event = create_event( root, &name, objattr->attributes,
                                req->manual_reset, req->initial_state, sd )))
     {
+        /* ml805: record identity at birth, so a later [evt-hist] dump can say
+         * whether the object a stuck waiter is queued on was ever touched. */
+        ios_evt_record( event, event->sync, IOS_EVT_CREATE, req->initial_state );
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
             reply->handle = alloc_handle( current->process, event, req->access, objattr->attributes );
         else

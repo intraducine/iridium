@@ -55,6 +55,16 @@ static rpmalloc_config_t global_config {
 // -> c0000005 in ntdll memcpy, killing the child before the message it was
 // formatting ever surfaced. Lazily initialize the thread heap at the hook
 // boundary; rpmalloc_is_thread_initialized() is a cheap TLS read.
+
+#ifdef FEX_IOS_HOST
+extern "C" void fex_ios_rpm_lock(void);
+extern "C" void fex_ios_rpm_unlock(void);
+namespace { struct IosRpmGuard { IosRpmGuard() { fex_ios_rpm_lock(); } ~IosRpmGuard() { fex_ios_rpm_unlock(); } }; }
+#define IOS_RPM_GUARD() IosRpmGuard ios_rpm_guard_
+#else
+#define IOS_RPM_GUARD() ((void)0)
+#endif
+
 static inline void EnsureThreadHeap() {
   if (!::rpmalloc_is_thread_initialized()) {
     ::rpmalloc_thread_initialize();
@@ -62,44 +72,54 @@ static inline void EnsureThreadHeap() {
 }
 
 void* malloc(size_t size) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpmalloc(size);
 }
 void* calloc(size_t n, size_t size) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpcalloc(n, size);
 }
 void* memalign(size_t align, size_t s) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpmemalign(align, s);
 }
 void* valloc(size_t size) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpaligned_alloc(global_config.page_size, size);
 }
 int posix_memalign(void** r, size_t a, size_t s) {
   void* ptr;
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   auto res = ::rpposix_memalign(&ptr, a, s);
   *r = ptr;
   return res;
 }
 void* realloc(void* ptr, size_t size) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rprealloc(ptr, size);
 }
 void free(void* ptr) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpfree(ptr);
 }
 size_t malloc_usable_size(void* ptr) {
+  IOS_RPM_GUARD();
   return ::rpmalloc_usable_size(ptr);
 }
 void* aligned_alloc(size_t a, size_t s) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpaligned_alloc(a, s);
 }
 void aligned_free(void* ptr) {
+  IOS_RPM_GUARD();
   EnsureThreadHeap();
   return ::rpfree(ptr);
 }
@@ -247,6 +267,7 @@ void free(void* ptr) {
   return ::free(ptr);
 }
 size_t malloc_usable_size(void* ptr) {
+  IOS_RPM_GUARD();
 #ifdef __APPLE__
   return ::malloc_size(ptr);
 #else

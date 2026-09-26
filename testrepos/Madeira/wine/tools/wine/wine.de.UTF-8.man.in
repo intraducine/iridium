@@ -254,9 +254,9 @@ die Datei
 im obersten Ordner der Quellcodedistribution.
 .SH COPYRIGHT
 .B wine
-kann unter den Bedingungen der GPL genutzt werden; für eine Kopie der
+kann unter den Bedingungen der LGPL genutzt werden; für eine Kopie der
 Lizenz siehe die Datei
-.B COPYING
+.B COPYING.LIB
 im obersten Ordner der Quellcodedistribution.
 .SH FEHLER
 .PP

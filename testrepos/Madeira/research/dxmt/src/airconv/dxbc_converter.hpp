@@ -4,6 +4,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -259,6 +260,9 @@ template <typename S> IREffect make_effect_bind(S &&fs) {
   });
 }
 
+/* ml1031: zero an input register the paired vertex stage never writes. */
+IREffect init_input_reg_zero(uint32_t to_reg, uint32_t mask, bool is_int);
+
 IREffect store_at_vec4_array_masked(
   llvm::Value *array, pvalue index, pvalue maybe_vec4, uint32_t mask
 );
@@ -276,6 +280,8 @@ IREffect init_input_reg_with_interpolation(
 std::function<IRValue(pvalue)>
 pop_output_reg(uint32_t from_reg, uint32_t mask, uint32_t to_element);
 
+std::function<IRValue(pvalue)>
+pop_output_reg_fill(uint32_t from_reg, uint32_t mask, uint32_t to_element);
 std::function<IRValue(pvalue)>
 pop_output_reg_fix_unorm(uint32_t from_reg, uint32_t mask, uint32_t to_element);
 
@@ -335,13 +341,21 @@ struct SignatureContext {
   bool skip_vertex_output;
   uint32_t pull_mode_reg_mask;
   uint32_t unorm_output_reg_mask;
+  /* ml1031: names the paired vertex stage actually writes. nullptr => do not
+   * filter (pre-ml1031 behaviour). */
+  const std::unordered_set<std::string> *provided_interpolants;
+  /* ml1033: what the filter actually DID, so a misfire is visible. */
+  unsigned ps_inputs_seen;
+  unsigned ps_inputs_zeroed;
+  std::string ps_inputs_zeroed_names;
 
   SignatureContext(
     IREffect &prologue, IRValue &epilogue, air::FunctionSignatureBuilder &func_signature, io_binding_map &resource
   )
       : prologue(prologue), epilogue(epilogue), func_signature(func_signature), resource(resource), ia_layout(nullptr),
         dual_source_blending(false), disable_depth_output(false), skip_vertex_output(false), pull_mode_reg_mask(0),
-        unorm_output_reg_mask(0){};
+        unorm_output_reg_mask(0), provided_interpolants(nullptr), ps_inputs_seen(0),
+        ps_inputs_zeroed(0){};
 };
 
 struct MeshOutputContext {

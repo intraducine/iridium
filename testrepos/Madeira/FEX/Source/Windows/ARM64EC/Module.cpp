@@ -6,6 +6,7 @@ desc: Implements the ARM64EC BT module API using FEXCore
 $end_info$
 */
 
+#include "../Common/ArenaManager.h"
 #include <FEXCore/fextl/fmt.h>
 #include <FEXCore/Core/X86Enums.h>
 #include <FEXCore/Core/SignalDelegator.h>
@@ -76,6 +77,9 @@ extern "C" int ios_va_log_len;
  * PE images are copied into the JIT pool. */
 extern "C" uint64_t IosJitTranslate(uint64_t Addr);
 extern "C" uint64_t IosJitReverseTranslate(uint64_t Addr);
+extern "C" uint64_t IosSubfloorToReal(uint64_t Addr);   // ml951
+extern "C" uint64_t IosSubfloorToLow(uint64_t Addr);    // ml951
+extern "C" uint64_t IosSubfloorClipSize(uint64_t LowAddr, uint64_t Size);  // ml951
 /* ml316: FFS-bypass diagnostics, written by ExitToX64's bypass path in Module.S:
  * [0] = native short-circuits taken, [1] = last EC target,
  * [2] = FFS matched but target not EC (fell through to emulation), [3] = last such
@@ -90,6 +94,17 @@ extern "C" uint32_t IosTebTsdOffset;
  * lld generates for the neighbouring word ("misaligned ldr/str offset"). */
 static uint32_t IosTebTsdImportFound = 0;
 uint64_t IosFfsBypassLog[4] {};
+/* ml1131: transition probe, written by Module.S and read by wine's ntdll-unix
+ * sampler through this DATA export (libarm64ecfex.def). Layout in bytes:
+ *   0     magic 'MADXPFEX' (set in ProcessInit)
+ *   64    x64->EC calls, 16 shards x 64 bytes (shard = bits 16..19 of sp), LSE add
+ *   1088  FPCR writes actually performed in ExitFunctionEC, 16 shards
+ *   2112  EC->x64 calls through ExitToX64 (not the FFS bypass), 16 shards
+ *   3136  ring index (every 64th x64->EC call of a shard appends its target)
+ *   3200  ring[4096] of target addresses (as the x64 caller called them)
+ * Keep in sync with Module.S and build/ntdll-unix/server_ios.c (ios_xp_fex_*). */
+extern "C" __attribute__((aligned(64))) uint64_t IosXpFex[4496];
+__attribute__((aligned(64))) uint64_t IosXpFex[4496] {};
 #endif // FEX_IOS_HOST
 
 namespace Exception {
@@ -764,6 +779,34 @@ public:
       }
     }
     if (Result.Size == 0) {
+      /* ml951: sub-floor image window. The address is below iOS's 4GB floor, so
+       * nothing is mapped there and the tracker cannot know it -- but the image
+       * IS mapped high, and its executable sections are already recorded for
+       * that mapping. Translate low -> real, ask about the real address, then
+       * report the range back in the GUEST's own low domain so the guest RIP is
+       * never moved to the backing address. Permissions come from the tracker
+       * unchanged, and the size is clipped to the registered window. Inert when
+       * no window is registered (the table is empty), which is also the runtime
+       * off switch: ntdll skips pushing windows when MADEIRA_NO_SUBFLOOR_XQUERY
+       * is set. */
+      const uint64_t RealAddr = IosSubfloorToReal(Address);
+      if (RealAddr != Address) {
+        auto Inner = InvalidationTracker->QueryExecutableRange(RealAddr);
+        if (Inner.Size != 0) {
+          const uint64_t LowBase = IosSubfloorToLow(Inner.Base);
+          if (LowBase != Inner.Base) {
+            static uint32_t SubfloorHitCount = 0;
+            if (SubfloorHitCount < 8) {
+              SubfloorHitCount++;
+              LogMan::Msg::EFmt("[iOS-subfloor-xquery] ml951 addr={:#x} -> real={:#x} exec range low={:#x} size={:#x} writable={}",
+                                Address, RealAddr, LowBase, IosSubfloorClipSize(LowBase, Inner.Size), Inner.Writable);
+            }
+            return {LowBase, IosSubfloorClipSize(LowBase, Inner.Size), Inner.Writable};
+          }
+        }
+      }
+    }
+    if (Result.Size == 0) {
       static uint32_t QueryFailCount = 0;
       if (QueryFailCount < 12) {
         QueryFailCount++;
@@ -842,6 +885,7 @@ NTSTATUS ProcessInit() {
     if (!IosTebTsdOffset) {
       return STATUS_UNSUCCESSFUL;
     }
+    IosXpFex[0] = 0x5845465058444d41ull;   /* ml1131 'AMDXPFEX' little-endian magic */
   }
 #endif
 
@@ -852,6 +896,21 @@ NTSTATUS ProcessInit() {
   FEX::Config::LoadConfig(fextl::string {ExecutableName}, _environ, FEX::ReadPortabilityInformation());
   FEXCore::Config::ReloadMetaLayer();
   FEX::Windows::Logging::Init();
+
+#if defined(FEX_IOS_HOST) && defined(MADEIRA_ARENA_SELFTEST)
+  /* Runs only when MADEIRA_ARENA_TEST is set, and only in builds that link the
+   * self-test (ArenaSelfTest.cpp is not in CMakeLists, so this is compiled out
+   * by default and the carver has NEVER executed on device).
+   *
+   * ml798 correction: an earlier version of this comment blamed the test's
+   * std::thread/std::vector CRT constructors for the _lock(17) recursion that
+   * killed every launch. The ml796 A/B REFUTED that -- unlinking the test
+   * changed nothing. The real cause was three getenv() calls added to
+   * rpmalloc's band selector, which runs before ucrtbase's DllMain; see the
+   * ml797 note in ios_fex_band_select(). Keeping the false attribution here
+   * would send the next reader to exonerated code. */
+  FEX::Windows::Arena::SelfTest();
+#endif
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml278: announce the atomic-alias geometry UNCONDITIONALLY, AFTER
    * Logging::Init().
@@ -890,7 +949,7 @@ NTSTATUS ProcessInit() {
  * __DATE__/__TIME__ below is compiler-generated and therefore the
  * authoritative identity; if the two disagree, the tag is wrong, not the
  * build. */
-#define MADEIRA_REV "ml755"
+#define MADEIRA_REV "ml908"
   LogMan::Msg::EFmt("[build-id] xtajit64 rev=" MADEIRA_REV " compiled " __DATE__ " " __TIME__);
 #ifdef FEX_IOS_HOST
   /* ml751: flush the VA band selector's beacons.
@@ -1073,7 +1132,28 @@ public:
 bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* Exception, CONTEXT* GuestContext, ARM64_NT_CONTEXT* NativeContext) {
   auto Thread = CPUArea.ThreadState();
   FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedSignalTime);
-  LogMan::Msg::DFmt("Exception: Code: {:X} Address: {:X}", Exception->ExceptionCode, reinterpret_cast<uintptr_t>(Exception->ExceptionAddress));
+  /* ml1039: an access violation is only diagnosable with its DATA address. "Address" is the faulting PC; the
+   * operand lives in ExceptionInformation[0]=read/write/execute and [1]=address, and leaving them out cost a
+   * whole run on a fault inside a decompressor whose target could not be determined afterwards. */
+  /* ml1055: a write into tracked code is ROUTINE here (a protector rewrites its image tens of thousands of times a
+   * run) and each one printed two lines, which our log pipeline then spent a core digesting. The line is deferred
+   * for AV writes: sampled when the fault turns out to be handled SMC, printed in full on every other outcome, so
+   * no genuine access violation loses its data address. */
+  const bool IosDeferAvLog = Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && Exception->NumberParameters >= 2 &&
+                             Exception->ExceptionInformation[0] == 1;
+  auto IosLogAv = [&]() {
+    LogMan::Msg::DFmt("Exception: Code: {:X} Address: {:X} AV {} of {:X}", Exception->ExceptionCode,
+                      reinterpret_cast<uintptr_t>(Exception->ExceptionAddress),
+                      Exception->ExceptionInformation[0] == 0 ? "READ" : Exception->ExceptionInformation[0] == 1 ? "WRITE" : "EXEC",
+                      static_cast<uint64_t>(Exception->ExceptionInformation[1]));
+  };
+  if (IosDeferAvLog) {
+    /* printed below */
+  } else if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && Exception->NumberParameters >= 2) {
+    IosLogAv();
+  } else {
+    LogMan::Msg::DFmt("Exception: Code: {:X} Address: {:X}", Exception->ExceptionCode, reinterpret_cast<uintptr_t>(Exception->ExceptionAddress));
+  }
 
   if (NativeContext->Pc == reinterpret_cast<uint64_t>(&ExitFunctionSuspendPoint)) {
     // A suspend interrupt can occur in ExitFunctionEC before InSimulation is unset and set SuspendDoorbell. If this
@@ -1088,16 +1168,26 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
     const auto FaultAddress = static_cast<uint64_t>(Exception->ExceptionInformation[1]);
 
     if (FEX::Windows::CallRetStack::HandleAccessViolation(Thread, FaultAddress, NativeContext->X17)) {
+      if (IosDeferAvLog) IosLogAv();
       return true;
     }
 
     if (FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread, reinterpret_cast<void*>(FaultAddress), NativeContext->X,
                                                        reinterpret_cast<__uint128_t*>(NativeContext->V), &NativeContext->Pc)) {
+      if (IosDeferAvLog) IosLogAv();
       return true;
     }
 
     std::scoped_lock Lock(ThreadCreationMutex);
+    static std::atomic<uint64_t> IosSmcHandled {0};
+    bool IosSmcSay = true;
     if (InvalidationTracker && InvalidationTracker->HandleRWXAccessViolation(Thread, NativeContext->Pc, FaultAddress)) {
+      {
+        const uint64_t N = IosSmcHandled.fetch_add(1, std::memory_order_relaxed) + 1;
+        IosSmcSay = N <= 40 || (N % 1000) == 0;
+        if (IosDeferAvLog && IosSmcSay) IosLogAv();
+        if (IosSmcSay && N > 40) LogMan::Msg::DFmt("[smc] ml1055 {} self-modifying writes handled so far (lines sampled 1 in 1000)", N);
+      }
       FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedSMCCount, 1);
       if (CTX->IsAddressInCodeBuffer(Thread, NativeContext->Pc) && !CTX->IsCurrentBlockSingleInst(CPUArea.ThreadState()) &&
           CTX->IsAddressInCurrentBlock(Thread, FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE)) {
@@ -1110,7 +1200,7 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
         NativeContext->X11 = 1;                                        // Set ENTRY_FILL_SRA_SINGLE_INST_REG to force a single step
         NativeContext->X17 = reinterpret_cast<uint64_t>(CPUArea.Area); // Set EC_ENTRY_CPUAREA_REG
       } else {
-        LogMan::Msg::DFmt("Handled self-modifying code: pc: {:X} fault: {:X}", NativeContext->Pc, FaultAddress);
+        if (IosSmcSay) LogMan::Msg::DFmt("Handled self-modifying code: pc: {:X} fault: {:X}", NativeContext->Pc, FaultAddress);
 #ifdef FEX_IOS_HOST
         /* ml657: ON iOS THE SMC RETRY CAN NEVER SUCCEED, SO PERFORM THE ACCESS HERE.
          *
@@ -1138,7 +1228,76 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
          * unchanged. ⚠️ An ALIGNED store trapped by SMC would still loop — not observed,
          * and it would need a different fix rather than a wider net here. */
         const uint64_t SmcPc = NativeContext->Pc;
-        if (Exception::HandleUnalignedAccess(CPUArea, *NativeContext, CTX->IsAddressInCodeBuffer(Thread, SmcPc))) {
+
+        /* ml1018: A BYTE RELEASE STORE MUST NEVER ENTER THE BACKPATCHER.
+         *
+         * ml657 hands this fault to HandleUnalignedAccess. For an STLR/STLUR that
+         * helper writes a half-barrier over PC[-1] and returns -4. For 16/32/64-bit
+         * that slot is a nop the emitter reserves ("Half-barrier once back-patched",
+         * MemoryOps.cpp), but for 8-bit the emitter deliberately reserves NOTHING --
+         * `stlrb` is emitted bare, because "8bit load is always aligned to natural
+         * alignment". So PC[-1] is a LIVE INSTRUCTION and the backpatch destroys it.
+         *
+         * Wine's own Mach path already refuses byte accesses for exactly this reason
+         * (ml624, signal_arm64_ios.c), which is where the ULTRAKILL wall was: a live
+         * `add x6, x0, #2` computing the ADDRESS was replaced by `dmb ish`, so the
+         * store went to a stale x6. This SMC path was never given that guard, and
+         * ml657's own comment flagged the hole -- "an ALIGNED store trapped by SMC
+         * would still loop" -- a byte store is ALWAYS aligned.
+         *
+         * Measured on RDR2 (rdr85-87, three runs): STLRB 0x089ffc28 at guest
+         * 0x1460eb66a, ml657 returning pc-4, and afterwards a deterministic bad read
+         * of 0xf91a47d1 from a block on that same page.
+         *
+         * A byte access cannot be misaligned, so this was never an unaligned atomic
+         * -- it is a write to a page we map RX. HandleRWXAccessViolation above has
+         * already accepted the write and unprotected the interval, so returning
+         * WITHOUT advancing Pc retries the ORIGINAL instruction with PC[-1] intact.
+         * If the unprotect did not make the backing writable this re-faults instead
+         * of corrupting code, and the existing 2000-redelivery guard reports it --
+         * a diagnosable loop is strictly better than silent instruction loss. */
+        constexpr uint32_t Ml1018LdaxrMask = 0x3F'FF'FC'00;
+        constexpr uint32_t Ml1018StlrInst  = 0x08'9F'FC'00;
+        constexpr uint32_t Ml1018Rcpc2Mask = 0x3F'E0'0C'00;
+        constexpr uint32_t Ml1018StlurInst = 0x19'00'00'00;
+        const uint32_t* Ml1018Pc = reinterpret_cast<const uint32_t*>(SmcPc);
+        const uint32_t Ml1018Insn = Ml1018Pc[0];
+        const bool Ml1018IsByteRelStore =
+            ((Ml1018Insn >> 30) & 0x3) == 0 &&
+            (((Ml1018Insn & Ml1018LdaxrMask) == Ml1018StlrInst) ||
+             ((Ml1018Insn & Ml1018Rcpc2Mask) == Ml1018StlurInst));
+
+        if (Ml1018IsByteRelStore) {
+          /* ml1065: ml1018 retried the SAME stlrb and relied on the page having become
+           * writable. On iOS it never does (the mapping stays RX; plain stores into it
+           * are emulated by Wine's Mach handler, but that emulator covers STR/STRB, not
+           * the release forms). Result: ph-rdr31/32 -- 2000 identical redeliveries of
+           * a byte store to 0x14011b2c7 on the way back to the menu, then termination.
+           * Rewrite the instruction IN PLACE to the plain byte store with the same
+           * registers and offset (stlrb -> strb [Rn], stlurb -> sturb [Rn,#imm9]):
+           * nothing at PC[-1] is touched, the retry faults as an ordinary store and
+           * Wine completes it. What is given up is release ordering on a byte written
+           * into a code page, which no reader depends on. */
+          const uint32_t Ml1018Rt = Ml1018Insn & 0x1f, Ml1018Rn = (Ml1018Insn >> 5) & 0x1f;
+          uint32_t Ml1065New;
+          if ((Ml1018Insn & Ml1018LdaxrMask) == Ml1018StlrInst) {
+            Ml1065New = 0x39000000u | (Ml1018Rn << 5) | Ml1018Rt;                        /* STRB Wt, [Xn] */
+          } else {
+            const uint32_t Imm9 = (Ml1018Insn >> 12) & 0x1ff;
+            Ml1065New = 0x38000000u | (Imm9 << 12) | (Ml1018Rn << 5) | Ml1018Rt;         /* STURB Wt, [Xn, #imm9] */
+          }
+          *reinterpret_cast<volatile uint32_t*>(SmcPc) = Ml1065New;   /* the write itself goes through Wine's emulated-store path */
+          __builtin___clear_cache(reinterpret_cast<char*>(SmcPc), reinterpret_cast<char*>(SmcPc) + 4);
+          static unsigned Ml1018Count;
+          if (Ml1018Count < 16) {
+            /* Capture PC[-1] BEFORE anything can patch it -- the one piece of
+             * evidence the diagnosis was missing, i.e. which live instruction the
+             * old path was destroying. */
+            LogMan::Msg::EFmt("[smc-byte] ml1018 #{} DECLINED backpatch: insn {:08X} at pc {:X} is a BYTE release "
+                              "store (fault {:X}); preserved PC[-1]={:08X} PC[+1]={:08X}; retrying at the same pc",
+                              ++Ml1018Count, Ml1018Insn, SmcPc, FaultAddress, Ml1018Pc[-1], Ml1018Pc[1]);
+          }
+        } else if (Exception::HandleUnalignedAccess(CPUArea, *NativeContext, CTX->IsAddressInCodeBuffer(Thread, SmcPc))) {
           static unsigned SmcAtomicCount;
           if (SmcAtomicCount < 16) {
             LogMan::Msg::EFmt("[smc-atomic] ml657 #{} handled pc {:X} -> {:X} fault {:X}", ++SmcAtomicCount, SmcPc,
@@ -1150,6 +1309,7 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
 
       return true;
     }
+    if (IosDeferAvLog) IosLogAv();   /* ml1055: NOT self-modifying code -- a real fault, always logged */
   }
 
   bool IsJIT = CTX->IsAddressInCodeBuffer(Thread, NativeContext->Pc);
@@ -1625,7 +1785,7 @@ NTSTATUS ThreadInit() {
     }
   }
 #endif
-  std::scoped_lock Lock(ThreadCreationMutex);
+  std::unique_lock<std::recursive_mutex> Lock(ThreadCreationMutex);
 #ifdef FEX_IOS_HOST
   IosTiLog("[FEX-iOS] TI:lock\n");
 #endif
@@ -1638,6 +1798,11 @@ NTSTATUS ThreadInit() {
   static constexpr size_t EmulatorStackSize = 0x40000;
   const uint64_t EmulatorStack =
     reinterpret_cast<uint64_t>(::VirtualAlloc(nullptr, EmulatorStackSize, MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE));
+  if (!EmulatorStack) {
+    Lock.unlock();
+    FEX::Windows::DeinitCRTThread();
+    return STATUS_NO_MEMORY;
+  }
   CPUArea.EmulatorStackLimit() = EmulatorStack;
   CPUArea.EmulatorStackBase() = EmulatorStack + EmulatorStackSize;
 #ifdef FEX_IOS_HOST
@@ -1645,6 +1810,27 @@ NTSTATUS ThreadInit() {
 #endif
 
   auto* Thread = CTX->CreateThread(0, 0);
+  if (!Thread) {
+    /* The emulator could not allocate this thread's state. Unwind what this
+     * function has already built and hand the failure back; the loader releases
+     * loader_section and ends only this thread, so the process survives to
+     * report it rather than wedging on a lock owned by a dead thread. */
+    LogMan::Msg::EFmt("[FEX-iOS] ThreadInit: thread state unavailable -- unwinding thread {:#x} "
+                      "and returning STATUS_NO_MEMORY", (unsigned long long)GetCurrentThreadId());
+    CPUArea.StateFrame() = nullptr;
+    CPUArea.ThreadState() = nullptr;
+    CPUArea.DispatcherLoopTopEnterEC() = 0;
+    CPUArea.DispatcherLoopTopEnterECFillSRA() = 0;
+    CPUArea.Area->SuspendDoorbell = nullptr;
+    CPUArea.EmulatorStackLimit() = 0;
+    CPUArea.EmulatorStackBase() = 0;
+    if (EmulatorStack) {
+      ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
+    }
+    Lock.unlock();
+    FEX::Windows::DeinitCRTThread();
+    return STATUS_NO_MEMORY;
+  }
 #ifdef FEX_IOS_HOST
   IosTiLog("[FEX-iOS] TI:createthread\n");
 #endif
@@ -1700,7 +1886,42 @@ NTSTATUS ThreadInit() {
   }
 #endif
 
-  FEX::Windows::CallRetStack::InitializeThread(Thread);
+  if (!FEX::Windows::CallRetStack::InitializeThread(Thread)) {
+    /* Unwind everything this function built for this thread, in reverse.
+     *
+     * Returning early without unwinding leaves the CPU area pointing at a
+     * half-built thread, and the emulator stack and segment table leaked -- on
+     * a band that just proved it has nothing left to give. The caller releases
+     * the loader lock and terminates only this thread, so the process survives
+     * to report the failure instead of wedging. */
+    LogMan::Msg::EFmt("[FEX-iOS] ThreadInit: call-ret stack unavailable (band [{:#x},{:#x}]) "
+                      "-- unwinding thread {:#x} and returning STATUS_NO_MEMORY",
+                      (unsigned long long)ios_fex_band_base, (unsigned long long)ios_fex_band_end,
+                      (unsigned long long)GetCurrentThreadId());
+
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = nullptr;
+    Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_LDT] = nullptr;
+    delete[] NewSegments;
+
+    CTX->DestroyThread(Thread);
+
+    /* Clear the CPU-area fields before freeing what they point at, so nothing
+     * can observe a stale pointer while the thread winds down. */
+    CPUArea.StateFrame() = nullptr;
+    CPUArea.ThreadState() = nullptr;
+    CPUArea.DispatcherLoopTopEnterEC() = 0;
+    CPUArea.DispatcherLoopTopEnterECFillSRA() = 0;
+    CPUArea.Area->SuspendDoorbell = nullptr;
+    CPUArea.EmulatorStackLimit() = 0;
+    CPUArea.EmulatorStackBase() = 0;
+    if (EmulatorStack) {
+      ::VirtualFree(reinterpret_cast<void*>(EmulatorStack), 0, MEM_RELEASE);
+    }
+
+    Lock.unlock();
+    FEX::Windows::DeinitCRTThread();
+    return STATUS_NO_MEMORY;
+  }
 #ifdef FEX_IOS_HOST
   IosTiLog("[FEX-iOS] TI:callret\n");
 #endif

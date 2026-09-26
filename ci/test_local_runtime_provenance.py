@@ -20,7 +20,7 @@ class LocalRuntimeProvenanceTests(unittest.TestCase):
     def test_native_contract_includes_fex_handoff_and_app_bridge(self):
         reuse = MODULE.load_reuse()
         paths = set(MODULE.native_contract_inputs(reuse))
-        self.assertIn("ci/patches/rpmalloc-host-arena.patch", paths)
+        self.assertIn("testrepos/Madeira/build", paths)
         self.assertIn("iridium/apps/ios/MadeiraSupport/NativePool.c", paths)
         self.assertIn("testrepos/Madeira/app/Madeira/Winios/Winios.m", paths)
         self.assertIn("testrepos/Madeira/FEX", paths)

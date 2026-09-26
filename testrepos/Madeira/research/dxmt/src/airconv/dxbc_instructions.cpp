@@ -311,6 +311,14 @@ SrcOperand readSrcOperand(
     break;
   }
   case D3D10_SB_OPERAND_TYPE_CONSTANT_BUFFER: {
+    /* SM 5.0 spells a constant-buffer operand cb<rangeid>[<regindex>] (2D),
+     * where the range id doubles as the register slot. SM 5.1 inserts the
+     * index WITHIN the descriptor range: cb<rangeid>[<rangeindex>][<regindex>]
+     * (3D), so every index read shifts up one position and the range id stops
+     * being the register. This mirrors readSrcOperandResource /
+     * readSrcOperandSampler / readSrcOperandUAV, which already handle both
+     * shapes the same way; the constant buffer was the one operand type left
+     * unimplemented, and it aborted every SM 5.1 shader before this. */
     if (O.m_IndexDimension == D3D10_SB_OPERAND_INDEX_2D) {
       return SrcOperandConstantBuffer{
         ._ = readSrcOperandCommon(O, read_type),
@@ -319,7 +327,16 @@ SrcOperand readSrcOperand(
         .regindex = readOperandIndex(O.m_Index[1], O.m_IndexType[1], phase),
       };
     }
-    assert(0 && "TODO: SM5.1");
+    if (O.m_IndexDimension == D3D10_SB_OPERAND_INDEX_3D) {
+      DXASSERT_DXBC(O.m_IndexType[0] == D3D10_SB_OPERAND_INDEX_IMMEDIATE32);
+      return SrcOperandConstantBuffer{
+        ._ = readSrcOperandCommon(O, read_type),
+        .rangeid = O.m_Index[0].m_RegIndex,
+        .rangeindex = readOperandIndex(O.m_Index[1], O.m_IndexType[1], phase),
+        .regindex = readOperandIndex(O.m_Index[2], O.m_IndexType[2], phase),
+      };
+    }
+    DXASSERT_DXBC(false && "unhandled constant buffer operand dimension");
   }
   case D3D10_SB_OPERAND_TYPE_IMMEDIATE_CONSTANT_BUFFER: {
     DXASSERT_DXBC(O.m_IndexDimension == D3D10_SB_OPERAND_INDEX_1D);

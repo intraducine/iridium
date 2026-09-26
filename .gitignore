@@ -10,3 +10,8 @@ DerivedData/
 *.xcarchive/
 xcuserdata/
 __pycache__/
+
+# Apple converter installer and generated runtime binaries
+testrepos/Madeira/research/GPTK/*.pkg
+testrepos/Madeira/app/Madeira/d3d12/*.dylib
+testrepos/Madeira/build/madeira-d3d12/out*/

@@ -4,16 +4,16 @@
  * Copyright 2012 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -35,13 +35,13 @@ static const WCHAR test_w[] = L"test";
 /* Double zero so that it's safe to cast it to WCHAR * */
 static const CHAR te_a[] = {'t', 'e', 0, 0};
 static const CHAR large_a[] =
-    "You should have received a copy of the GNU General Public License along with this ...";
+    "You should have received a copy of the GNU Lesser General Public License along with this ...";
 static const WCHAR large_w[] =
-    L"You should have received a copy of the GNU General Public License along with this ...";
+    L"You should have received a copy of the GNU Lesser General Public License along with this ...";
 static const WCHAR large_truncated_65_w[65] =
-    L"You should have received a copy of the GNU General Public";
+    L"You should have received a copy of the GNU Lesser General Public";
 static const WCHAR large_truncated_80_w[80] =
-    L"You should have received a copy of the GNU General Public License along w";
+    L"You should have received a copy of the GNU Lesser General Public License along w";
 static WCHAR buffer[64];
 
 /* Text field conversion test behavior flags. */

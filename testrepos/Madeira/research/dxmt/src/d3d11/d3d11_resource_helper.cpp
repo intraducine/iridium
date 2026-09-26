@@ -435,9 +435,26 @@ CreateMTLTextureDescriptorInternal(
     } else {
       if (SampleCount > 1) {
         if (!pDevice->GetMTLDevice().supportsTextureSampleCount(SampleCount)) {
-          ERR("CreateMTLTextureDescriptorInternal: sample count ", SampleCount,
-              " is not supported.");
-          return E_INVALIDARG;
+          /* ml868: Apple GPUs stop at 4 samples and an engine may ask for 8
+           * without consulting CheckMultisampleQualityLevels (UE5 did, and
+           * the E_INVALIDARG became a fatal on its rendering thread). Clamp
+           * to the largest count the device has, the way a driver would; only
+           * a device with no multisampling at all still refuses. */
+          UINT alt = SampleCount;
+          while (alt > 1 && !pDevice->GetMTLDevice().supportsTextureSampleCount(alt))
+            alt >>= 1;
+          if (alt <= 1) {
+            ERR("CreateMTLTextureDescriptorInternal: sample count ", SampleCount,
+                " is not supported.");
+            return E_INVALIDARG;
+          }
+          static bool said = false;
+          if (!said) {
+            said = true;
+            ERR("CreateMTLTextureDescriptorInternal: sample count ", SampleCount,
+                " is not supported; using ", alt, " (reported once)");
+          }
+          SampleCount = alt;
         }
         if (ArraySize > 1) {
           pDescOut->type = WMTTextureType2DMultisampleArray;

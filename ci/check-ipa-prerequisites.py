@@ -29,6 +29,11 @@ REQUIRED = {
         "testrepos/Madeira/FEX/build-ios/FEXCore/Source/libFEXCore_Base.a",
     ],
     "Windows modules and clean prefix": [
+        "testrepos/Madeira/app/Madeira/arm64ec-windows/d3d12.dll",
+        "testrepos/Madeira/app/Madeira/d3d12/libmetalirconverter.dylib",
+        "testrepos/Madeira/app/Madeira/d3d12/METAL-SHADER-CONVERTER-AGREEMENT.txt",
+        "testrepos/Madeira/app/Madeira/d3d12/LICENSE-metal-shader-converter-headers.txt",
+        "testrepos/Madeira/app/Madeira/d3d12/NOTICE.txt",
         "testrepos/Madeira/app/Madeira/arm64ec-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/aarch64-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/prefix-template.tar.gz",

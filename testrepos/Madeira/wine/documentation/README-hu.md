@@ -9,7 +9,7 @@ API hívásokat azok Unix, vagy X11 megfelelõinek használatával.
 Ez a függvénykönyvtár használható a Win32 kód natív Unix futtatható
 állománnyá portlásához.
 
-A Wine egy szabad szoftver, a GNU GPL alatt kiadva; nézze meg a
+A Wine egy szabad szoftver, a GNU LGPL alatt kiadva; nézze meg a
 LICENSE fájlt a részletekért.
 
 ## GYORS INDÍTÁS

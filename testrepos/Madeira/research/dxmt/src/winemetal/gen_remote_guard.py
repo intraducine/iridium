@@ -74,7 +74,14 @@ ROUTED = {
     '_MTLCommandBuffer_blitCommandEncoder', '_MTLBlitCommandEncoder_encodeCommands',
     '_MTLDevice_minimumLinearTextureAlignmentForPixelFormat',
     '_MTLDevice_supportsTextureSampleCount', '_MTLBuffer_newTexture',
+    '_MTLCommandBuffer_computeCommandEncoder', '_MTLComputeCommandEncoder_encodeCommands',
+    '_MTLTexture_mipmapLevelCount', '_MTLDevice_newMeshRenderPipelineState',
     '_MTLCommandEncoder_setLabel',
+    '_MTLDevice_newRenderPipelineStateVD',
+    '_MTLDevice_newSharedTexture',
+    '_MTLDevice_newResidencySet', '_MTLResidencySet_addAllocation',
+    '_MTLResidencySet_commit', '_MTLCommandQueue_addResidencySet',
+    '_MTLDevice_newGeometryEmulationPipelineState',
 }
 
 # Deliberately NOT guarded -- these belong on whichever machine runs the guest.
@@ -104,7 +111,7 @@ ROUTED = {
 # a version that changes at random makes DXMT reconfigure presentation
 # repeatedly. Their layer dereferences are all inside `#if !TARGET_OS_IOS`, so
 # running them locally never touches a host handle.
-LOCAL_OK = re.compile(r'^(thunk_SM50|CacheReader_|CacheWriter_|DispatchData_|'
+LOCAL_OK = re.compile(r'^(madeira_ir_|thunk_SM50|CacheReader_|CacheWriter_|DispatchData_|'
                       r'NSAutoreleasePool_|SharedEventListener_|NSString_|'
                       r'WMTSetMetalShaderCachePath|WMTQueryDisplaySettingForLayer|'
                       r'MetalLayer_getEDRValue|DeveloperHUDProperties_|'

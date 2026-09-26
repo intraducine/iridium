@@ -28,12 +28,13 @@ Iridium app changes include Madeira runtime integration, JIT helper support, med
 
 ## testrepos/Madeira
 Upstream: https://github.com/willfaust/Madeira
-Base revision: `97e2ce26e6dc9e4a38976f3b5deb9272d64558eb`
+Base revision: `8c050d03f4d89096e1e2e2c8bb44479fffd86619`
 
 Local modified source paths included in this snapshot:
 - `app/Madeira/ContentView.swift`
 - `app/Madeira/StikJITHelper.swift`
 - `app/Madeira/WineProcessBridge.m`
+- `build/madeira-d3d12/deps.sh` and `fetch-converter.sh`: use a checksum-pinned release dependency for hosted builds, retaining an official local-installer override and Apple notices.
 - `build/ntdll-unix/build.sh`
 - `build/ntdll-unix/signal_arm64_ios.c`: handle integer store-pair address updates in both exception paths.
 - `build/ntdll-unix/virtual_ios.c`: correct bitset indexing when retargeting thread-data reads in JIT code; remove unbounded diagnostic stack scans from allocation paths.
@@ -45,12 +46,12 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 
 ## testrepos/Madeira/FEX
 
-Iridium uses an app-reserved host arena in Wine and FEX. The local rpmalloc
-change is supplied in `ci/patches/rpmalloc-host-arena.patch` and applied by
-`ci/prepare-runtime-inputs.sh`. FEX host allocations remain inside that arena.
+Iridium uses an app-reserved host arena in Wine and FEX. Wine publishes that reservation through the upstream arena handoff.
+FEX host allocations remain inside that arena. The compact allocator and
+thread failure corrections remain in the tracked build patches.
 
 Upstream: https://github.com/willfaust/FEX
-Base revision: `053c385ecc9090702e4959a1d96752ea918a6110`
+Base revision: `0f8edf8f6383ae8085e0ffac511c789cdae97514`
 
 Local modified source paths included in this snapshot:
 - `FEXCore/Source/Interface/Core/Core.cpp`
@@ -60,7 +61,12 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 
 ## testrepos/Madeira/wine
 Upstream: https://github.com/willfaust/wine
-Base revision: `7817e220384e895651f868ba4d97affcf21b3816`
+Base revision: `723d1bf5132768276cea9bc35ab59c83557bb5fb`
+
+`dlls/ntdll/arm64ec_x64_export_iat.c` is supplied from Will Faust's source
+commit `32810bdeb4b9e72b02320e9b72ce3ba03ceee3d7` (LGPL-2.1-or-later).
+The public base includes it from `loader.c` but omits the file. Iridium includes
+the complete helper source so a clean checkout can configure Wine.
 
 Local modified source paths included in this snapshot:
 - `dlls/ntdll/loader.c`: restrict the JIT alias lifecycle diagnostic to ARM64EC, where its helper is defined; preserve the ARM64EC diagnostic.
@@ -71,7 +77,7 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 
 ## testrepos/Madeira/research/dxmt
 Upstream: https://github.com/willfaust/dxmt
-Base revision: `b4b89f0a5a1752da3982a7b6c5575506024bf253`
+Base revision: `ca8a2516d819e7e1f366981825ad1f0d26f80fdd`
 
 Local modified source paths included in this snapshot:
 - `src/airconv/shaders/air_tessellation.metal`
