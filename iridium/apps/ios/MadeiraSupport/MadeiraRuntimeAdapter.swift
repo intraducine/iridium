@@ -31,6 +31,13 @@ enum MadeiraRuntimeAdapter {
                       exited: @escaping () -> Void = {}) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !started else { fail("Restart Iridium before another Madeira session."); return }
+        #if os(iOS)
+        for line in MadeiraLaunchEntitlements.logLines(
+            isHosted: LiveContainerIntegration.isHosted()
+        ) {
+            RuntimeLogCapture.writeLine(line)
+        }
+        #endif
         let encodedArguments: String
         do { encodedArguments = try MadeiraLaunchArguments.encode(arguments) }
         catch { fail("Invalid launch arguments: \(error.localizedDescription)"); return }
