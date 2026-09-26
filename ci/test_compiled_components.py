@@ -26,7 +26,20 @@ class CompiledComponentsTests(unittest.TestCase):
             runtime = build / 'corresponding-source/source.tar.gz'
             runtime.parent.mkdir()
             runtime.write_bytes(b'needed')
+            objects = root / space.OBJECT_TREES[0]
+            objects.mkdir(parents=True)
+            (objects / 'compiled.o').write_bytes(b'temporary object')
+            (objects / 'compiled.obj').write_bytes(b'temporary object')
+            (objects / 'libFinal.a').write_bytes(b'needed archive')
+            source = root / 'source.o'
+            source.write_bytes(b'not a compiler output')
+            (objects / 'linked.o').symlink_to(source)
             space.cleanup(root)
+            self.assertFalse((objects / 'compiled.o').exists())
+            self.assertFalse((objects / 'compiled.obj').exists())
+            self.assertEqual((objects / 'libFinal.a').read_bytes(), b'needed archive')
+            self.assertTrue((objects / 'linked.o').is_symlink())
+            self.assertEqual(source.read_bytes(), b'not a compiler output')
             self.assertEqual(runtime.read_bytes(), b'needed')
             self.assertTrue(all(not (build / (name + '-transfer')).exists() for name in space.TRANSFERS))
             outside = root / 'outside'
