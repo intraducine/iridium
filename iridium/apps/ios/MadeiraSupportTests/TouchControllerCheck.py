@@ -112,7 +112,9 @@ assert "resetGeneration &+= 1" in overlay
 assert 'Button("Input Settings", systemImage: "gamecontroller")' in player
 assert 'TouchControllerOverlay(gameID: session.gameID)' in player
 assert 'TouchControllerOverlay.playerMenuRequested' in player
-assert 'if !touchControlsEnabled || controlsVisible' in player
+# The artwork hides the touch overlay's menu handle during launch. Keep the
+# standard menu reachable then, while preserving its existing gameplay condition.
+assert 'if launchPresentation.showsArtwork || !touchControlsEnabled || controlsVisible' in player
 assert '@State private var showPerformance = false' in player
 assert 'Toggle("Pin Performance HUD", isOn: $showPerformance)' in player
 assert 'runtimePlayer: madeiraPresentStalled' in player
