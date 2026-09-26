@@ -96,6 +96,12 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
             captureQueries += 1
             return wantsPointerCapture
         }
+        private var playerSceneIsForeground: Bool {
+            if let scene = viewIfLoaded?.window?.windowScene {
+                return scene.activationState == .foregroundActive
+            }
+            return UIApplication.shared.applicationState == .active
+        }
         private var wantsPointerCapture: Bool {
             #if INTERFACE_PREVIEW
             false
@@ -115,6 +121,15 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                     MainActor.assumeIsolated { self?.refreshCapture() }
                 })
             }
+            for name in [UIScene.didActivateNotification, UIScene.willDeactivateNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                    MainActor.assumeIsolated {
+                        guard let self, let scene = notification.object as? UIScene,
+                              scene === self.viewIfLoaded?.window?.windowScene else { return }
+                        self.refreshCapture(sceneIsDeactivating: notification.name == UIScene.willDeactivateNotification)
+                    }
+                })
+            }
         }
 
         override func viewDidAppear(_ animated: Bool) {
@@ -127,12 +142,12 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
             super.viewWillDisappear(animated)
         }
 
-        private func refreshCapture() {
+        private func refreshCapture(sceneIsDeactivating: Bool = false) {
             setNeedsUpdateOfPrefersPointerLocked()
             #if MADEIRA_RUNTIME
-            MadeiraHardwareInput.acceptingInput = captureRequested && UIApplication.shared.applicationState == .active
-            MadeiraHardwareInput.pointerCaptured = wantsPointerCapture && viewIfLoaded?.window?.windowScene?.pointerLockState?.isLocked == true
-            RuntimeLogCapture.writeLine("[Launch] Pointer capture requested=\(wantsPointerCapture), systemQueries=\(captureQueries), sceneActive=\(viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive), active=\(MadeiraHardwareInput.pointerCaptured), AssistiveTouch=\(UIAccessibility.isAssistiveTouchRunning).")
+            MadeiraHardwareInput.acceptingInput = captureRequested && playerSceneIsForeground && !sceneIsDeactivating
+            MadeiraHardwareInput.pointerCaptured = !sceneIsDeactivating && wantsPointerCapture && viewIfLoaded?.window?.windowScene?.pointerLockState?.isLocked == true
+            RuntimeLogCapture.writeLine("[Launch] Pointer capture requested=\(wantsPointerCapture), systemQueries=\(captureQueries), sceneActive=\(viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive), appActive=\(UIApplication.shared.applicationState == .active), inputActive=\(MadeiraHardwareInput.acceptingInput), active=\(MadeiraHardwareInput.pointerCaptured), AssistiveTouch=\(UIAccessibility.isAssistiveTouchRunning).")
             #endif
         }
 

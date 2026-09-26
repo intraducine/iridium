@@ -16,6 +16,7 @@ import Foundation
         events=[]
         MadeiraHardwareInput.key(hid:4,pressed:true) // GCKeyboard must not double deliver a software insertion
         precondition(events.isEmpty)
+        UIApplication.shared.applicationState = .inactive // Hosted player scene still accepts input.
         precondition(MadeiraHardwareInput.insertText("aA!"))
         precondition(events.count == 1 && events[0].1 == 1, "software key released before the game can poll it")
         try! await Task.sleep(nanoseconds: 30_000_000)
@@ -29,6 +30,7 @@ import Foundation
         precondition(events.count == 1 && events[0].0 == 8)
         try! await Task.sleep(nanoseconds: 100_000_000)
         precondition(events.count == 2 && events[0].0 == 8)
+        UIApplication.shared.applicationState = .active
         MadeiraHardwareInput.softwareKeyboardActive=false
         MadeiraHardwareInput.key(hid:57,pressed:true)
         MadeiraHardwareInput.key(hid:57,pressed:false)
@@ -44,8 +46,16 @@ import Foundation
         precondition(events.count == canceledCount, "keyboard dismissal sent queued input")
         precondition(!events.contains(where: { $0.0 == 0x42 }), "queued key reached the game after dismissal")
         events=[]
-        MadeiraHardwareInput.acceptingInput=false
+        MadeiraHardwareInput.softwareKeyboardActive=true
+        precondition(MadeiraHardwareInput.insertText("cd"))
+        MadeiraHardwareInput.acceptingInput=false // Menu or scene deactivation cancels queued input.
+        let stoppedCount=events.count
+        try! await Task.sleep(nanoseconds: 150_000_000)
+        precondition(events.count == stoppedCount)
+        precondition(!events.contains(where: { $0.0 == 0x44 }))
+        events=[]
         precondition(MadeiraHardwareInput.insertText("a"))
+        MadeiraHardwareInput.deleteBackward()
         precondition(events.isEmpty)
         print("PASS keyboard mapping, held software keys, ordered release, cancellation, and hardware deduplication")
     }
