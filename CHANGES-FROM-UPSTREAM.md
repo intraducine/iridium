@@ -69,6 +69,7 @@ The public base includes it from `loader.c` but omits the file. Iridium includes
 the complete helper source so a clean checkout can configure Wine.
 
 Local modified source paths included in this snapshot:
+- `dlls/ntdll/sync.c`: retain ARM64/ARM64EC diagnostic timers and use Wine's performance counter on other architectures.
 - `dlls/ntdll/unix/sync.c`: restrict Apple thread QoS and Mach alert timing to Apple builds, and the ARM yield experiment to ARM64; Linux prefix builds keep their futex wait path.
 - `dlls/ntdll/loader.c`: restrict the JIT alias lifecycle diagnostic to ARM64EC, where its helper is defined; preserve the ARM64EC diagnostic.
 - `dlls/ntdll/signal_arm64ec.c`: guard loader image notifications against recursive FEX memory callbacks while preserving the caller's callback state.

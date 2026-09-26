@@ -28,6 +28,25 @@ class WineSyncPlatformsTests(unittest.TestCase):
             self.assertIn('NtWaitForAlertByThreadId', result)
             self.assertIn('futex_wait', result)
 
+    def test_windows_timer_architectures(self):
+        source = (ROOT / 'testrepos/Madeira/wine/dlls/ntdll/sync.c').read_text()
+        source = source[source.index('static inline ULONGLONG ios_xp_ticks'):source.index('static void ios_xp_cs_waited')]
+        compiler = shutil.which('cc')
+        self.assertIsNotNone(compiler, 'A C compiler is required')
+        for arch in ('__x86_64__', '__aarch64__', '__arm64ec__'):
+            result = subprocess.run([compiler, '-E', '-P', '-x', 'c',
+                                     '-U__aarch64__', '-U__arm64ec__', '-U__x86_64__',
+                                     '-D' + arch, '-'], input=source, text=True,
+                                    capture_output=True, check=True).stdout
+            if arch == '__x86_64__':
+                self.assertNotIn('cntvct_el0', result)
+                self.assertNotIn('cntfrq_el0', result)
+                self.assertIn('NtQueryPerformanceCounter( &counter, &frequency )', result)
+            else:
+                self.assertIn('cntvct_el0', result)
+                self.assertIn('cntfrq_el0', result)
+                self.assertNotIn('NtQueryPerformanceCounter', result)
+
 
 if __name__ == '__main__':
     unittest.main()

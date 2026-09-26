@@ -47,17 +47,29 @@ struct ios_xp_nt ios_xp_nt;   /* layout: ntdll_misc.h */
 
 static inline ULONGLONG ios_xp_ticks(void)
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
     ULONGLONG v;
     __asm__ __volatile__( "mrs %0, cntvct_el0" : "=r"(v) );
     return v;
+#else
+    LARGE_INTEGER counter;
+    NtQueryPerformanceCounter( &counter, NULL );
+    return counter.QuadPart;
+#endif
 }
 void ios_xp_nt_init(void)
 {
     if (!ios_xp_nt.freq)
     {
+#if defined(__aarch64__) || defined(__arm64ec__)
         ULONGLONG f;
         __asm__ __volatile__( "mrs %0, cntfrq_el0" : "=r"(f) );
         ios_xp_nt.freq = f;
+#else
+        LARGE_INTEGER counter, frequency;
+        NtQueryPerformanceCounter( &counter, &frequency );
+        ios_xp_nt.freq = frequency.QuadPart;
+#endif
         ios_xp_nt.magic = 0x31544e5058444d41ull;   /* 'AMDXPNT1' */
     }
 }
