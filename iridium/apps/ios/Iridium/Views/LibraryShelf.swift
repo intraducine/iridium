@@ -173,6 +173,7 @@ struct LibraryShelf: View {
                                                 VStack(alignment: .leading, spacing: 8) {
                                                     ArtworkImage(image: artwork.displayImage(artwork.appearance(game.id).cover), title: "", position: artwork.appearance(game.id).coverY, fit: !artwork.appearance(game.id).customCover)
                                                         .frame(height: coverHeight)
+                                                        .background { RuntimeLaunchSource(gameID: game.id) }
                                                         .clipShape(RoundedRectangle(cornerRadius: 18))
                                                         .padding(4)
                                                         .overlay { RoundedRectangle(cornerRadius: 22).stroke(game.id == selected.id && (!controller.showingControllerHints || menuFocus == .covers) ? .white : .clear, lineWidth: 3) }

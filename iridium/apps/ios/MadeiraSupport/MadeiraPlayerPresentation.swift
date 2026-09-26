@@ -36,8 +36,13 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
             let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration))
             player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration)
             player.modalPresentationStyle = .fullScreen
+            player.launchTransition = RuntimeLaunchTransition(gameID: session.gameID)
+            player.transitioningDelegate = player.launchTransition
             controller.player = player
-            controller.present(player, animated: true)
+            controller.present(player, animated: true) { [weak controller] in
+                // Reconcile a failure/cancellation that arrived during the expansion.
+                controller?.synchronize?()
+            }
         }
         if controller.sessionObservation == nil {
             // A full-screen presentation can suspend SwiftUI updates in the covered library.
@@ -86,6 +91,7 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
     }
 
     final class Player: UIHostingController<RuntimePlayerView> {
+        var launchTransition: RuntimeLaunchTransition?
         var captureRequested = false { didSet { refreshCapture() } }
         private var observers: [NSObjectProtocol] = []
 
