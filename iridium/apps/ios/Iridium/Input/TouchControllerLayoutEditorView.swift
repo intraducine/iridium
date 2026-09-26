@@ -30,7 +30,7 @@ struct TouchControllerLayoutEditorView: View {
                     )
 
                     ForEach(layout.controls) { control in
-                        let renderedSize = editorControlSize(control, minimumDimension: minimumDimension)
+                        let renderedSize = touchControllerRenderedSize(control, minimumDimension: minimumDimension)
                         EditorControlPreview(
                             control: control,
                             renderedSize: renderedSize,
@@ -184,7 +184,7 @@ struct TouchControllerLayoutEditorView: View {
     private func move(_ id: UUID, to location: CGPoint, canvas: CGSize) {
         guard canvas.width > 0, canvas.height > 0,
               let index = layout.controls.firstIndex(where: { $0.id == id }) else { return }
-        let rendered = editorControlSize(
+        let rendered = touchControllerRenderedSize(
             layout.controls[index],
             minimumDimension: min(canvas.width, canvas.height)
         )
@@ -230,25 +230,6 @@ struct TouchControllerLayoutEditorView: View {
     }
 }
 
-private func editorControlSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
-    let base = max(38, CGFloat(control.size) * minimumDimension)
-    switch control.mapping.kind {
-    case .stick, .dpad:
-        return CGSize(width: base, height: base)
-    case .trigger:
-        return CGSize(width: base * 1.55, height: base * 0.68)
-    case .button:
-        switch control.mapping {
-        case .leftBumper, .rightBumper:
-            return CGSize(width: base * 1.45, height: base * 0.70)
-        case .menu, .view:
-            return CGSize(width: base * 1.15, height: base * 0.80)
-        default:
-            return CGSize(width: base, height: base)
-        }
-    }
-}
-
 private struct EditorControlPreview: View {
     let control: TouchControllerControl
     let renderedSize: CGSize
@@ -258,24 +239,11 @@ private struct EditorControlPreview: View {
         ZStack {
             switch control.mapping.kind {
             case .stick:
-                Circle().fill(.black.opacity(0.55))
-                Circle().stroke(.white.opacity(0.55), lineWidth: 2)
-                Circle()
-                    .fill(.white.opacity(0.32))
-                    .frame(width: renderedSize.width * 0.44, height: renderedSize.height * 0.44)
-                Text(control.mapping.compactLabel).font(.caption2.bold()).foregroundStyle(.white)
+                MoonlightStickArtwork(size: renderedSize, knobOffset: .zero)
             case .dpad:
-                Image(systemName: "dpad.fill")
-                    .resizable().scaledToFit()
-                    .foregroundStyle(.white.opacity(0.58))
-            case .trigger:
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.black.opacity(0.58))
-                Text(control.mapping.compactLabel).font(.caption.bold()).foregroundStyle(.white)
-            case .button:
-                Circle().fill(.black.opacity(0.58))
-                Circle().stroke(.white.opacity(0.55), lineWidth: 2)
-                Text(control.mapping.compactLabel).font(.caption.bold()).foregroundStyle(.white)
+                MoonlightDPadArtwork(size: renderedSize)
+            case .trigger, .button:
+                Image(control.mapping.moonlightImageName).resizable().scaledToFit()
             }
         }
         .opacity(control.opacity)

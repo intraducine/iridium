@@ -86,6 +86,8 @@ enum MadeiraController {
     }
 
     private static var touch = TouchState()
+    private static var loggedFirstTouchButton = false
+    private static var loggedFirstTouchStick = false
     private static var previous = Data()
     private static var packet: UInt32 = 0
     private static var slots: [GCController?] = Array(repeating: nil, count: 4)
@@ -106,6 +108,10 @@ enum MadeiraController {
     }
 
     static func setTouchButton(source: UUID, mask: UInt16, pressed: Bool) {
+        if pressed && !loggedFirstTouchButton {
+            loggedFirstTouchButton = true
+            RuntimeLogCapture.writeLine("[Input] Touch button received: active=\(touch.active), foreground=\(hostIsForegroundInteractive), accepting=\(acceptingInput).")
+        }
         guard touch.active else { return }
         touch.setButton(source: source, mask: mask, pressed: pressed)
         publishSnapshot()
@@ -118,6 +124,10 @@ enum MadeiraController {
     }
 
     static func setTouchStick(source: UUID, left: Bool, x: Float, y: Float, active: Bool) {
+        if active && !loggedFirstTouchStick {
+            loggedFirstTouchStick = true
+            RuntimeLogCapture.writeLine("[Input] Touch stick received: active=\(touch.active), foreground=\(hostIsForegroundInteractive), accepting=\(acceptingInput).")
+        }
         guard touch.active else { return }
         touch.setStick(source: source, left: left, x: x, y: y, active: active)
         publishSnapshot()
@@ -130,6 +140,8 @@ enum MadeiraController {
         observers.removeAll()
         touch.active = false
         touch.releaseInputs()
+        loggedFirstTouchButton = false
+        loggedFirstTouchStick = false
         if let path = statePath {
             packet &+= 1
             var value = packet.littleEndian
@@ -144,8 +156,9 @@ enum MadeiraController {
         slots = Array(repeating: nil, count: 4)
     }
 
-    static func start(prefix: URL) {
+    static func start(prefix: URL, touchControlsEnabled: Bool) {
         stop()
+        touch.active = touchControlsEnabled
         previous = Data()
         let path = prefix.appendingPathComponent("drive_c/iridium-controller.bin")
         statePath = path
@@ -200,8 +213,10 @@ enum MadeiraController {
         for index in 0..<4 {
             let connectedPad = slots[index]?.extendedGamepad
             let pad = inputActive ? connectedPad : nil
-            let touchConnected = index == 0 && touch.active
-            let touchInput = touchConnected && inputActive
+            // Keep slot 0 present so games that stop probing empty XInput slots
+            // can receive touch controls when the overlay is enabled later.
+            let touchConnected = index == 0
+            let touchInput = touchConnected && touch.active && inputActive
             put(UInt32(connectedPad != nil || touchConnected ? 1 : 0))
 
             var buttons: UInt16 = touchInput ? touch.buttons : 0

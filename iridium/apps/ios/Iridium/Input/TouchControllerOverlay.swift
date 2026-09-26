@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 struct TouchControllerOverlay: View {
     private static let inputResetNotification = Notification.Name("IridiumTouchControllerInputReset")
@@ -97,22 +98,77 @@ struct TouchControllerOverlay: View {
     }
 }
 
-private func touchControllerRenderedSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
+func touchControllerRenderedSize(_ control: TouchControllerControl, minimumDimension: CGFloat) -> CGSize {
     let base = max(38, CGFloat(control.size) * minimumDimension)
     switch control.mapping.kind {
     case .stick, .dpad:
         return CGSize(width: base, height: base)
     case .trigger:
-        return CGSize(width: base * 1.55, height: base * 0.68)
+        return CGSize(width: base, height: base)
     case .button:
         switch control.mapping {
-        case .leftBumper, .rightBumper:
-            return CGSize(width: base * 1.45, height: base * 0.70)
         case .menu, .view:
-            return CGSize(width: base * 1.15, height: base * 0.80)
+            return CGSize(width: base * 1.45, height: base * 0.65)
         default:
             return CGSize(width: base, height: base)
         }
+    }
+}
+
+extension TouchControllerMapping {
+    var moonlightImageName: String {
+        switch self {
+        case .a: "AButton"
+        case .b: "BButton"
+        case .x: "XButton"
+        case .y: "YButton"
+        case .leftBumper: "L1"
+        case .rightBumper: "R1"
+        case .leftTrigger: "L2"
+        case .rightTrigger: "R2"
+        case .leftStickButton: "L3"
+        case .rightStickButton: "R3"
+        case .menu: "StartButton"
+        case .view: "SelectButton"
+        case .leftStick, .rightStick, .dpad: "StickOuter"
+        }
+    }
+}
+
+struct MoonlightStickArtwork: View {
+    let size: CGSize
+    let knobOffset: CGSize
+
+    var body: some View {
+        ZStack {
+            Image("StickOuter").resizable().scaledToFit()
+            Image("StickInner").resizable().scaledToFit()
+                .frame(width: size.width * 0.60, height: size.height * 0.60)
+                .offset(knobOffset)
+        }
+        .frame(width: size.width, height: size.height)
+    }
+}
+
+struct MoonlightDPadArtwork: View {
+    let size: CGSize
+
+    var body: some View {
+        ZStack {
+            Image("UpButton").resizable().scaledToFit()
+                .frame(width: size.width * 0.31, height: size.height * 0.38)
+                .offset(y: -size.height * 0.30)
+            Image("DownButton").resizable().scaledToFit()
+                .frame(width: size.width * 0.31, height: size.height * 0.38)
+                .offset(y: size.height * 0.30)
+            Image("LeftButton").resizable().scaledToFit()
+                .frame(width: size.width * 0.38, height: size.height * 0.31)
+                .offset(x: -size.width * 0.30)
+            Image("RightButton").resizable().scaledToFit()
+                .frame(width: size.width * 0.38, height: size.height * 0.31)
+                .offset(x: size.width * 0.30)
+        }
+        .frame(width: size.width, height: size.height)
     }
 }
 
@@ -137,32 +193,53 @@ private struct TouchControllerRuntimeControl: View {
 private struct TouchControllerButton: View {
     let control: TouchControllerControl
     @State private var pressed = false
+    @State private var pressedAt = 0.0
+    @State private var releaseTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack {
-            Circle().fill(.black.opacity(pressed ? 0.58 : 0.36))
-            Circle().stroke(.white.opacity(pressed ? 0.88 : 0.58), lineWidth: 2)
-            Text(control.mapping.compactLabel)
-                .font(.system(.body, design: .rounded, weight: .bold))
-                .foregroundStyle(.white)
-        }
+        Image(control.mapping.moonlightImageName)
+            .resizable()
+            .scaledToFit()
+            .brightness(pressed ? 0.25 : 0)
         .opacity(control.opacity)
-        .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    guard !pressed else { return }
-                    pressed = true
-                    TouchControllerRuntimeBridge.setButton(source: control.id, mapping: control.mapping, pressed: true)
+        .contentShape(Rectangle())
+        .overlay {
+            MoonlightTouchArea(round: control.mapping != .menu && control.mapping != .view,
+                               label: control.mapping.displayName) { phase, _ in
+                switch phase {
+                case .began: press()
+                case .moved: break
+                case .ended: finishPress()
                 }
-                .onEnded { _ in release() }
-        )
+            }
+        }
         .onDisappear { release() }
         .accessibilityLabel(control.mapping.displayName)
         .accessibilityAddTraits(.isButton)
     }
 
+    private func press() {
+        // A second quick tap needs a new up/down edge for XInput polling.
+        if releaseTask != nil { release() }
+        guard !pressed else { return }
+        pressed = true
+        pressedAt = ProcessInfo.processInfo.systemUptime
+        TouchControllerRuntimeBridge.setButton(source: control.id, mapping: control.mapping, pressed: true)
+    }
+
+    private func finishPress() {
+        guard pressed else { return }
+        let remaining = max(0, 0.10 - (ProcessInfo.processInfo.systemUptime - pressedAt))
+        releaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            release()
+        }
+    }
+
     private func release() {
+        releaseTask?.cancel()
+        releaseTask = nil
         guard pressed else { return }
         pressed = false
         TouchControllerRuntimeBridge.setButton(source: control.id, mapping: control.mapping, pressed: false)
@@ -172,34 +249,45 @@ private struct TouchControllerButton: View {
 private struct TouchControllerTrigger: View {
     let control: TouchControllerControl
     @State private var pressed = false
+    @State private var pressedAt = 0.0
+    @State private var releaseTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(.black.opacity(pressed ? 0.60 : 0.38))
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(.white.opacity(pressed ? 0.90 : 0.60), lineWidth: 2)
-            Text(control.mapping.compactLabel)
-                .font(.system(.caption, design: .rounded, weight: .bold))
-                .foregroundStyle(.white)
-        }
+        Image(control.mapping.moonlightImageName)
+            .resizable()
+            .scaledToFit()
+            .brightness(pressed ? 0.25 : 0)
         .opacity(control.opacity)
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
+        .overlay {
+            MoonlightTouchArea(round: true, label: control.mapping.displayName) { phase, _ in
+                switch phase {
+                case .began:
+                    if releaseTask != nil { release() }
                     guard !pressed else { return }
                     pressed = true
+                    pressedAt = ProcessInfo.processInfo.systemUptime
                     TouchControllerRuntimeBridge.setTrigger(source: control.id, mapping: control.mapping, value: 1)
+                case .moved: break
+                case .ended:
+                    guard pressed else { return }
+                    let remaining = max(0, 0.10 - (ProcessInfo.processInfo.systemUptime - pressedAt))
+                    releaseTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(remaining))
+                        guard !Task.isCancelled else { return }
+                        release()
+                    }
                 }
-                .onEnded { _ in release() }
-        )
+            }
+        }
         .onDisappear { release() }
         .accessibilityLabel(control.mapping.displayName)
         .accessibilityAddTraits(.isButton)
     }
 
     private func release() {
+        releaseTask?.cancel()
+        releaseTask = nil
         guard pressed else { return }
         pressed = false
         TouchControllerRuntimeBridge.setTrigger(source: control.id, mapping: control.mapping, value: 0)
@@ -212,24 +300,17 @@ private struct TouchControllerStick: View {
     @State private var knobOffset: CGSize = .zero
 
     var body: some View {
-        ZStack {
-            Circle().fill(.black.opacity(0.32))
-            Circle().stroke(.white.opacity(0.45), lineWidth: 2)
-            Circle()
-                .fill(.white.opacity(0.42))
-                .frame(width: renderedSize.width * 0.46, height: renderedSize.height * 0.46)
-                .offset(knobOffset)
-            Text(control.mapping.compactLabel)
-                .font(.caption2.bold())
-                .foregroundStyle(.white.opacity(0.85))
-        }
+        MoonlightStickArtwork(size: renderedSize, knobOffset: knobOffset)
         .opacity(control.opacity)
         .contentShape(Circle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                .onChanged { value in update(location: value.location) }
-                .onEnded { _ in reset() }
-        )
+        .overlay {
+            MoonlightTouchArea(round: true, label: control.mapping.displayName) { phase, location in
+                switch phase {
+                case .began, .moved: update(location: location)
+                case .ended: reset()
+                }
+            }
+        }
         .onDisappear { reset() }
         .accessibilityLabel(control.mapping.displayName)
     }
@@ -263,6 +344,8 @@ private struct TouchControllerDPad: View {
     let control: TouchControllerControl
     let renderedSize: CGSize
     @State private var directions: Set<Direction> = []
+    @State private var pressedAt = 0.0
+    @State private var releaseTask: Task<Void, Never>?
 
     private enum Direction: CaseIterable, Hashable {
         case up, down, left, right
@@ -278,31 +361,27 @@ private struct TouchControllerDPad: View {
     }
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black.opacity(0.30))
-                .frame(width: renderedSize.width * 0.34, height: renderedSize.height)
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black.opacity(0.30))
-                .frame(width: renderedSize.width, height: renderedSize.height * 0.34)
-            Image(systemName: "dpad.fill")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(.white.opacity(0.55))
-                .padding(renderedSize.width * 0.10)
-        }
+        MoonlightDPadArtwork(size: renderedSize)
         .opacity(control.opacity)
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                .onChanged { value in update(location: value.location) }
-                .onEnded { _ in releaseAll() }
-        )
+        .overlay {
+            MoonlightTouchArea(round: false, label: "D-Pad") { phase, location in
+                switch phase {
+                case .began:
+                    if releaseTask != nil { releaseAll() }
+                    update(location: location)
+                case .moved: update(location: location)
+                case .ended: finishPress()
+                }
+            }
+        }
         .onDisappear { releaseAll() }
         .accessibilityLabel("D-Pad")
     }
 
     private func update(location: CGPoint) {
+        releaseTask?.cancel()
+        releaseTask = nil
         let center = CGPoint(x: renderedSize.width / 2, y: renderedSize.height / 2)
         let dx = location.x - center.x
         let dy = location.y - center.y
@@ -313,17 +392,109 @@ private struct TouchControllerDPad: View {
         if dy > threshold { next.insert(.down) }
         if dy < -threshold { next.insert(.up) }
 
+        if directions.isEmpty && !next.isEmpty {
+            pressedAt = ProcessInfo.processInfo.systemUptime
+        }
+
         for direction in Direction.allCases where directions.contains(direction) != next.contains(direction) {
             TouchControllerRuntimeBridge.setDPad(source: control.id, mask: direction.mask, pressed: next.contains(direction))
         }
         directions = next
     }
 
+    private func finishPress() {
+        guard !directions.isEmpty else { return }
+        let remaining = max(0, 0.10 - (ProcessInfo.processInfo.systemUptime - pressedAt))
+        releaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            releaseAll()
+        }
+    }
+
     private func releaseAll() {
+        releaseTask?.cancel()
+        releaseTask = nil
         for direction in directions {
             TouchControllerRuntimeBridge.setDPad(source: control.id, mask: direction.mask, pressed: false)
         }
         directions.removeAll()
+    }
+}
+
+// Follows the touch-down/move/up pattern in Moonlight iOS OnScreenControls.m.
+// This per-control UIView and Iridium's XInput bridge are separate code.
+// Copyright (c) 2014 Moonlight Stream. GPL-3.0; see Moonlight-LICENSE.txt.
+private enum MoonlightTouchPhase { case began, moved, ended }
+
+@MainActor
+private struct MoonlightTouchArea: UIViewRepresentable {
+    let round: Bool
+    let label: String
+    let onEvent: (MoonlightTouchPhase, CGPoint) -> Void
+
+    func makeUIView(context: Context) -> MoonlightTouchView {
+        MoonlightTouchView()
+    }
+
+    func updateUIView(_ view: MoonlightTouchView, context: Context) {
+        view.round = round
+        view.accessibilityLabel = label
+        view.accessibilityIdentifier = "touchControl-\(label)"
+        view.onEvent = onEvent
+    }
+}
+
+@MainActor
+private final class MoonlightTouchView: UIView {
+    var round = false
+    var onEvent: ((MoonlightTouchPhase, CGPoint) -> Void)?
+    private var activeTouches = Set<UITouch>()
+    private var primaryTouch: UITouch?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isMultipleTouchEnabled = true
+        isOpaque = false
+        isAccessibilityElement = true
+        accessibilityTraits = [.button, .allowsDirectInteraction]
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard round else { return bounds.contains(point) }
+        let x = point.x - bounds.midX
+        let y = point.y - bounds.midY
+        let radius = min(bounds.width, bounds.height) / 2
+        return x * x + y * y <= radius * radius
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        activeTouches.formUnion(touches)
+        guard primaryTouch == nil, let touch = touches.first else { return }
+        primaryTouch = touch
+        onEvent?(.began, touch.location(in: self))
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = primaryTouch, touches.contains(touch) else { return }
+        onEvent?(.moved, touch.location(in: self))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { finish(touches) }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { finish(touches) }
+
+    private func finish(_ touches: Set<UITouch>) {
+        activeTouches.subtract(touches)
+        guard let touch = primaryTouch, touches.contains(touch) else { return }
+        if let next = activeTouches.first {
+            primaryTouch = next
+            onEvent?(.moved, next.location(in: self))
+        } else {
+            primaryTouch = nil
+            onEvent?(.ended, touch.location(in: self))
+        }
     }
 }
 
@@ -337,18 +508,27 @@ private enum TouchControllerRuntimeBridge {
 
     static func setButton(source: UUID, mapping: TouchControllerMapping, pressed: Bool) {
         guard let mask = mapping.buttonMask else { return }
+        #if INTERFACE_PREVIEW
+        if pressed { NotificationCenter.default.post(name: .init("IridiumPreviewTouchButton"), object: mapping) }
+        #endif
         #if MADEIRA_RUNTIME
         MadeiraController.setTouchButton(source: source, mask: mask, pressed: pressed)
         #endif
     }
 
     static func setDPad(source: UUID, mask: UInt16, pressed: Bool) {
+        #if INTERFACE_PREVIEW
+        if pressed { NotificationCenter.default.post(name: .init("IridiumPreviewTouchButton"), object: mask) }
+        #endif
         #if MADEIRA_RUNTIME
         MadeiraController.setTouchButton(source: source, mask: mask, pressed: pressed)
         #endif
     }
 
     static func setTrigger(source: UUID, mapping: TouchControllerMapping, value: Float) {
+        #if INTERFACE_PREVIEW
+        if value > 0 { NotificationCenter.default.post(name: .init("IridiumPreviewTouchButton"), object: mapping) }
+        #endif
         #if MADEIRA_RUNTIME
         switch mapping {
         case .leftTrigger:

@@ -151,6 +151,16 @@ int main(void) {
     assert(arena_size()==G && arena_base()==hi-G && block_count==1);
     assert(blocks[0].lo==hi-G && blocks[0].hi==hi);
     assert(replay_guest_startup(arena_base())==8); tests++;
+    reset(lo,hi);
+    allowed[allowed_count++]=(struct interval){0x140000000ULL,0x160000000ULL};
+    assert(iridium_tight_va_fex_size(5*G)==0);
+    assert(iridium_tight_va_fex_size(6*G)==1536*M);
+    assert(iridium_tight_va_fex_size(7*G)==1792*M);
+    assert(iridium_tight_va_fex_size(8*G)==0);
+    assert(iridium_try_budgeted_fex_range(hi,lo,iridium_tight_va_fex_size(hi-lo))==1);
+    assert(arena_size()==1536*M && arena_base()==hi-1536*M);
+    assert(replay_guest_startup(arena_base())==8);
+    assert(guest_reserve(0x1ffff000ULL,arena_base())!=0); tests++;
     /* The same code must work at different process ceilings, not phone IDs. */
     struct { uint64_t low, high, size; } cases[] = {
         {lo, 0x8000000000ULL,16*G}, {lo+G,0x8000000000ULL,8*G},
@@ -190,7 +200,7 @@ int main(void) {
     reset(8*G,10*G); allowed[allowed_count++]=(struct interval){20*G,22*G}; ceiling=32*G;
     assert(!iridium_reserve_fex_memory()); unpublished(); assert(block_count==0); tests++;
     reset(G,4*G); assert(!iridium_reserve_fex_memory()); unpublished(); assert(allocations==0); tests++;
-    printf("Host arena: %d executable cases passed; old geometry fails request 5, budgeted geometry serves 8.\n",tests);
+    printf("Host arena: %d executable cases passed; 1.5 GiB FEX range serves the ninth guest reserve.\n",tests);
     return 0;
 }
 '''

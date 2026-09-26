@@ -9,6 +9,7 @@ import IridiumRuntime
     @State private var testFavorites = false
     @State private var plays = 0
     @State private var options = 0
+    @State private var touchButtons = 0
     @StateObject private var model: AppViewModel
     init() {
         let empty = ProcessInfo.processInfo.arguments.contains("--empty")
@@ -63,6 +64,18 @@ import IridiumRuntime
             } else if ProcessInfo.processInfo.arguments.contains("--settings") {
                 NavigationStack { SettingsView(viewModel: model) }
                     .environmentObject(controller).environment(\.menuController, controller)
+            } else if ProcessInfo.processInfo.arguments.contains("--touch-controls") {
+                Color.black.ignoresSafeArea()
+                    .overlay { TouchControllerOverlay(gameID: model.games[0].id) }
+                    .overlay(alignment: .top) {
+                        Text("Touch presses: \(touchButtons)")
+                            .foregroundStyle(.white)
+                            .padding(.top, 16)
+                            .accessibilityIdentifier("touchPresses")
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .init("IridiumPreviewTouchButton"))) { _ in
+                        touchButtons += 1
+                    }
             } else if ProcessInfo.processInfo.arguments.contains("--player") {
                 let root = FileManager.default.temporaryDirectory.path
                 let session = RuntimePlayerSession(sessionIdentifier: "ui-only", gameID: model.games[0].id,

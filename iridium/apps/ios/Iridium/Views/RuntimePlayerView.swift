@@ -55,6 +55,7 @@ struct RuntimePlayerView: View {
     @State private var isShowingControls = false
     @State private var showPerformance = false
     @State private var deviceKeyboardVisible = false
+    @State private var showKeyboardAfterControlsDismiss = false
     @State private var keyboardInputRejected = false
     @State private var touchControlsEnabled = false
     @State private var isConfirmingClose = false
@@ -319,26 +320,8 @@ struct RuntimePlayerView: View {
                     controlsVisible = false
                     return .handled
                 }
-                .sheet(isPresented: $isShowingControls) {
-                    NavigationStack {
-                        if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
-                            GameInputSettingsView(
-                                game: game,
-                                deviceKeyboardVisible: Binding(
-                                    get: { deviceKeyboardVisible },
-                                    set: { visible in
-                                        deviceKeyboardVisible = visible
-                                        if visible { isShowingControls = false }
-                                    }
-                                )
-                            )
-                            .toolbar {
-                                ToolbarItem(placement: .confirmationAction) {
-                                    Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction)
-                                }
-                            }
-                        }
-                    }
+                .sheet(isPresented: $isShowingControls, onDismiss: finishInputSettingsDismissal) {
+                    inputSettingsSheet
                 }
                 .onChange(of: isShowingControls) { _, _ in updatePointerCapture() }
                 .onChange(of: isShowingDiagnostics) { _, _ in updatePointerCapture() }
@@ -398,6 +381,40 @@ struct RuntimePlayerView: View {
 
     private var hasPresentedFirstFrame: Bool {
         frameCount > 0
+    }
+
+    private var inputSettingsSheet: some View {
+        NavigationStack {
+            if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
+                GameInputSettingsView(game: game, deviceKeyboardVisible: Binding(
+                    get: { deviceKeyboardVisible || showKeyboardAfterControlsDismiss },
+                    set: { visible in
+                        if visible {
+                            showKeyboardAfterControlsDismiss = true
+                            isShowingControls = false
+                        } else {
+                            showKeyboardAfterControlsDismiss = false
+                            deviceKeyboardVisible = false
+                        }
+                    }
+                ))
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction)
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishInputSettingsDismissal() {
+        guard showKeyboardAfterControlsDismiss else { return }
+        showKeyboardAfterControlsDismiss = false
+        // Let UIKit finish the sheet's keyboard-focus restoration first.
+        DispatchQueue.main.async {
+            guard session.state == .running, !viewModel.closingMadeiraSession else { return }
+            deviceKeyboardVisible = true
+        }
     }
 
     private var guestInputEnabled: Bool {
@@ -703,6 +720,12 @@ private final class RuntimePlayerHostView: UIView {
         let changed = focusPolicy.update(inputEnabled: guestInputEnabled && window != nil,
                                          keyboard: wantsDeviceKeyboard)
         guard changed || force else { return }
+        // Responder changes can synchronously start keyboard layout. Never do that
+        // inside SwiftUI's updateUIView or a keyboard visibility notification.
+        DispatchQueue.main.async { [weak self] in self?.applyResponderOwnership() }
+    }
+
+    private func applyResponderOwnership() {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             switch focusPolicy.owner {
@@ -710,17 +733,19 @@ private final class RuntimePlayerHostView: UIView {
                 if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
                 if isFirstResponder { _ = resignFirstResponder() }
             case .keyboard:
+                guard window != nil else { return }
                 if !softwareKeyboardView.isFirstResponder, !softwareKeyboardView.becomeFirstResponder() {
                     keyboardHidden()
                 }
             case .game:
+                guard window != nil else { return }
                 if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
                 if !isFirstResponder { _ = becomeFirstResponder() }
             }
             return
         }
         #endif
-        if focusPolicy.owner == .game { _ = becomeFirstResponder() }
+        if focusPolicy.owner == .game, window != nil { _ = becomeFirstResponder() }
         else if isFirstResponder { _ = resignFirstResponder() }
     }
 

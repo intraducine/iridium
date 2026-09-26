@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Select retained manual-build artifacts only when their producer inputs match."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,10 @@ MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/patches/cerbero-spandsp-mirror.patch',
                 'iridium/apps/ios/stikjit.yml',
                 'check-public-source.py')
+SPANDSP_MIRROR_PATCH = 'ci/patches/cerbero-spandsp-mirror.patch'
+SPANDSP_MIRROR_SHA256 = 'f3976698deeb45698587c1a5ee63b76ce7acfe2a6507c7c2e33431e631f348cb'
+SPANDSP_OLD_LOOP = 'cerbero-meson-source-cache.patch; do'
+SPANDSP_NEW_LOOP = 'cerbero-meson-source-cache.patch cerbero-spandsp-mirror.patch; do'
 PREFIX_INPUTS = ('testrepos/Madeira/wine', 'testrepos/Madeira/scripts/build-prefix-snapshot.sh',
                  'ci/prepare-prefix.sh', 'ci/sanitize-prefix.py', 'ci/wineboot-from-build.sh')
 NATIVE_INPUTS = MEDIA_INPUTS + (
@@ -66,6 +71,19 @@ def api(path):
 
 def git(root, *args):
     return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+
+
+def media_mirror_transport_only(root, revision):
+    """The pinned SpanDSP archive is unchanged; only its download URL moved."""
+    if git(root, 'ls-tree', revision, '--', SPANDSP_MIRROR_PATCH):
+        return False
+    patch = root / SPANDSP_MIRROR_PATCH
+    if not patch.is_file() or hashlib.sha256(patch.read_bytes()).hexdigest() != SPANDSP_MIRROR_SHA256:
+        return False
+    script = 'ci/prepare-media-sdk.sh'
+    old = git(root, 'show', revision + ':' + script)
+    new = git(root, 'show', 'HEAD:' + script)
+    return old.count(SPANDSP_OLD_LOOP) == 1 and new == old.replace(SPANDSP_OLD_LOOP, SPANDSP_NEW_LOOP)
 
 
 def normalize_source_only_changes(text):
@@ -138,7 +156,10 @@ def compatible(root, revision, stage):
              'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:
         paths += ('ci/compiled-components.py',)
+    mirror_only = stage == 'media' and media_mirror_transport_only(root, revision)
     for path in paths:
+        if mirror_only and path in ('ci/prepare-media-sdk.sh', SPANDSP_MIRROR_PATCH):
+            continue
         # ls-tree returns an empty result for absent inputs, so old producers
         # without newly required scripts are invalidated without a Git error.
         if path == 'ci/prepare-media-sdk.sh':

@@ -113,9 +113,12 @@ enum MadeiraRuntimeAdapter {
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
-                        DispatchQueue.main.async {
+                        DispatchQueue.main.sync {
                             guard launchID == token, !launchCancelled, !failureReported else { return }
-                            MadeiraController.start(prefix: prefix)
+                            MadeiraController.start(
+                                prefix: prefix,
+                                touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
+                            )
                         }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
                         setenv("MADEIRA_EXE", path, 1)

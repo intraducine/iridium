@@ -123,19 +123,33 @@ static int iridium_try_budgeted_fex_range(vm_address_t kernel_limit,
     return 0;
 }
 
+static vm_size_t iridium_tight_va_fex_size(vm_size_t window)
+{
+    const vm_size_t step = 256ULL << 20;
+    vm_size_t size = (window / 4) & ~(step - 1);
+    return window < (8ULL << 30) && size >= (1536ULL << 20) ? size : 0;
+}
+
 int iridium_reserve_fex_memory(void)
 {
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    /* Restore the device-tested launch behavior that existed before 1f7706d.
-     * That commit replaced Madeira's Winios reservation with this experimental
-     * allocator; subsequent device logs showed 4 GiB guest starvation, then
-     * 1 GiB translator starvation, while disabling the reservation entirely
-     * left FEX with no usable band. Keep the wrapper for source compatibility,
-     * but use the original Madeira/Winios reservation policy on device. */
-    fprintf(stderr, "[fex-arena] using restored Madeira/Winios reservation policy\n");
+    if (iridium_fex_reserved) return 1;
+    task_vm_info_data_t info = {0};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    const vm_address_t high_floor = 0x7000000000ULL;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) == KERN_SUCCESS &&
+        info.max_address > high_floor) {
+        vm_size_t size = iridium_tight_va_fex_size(info.max_address - high_floor);
+        if (size) {
+            /* A tight map needs three parts guest space per part FEX space.
+             * The fixed Mach probe below must prove the whole range is usable. */
+            int result = iridium_try_budgeted_fex_range(info.max_address, high_floor, size);
+            if (result != 0) return result > 0;
+        }
+    }
+    fprintf(stderr, "[fex-arena] using Madeira/Winios reservation policy\n");
     return winios_reserve_fex_memory();
-#endif
-
+#else
     if (iridium_fex_reserved) return 1;
     /* Inherited strings are not proof that this process owns a reservation. */
     unsetenv("WINE_IOS_FEX_ARENA_BASE");
@@ -162,4 +176,5 @@ int iridium_reserve_fex_memory(void)
     /* The old fallback has no guest budget and would undo this safety check. */
     fprintf(stderr, "[fex-arena] no reservation with sufficient guest headroom; refusing to launch\n");
     return 0;
+#endif
 }

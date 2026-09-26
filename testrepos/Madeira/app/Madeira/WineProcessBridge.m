@@ -125,17 +125,17 @@ static int madeira_prune_keep_tree(const char *dir, int depth)
  * destination already exists the source is left in place for manual review,
  * because that tree holds real user data. */
 
-static int ios_reg_unmangle(const char *path)
+static int ios_reg_replace(const char *path, const char *bad, const char *good)
 {
     FILE *f = fopen( path, "rb" );
-    if (!f) return 0;
+    if (!f) return errno == ENOENT ? 0 : -1;
     fseek( f, 0, SEEK_END ); long n = ftell( f ); fseek( f, 0, SEEK_SET );
-    if (n <= 0 || n > (64 << 20)) { fclose( f ); return 0; }
+    if (n <= 0 || n > (64 << 20)) { fclose( f ); return -1; }
     char *buf = malloc( (size_t)n + 1 );
-    if (!buf) { fclose( f ); return 0; }
+    if (!buf) { fclose( f ); return -1; }
     size_t got = fread( buf, 1, (size_t)n, f );
     fclose( f );
-    if (got != (size_t)n) { free( buf ); return 0; }
+    if (got != (size_t)n) { free( buf ); return -1; }
     buf[n] = 0;
 
     /* ml667: anchored on "C:" originally, which MISSED the one value that has
@@ -143,19 +143,18 @@ static int ios_reg_unmangle(const char *path)
      * standard way to reach the profile, so that single miss left the default
      * path broken while everything else looked repaired. Match the collapsed
      * token itself; it reconstructs correctly with or without a drive prefix. */
-    static const char BAD[]  = "usersmadeira";
-    static const char GOOD[] = "users\\\\madeira";
-    const size_t bl = sizeof(BAD) - 1, gl = sizeof(GOOD) - 1;
+    const size_t bl = strlen(bad), gl = strlen(good);
+    if (!bl || gl < bl) { free( buf ); return -1; }
     size_t hits = 0;
-    for (char *q = buf; (q = strstr( q, BAD )); q += bl) hits++;
+    for (char *q = buf; (q = strstr( q, bad )); q += bl) hits++;
     if (!hits) { free( buf ); return 0; }
 
     char *out = malloc( (size_t)n + hits * (gl - bl) + 1 ), *w;
-    if (!out) { free( buf ); return 0; }
+    if (!out) { free( buf ); return -1; }
     w = out;
     for (const char *r = buf; *r; )
     {
-        if (!strncmp( r, BAD, bl )) { memcpy( w, GOOD, gl ); w += gl; r += bl; }
+        if (!strncmp( r, bad, bl )) { memcpy( w, good, gl ); w += gl; r += bl; }
         else *w++ = *r++;
     }
     *w = 0;
@@ -172,9 +171,9 @@ static int ios_reg_unmangle(const char *path)
         if (ok && rename( tmp, path ) != 0) ok = 0;
         if (!ok) unlink( tmp );
     }
-    LOG( "profile-repair: %{public}s %zu path(s) %{public}s", path, hits, ok ? "rewritten" : "FAILED" );
+    LOG( "profile-repair: registry %zu path(s) %{public}s", hits, ok ? "rewritten" : "FAILED" );
     free( buf ); free( out );
-    return ok ? (int)hits : 0;
+    return ok ? (int)hits : -1;
 }
 
 /* Move src into dst, merging. Existing destinations are never overwritten. */
@@ -182,8 +181,16 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
 {
     DIR *d;
     struct dirent *ent;
+    struct stat src_st;
+    struct stat dst_st;
     if (depth <= 0) return;
-    if (rename( src, dst ) == 0) { LOG( "profile-repair: moved %{public}s", src ); return; }
+    if (lstat( src, &src_st ) != 0 || !S_ISDIR( src_st.st_mode )) return;
+    if (lstat( dst, &dst_st ) == 0)
+    {
+        if (!S_ISDIR( dst_st.st_mode )) return;
+    }
+    else if (errno != ENOENT) return;
+    if (rename( src, dst ) == 0) { LOG( "profile-repair: moved legacy directory" ); return; }
     if (errno != ENOTEMPTY && errno != EEXIST && errno != ENOTDIR) return;
     if (!(d = opendir( src ))) return;
     while ((ent = readdir( d )))
@@ -197,7 +204,8 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
         if (lstat( sp, &st ) == 0 && S_ISDIR( st.st_mode ))
         {
             mkdir( dp, 0755 );
-            ios_merge_move( sp, dp, depth - 1 );
+            if (lstat( dp, &st ) == 0 && S_ISDIR( st.st_mode ))
+                ios_merge_move( sp, dp, depth - 1 );
         }
         /* a colliding FILE is left alone -- never clobber real user data */
     }
@@ -213,7 +221,12 @@ static void madeira_repair_profile(NSString *prefix)
 
     int fixed = 0;
     for (NSString *reg in @[ @"user.reg", @"userdef.reg", @"system.reg" ])
-        fixed += ios_reg_unmangle( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation );
+    {
+        int count = ios_reg_replace( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation,
+                                     "usersmadeira", "users\\\\madeira" );
+        if (count < 0) return;
+        fixed += count;
+    }
 
     NSString *bad  = [prefix stringByAppendingPathComponent:@"drive_c/usersmadeira"];
     NSString *good = [prefix stringByAppendingPathComponent:@"drive_c/users/madeira"];
@@ -236,7 +249,7 @@ static void madeira_repair_profile(NSString *prefix)
     if (![fm fileExistsAtPath:bad])
         [@"ml667" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
     else
-        LOG( "profile-repair: %{public}s still present -- will retry next launch", bad.UTF8String );
+        LOG( "profile-repair: legacy profile still present -- will retry next launch" );
     LOG( "profile-repair: complete (%d registry path(s) rewritten)", fixed );
 }
 
@@ -276,6 +289,33 @@ static void madeira_undo_appdata_skeleton(NSString *prefix)
     [@"ml666" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+static void madeira_repair_mobile_profile(NSString *prefix)
+{
+    /* iOS calls its account "mobile". Wine uses USER to derive its profile,
+     * and older runs wrote that name into Shell Folders despite the template's
+     * madeira profile. Repair before wineserver loads the registry. */
+    int fixed = 0;
+    for (NSString *reg in @[ @"user.reg", @"userdef.reg", @"system.reg" ])
+    {
+        int count = ios_reg_replace( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation,
+                                     "users\\\\mobile", "users\\\\madeira" );
+        if (count < 0) return;  /* retain the old tree if the registry could not be repaired */
+        fixed += count;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *bad = [prefix stringByAppendingPathComponent:@"drive_c/users/mobile"];
+    if ([fm fileExistsAtPath:bad])
+    {
+        NSString *good = [prefix stringByAppendingPathComponent:@"drive_c/users/madeira"];
+        [fm createDirectoryAtPath:good withIntermediateDirectories:YES attributes:nil error:nil];
+        ios_merge_move( bad.fileSystemRepresentation, good.fileSystemRepresentation, 12 );
+        if ([fm fileExistsAtPath:bad])
+            LOG( "profile-repair: legacy mobile profile still contains data; existing files were not overwritten" );
+    }
+    if (fixed) LOG( "profile-repair: corrected %d mobile profile path(s)", fixed );
+}
+
 
 // Wine's main entry point (from ntdll unix loader.c, statically linked)
 extern void __wine_main(int argc, char *argv[]);
@@ -309,6 +349,9 @@ static char *g_prefix_path = NULL;
 void madeira_seed_prefix_if_needed(const char *prefix_path) {
     @autoreleasepool {
         if (!prefix_path) return;
+        /* Wine derives its Windows user from USER, not from the template's
+         * USERPROFILE entry. Set it before any Wine process can initialize. */
+        setenv("USER", "madeira", 1);
         NSString *prefix = [NSString stringWithUTF8String:prefix_path];
         NSString *stamp = [prefix stringByAppendingPathComponent:@".update-timestamp"];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -342,6 +385,7 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+        madeira_repair_mobile_profile( prefix );
     }
 }
 

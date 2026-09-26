@@ -226,6 +226,7 @@ def verify_retained_inputs(reuse, revision: str) -> None:
     }
     old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
+    media_mirror_only = reuse.media_mirror_transport_only(ROOT, revision) if hasattr(reuse, "media_mirror_transport_only") else False
     corrections = load("fex_runtime_corrections", CI / "apply-fex-runtime-corrections.py")
     problems = []
     details = []
@@ -252,6 +253,9 @@ def verify_retained_inputs(reuse, revision: str) -> None:
             reuse.producer_job(old_workflow, stage)
             != reuse.producer_job(new_workflow, stage)
         )
+        if stage == "media" and media_mirror_only and not dirty and not workflow_changed \
+                and set(changed) == {"ci/prepare-media-sdk.sh", reuse.SPANDSP_MIRROR_PATCH}:
+            continue
         if changed or dirty or workflow_changed:
             problems.append(stage)
             reasons = []
