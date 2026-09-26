@@ -213,3 +213,29 @@ diff --git a/testrepos/Madeira/wine/dlls/ntdll/loader.c b/testrepos/Madeira/wine
  #endif
  
          if (NtCurrentTeb()->SkipThreadAttach)
+diff --git a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
+index 1e9b581d..1adc82c0 100644
+--- a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
++++ b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
+@@ -1852,6 +1855,7 @@ static void notify_map_view_of_section( HANDLE handle, void *addr, SIZE_T size,
+ void arm64ec_notify_image_map( void *base )
+ {
+     static unsigned int n_map;
++    BOOL entered;
+
+     /* ml710: must be the intervals-only entry point, NEVER NotifyMapViewOfSection.
+      * The latter also drives ImageTracker, which takes FEX's CodeInvalidationMutex
+@@ -1864,7 +1868,13 @@ void arm64ec_notify_image_map( void *base )
+     n_map++;
+     if (n_map <= 64)
+         ERR( "[ldr-image] ml710 MAP #%u base=%p peb=%p\n", n_map, base, RtlGetCurrentPeb() );
++    /* FEX may allocate or decommit its own memory while holding IntervalsLock.
++     * Suppress recursive memory notifications during that work. Still deliver
++     * the image notification if already inside a callback, and preserve that
++     * caller's state instead of clearing its guard. */
++    entered = enter_syscall_callback();
+     pNotifyImageMap( base );
++    if (entered) leave_syscall_callback();
+ }
+
+ /* ml709b: UNUSED, deliberately. The loader must not call this -- see the long comment
