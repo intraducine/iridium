@@ -1238,6 +1238,7 @@ volatile long long ios_xp_yield, ios_xp_yield_slept, ios_xp_delay, ios_xp_delay_
  * eco = 1. QoS can only be set by a thread on itself, so each thread applies
  * a change the next time it waits, sleeps or yields, which every guest thread
  * does many times a second. */
+#ifdef __APPLE__
 volatile int ios_eco_gen = 1;          /* bumped on every toggle; 1 so a thread's first poll applies */
 static volatile int ios_eco_on = -1;   /* -1 = madeira.cfg not read yet */
 static qos_class_t ios_eco_class = QOS_CLASS_UTILITY;
@@ -1278,6 +1279,9 @@ void madeira_set_eco( int on )   /* the app's ECO pill */
              : ios_eco_class == QOS_CLASS_USER_INITIATED ? "user-initiated" : "utility" );
 }
 int madeira_get_eco(void) { ios_eco_init(); return ios_eco_on > 0; }
+#else
+#define IOS_ECO_POLL() do { } while (0)
+#endif
 
 NTSTATUS WINAPI NtSetEvent( HANDLE handle, LONG *prev_state )
 {
@@ -4118,8 +4122,8 @@ void ios_orphan_check( const unsigned long long *live_stamps, int nstamps )
  * behind every contended critical section, condition variable and
  * WaitOnAddress); read by the thread sampler's periodic line. */
 volatile long long ios_alert_wakes, ios_alert_waits, ios_alert_wait_timeouts;
-/* ml1122: alert -> waiter-running latency, and the alert-spin-us experiment. */
-#include <mach/mach_time.h>
+/* Apple-only alert timing and spin experiment. Linux uses its normal futex wait. */
+#ifdef __APPLE__
 volatile long long ios_alert_lat_n, ios_alert_lat_ticks, ios_alert_lat_hist[6], ios_alert_spin_tries, ios_alert_spin_hits;
 static volatile unsigned long long ios_alert_stamp[4096];
 static inline unsigned ios_alert_slot( const void *entry ) { return (unsigned)(((ULONG_PTR)entry >> 2) & 4095); }
@@ -4130,6 +4134,7 @@ static double ios_ticks_per_us(void)
     if (!v) { mach_timebase_info_data_t tb; mach_timebase_info( &tb ); v = 1000.0 * tb.denom / tb.numer; }
     return v;
 }
+#endif
 NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
 {
     union tid_alert_entry *entry = get_tid_alert_entry( tid );
@@ -4167,7 +4172,9 @@ NTSTATUS WINAPI NtAlertThreadByThreadId( HANDLE tid )
                 ERR( "[alert-unix] ALERT-SENT from=%04x -> pump tid=%04x futex=%p rev=ml482\n",
                      (int)self_tid, (int)(ULONG_PTR)tid, entry ); }
         }
+#ifdef __APPLE__
         ios_alert_stamp[ios_alert_slot( futex )] = mach_absolute_time();   /* ml1122 */
+#endif
         if (!InterlockedExchange( futex, 1 ))
             futex_wake_one( futex );
         return STATUS_SUCCESS;
@@ -4279,6 +4286,7 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             ios_alert_waiters[ios_wslot].addr = address ? address : (const void *)0x1;
         }
 
+#if defined(__APPLE__) && defined(__aarch64__)
         if (!ios_alert_spin_loaded)   /* ml1122: madeira.cfg alert-spin-us (default 0) */
         {
             long long us = madeira_cfg_int( "alert-spin-us", 0 );
@@ -4294,9 +4302,12 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             while (!*(volatile LONG *)futex && mach_absolute_time() < spin_end) __asm__ __volatile__( "yield" );
             if (*(volatile LONG *)futex) __sync_fetch_and_add( &ios_alert_spin_hits, 1 );
         }
+#endif
         while (!InterlockedExchange( futex, 0 ))
         {
+#ifdef __APPLE__
             unsigned long long ios_woke;
+#endif
             if (timeout)
             {
                 LONGLONG timeleft = update_timeout( end );
@@ -4308,6 +4319,7 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
             }
             else
                 ret = futex_wait( futex, 0, NULL );
+#ifdef __APPLE__
             ios_woke = mach_absolute_time();   /* ml1122 */
             if (*(volatile LONG *)futex)
             {
@@ -4321,6 +4333,7 @@ NTSTATUS WINAPI NtWaitForAlertByThreadId( const void *address, const LARGE_INTEG
                 }
             }
 
+#endif
             if (ret == -1 && errno == ETIMEDOUT)
             {
                 if (ios_wslot >= 0) ios_alert_waiters[ios_wslot].addr = NULL;
