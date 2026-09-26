@@ -196,35 +196,74 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
                 }
             }
             let current = appearance(game.id)
+            let revision = revisions[game.id]
             if current.automaticLookup, !current.customCover, current.portraitSourceVersion != 2,
                let matchID = current.matchID, !attempted.contains(game.id) {
                 attempted.insert(game.id)
-                do { try await apply(ArtworkMatch(id: matchID, name: current.matchName ?? game.title, source: current.matchSource), to: game.id) }
-                catch { lookupNote = "Portrait artwork is unavailable right now. You can still play." }
+                do {
+                    try await retryOnce {
+                        guard self.revisions[game.id] == revision else { return }
+                        let match = ArtworkMatch(
+                            id: matchID,
+                            name: current.matchName ?? game.title,
+                            source: current.matchSource)
+                        try await self.apply(match, to: game.id)
+                    }
+                } catch is CancellationError {
+                    attempted.remove(game.id)
+                    return
+                } catch {
+                    attempted.remove(game.id)
+                    print("[IridiumArtwork] Portrait lookup failed after retry: \(error.localizedDescription)")
+                    if current.cover == nil && current.background == nil {
+                        lookupNote = "Portrait artwork is unavailable right now. You can still play."
+                    }
+                }
                 continue
             }
             guard current.automaticLookup, current.matchID == nil, !attempted.contains(game.id) else { continue }
             attempted.insert(game.id)
-            let revision = revisions[game.id]
             do {
-                if let appID = Self.steamAppID(game.installPath) {
-                    print("[IridiumArtwork] Found Steam app ID \(appID) for \(game.title)")
-                    try await apply(ArtworkMatch(id: appID, name: game.title, source: "steam"), to: game.id)
-                    print("[IridiumArtwork] Applied Steam artwork for \(game.title)")
-                    continue
+                try await retryOnce {
+                    guard self.revisions[game.id] == revision else { return }
+                    if let appID = Self.steamAppID(game.installPath) {
+                        try await self.apply(
+                            ArtworkMatch(id: appID, name: game.title, source: "steam"),
+                            to: game.id)
+                        return
+                    }
+                    let matches = try await self.search(game.title)
+                    let exact = matches.filter { Self.normalized($0.name) == Self.normalized(game.title) }
+                    // A folder title alone is not sufficient evidence for an automatic match.
+                    let executable = Self.normalized(game.launchProfile.executablePath)
+                    guard exact.count == 1,
+                          executable == Self.normalized(exact[0].name),
+                          self.revisions[game.id] == revision
+                    else { return }
+                    try await self.apply(exact[0], to: game.id)
                 }
-                let matches = try await search(game.title)
-                let exact = matches.filter { Self.normalized($0.name) == Self.normalized(game.title) }
-                // A folder title alone is not sufficient evidence for an automatic match.
-                let executable = Self.normalized(game.launchProfile.executablePath)
-                guard exact.count == 1, executable == Self.normalized(exact[0].name), revisions[game.id] == revision else { continue }
-                try await apply(exact[0], to: game.id)
-            } catch is CancellationError { return }
-            catch {
-                print("[IridiumArtwork] Lookup failed for \(game.title): \(error.localizedDescription)")
-                self.lookupNote = "Artwork is unavailable right now. Your games are still ready to use."
+            } catch is CancellationError {
+                attempted.remove(game.id)
                 return
+            } catch {
+                attempted.remove(game.id)
+                print("[IridiumArtwork] Lookup failed after retry: \(error.localizedDescription)")
+                if current.cover == nil && current.background == nil {
+                    self.lookupNote = "Artwork is unavailable right now. Your games are still ready to use."
+                }
+                continue
             }
+        }
+    }
+
+    private func retryOnce(_ operation: () async throws -> Void) async throws {
+        do {
+            try await operation()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try await Task.sleep(for: .milliseconds(500))
+            try await operation()
         }
     }
 
@@ -326,6 +365,7 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
             if !$0.customCover { $0.cover = cover; $0.portraitCover = true; $0.portraitSourceVersion = 2 }
             if !$0.customBackground { $0.background = background }
         }
+        lookupNote = nil
     }
 
     private func download(_ url: URL?) async throws -> String? {
