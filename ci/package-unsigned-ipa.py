@@ -205,8 +205,17 @@ def deduplicate_windows_runtime(app):
     for relative, record in links.items():
         alias = app / relative
         if not alias.is_symlink():
-            alias.unlink()
-            alias.symlink_to(record["target"])
+            # Create the replacement alongside the duplicate, then rename it
+            # atomically. A failed link/rename leaves the original file intact.
+            fd, temporary = tempfile.mkstemp(prefix=".iridium-dedup-", dir=aliases)
+            os.close(fd)
+            temporary = Path(temporary)
+            try:
+                temporary.unlink()
+                temporary.symlink_to(record["target"])
+                os.replace(temporary, alias)
+            finally:
+                temporary.unlink(missing_ok=True)
         if alias.resolve(strict=True) != (app / record["canonical"]).resolve(strict=True):
             raise ValueError("Windows runtime alias does not resolve to its canonical module")
     return links
@@ -214,8 +223,6 @@ def deduplicate_windows_runtime(app):
 
 def check_windows_runtime_archive(ipa, links):
     """Fail if the ZIP writer loses links, follows them, or changes PE bytes."""
-    if not links:
-        return
     prefix = "Payload/Iridium.app/"
     with zipfile.ZipFile(ipa) as archive:
         entries = archive.infolist()
@@ -232,7 +239,7 @@ def check_windows_runtime_archive(ipa, links):
             expected_link = record["target"].encode("utf-8")
             if alias.file_size != len(expected_link) or archive.read(alias) != expected_link:
                 raise ValueError("IPA contains an incorrect Windows runtime symlink")
-            if stat.S_ISLNK(target.external_attr >> 16) or target.file_size != record["size"]:
+            if not stat.S_ISREG(target.external_attr >> 16) or target.file_size != record["size"]:
                 raise ValueError("IPA contains an invalid canonical Windows module")
             digest = hashlib.sha256()
             with archive.open(target) as stream:
@@ -240,6 +247,21 @@ def check_windows_runtime_archive(ipa, links):
                     digest.update(chunk)
             if digest.hexdigest() != record["sha256"]:
                 raise ValueError("IPA changed canonical Windows module bytes")
+        compressed_by_component = {}
+        for entry in entries:
+            if entry.filename.startswith(prefix) and not entry.is_dir():
+                component = entry.filename[len(prefix):].split("/", 1)[0]
+                compressed_by_component[component] = (
+                    compressed_by_component.get(component, 0) + entry.compress_size)
+        # These describe the resulting layout, including already-valid aliases
+        # on a repeat package. They are not a measured compressed-byte saving.
+        return {
+            "ipaBytes": ipa.stat().st_size,
+            "deduplicatedWindowsFiles": len(links),
+            "duplicateUncompressedBytesAvoided": sum(record["size"] for record in links.values()),
+            "compressedBytesByComponent": dict(sorted(compressed_by_component.items())),
+            "windowsResourceAliases": links,
+        }
 
 
 def refresh_runtime_manifest_artifacts(app):
@@ -291,8 +313,12 @@ def package(app, output):
     check_asset_catalog(app)
     output.mkdir(parents=True, exist_ok=True)
     ipa = output / "Iridium-unsigned.ipa"
-    if ipa.exists():
+    report_path = output / "ipa-size-report.json"
+    checksum_path = output / "SHA256SUMS"
+    if ipa.exists() or ipa.is_symlink():
         raise ValueError("Output IPA already exists; use a new output directory")
+    if any(path.exists() or path.is_symlink() for path in (report_path, checksum_path)):
+        raise ValueError("Output report or checksum already exists; use a new output directory")
     with tempfile.TemporaryDirectory(prefix="unsigned-", dir=output) as tmp:
         payload = Path(tmp) / "Payload"
         staged = payload / "Iridium.app"
@@ -321,11 +347,28 @@ def package(app, output):
         check_payload(staged)
         temporary_ipa = Path(tmp) / "Iridium-unsigned.ipa"
         subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(temporary_ipa)], check=True)
-        check_windows_runtime_archive(temporary_ipa, links)
-        temporary_ipa.replace(ipa)
+        report = check_windows_runtime_archive(temporary_ipa, links)
+        temporary_report = Path(tmp) / report_path.name
+        temporary_report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary_checksum = Path(tmp) / checksum_path.name
+        temporary_checksum.write_text(file_sha256(temporary_ipa) + "  " + ipa.name + "\n", encoding="utf-8")
+        # Stage all outputs first; publish the verified IPA last. Report/write
+        # failures must not leave a final IPA that appears ready to distribute.
+        published = []
+        try:
+            for temporary, destination in ((temporary_report, report_path),
+                                           (temporary_checksum, checksum_path),
+                                           (temporary_ipa, ipa)):
+                temporary.replace(destination)
+                published.append(destination)
+        except OSError:
+            for destination in reversed(published):
+                destination.unlink(missing_ok=True)
+            raise
         print(f"Shared {len(links)} identical Windows modules; "
-              f"avoided {sum(record['size'] for record in links.values())} uncompressed duplicate bytes.")
-    (output / "SHA256SUMS").write_text(hashlib.sha256(ipa.read_bytes()).hexdigest() + "  " + ipa.name + "\n")
+              f"avoided {report['duplicateUncompressedBytesAvoided']} uncompressed duplicate bytes; "
+              f"IPA {report['ipaBytes']} bytes.")
+        print("IPA compressed component sizes: " + json.dumps(report["compressedBytesByComponent"], sort_keys=True))
     print("Created unsigned IPA. Users must sign the app and its extensions before installation.")
 
 
