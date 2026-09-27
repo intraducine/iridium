@@ -2,13 +2,16 @@
 """Package only a complete, unsigned app. Never access a signing keychain."""
 import hashlib
 import json
+import os
 import plistlib
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 MACHO = {bytes.fromhex(value) for value in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
 SENSITIVE = {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}
@@ -170,6 +173,122 @@ def refresh_runtime_manifest_artifacts(app):
             )
 
 
+# Only the two flat, generated Windows resource trees participate. Native code,
+# signatures, Info.plist, licenses, and architecture-specific modules stay put.
+WINDOWS_RESOURCE_SUFFIXES = {'.dll', '.exe', '.drv', '.sys', '.acm', '.cpl', '.tlb', '.ax', '.ocx', '.mui', '.rll'}
+
+
+def stream_sha256(stream):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def deduplicate_windows_resources(app):
+    """Link identical Windows resources in the unsigned staging copy only."""
+    app = app.resolve(strict=True)
+    canonical_root = app / 'arm64ec-windows'
+    alias_root = app / 'aarch64-windows'
+    for root in (canonical_root, alias_root):
+        if root.is_symlink():
+            raise ValueError('Windows resource directory must not be a symlink')
+        if root.exists() and not root.is_dir():
+            raise ValueError('Windows resource directory is not a directory')
+    if not canonical_root.is_dir() or not alias_root.is_dir():
+        return []
+
+    records = []
+    for canonical in sorted(canonical_root.iterdir()):
+        alias = alias_root / canonical.name
+        if canonical.suffix.lower() not in WINDOWS_RESOURCE_SUFFIXES:
+            continue
+        if canonical.is_symlink() or alias.is_symlink():
+            continue  # Never turn an existing link into a chain or retarget it.
+        if not canonical.is_file() or not alias.is_file():
+            continue
+        original = alias.stat()
+        kept = canonical.stat()
+        if (original.st_size == 0 or original.st_size != kept.st_size
+                or stat.S_IMODE(original.st_mode) != stat.S_IMODE(kept.st_mode)):
+            continue
+        # A renamed native executable must not become a resource symlink.
+        with canonical.open('rb') as stream:
+            if stream.read(4) in MACHO:
+                continue
+            stream.seek(0)
+            checksum = stream_sha256(stream)
+        with alias.open('rb') as stream:
+            if stream_sha256(stream) != checksum:
+                continue
+        # Match actual bytes as well as hashes. No shallow filecmp cache.
+        with canonical.open('rb') as left, alias.open('rb') as right:
+            while True:
+                chunk = left.read(1024 * 1024)
+                if chunk != right.read(1024 * 1024):
+                    raise ValueError('Windows resource changed during deduplication')
+                if not chunk:
+                    break
+        target = '../arm64ec-windows/' + canonical.name
+        # Atomic replacement: a failed symlink operation keeps the original file.
+        fd, temporary = tempfile.mkstemp(prefix='.iridium-dedup-', dir=alias_root)
+        os.close(fd)
+        temporary = Path(temporary)
+        try:
+            temporary.unlink()
+            temporary.symlink_to(target)
+            os.replace(temporary, alias)
+        finally:
+            if temporary.is_symlink() or temporary.exists():
+                temporary.unlink()
+        if alias.resolve(strict=True) != canonical:
+            raise ValueError('Deduplicated Windows resource does not resolve to its canonical file')
+        records.append({
+            'path': alias.relative_to(app).as_posix(),
+            'canonical': canonical.relative_to(app).as_posix(),
+            'target': target,
+            'sizeBytes': original.st_size,
+            'sha256': checksum,
+        })
+    return records
+
+
+def verify_windows_resource_archive(ipa, records):
+    """Reject ZIPs that flatten links, duplicate entries, or change kept bytes."""
+    prefix = 'Payload/Iridium.app/'
+    with zipfile.ZipFile(ipa) as archive:
+        entries = archive.infolist()
+        names = [entry.filename for entry in entries]
+        if len(set(names)) != len(names):
+            raise ValueError('IPA contains duplicate ZIP entry names')
+        for record in records:
+            alias = archive.getinfo(prefix + record['path'])
+            canonical = archive.getinfo(prefix + record['canonical'])
+            if not stat.S_ISLNK(alias.external_attr >> 16):
+                raise ValueError('IPA did not preserve a Windows resource symlink')
+            if archive.read(alias) != record['target'].encode('utf-8'):
+                raise ValueError('IPA changed a Windows resource symlink target')
+            if not stat.S_ISREG(canonical.external_attr >> 16):
+                raise ValueError('Canonical Windows resource is not a regular ZIP entry')
+            if canonical.file_size != record['sizeBytes']:
+                raise ValueError('IPA changed a canonical Windows resource size')
+            with archive.open(canonical) as stream:
+                if stream_sha256(stream) != record['sha256']:
+                    raise ValueError('IPA changed a canonical Windows resource checksum')
+        compressed_by_component = {}
+        for entry in entries:
+            if entry.filename.startswith(prefix) and not entry.is_dir():
+                component = entry.filename[len(prefix):].split('/', 1)[0]
+                compressed_by_component[component] = compressed_by_component.get(component, 0) + entry.compress_size
+        return {
+            'ipaBytes': ipa.stat().st_size,
+            'deduplicatedWindowsFiles': len(records),
+            'duplicateUncompressedBytesRemoved': sum(record['sizeBytes'] for record in records),
+            'compressedBytesByComponent': dict(sorted(compressed_by_component.items())),
+            'windowsResourceAliases': records,
+        }
+
+
 def package(app, output):
     if output.resolve().is_relative_to(app.resolve()):
         raise ValueError("Output directory must be outside the app bundle")
@@ -203,8 +322,21 @@ def package(app, output):
         # runtime inventory only after every signature has been removed so the
         # manifest describes the exact bytes that are written into the IPA.
         refresh_runtime_manifest_artifacts(staged)
+        # Run after all module overrides and signing cleanup, on the temporary
+        # copy only. Incremental Xcode builds must never write through our links.
+        aliases = deduplicate_windows_resources(staged)
         check_payload(staged)
         subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(ipa)], check=True)
+        try:
+            report = verify_windows_resource_archive(ipa, aliases)
+        except (ValueError, KeyError, OSError, zipfile.BadZipFile):
+            ipa.unlink(missing_ok=True)
+            raise
+    (output / "ipa-size-report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    print(f"Windows resource deduplication: {report['deduplicatedWindowsFiles']} files, "
+          f"{report['duplicateUncompressedBytesRemoved']} uncompressed bytes removed; "
+          f"IPA {report['ipaBytes']} bytes")
+    print("IPA compressed component sizes: " + json.dumps(report['compressedBytesByComponent'], sort_keys=True))
     (output / "SHA256SUMS").write_text(hashlib.sha256(ipa.read_bytes()).hexdigest() + "  " + ipa.name + "\n")
     print("Created unsigned IPA. Users must sign the app and its extensions before installation.")
 
@@ -214,5 +346,5 @@ if __name__ == "__main__":
         raise SystemExit("usage: package-unsigned-ipa.py Iridium.app output-directory")
     try:
         package(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
-    except (ValueError, OSError, KeyError, plistlib.InvalidFileException, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, KeyError, plistlib.InvalidFileException, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         raise SystemExit(f"Unsigned packaging failed: {error}")
