@@ -2,13 +2,16 @@
 """Package only a complete, unsigned app. Never access a signing keychain."""
 import hashlib
 import json
+import os
 import plistlib
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 MACHO = {bytes.fromhex(value) for value in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca")}
 SENSITIVE = {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}
@@ -16,6 +19,7 @@ PRIVATE_KEY_MARKER = re.compile(rb"-----BEGIN (?P<label>(?:RSA |EC |OPENSSH )?PR
 PEM_BASE64_LINE = re.compile(rb"[A-Za-z0-9+/]+={0,2}")
 PEM_METADATA_LINE = re.compile(rb"[A-Za-z0-9-]+:[ -~]*")
 MAX_PEM_SCAN = 1024 * 1024
+WINDOWS_MODULE_SUFFIXES = {".dll", ".exe", ".drv", ".sys", ".acm", ".cpl", ".ax", ".ocx", ".mui", ".rll"}
 
 
 def executable_path(bundle, info):
@@ -130,6 +134,114 @@ def unsigned_status(path):
     raise ValueError("Could not determine native executable signing state")
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def identical_files(first, second):
+    """Compare bytes, not names, timestamps, or architecture-directory labels."""
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    with first.open("rb") as left, second.open("rb") as right:
+        while True:
+            chunk = left.read(1024 * 1024)
+            if chunk != right.read(1024 * 1024):
+                return False
+            if not chunk:
+                return True
+
+
+def deduplicate_windows_runtime(app):
+    """Replace identical PE resources in the disposable package copy with links.
+
+    Keep both lookup paths: Wine uses both architecture directories. Never
+    strip or rewrite a PE image, deduplicate native Mach-O code, or touch the
+    Xcode product. Do this after bridge installation and signature removal so
+    subsequent build steps cannot write through an alias into its other view.
+    """
+    canonical = app / "aarch64-windows"
+    aliases = app / "arm64ec-windows"
+    if not any(path.exists() or path.is_symlink() for path in (canonical, aliases)):
+        return {}
+    for directory in (canonical, aliases):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("Windows runtime directories must be real directories")
+
+    links = {}
+    for alias in sorted(aliases.iterdir()):
+        if alias.suffix.lower() not in WINDOWS_MODULE_SUFFIXES:
+            continue
+        target = canonical / alias.name
+        if target.is_symlink():
+            raise ValueError("Windows runtime canonical module must not be a symlink")
+        destination = "../aarch64-windows/" + alias.name
+        if alias.is_symlink():
+            # Permit a previously compacted app only when it has our exact,
+            # one-hop, bundle-relative layout and a readable canonical file.
+            if os.readlink(alias) != destination or not target.is_file():
+                raise ValueError("Invalid Windows runtime module symlink")
+        elif not alias.is_file() or not target.is_file():
+            continue
+        elif stat.S_IMODE(alias.stat().st_mode) != stat.S_IMODE(target.stat().st_mode):
+            continue
+        elif not identical_files(alias, target):
+            continue
+        with target.open("rb") as stream:
+            if stream.read(2) != b"MZ":
+                continue
+        links[alias.relative_to(app).as_posix()] = {
+            "target": destination,
+            "canonical": target.relative_to(app).as_posix(),
+            "size": target.stat().st_size,
+            "sha256": file_sha256(target),
+        }
+
+    # Plan and validate everything before replacing any resource. A failure
+    # discards the temporary package; it never damages the original app.
+    for relative, record in links.items():
+        alias = app / relative
+        if not alias.is_symlink():
+            alias.unlink()
+            alias.symlink_to(record["target"])
+        if alias.resolve(strict=True) != (app / record["canonical"]).resolve(strict=True):
+            raise ValueError("Windows runtime alias does not resolve to its canonical module")
+    return links
+
+
+def check_windows_runtime_archive(ipa, links):
+    """Fail if the ZIP writer loses links, follows them, or changes PE bytes."""
+    if not links:
+        return
+    prefix = "Payload/Iridium.app/"
+    with zipfile.ZipFile(ipa) as archive:
+        entries = archive.infolist()
+        inventory = {entry.filename: entry for entry in entries}
+        if len(inventory) != len(entries):
+            raise ValueError("IPA contains ambiguous duplicate archive entries")
+        for relative, record in links.items():
+            alias = inventory.get(prefix + relative)
+            target = inventory.get(prefix + record["canonical"])
+            if alias is None or target is None:
+                raise ValueError("IPA is missing a Windows runtime module path")
+            if not stat.S_ISLNK(alias.external_attr >> 16):
+                raise ValueError("IPA writer did not preserve Windows runtime symlinks")
+            expected_link = record["target"].encode("utf-8")
+            if alias.file_size != len(expected_link) or archive.read(alias) != expected_link:
+                raise ValueError("IPA contains an incorrect Windows runtime symlink")
+            if stat.S_ISLNK(target.external_attr >> 16) or target.file_size != record["size"]:
+                raise ValueError("IPA contains an invalid canonical Windows module")
+            digest = hashlib.sha256()
+            with archive.open(target) as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != record["sha256"]:
+                raise ValueError("IPA changed canonical Windows module bytes")
+
+
 def refresh_runtime_manifest_artifacts(app):
     """Refresh artifact hashes after unsigned packaging mutates bundled Mach-O files."""
     bundled_runtime_root = app / "BundledRuntime"
@@ -205,8 +317,14 @@ def package(app, output):
         # runtime inventory only after every signature has been removed so the
         # manifest describes the exact bytes that are written into the IPA.
         refresh_runtime_manifest_artifacts(staged)
+        links = deduplicate_windows_runtime(staged)
         check_payload(staged)
-        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(ipa)], check=True)
+        temporary_ipa = Path(tmp) / "Iridium-unsigned.ipa"
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(temporary_ipa)], check=True)
+        check_windows_runtime_archive(temporary_ipa, links)
+        temporary_ipa.replace(ipa)
+        print(f"Shared {len(links)} identical Windows modules; "
+              f"avoided {sum(record['size'] for record in links.values())} uncompressed duplicate bytes.")
     (output / "SHA256SUMS").write_text(hashlib.sha256(ipa.read_bytes()).hexdigest() + "  " + ipa.name + "\n")
     print("Created unsigned IPA. Users must sign the app and its extensions before installation.")
 
@@ -216,5 +334,5 @@ if __name__ == "__main__":
         raise SystemExit("usage: package-unsigned-ipa.py Iridium.app output-directory")
     try:
         package(Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve())
-    except (ValueError, OSError, KeyError, plistlib.InvalidFileException, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, KeyError, plistlib.InvalidFileException, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         raise SystemExit(f"Unsigned packaging failed: {error}")
