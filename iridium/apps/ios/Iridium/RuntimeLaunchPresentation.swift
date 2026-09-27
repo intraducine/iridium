@@ -36,7 +36,7 @@ enum RuntimeLaunchPresentation: Equatable {
     }
 }
 
-/// Ignore off-screen, stale or invalid source geometry rather than zooming from it.
+/// Ignore off-screen, stale or invalid layout measurements.
 enum RuntimeLaunchGeometry {
     static func sourceFrame(_ frame: CGRect, in bounds: CGRect) -> CGRect? {
         let values = [frame.origin.x, frame.origin.y, frame.size.width, frame.size.height,
@@ -47,5 +47,30 @@ enum RuntimeLaunchGeometry {
         let visible = frame.intersection(bounds)
         guard !visible.isNull, visible.width > 1, visible.height > 1 else { return nil }
         return visible
+    }
+}
+
+/// Presentation timing never gates runtime startup or first-frame readiness.
+enum RuntimeLaunchMotion {
+    static let chromeFadeDuration = 0.22
+    static let backdropDuration = 0.42
+    static let revealDuration = 0.24
+
+    static func scale(emphasized: Bool, reduceMotion: Bool) -> CGFloat {
+        emphasized && !reduceMotion ? 1.03 : 1
+    }
+}
+
+extension RuntimeLaunchGeometry {
+    /// Retain the same crop/title only within the original viewport. Rotation,
+    /// resizing, and a different scene use the destination's safe-area layout.
+    static func retainedFrame(_ frame: CGRect?, sourceBounds: CGRect?, targetBounds: CGRect) -> CGRect? {
+        guard let frame, let sourceBounds,
+              abs(sourceBounds.width - targetBounds.width) < 1,
+              abs(sourceBounds.height - targetBounds.height) < 1,
+              let visible = sourceFrame(frame, in: sourceBounds),
+              sourceFrame(targetBounds, in: targetBounds) != nil else { return nil }
+        return visible.offsetBy(dx: targetBounds.minX - sourceBounds.minX,
+                                dy: targetBounds.minY - sourceBounds.minY)
     }
 }

@@ -29,18 +29,20 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                 controller.player = nil
             }
             if let player = controller.player {
-                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration)
+                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: player.launchArtwork, onLaunchReady: { [weak player] in player?.launchTransition?.revealGame() })
                 return
             }
             guard controller.view.window != nil, controller.presentedViewController == nil else { return }
-            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration))
-            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration)
+            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window)
+            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration, launchArtwork: artwork))
+            player.launchArtwork = artwork
+            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, onLaunchReady: { [weak player] in player?.launchTransition?.revealGame() })
             player.modalPresentationStyle = .fullScreen
-            player.launchTransition = RuntimeLaunchTransition(gameID: session.gameID)
+            player.launchTransition = RuntimeLaunchTransition()
             player.transitioningDelegate = player.launchTransition
             controller.player = player
             controller.present(player, animated: true) { [weak controller] in
-                // Reconcile a failure/cancellation that arrived during the expansion.
+                // Reconcile a failure/cancellation that arrived during the fade.
                 controller?.synchronize?()
             }
         }
@@ -92,6 +94,7 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
 
     final class Player: UIHostingController<RuntimePlayerView> {
         var launchTransition: RuntimeLaunchTransition?
+        var launchArtwork: RuntimeLaunchArtworkSnapshot?
         var captureRequested = false { didSet { refreshCapture() } }
         private var observers: [NSObjectProtocol] = []
 

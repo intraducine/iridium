@@ -40,15 +40,9 @@ struct LibraryShelf: View {
                     isLoading: selected.map { artwork.appearance($0.id).background != nil } ?? false,
                     position: selected.map { artwork.appearance($0.id).backgroundY } ?? 0.5,
                     reduceMotion: reduceMotion)
-                .overlay {
-                    LinearGradient(stops: [
-                        .init(color: .black.opacity(0.6), location: 0),
-                        .init(color: .black.opacity(0.6), location: 0.3),
-                        .init(color: .black.opacity(0.12), location: 0.6),
-                        .init(color: .black.opacity(0.5), location: 1)
-                    ], startPoint: .top, endPoint: .bottom)
-                }.overlay {
-                    LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
+                .overlay { LibraryBackdropScrim() }
+                .background {
+                    if let selected { RuntimeLaunchSource(gameID: selected.id, role: .backdrop) }
                 }.ignoresSafeArea()
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: landscape ? 10 : 24) {
@@ -80,6 +74,8 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.title2.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
+                                        .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: true, showReason: false).fixedSize()
                                 }
                                 if let reason = launchDetail(selected) {
@@ -90,6 +86,8 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.largeTitle.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
+                                        .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: false)
                                 }
                             }
@@ -173,7 +171,6 @@ struct LibraryShelf: View {
                                                 VStack(alignment: .leading, spacing: 8) {
                                                     ArtworkImage(image: artwork.displayImage(artwork.appearance(game.id).cover), title: "", position: artwork.appearance(game.id).coverY, fit: !artwork.appearance(game.id).customCover)
                                                         .frame(height: coverHeight)
-                                                        .background { RuntimeLaunchSource(gameID: game.id) }
                                                         .clipShape(RoundedRectangle(cornerRadius: 18))
                                                         .padding(4)
                                                         .overlay { RoundedRectangle(cornerRadius: 22).stroke(game.id == selected.id && (!controller.showingControllerHints || menuFocus == .covers) ? .white : .clear, lineWidth: 3) }
@@ -428,8 +425,26 @@ extension View {
 }
 
 
+/// Used by both the library and its launch continuation; only strength changes.
+struct LibraryBackdropScrim: View {
+    var strength = 1.0
+    var body: some View {
+        LinearGradient(stops: [
+            .init(color: .black.opacity(0.6), location: 0),
+            .init(color: .black.opacity(0.6), location: 0.3),
+            .init(color: .black.opacity(0.12), location: 0.6),
+            .init(color: .black.opacity(0.5), location: 1)
+        ], startPoint: .top, endPoint: .bottom)
+        .overlay {
+            LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
+        }
+        .opacity(strength)
+        .allowsHitTesting(false)
+    }
+}
+
 // Keep image layers alive while fading, so another selection can reverse their current opacity.
-private struct LibraryBackdrop: UIViewRepresentable {
+struct LibraryBackdrop: UIViewRepresentable {
     let image: UIImage?
     let isLoading: Bool
     let position: Double

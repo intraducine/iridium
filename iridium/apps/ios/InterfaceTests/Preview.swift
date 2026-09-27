@@ -34,6 +34,14 @@ import IridiumRuntime
         } else {
             for game in games { try? LibraryArtwork.shared.update(game.id) { $0.cover = nil } }
         }
+        if ProcessInfo.processInfo.arguments.contains("--launch-presentation") {
+            for game in games {
+                try? LibraryArtwork.shared.update(game.id) {
+                    if !ProcessInfo.processInfo.arguments.contains("--covers") { $0.background = nil }
+                    if ProcessInfo.processInfo.arguments.contains("--launch-cover-only") { $0.background = nil }
+                }
+            }
+        }
         _model = StateObject(wrappedValue: AppViewModel.makeForTesting(games: games, importScanResult: scan,
             activeRuntimePlayerSession: ProcessInfo.processInfo.arguments.contains("--presented-player") ? Self.playerSession(game: games[0]) : nil))
     }
@@ -52,7 +60,9 @@ import IridiumRuntime
     }
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--presented-player") {
+            if ProcessInfo.processInfo.arguments.contains("--launch-presentation") {
+                LaunchPresentationPreview(games: model.games)
+            } else if ProcessInfo.processInfo.arguments.contains("--presented-player") {
                 Text("Player closed").accessibilityIdentifier("returnedFromPlayer")
                     .background { MadeiraPlayerPresentation(viewModel: model, presentationConfiguration: Self.playerConfiguration) }
             } else if ProcessInfo.processInfo.arguments.contains("--checks") {

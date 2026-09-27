@@ -36,6 +36,8 @@ struct RuntimePlayerView: View {
     var onCaptureChange: (Bool) -> Void = { _ in }
     // UI tests can supply file-backed presentation without starting a runtime.
     var presentationConfiguration: RuntimePlayerBridgeConfiguration? = nil
+    var launchArtwork: RuntimeLaunchArtworkSnapshot? = nil
+    var onLaunchReady: () -> Void = {}
 
     @State private var controllerCount = GCController.controllers().count
     @State private var inputNotice: String?
@@ -75,18 +77,10 @@ struct RuntimePlayerView: View {
             ) {
                 playerView(configuration: bridgeConfiguration, geometry: safeGeometry)
             } else {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        Text("Runtime Player")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Text("Closing game…")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.top, 16)
-                }
+                RuntimeLaunchArtworkView(
+                    session: session, phase: .closing, safeInsets: safeGeometry.safeAreaInsets,
+                    artwork: launchArtwork, viewLogs: {}, close: { viewModel.dismissActiveRuntimePlayer() }
+                )
                 .ignoresSafeArea()
                 .statusBarHidden()
                 .task {
@@ -140,16 +134,17 @@ struct RuntimePlayerView: View {
                         if launchPresentation.showsArtwork {
                             RuntimeLaunchArtworkView(
                                 session: session, phase: launchPresentation,
-                                safeInsets: safeGeometry.safeAreaInsets,
+                                safeInsets: safeGeometry.safeAreaInsets, artwork: launchArtwork,
                                 viewLogs: { deviceKeyboardVisible = false; isShowingDiagnostics = true },
                                 close: { viewModel.dismissActiveRuntimePlayer() }
                             )
+                            .id(session.sessionIdentifier)
                             .allowsHitTesting(!controlsVisible)
                             .accessibilityHidden(controlsVisible)
                             .transition(.opacity)
                         }
                     }
-                    .animation(.easeOut(duration: reduceMotion ? 0.15 : 0.4), value: launchPresentation.showsArtwork)
+                    .animation(.easeOut(duration: reduceMotion ? 0.15 : RuntimeLaunchMotion.revealDuration), value: launchPresentation.showsArtwork)
                     .overlay {
                         if touchControlsEnabled {
                             TouchControllerOverlay(gameID: session.gameID)
@@ -198,7 +193,15 @@ struct RuntimePlayerView: View {
                                     .padding(.vertical, 4)
                                     Toggle("Pin Performance HUD", isOn: $showPerformance).frame(minHeight: 44)
                                     Button("View Log", systemImage: "doc.text") { deviceKeyboardVisible = false; isShowingDiagnostics = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    if launchPresentation == .starting {
+                                        Button("Cancel Launch", systemImage: "xmark", role: .destructive) {
+                                            deviceKeyboardVisible = false
+                                            controlsVisible = false
+                                            viewModel.dismissActiveRuntimePlayer()
+                                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    } else {
+                                        Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    }
                                 }
                                 .buttonStyle(.plain)
                                 .controlSize(.large)
@@ -340,7 +343,10 @@ struct RuntimePlayerView: View {
                 }
                 .onChange(of: deviceKeyboardVisible) { _, _ in updatePointerCapture() }
                 .onChange(of: session.state) { _, _ in updatePointerCapture() }
-                .onChange(of: launchPresentation) { _, _ in updatePointerCapture() }
+                .onChange(of: launchPresentation) { _, phase in
+                    updatePointerCapture()
+                    if phase == .playing { onLaunchReady() }
+                }
                 .onChange(of: viewModel.closingMadeiraSession) { _, _ in updatePointerCapture() }
                 .onChange(of: keyboardInputRejected) { _, _ in updatePointerCapture() }
                 .alert("Keyboard input not sent", isPresented: $keyboardInputRejected) {
