@@ -73,6 +73,33 @@ struct RuntimePlayerView: View {
             if let bridgeConfiguration = presentationConfiguration ?? viewModel.runtimePlayerBridgeConfiguration(
                 for: session.sessionIdentifier
             ) {
+                playerView(configuration: bridgeConfiguration, geometry: safeGeometry)
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        Text("Runtime Player")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("Closing game…")
+                            .font(.footnote)
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                    .padding(.top, 16)
+                }
+                .ignoresSafeArea()
+                .statusBarHidden()
+                .task {
+                    viewModel.dismissActiveRuntimePlayer()
+                }
+            }
+        }
+        }.ignoresSafeArea()
+        }.statusBarHidden()
+    }
+
+    private func playerSurface(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                               geometry safeGeometry: GeometryProxy) -> some View {
                     RuntimeRenderHostView(
                         configuration: bridgeConfiguration,
                         isRunning: session.state == .running,
@@ -226,6 +253,11 @@ struct RuntimePlayerView: View {
                 .preferredColorScheme(.dark)
                 .background(Color.black.ignoresSafeArea())
                 .statusBarHidden()
+    }
+
+    private func playerTasks(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                             geometry safeGeometry: GeometryProxy) -> some View {
+        playerSurface(configuration: bridgeConfiguration, geometry: safeGeometry)
                 .task(id: session.sessionIdentifier) {
                     // Frame ownership is tracked by session, not reset by this log task.
                     // A fast first frame can arrive before SwiftUI starts the task.
@@ -270,6 +302,11 @@ struct RuntimePlayerView: View {
                     }
                     RuntimePlayerControllerBridge.shared.stop()
                 }
+    }
+
+    private func playerView(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                            geometry safeGeometry: GeometryProxy) -> some View {
+        playerTasks(configuration: bridgeConfiguration, geometry: safeGeometry)
                 .onAppear {
                     controllerCount = GCController.controllers().count
                     touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: session.gameID)
@@ -351,28 +388,6 @@ struct RuntimePlayerView: View {
                     )
                     .presentationDetents([.medium, .large])
                 }
-            } else {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        Text("Runtime Player")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Text("Closing game…")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.top, 16)
-                }
-                .ignoresSafeArea()
-                .statusBarHidden()
-                .task {
-                    viewModel.dismissActiveRuntimePlayer()
-                }
-            }
-        }
-        }.ignoresSafeArea()
-        }.statusBarHidden()
     }
 
     private var hasPresentedFirstFrame: Bool {
