@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// A moving poster/title over an unchanged library backdrop. The player still owns
-/// first-frame readiness and fades this entire view, not its individual elements.
+/// Keeps the library artwork on screen until the renderer presents a frame.
 @MainActor struct RuntimeLaunchArtworkView: View {
     let session: RuntimePlayerSession
     let phase: RuntimeLaunchPresentation
@@ -9,92 +8,123 @@ import SwiftUI
     let viewLogs: () -> Void
     let close: () -> Void
     @State private var artwork: RuntimeLaunchArtworkSnapshot
-    @State private var settled: Bool
-    @State private var textHeight: CGFloat = 100
+    @ObservedObject var motionState: RuntimeLaunchMotionState
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(session: RuntimePlayerSession, phase: RuntimeLaunchPresentation, safeInsets: EdgeInsets,
          artwork: RuntimeLaunchArtworkSnapshot? = nil,
+         motionState: RuntimeLaunchMotionState,
          viewLogs: @escaping () -> Void, close: @escaping () -> Void) {
         self.session = session
         self.phase = phase
         self.safeInsets = safeInsets
         self.viewLogs = viewLogs
         self.close = close
+        self.motionState = motionState
         if let artwork, artwork.gameID == session.gameID {
             _artwork = State(initialValue: artwork)
         } else {
             _artwork = State(initialValue: .capture(session: session))
         }
-        _settled = State(initialValue: phase != .starting)
     }
 
     var body: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
-            let layout = RuntimeLaunchHeroLayout.resolve(in: bounds, safeTop: safeInsets.top,
-                safeLeading: safeInsets.leading, safeBottom: safeInsets.bottom, safeTrailing: safeInsets.trailing,
-                hasCover: artwork.cover != nil, accessibility: typeSize.isAccessibilitySize, textHeight: textHeight)
-            let moving = !settled && !reduceMotion
-            let coverFrame = moving ? (artwork.retainedFrame(artwork.coverFrame, in: bounds) ?? layout.cover) : layout.cover
-            let textFrame = moving ? (artwork.retainedFrame(artwork.titleFrame, in: bounds) ?? layout.text) : layout.text
-            let compact = bounds.width > bounds.height && !typeSize.isAccessibilitySize
+            let landscape = bounds.width > bounds.height && !typeSize.isAccessibilitySize
+            let top = max(safeInsets.top + (landscape ? 52 : 36), landscape ? bounds.height * 0.18 : 0)
+            let leading = safeInsets.leading + (landscape ? 32 : 24)
+            let trailing = safeInsets.trailing + (landscape ? 32 : 24)
+            let coverWidth = landscape
+                ? min(210, max(120, (bounds.height - top - safeInsets.bottom - 24) * 2 / 3))
+                : min(190, bounds.width * 0.48)
+            let coverHeight = coverWidth * 1.5
+            let motion = !reduceMotion && !typeSize.isAccessibilitySize && !motionState.settled
+            let sourceTitle = artwork.retainedFrame(artwork.titleFrame, in: bounds)
+            let sourceCover = artwork.retainedFrame(artwork.coverFrame, in: bounds)
+
             ZStack(alignment: .topLeading) {
                 Color.black
                 backdrop(in: bounds)
                 ScrollView {
-                    ZStack(alignment: .topLeading) {
-                        if let cover = artwork.cover, let frame = coverFrame {
-                            ArtworkImage(image: cover, title: "", position: artwork.coverY, fit: !artwork.customCover)
-                                .frame(width: frame.width, height: frame.height)
-                                .clipShape(RoundedRectangle(cornerRadius: 18))
-                                .offset(x: frame.minX, y: frame.minY)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityHidden(false)
-                                .accessibilityLabel("\(artwork.title) artwork")
-                                .accessibilityIdentifier("playerLaunchCover")
+                    Group {
+                        if landscape, let cover = artwork.cover {
+                            HStack(alignment: .top, spacing: 24) {
+                                movingCover(cover, width: coverWidth, height: coverHeight,
+                                            source: sourceCover, motion: motion)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    movingTitle(landscape: true, source: sourceTitle, motion: motion)
+                                    launchDetails()
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } else {
+                            VStack(alignment: .leading, spacing: 16) {
+                                movingTitle(landscape: false, source: sourceTitle, motion: motion)
+                                if let cover = artwork.cover {
+                                    movingCover(cover, width: coverWidth, height: coverHeight,
+                                                source: sourceCover, motion: motion)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                launchDetails()
+                            }
                         }
-                        textColumn(compact: compact)
-                            .frame(width: textFrame.width, alignment: .leading)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { textHeight = $0 }
-                            .offset(x: textFrame.minX, y: textFrame.minY)
                     }
-                    .frame(width: bounds.width,
-                           height: max(bounds.height, max(coverFrame?.maxY ?? 0, textFrame.minY + textHeight) + safeInsets.bottom + 24),
-                           alignment: .topLeading)
+                    .padding(.leading, leading).padding(.trailing, trailing)
+                    .padding(.top, top)
+                    .padding(.bottom, safeInsets.bottom + 24)
+                    .frame(minHeight: bounds.height, alignment: .topLeading)
                 }
                 .scrollBounceBehavior(.basedOnSize)
             }
+            .coordinateSpace(name: "launchWindow")
             .foregroundStyle(.white)
-            .contentShape(Rectangle())
-            .onReceive(artwork.handoff.$chromeHidden) { hidden in
-                guard hidden, !settled, !artwork.handoff.hasPresentedFrame else { return }
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: RuntimeLaunchMotion.heroDuration)) {
-                    settled = true
-                }
-            }
         }
         .accessibilityIdentifier("playerLaunchArtwork")
     }
 
-    private func textColumn(compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: compact ? 10 : 16) {
-            Text(artwork.title)
-                .font(compact ? .title2.bold() : .largeTitle.bold())
-                .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("playerLaunchTitle")
+    private func movingTitle(landscape: Bool, source: CGRect?, motion: Bool) -> some View {
+        Text(artwork.title)
+            .font(landscape ? .title2.bold() : .largeTitle.bold())
+            .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .visualEffect { content, geometry in
+                let target = geometry.frame(in: .named("launchWindow"))
+                let start = source ?? target
+                return content.offset(x: motion ? start.minX - target.minX : 0,
+                                      y: motion ? start.minY - target.minY : 0)
+            }
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("playerLaunchTitle")
+    }
+
+    private func movingCover(_ cover: UIImage, width: CGFloat, height: CGFloat,
+                             source: CGRect?, motion: Bool) -> some View {
+        ArtworkImage(image: cover, title: "", position: artwork.coverY, fit: artwork.coverFits)
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .visualEffect { content, geometry in
+                let target = geometry.frame(in: .named("launchWindow"))
+                let start = source ?? target
+                return content.scaleEffect(x: motion ? start.width / max(1, target.width) : 1,
+                                           y: motion ? start.height / max(1, target.height) : 1,
+                                           anchor: .topLeading)
+                    .offset(x: motion ? start.minX - target.minX : 0,
+                            y: motion ? start.minY - target.minY : 0)
+            }
+            .accessibilityIdentifier("playerLaunchCover")
+    }
+
+    private func launchDetails() -> some View {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                if phase.isBusy {
-                    ProgressView().controlSize(.small).tint(.white).accessibilityHidden(true)
-                }
                 Text(phase == .starting ? "Starting…" : phase.title)
                     .font(.subheadline).foregroundStyle(.white.opacity(0.8))
                     .accessibilityIdentifier("playerLaunchStatus")
             }
+            .opacity(motionState.detailsVisible ? 1 : 0)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("playerLaunchPanel")
             if let message = phase.message {
@@ -121,12 +151,17 @@ import SwiftUI
 
     private func backdrop(in bounds: CGRect) -> some View {
         let frame = artwork.retainedFrame(artwork.backdropFrame, in: bounds) ?? bounds
-        return LibraryBackdrop(image: artwork.background, isLoading: false,
-                               position: artwork.backgroundY, reduceMotion: true)
-            .frame(width: frame.width, height: frame.height)
-            .overlay { LibraryBackdropScrim() }
-            .position(x: frame.midX, y: frame.midY)
-            .clipped()
-            .accessibilityHidden(true)
+        return Group {
+            if let background = artwork.background {
+                LibraryBackdrop(image: background, isLoading: false, position: artwork.backgroundY, reduceMotion: true)
+            } else {
+                Color.black
+            }
+        }
+        .frame(width: frame.width, height: frame.height)
+        .overlay { LibraryBackdropScrim() }
+        .position(x: frame.midX, y: frame.midY)
+        .clipped()
+        .accessibilityHidden(true)
     }
 }

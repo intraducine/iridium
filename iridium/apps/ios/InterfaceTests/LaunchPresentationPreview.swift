@@ -15,17 +15,14 @@ struct LaunchPresentationPreview: View {
     @State private var playerModel: AppViewModel?
     @State private var configuration: RuntimePlayerBridgeConfiguration?
     @State private var isPresenting = false
-    @State private var queuedGame: GameRecord?
     @State private var frameTask: Task<Void, Never>?
     @State private var fixtureError: String?
 
     var body: some View {
         LibraryShelf(games: games, artwork: artwork, controller: controller,
-            play: requestStart, disabled: { _ in isPresenting || queuedGame != nil },
-            launchTitle: { _ in queuedGame != nil ? "Play queued" : (isPresenting ? "Player Open" : "Play") },
-            launchDetail: { _ in queuedGame != nil || isPresenting ? "Preparing the queued game and its player." : nil },
+            play: start, disabled: { _ in false }, launchTitle: { _ in "Play" },
             details: { _ in }, search: $search, favorites: $favorites, selectedID: $selected,
-            acceptsControllerInput: !isPresenting && queuedGame == nil)
+            acceptsControllerInput: !isPresenting)
             .environmentObject(controller).environment(\.menuController, controller)
             .background {
                 if let playerModel, let configuration {
@@ -37,19 +34,9 @@ struct LaunchPresentationPreview: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                VStack(alignment: .trailing) {
-                    if let game = queuedGame {
-                        Button("Continue queued fixture") {
-                            queuedGame = nil
-                            start(game)
-                        }.accessibilityIdentifier("continueQueuedLaunch")
-                        Button("Cancel queued fixture") { queuedGame = nil }
-                            .accessibilityIdentifier("cancelQueuedLaunch")
-                    }
-                    Text(fixtureError ?? (artworkReady ? "Fixture ready" : "Preparing fixture"))
-                        .font(.caption2).padding(8)
-                        .accessibilityIdentifier(fixtureError != nil ? "launchFixtureError" : (artworkReady ? "launchFixtureReady" : "launchFixturePreparing"))
-                }
+                Text(fixtureError ?? (artworkReady ? "Fixture ready" : "Preparing fixture"))
+                    .font(.caption2).padding(8)
+                    .accessibilityIdentifier(fixtureError != nil ? "launchFixtureError" : (artworkReady ? "launchFixtureReady" : "launchFixturePreparing"))
             }
     }
 
@@ -58,14 +45,6 @@ struct LaunchPresentationPreview: View {
         let appearance = artwork.appearance(game.id)
         return (appearance.background == nil || artwork.displayImage(appearance.background) != nil)
             && (appearance.cover == nil || artwork.displayImage(appearance.cover) != nil)
-    }
-
-    private func requestStart(_ game: GameRecord) {
-        guard !isPresenting, queuedGame == nil else { return }
-        if ProcessInfo.processInfo.arguments.contains("--launch-queued-phase") {
-            // A test-controlled preparation phase, not a delay in production startup.
-            queuedGame = game
-        } else { start(game) }
     }
 
     private func start(_ game: GameRecord) {

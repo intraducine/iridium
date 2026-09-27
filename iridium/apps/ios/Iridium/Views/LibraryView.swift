@@ -33,8 +33,8 @@ struct LibraryView: View {
         } else {
         LibraryShelf(games: viewModel.games, artwork: artwork, controller: controller,
             play: { requestGameLaunch($0) },
-            disabled: { viewModel.isLaunchActionDisabled(for: $0) },
-            launchTitle: { viewModel.launchActionTitle(for: $0) },
+            disabled: { viewModel.isLaunchActionDisabled(for: $0) && !isPlayerTakingOver($0) },
+            launchTitle: { isPlayerTakingOver($0) ? "Play" : viewModel.launchActionTitle(for: $0) },
             launchDetail: { viewModel.isLaunchActionDisabled(for: $0) ? viewModel.launchActionDetail(for: $0) : nil },
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
@@ -205,6 +205,14 @@ struct LibraryView: View {
         }
 
         viewModel.recordLaunchPreparation(for: game)
+    }
+
+    private func isPlayerTakingOver(_ game: GameRecord) -> Bool {
+        #if MADEIRA_RUNTIME
+        return MadeiraRuntimeAdapter.enabled && viewModel.activeRuntimePlayerSession?.gameID == game.id
+        #else
+        return false
+        #endif
     }
 
     private func requestGameImport() {

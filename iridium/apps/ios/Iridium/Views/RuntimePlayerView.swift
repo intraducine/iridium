@@ -37,6 +37,7 @@ struct RuntimePlayerView: View {
     // UI tests can supply file-backed presentation without starting a runtime.
     var presentationConfiguration: RuntimePlayerBridgeConfiguration? = nil
     var launchArtwork: RuntimeLaunchArtworkSnapshot? = nil
+    var launchMotionState = RuntimeLaunchMotionState(animate: false)
     var onLaunchReady: () -> Void = {}
 
     @State private var controllerCount = GCController.controllers().count
@@ -79,7 +80,8 @@ struct RuntimePlayerView: View {
             } else {
                 RuntimeLaunchArtworkView(
                     session: session, phase: .closing, safeInsets: safeGeometry.safeAreaInsets,
-                    artwork: launchArtwork, viewLogs: {}, close: { viewModel.dismissActiveRuntimePlayer() }
+                    artwork: launchArtwork, motionState: launchMotionState,
+                    viewLogs: {}, close: { viewModel.dismissActiveRuntimePlayer() }
                 )
                 .ignoresSafeArea()
                 .statusBarHidden()
@@ -118,6 +120,7 @@ struct RuntimePlayerView: View {
                     } onFrameTiming: { value in
                         timing = value
                     } onFirstFramePresented: {
+                        onLaunchReady()
                         viewModel.recordRuntimePlayerFirstFramePresented(
                             sessionIdentifier: session.sessionIdentifier
                         )
@@ -135,6 +138,7 @@ struct RuntimePlayerView: View {
                             RuntimeLaunchArtworkView(
                                 session: session, phase: launchPresentation,
                                 safeInsets: safeGeometry.safeAreaInsets, artwork: launchArtwork,
+                                motionState: launchMotionState,
                                 viewLogs: { deviceKeyboardVisible = false; isShowingDiagnostics = true },
                                 close: { viewModel.dismissActiveRuntimePlayer() }
                             )
@@ -144,7 +148,6 @@ struct RuntimePlayerView: View {
                             .transition(.opacity)
                         }
                     }
-                    .animation(.easeOut(duration: reduceMotion ? 0.15 : RuntimeLaunchMotion.revealDuration), value: launchPresentation.showsArtwork)
                     .overlay {
                         if touchControlsEnabled {
                             TouchControllerOverlay(gameID: session.gameID)
@@ -345,7 +348,6 @@ struct RuntimePlayerView: View {
                 .onChange(of: session.state) { _, _ in updatePointerCapture() }
                 .onChange(of: launchPresentation) { _, phase in
                     updatePointerCapture()
-                    if phase == .playing { onLaunchReady() }
                 }
                 .onChange(of: viewModel.closingMadeiraSession) { _, _ in updatePointerCapture() }
                 .onChange(of: keyboardInputRejected) { _, _ in updatePointerCapture() }

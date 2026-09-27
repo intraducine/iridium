@@ -17,68 +17,29 @@ final class LaunchPresentationUITests: XCTestCase {
         add(attachment)
     }
 
-    func testQueuedStatusDoesNotReflowTheOutgoingLibrary() {
-        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
-            XCUIDevice.shared.orientation = orientation
-            let app = launch(["--covers", "--launch-queued-phase"])
-            let title = app.staticTexts["libraryGameTitle"]
-            let cover = app.buttons["selectedGameCover"]
-            let titleFrame = title.frame
-            let coverFrame = cover.frame
-            let buttonFrame = app.buttons["Play"].frame
-            app.buttons["Play"].tap()
-            XCTAssertTrue(app.buttons["continueQueuedLaunch"].waitForExistence(timeout: 3))
-            XCTAssertTrue(app.buttons["Play"].exists)
-            XCTAssertFalse(app.buttons["Play"].isEnabled)
-            XCTAssertFalse(app.buttons["Play queued"].exists)
-            XCTAssertEqual(title.frame.minX, titleFrame.minX, accuracy: 1)
-            XCTAssertEqual(title.frame.minY, titleFrame.minY, accuracy: 1)
-            XCTAssertEqual(cover.frame.minY, coverFrame.minY, accuracy: 1)
-            XCTAssertEqual(cover.frame.height, coverFrame.height, accuracy: 1)
-            XCTAssertEqual(app.buttons["Play"].frame.width, buttonFrame.width, accuracy: 1)
-            capture("launch-queued-stable-\(orientation.rawValue)")
-            app.buttons["cancelQueuedLaunch"].tap()
-            XCTAssertTrue(app.buttons["Play"].isEnabled)
-            app.buttons["Play"].tap()
-            app.buttons["continueQueuedLaunch"].tap()
-            XCTAssertTrue(app.staticTexts["playerLaunchTitle"].waitForExistence(timeout: 5))
-            app.terminate()
-        }
-    }
-
-    func testPosterTitleLayoutAndCancellationInMenu() {
+    func testTitleContinuityAndCancellationInMenu() {
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             XCUIDevice.shared.orientation = orientation
             let app = launch()
+            let source = app.staticTexts["libraryGameTitle"].frame
             capture("launch-library-\(orientation.rawValue)")
             app.buttons["Play"].tap()
             let title = app.staticTexts["playerLaunchTitle"]
-            let cover = app.descendants(matching: .any)["playerLaunchCover"]
             XCTAssertTrue(title.waitForExistence(timeout: 5))
-            XCTAssertTrue(cover.waitForExistence(timeout: 5))
-            let placed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                if orientation == .landscapeLeft {
-                    return title.frame.minX > cover.frame.maxX && abs(title.frame.minY - cover.frame.minY) < 2
-                }
-                return abs(title.frame.minX - cover.frame.minX) < 2 && title.frame.maxY < cover.frame.minY
+            let moved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                orientation == .portrait
+                    ? title.frame.minY < source.minY - 20 && title.frame.minX < app.frame.width / 4
+                    : title.frame.minX > source.minX + 80 && title.frame.minY < app.frame.height / 2
             }, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [placed], timeout: 5), .completed)
-            XCTAssertLessThan(cover.frame.width, cover.frame.height)
-            XCTAssertLessThan(cover.frame.minX, app.frame.width / 4)
+            XCTAssertEqual(XCTWaiter.wait(for: [moved], timeout: 4), .completed)
             XCTAssertFalse(app.buttons["Cancel Launch"].exists)
-            let settledTitle = title.frame
-            let settledCover = cover.frame
-            capture("launch-poster-layout-\(orientation.rawValue)")
+            capture("launch-artwork-\(orientation.rawValue)")
             app.buttons["Player Menu"].tap()
             XCTAssertTrue(app.buttons["Cancel Launch"].waitForExistence(timeout: 3))
             app.buttons["View Log"].tap()
             XCTAssertTrue(app.navigationBars["View Log"].waitForExistence(timeout: 3))
             app.navigationBars["View Log"].buttons["Done"].tap()
-            XCTAssertTrue(title.waitForExistence(timeout: 3))
-            XCTAssertEqual(title.frame.minX, settledTitle.minX, accuracy: 2)
-            XCTAssertEqual(title.frame.minY, settledTitle.minY, accuracy: 2)
-            XCTAssertEqual(cover.frame.width, settledCover.width, accuracy: 2)
-            XCTAssertEqual(cover.frame.minY, settledCover.minY, accuracy: 2)
+            XCTAssertTrue(title.waitForExistence(timeout: 3)) // No frame: logs must not reveal the game.
             app.buttons["Player Menu"].tap()
             app.buttons["Cancel Launch"].tap()
             XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 5))

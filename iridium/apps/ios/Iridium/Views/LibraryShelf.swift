@@ -17,7 +17,6 @@ struct LibraryShelf: View {
     var settings: () -> Void = {}
     var acceptsControllerInput = true
     @State private var visible = false
-    @State private var launchChrome: RuntimeLaunchChrome?
     private enum MenuFocus: Int { case filter, search, add, settings, play, options, covers }
     @State private var menuFocus: MenuFocus = .covers
     @FocusState private var keyboardFocus: MenuFocus?
@@ -43,7 +42,7 @@ struct LibraryShelf: View {
                     reduceMotion: reduceMotion)
                 .overlay { LibraryBackdropScrim() }
                 .background {
-                    if let selected { RuntimeLaunchSource(gameID: selected.id, role: .backdrop, active: visible) }
+                    if let selected { RuntimeLaunchSource(gameID: selected.id, role: .backdrop) }
                 }.ignoresSafeArea()
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: landscape ? 10 : 24) {
@@ -75,11 +74,11 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.title2.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title, active: visible) }
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
                                         .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: true, showReason: false).fixedSize()
                                 }
-                                if let reason = displayedLaunchDetail(selected) {
+                                if let reason = launchDetail(selected) {
                                     Text(reason).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                                 }
                             } else {
@@ -87,7 +86,7 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.largeTitle.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title, active: visible) }
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
                                         .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: false)
                                 }
@@ -112,10 +111,10 @@ struct LibraryShelf: View {
                         }
                     }.padding(.horizontal, sideInset).padding(.vertical, 8)
                         .frame(maxHeight: .infinity, alignment: .topLeading)
-                    if !searchPresented && showsControllerHints {
+                    if !searchPresented && controller.showingControllerHints {
                         ControllerHelp().padding(.horizontal, sideInset).padding(.bottom, 8)
-                            .opacity(showsControllerHints ? 1 : 0)
-                            .accessibilityHidden(!showsControllerHints)
+                            .opacity(controller.showingControllerHints ? 1 : 0)
+                            .accessibilityHidden(!controller.showingControllerHints)
                     }
                 }
             }.preferredColorScheme(.dark)
@@ -125,16 +124,13 @@ struct LibraryShelf: View {
         // The shelf supplies its own focus shapes for keyboard and controller input.
         .focusEffectDisabled(!searchPresented)
         .simultaneousGesture(TapGesture().onEnded {
-            if launchChrome == nil && controller.showingControllerHints { controller.showingControllerHints = false }
+            if controller.showingControllerHints { controller.showingControllerHints = false }
         })
         .onChange(of: searchPresented) { _, open in
             controller.backAction = open ? { search = ""; searching = false; searchPresented = false } : nil
         }
-        .onDisappear { launchChrome = nil; visible = false; controller.libraryNavigationActive = false; controller.backAction = nil }
-        .onChange(of: acceptsControllerInput) { _, accepts in
-            controller.libraryNavigationActive = visible && accepts
-            if accepts { launchChrome = nil } // A setup/import alert was dismissed.
-        }
+        .onDisappear { visible = false; controller.libraryNavigationActive = false; controller.backAction = nil }
+        .onChange(of: acceptsControllerInput) { _, accepts in controller.libraryNavigationActive = visible && accepts }
         .onReceive(controller.input) { action in
             guard visible && acceptsControllerInput else { return }
             handleController(action)
@@ -144,11 +140,8 @@ struct LibraryShelf: View {
             search = ""; searching = false; searchPresented = false
             return .handled
         }
-        .onAppear { launchChrome = nil; visible = true; controller.libraryNavigationActive = acceptsControllerInput; artwork.backdropGameID = selected?.id }
-        .onChange(of: selected?.id) { _, id in launchChrome = nil; artwork.backdropGameID = id }
-        .onChange(of: selected.map { disabled($0) } ?? false) { _, isDisabled in
-            if !isDisabled { launchChrome = nil } // Failed/cancelled preparation returned control.
-        }
+        .onAppear { visible = true; controller.libraryNavigationActive = acceptsControllerInput; artwork.backdropGameID = selected?.id }
+        .onChange(of: selected?.id) { _, id in artwork.backdropGameID = id }
 
     }
     private func carousel(_ selected: GameRecord, coverHeight: CGFloat, width: CGFloat, sideInset: CGFloat, landscape: Bool) -> some View {
@@ -178,10 +171,12 @@ struct LibraryShelf: View {
                                                 VStack(alignment: .leading, spacing: 8) {
                                                     ArtworkImage(image: artwork.displayImage(artwork.appearance(game.id).cover), title: "", position: artwork.appearance(game.id).coverY, fit: !artwork.appearance(game.id).customCover)
                                                         .frame(height: coverHeight)
+                                                        .background {
+                                                            if game.id == selected.id { RuntimeLaunchSource(gameID: game.id, role: .cover) }
+                                                        }
                                                         .clipShape(RoundedRectangle(cornerRadius: 18))
-                                                        .background { RuntimeLaunchSource(gameID: game.id, role: .cover, active: visible) }
                                                         .padding(4)
-                                                        .overlay { RoundedRectangle(cornerRadius: 22).stroke(game.id == selected.id && (!showsControllerHints || menuFocus == .covers) ? .white : .clear, lineWidth: 3) }
+                                                        .overlay { RoundedRectangle(cornerRadius: 22).stroke(game.id == selected.id && (!controller.showingControllerHints || menuFocus == .covers) ? .white : .clear, lineWidth: 3) }
                                                     if artwork.appearance(game.id).cover == nil {
                                                         Text(artwork.title(game)).font(.headline).lineLimit(1).truncationMode(.tail).padding(.horizontal, 5)
                                                     }
@@ -222,7 +217,7 @@ struct LibraryShelf: View {
                                         }
                                     }
                                     .onScrollPhaseChange { _, phase in
-                                        if phase == .interacting { controller.showingControllerHints = false; launchChrome = nil }
+                                        if phase == .interacting { controller.showingControllerHints = false }
                                         carouselIsUserDriven = phase == .tracking || phase == .interacting || phase == .decelerating
                                         if phase == .idle { resetCarousel() }
                                     }
@@ -246,7 +241,7 @@ struct LibraryShelf: View {
             return
         }
         if input == .play {
-            if !searchPresented, let selected, !disabled(selected) { requestPlay(selected) }
+            if !searchPresented, let selected, !disabled(selected) { play(selected) }
             return
         }
 
@@ -281,36 +276,17 @@ struct LibraryShelf: View {
             case .covers:
                 if searchPresented { search = ""; searching = false; searchPresented = false }
                 menuFocus = .play
-            case .play: if let selected, !disabled(selected) { requestPlay(selected) }
+            case .play: if let selected, !disabled(selected) { play(selected) }
             case .options: if let selected { details(selected) }
             }
         default: break
         }
     }
-    private var showsControllerHints: Bool {
-        launchChrome?.controllerHints ?? controller.showingControllerHints
-    }
-    private func displayedLaunchTitle(_ game: GameRecord) -> String {
-        if let launchChrome, launchChrome.gameID == game.id { return launchChrome.label }
-        return launchTitle(game)
-    }
-    private func displayedLaunchDetail(_ game: GameRecord) -> String? {
-        if let launchChrome, launchChrome.gameID == game.id { return launchChrome.detail }
-        return launchDetail(game)
-    }
-    private func requestPlay(_ game: GameRecord) {
-        guard !disabled(game) else { return }
-        // Capture before the model queues/prepares the player. Its live disabled
-        // predicate still rejects duplicate launches; only outgoing chrome is frozen.
-        launchChrome = RuntimeLaunchChrome(gameID: game.id, label: launchTitle(game),
-            detail: launchDetail(game), controllerHints: controller.showingControllerHints)
-        play(game)
-    }
     private func controllerFocus(_ target: MenuFocus) -> some View {
         Capsule()
             .strokeBorder(.white.opacity(0.85), lineWidth: 1.5)
             .padding(-5)
-            .opacity((showsControllerHints && menuFocus == target) || keyboardFocus == target ? 1 : 0)
+            .opacity((controller.showingControllerHints && menuFocus == target) || keyboardFocus == target ? 1 : 0)
             .allowsHitTesting(false)
     }
     private func moveSelection(_ offset: Int) {
@@ -341,12 +317,12 @@ struct LibraryShelf: View {
     }
     private var libraryFilter: some View {
         HStack(spacing: 10) {
-        if showsControllerHints { shoulderHint("LB") }
+        if controller.showingControllerHints { shoulderHint("LB") }
         Picker("Library filter", selection: Binding(get: { favorites }, set: { menuFocus = .filter; favorites = $0 })) {
             Text("All Games").tag(false)
             Text("Favorites").tag(true)
         }.pickerStyle(.segmented).focused($keyboardFocus, equals: .filter).overlay { controllerFocus(.filter) }.onHover { if $0 { menuFocus = .filter } }
-        if showsControllerHints { shoulderHint("RB") }
+        if controller.showingControllerHints { shoulderHint("RB") }
         }
     }
     private func shoulderHint(_ label: String) -> some View {
@@ -357,25 +333,25 @@ struct LibraryShelf: View {
     private func actions(_ game: GameRecord, landscape: Bool, showReason: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 16) {
-                Button { menuFocus = .play; searching = false; requestPlay(game) } label: {
-                    Label { Text(displayedLaunchTitle(game)).fontWeight(.semibold) } icon: { inputIcon("play.fill", position: 1) }
-                        .padding(.horizontal, 12).frame(minHeight: 34)
+                Button { menuFocus = .play; searching = false; play(game) } label: {
+                    Label { Text(launchTitle(game)).fontWeight(.semibold).lineLimit(1) } icon: { inputIcon("play.fill", position: 1) }
+                        .padding(.horizontal, 12).frame(minWidth: landscape ? 180 : nil).frame(minHeight: 34)
                 }.libraryGlass(prominent: true).disabled(disabled(game)).focused($keyboardFocus, equals: .play).overlay { controllerFocus(.play) }.onHover { if $0 { menuFocus = .play } }
                 Button { menuFocus = .options; details(game) } label: {
                     Label { Text("Game Options") } icon: { Group {
-                        if showsControllerHints { Image(systemName: "line.3.horizontal.circle") }
+                        if controller.showingControllerHints { Image(systemName: "line.3.horizontal.circle") }
                         else { Image(systemName: "ellipsis") }
                     } }
                         .frame(minHeight: 44)
                 }.buttonStyle(.plain).focused($keyboardFocus, equals: .options).overlay { controllerFocus(.options) }.onHover { if $0 { menuFocus = .options } }.accessibilityIdentifier("gameOptions")
             }
-            if showReason, let reason = displayedLaunchDetail(game) {
+            if showReason, let reason = launchDetail(game) {
                 Text(reason).font(.footnote).foregroundStyle(.secondary).lineLimit(landscape ? 1 : 2)
             }
         }
     }
     @ViewBuilder private func inputIcon(_ touchSymbol: String, position: Int?) -> some View {
-        if showsControllerHints, let position {
+        if controller.showingControllerHints, let position {
             ZStack {
                 ForEach(0..<4) { index in
                     Circle().fill(.primary.opacity(index == position ? 1 : 0.25))
@@ -452,8 +428,9 @@ extension View {
 }
 
 
-/// Identical compositing in the library and loading screen prevents a brightness pulse.
+/// Used by both the library and its launch continuation; only strength changes.
 struct LibraryBackdropScrim: View {
+    var strength = 1.0
     var body: some View {
         LinearGradient(stops: [
             .init(color: .black.opacity(0.6), location: 0),
@@ -464,6 +441,7 @@ struct LibraryBackdropScrim: View {
         .overlay {
             LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
         }
+        .opacity(strength)
         .allowsHitTesting(false)
     }
 }

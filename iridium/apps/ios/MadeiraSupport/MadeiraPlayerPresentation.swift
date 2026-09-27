@@ -29,16 +29,21 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                 controller.player = nil
             }
             if let player = controller.player {
-                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: player.launchArtwork, onLaunchReady: { [weak player] in player?.launchTransition?.revealGame() })
+                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: player.launchArtwork, launchMotionState: player.launchMotionState, onLaunchReady: { [weak player] in player?.fadeLaunchArtwork() })
                 return
             }
             guard controller.view.window != nil, controller.presentedViewController == nil else { return }
-            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window, waitsForPresentation: true)
-            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration, launchArtwork: artwork))
+            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window)
+            let animate = !UIAccessibility.isReduceMotionEnabled
+                && !UIApplication.shared.preferredContentSizeCategory.isAccessibilityCategory
+                && (artwork.titleFrame != nil || (artwork.cover != nil && artwork.coverFrame != nil))
+            let motionState = RuntimeLaunchMotionState(animate: animate)
+            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, launchMotionState: motionState))
             player.launchArtwork = artwork
-            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, onLaunchReady: { [weak player] in player?.launchTransition?.revealGame() })
+            player.launchMotionState = motionState
+            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, launchMotionState: motionState, onLaunchReady: { [weak player] in player?.fadeLaunchArtwork() })
             player.modalPresentationStyle = .fullScreen
-            player.launchTransition = RuntimeLaunchTransition(artwork: artwork)
+            player.launchTransition = RuntimeLaunchTransition(motionState: motionState)
             player.transitioningDelegate = player.launchTransition
             controller.player = player
             controller.present(player, animated: true) { [weak controller] in
@@ -95,7 +100,29 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
     final class Player: UIHostingController<RuntimePlayerView> {
         var launchTransition: RuntimeLaunchTransition?
         var launchArtwork: RuntimeLaunchArtworkSnapshot?
+        var launchMotionState = RuntimeLaunchMotionState(animate: false)
+        private var didFadeLaunchArtwork = false
+        private var launchFadeSnapshot: UIView?
         var captureRequested = false { didSet { refreshCapture() } }
+
+        func fadeLaunchArtwork() {
+            guard !didFadeLaunchArtwork else { return }
+            didFadeLaunchArtwork = true
+            guard let snapshot = view.snapshotView(afterScreenUpdates: false) else { return }
+            snapshot.frame = view.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            snapshot.isUserInteractionEnabled = false
+            snapshot.accessibilityElementsHidden = true
+            view.addSubview(snapshot)
+            launchFadeSnapshot = snapshot
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.15 : RuntimeLaunchMotion.revealDuration,
+                           delay: 0, options: .curveEaseOut) {
+                snapshot.alpha = 0
+            } completion: { [weak self] _ in
+                snapshot.removeFromSuperview()
+                self?.launchFadeSnapshot = nil
+            }
+        }
         private var observers: [NSObjectProtocol] = []
 
         // The presented player owns capture, not its nested SwiftUI event host.
@@ -143,11 +170,18 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
 
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
+            launchMotionState.settle(animated: false)
+            launchMotionState.finish()
+            #if MADEIRA_RUNTIME
+            rootView.viewModel.startPendingMadeiraLaunch(sessionID: rootView.session.sessionIdentifier)
+            #endif
             refreshCapture()
         }
 
         override func viewWillDisappear(_ animated: Bool) {
             captureRequested = false
+            launchFadeSnapshot?.removeFromSuperview()
+            launchFadeSnapshot = nil
             super.viewWillDisappear(animated)
         }
 

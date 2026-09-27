@@ -533,6 +533,9 @@ final class AppViewModel: ObservableObject {
     private var externalJITEnablementTask: Task<Void, Never>?
     private var runtimePlayerReservation: ReservedRuntimePlayerSession?
     private var runtimePlayerPreparedSession: RuntimePlayerPreparedSession?
+    #if MADEIRA_RUNTIME
+    private var pendingMadeiraStart: (sessionID: String, start: @MainActor () -> Void)?
+    #endif
     private var runningSessionMonitorTask: Task<Void, Never>?
     private var runtimePlayerFirstFrameWatchdogTask: Task<Void, Never>?
     private var runtimePlayerVerificationContext: RuntimePlayerVerificationContext?
@@ -1879,6 +1882,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func launchActionDetail(for game: GameRecord) -> String? {
+        // The player is taking over this screen. A new detail row would move
+        // the library artwork while its launch position is being captured.
+        if activeRuntimePlayerSession?.gameID == game.id || runtimePlayerReservation?.gameID == game.id {
+            return nil
+        }
         if !FileManager.default.fileExists(atPath: game.launchProfile.executablePath) {
             return "Game file moved or missing. Open Game Options to locate its folder."
         }
@@ -2044,33 +2052,37 @@ final class AppViewModel: ObservableObject {
                     launchTicketPath: "", sessionLogPath: prepared.bridgeConfiguration.wineDebugLogPath,
                     telemetryPath: "", state: .running, stateHistory: [.running],
                     statusSummary: "Preparing Madeira. No rendered frame yet.", launchedAt: Date())
-                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launchSession(for: game).arguments) { [weak self] message in
+                let launch = launchSession(for: game)
+                pendingMadeiraStart = (id, { [weak self] in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    if message.contains("failed") || message.hasPrefix("Cannot") {
+                    MadeiraRuntimeAdapter.start(executable: launch.executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launch.arguments) { [weak self] message in
+                        guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                        if message.contains("failed") || message.hasPrefix("Cannot") {
+                            UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
+                        }
+                        self?.activeRuntimePlayerSession?.statusSummary = message
+                        self?.activityStatusMessage = message
+                        print("[IridiumMadeira] \(message)")
+                    } fail: { [weak self] message in
+                        guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
+                        self.activeRuntimePlayerSession?.state = .failed
+                        self.activeRuntimePlayerSession?.stateHistory.append(.failed)
+                        self.activeRuntimePlayerSession?.statusSummary = message
+                        self.activityStatusMessage = message
+                        RuntimeLogCapture.writeLine("[Launch] \(message)")
+                    } exited: { [weak self] in
+                        guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                        let presented = madeira_get_present_count() > 0
+                        self.madeiraShutdownUnconfirmed = false
+                        self.activeRuntimePlayerSession?.state = presented ? .completed : .failed
+                        self.activeRuntimePlayerSession?.stateHistory.append(presented ? .completed : .failed)
+                        let message = presented ? "The game stopped. Restart Iridium before another session." : "The game exited before displaying a frame. Restart Iridium before retrying."
+                        self.activeRuntimePlayerSession?.statusSummary = message
+                        self.activityStatusMessage = message
+                        RuntimeLogCapture.writeLine("[Launch] \(message)")
                     }
-                    self?.activeRuntimePlayerSession?.statusSummary = message
-                    self?.activityStatusMessage = message
-                    print("[IridiumMadeira] \(message)")
-                } fail: { [weak self] message in
-                    guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
-                    self.activeRuntimePlayerSession?.state = .failed
-                    self.activeRuntimePlayerSession?.stateHistory.append(.failed)
-                    self.activeRuntimePlayerSession?.statusSummary = message
-                    self.activityStatusMessage = message
-                    RuntimeLogCapture.writeLine("[Launch] \(message)")
-                } exited: { [weak self] in
-                    guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    let presented = madeira_get_present_count() > 0
-                    self.madeiraShutdownUnconfirmed = false
-                    self.activeRuntimePlayerSession?.state = presented ? .completed : .failed
-                    self.activeRuntimePlayerSession?.stateHistory.append(presented ? .completed : .failed)
-                    let message = presented ? "The game stopped. Restart Iridium before another session." : "The game exited before displaying a frame. Restart Iridium before retrying."
-                    self.activeRuntimePlayerSession?.statusSummary = message
-                    self.activityStatusMessage = message
-                    RuntimeLogCapture.writeLine("[Launch] \(message)")
-                }
+                })
             }
             return
         }
@@ -2228,6 +2240,14 @@ final class AppViewModel: ObservableObject {
             launchTimer.mark("executeLaunchReturned")
         }
     }
+
+    #if MADEIRA_RUNTIME
+    func startPendingMadeiraLaunch(sessionID: String) {
+        guard let pendingMadeiraStart, pendingMadeiraStart.sessionID == sessionID else { return }
+        self.pendingMadeiraStart = nil
+        pendingMadeiraStart.start()
+    }
+    #endif
 
     private func buildLaunchSession(for game: GameRecord, jitStatus: JITStatus) -> LaunchSession {
         let resolvedPolicy = runtimePolicy(for: game)
@@ -2597,6 +2617,7 @@ final class AppViewModel: ObservableObject {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             guard sessionIdentifier == nil || activeRuntimePlayerSession?.sessionIdentifier == sessionIdentifier else { return }
+            pendingMadeiraStart = nil
             MadeiraRuntimeAdapter.stop()
             runtimePlayerReservation = nil
             runtimePlayerPreparedSession?.teardown()
