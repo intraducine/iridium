@@ -69,13 +69,39 @@ import Foundation
         precondition(RuntimeLaunchGeometry.retainedFrame(title, sourceBounds: portrait, targetBounds: .zero) == nil)
         let translated = portrait.offsetBy(dx: 10, dy: 20)
         precondition(RuntimeLaunchGeometry.retainedFrame(title, sourceBounds: portrait, targetBounds: translated) == title.offsetBy(dx: 10, dy: 20))
-        for emphasized in [false, true] {
-            precondition(RuntimeLaunchMotion.scale(emphasized: emphasized, reduceMotion: true) == 1)
+        precondition(RuntimeLaunchGeometry.wholeFrame(cover, in: portrait) == cover)
+        precondition(RuntimeLaunchGeometry.wholeFrame(CGRect(x: -30, y: 100, width: 200, height: 300), in: portrait) == nil)
+        precondition((0.40...0.55).contains(RuntimeLaunchMotion.heroDuration))
+        precondition((0.45...0.65).contains(RuntimeLaunchMotion.revealDuration))
+        precondition(RuntimeLaunchMotion.chromeFadeDuration < RuntimeLaunchMotion.heroDuration)
+        let chrome = RuntimeLaunchChrome(gameID: UUID(), label: "Play", detail: nil, controllerHints: true)
+        precondition(chrome.label == "Play" && chrome.detail == nil && chrome.controllerHints)
+        for bounds in [portrait, landscape, CGRect(x: 0, y: 0, width: 320, height: 568),
+                       CGRect(x: 0, y: 0, width: 1024, height: 768)] {
+            for hasCover in [false, true] {
+                for accessibility in [false, true] {
+                    let layout = RuntimeLaunchHeroLayout.resolve(in: bounds, safeTop: 24, safeLeading: 24,
+                        safeBottom: 24, safeTrailing: 24, hasCover: hasCover, accessibility: accessibility)
+                    precondition(layout.text.minX >= 24 && layout.text.maxX <= bounds.width - 24)
+                    precondition(layout.text.minY >= 24 + 72)
+                    precondition((layout.cover != nil) == hasCover)
+                    if let poster = layout.cover {
+                        precondition(abs(poster.width / poster.height - 2.0 / 3.0) < 0.0001)
+                        precondition(poster.minX >= 24 && poster.maxX <= bounds.width - 24)
+                        precondition(poster.maxY <= bounds.height - 24)
+                        if layout.sideBySide {
+                            precondition(layout.text.minX > poster.maxX && layout.text.minY == poster.minY)
+                        } else {
+                            precondition(layout.text.minX == poster.minX && layout.text.maxY < poster.minY)
+                        }
+                    }
+                    if accessibility { precondition(!layout.sideBySide) }
+                }
+            }
         }
-        precondition(RuntimeLaunchMotion.scale(emphasized: false, reduceMotion: false) == 1)
-        precondition(RuntimeLaunchMotion.scale(emphasized: true, reduceMotion: false) == 1.03)
-        precondition((0.35...0.45).contains(RuntimeLaunchMotion.backdropDuration))
-        precondition((0.20...0.25).contains(RuntimeLaunchMotion.revealDuration))
+        let tallText = RuntimeLaunchHeroLayout.resolve(in: portrait, safeTop: 59, safeLeading: 0,
+            safeBottom: 34, safeTrailing: 0, hasCover: true, accessibility: true, textHeight: 400)
+        precondition(tallText.cover!.minY > tallText.text.maxY)
         print("Launch state precedence, late frames, layout continuity, rotation fallback and motion limits passed")
     }
 }
@@ -145,7 +171,7 @@ class LaunchPresentationTests(unittest.TestCase):
         shelf = (VIEWS / "LibraryShelf.swift").read_text()
         presenter = (APP.parent / "MadeiraSupport/MadeiraPlayerPresentation.swift").read_text()
         for role in ("title", "backdrop"):
-            self.assertIn(f"RuntimeLaunchSource(gameID: selected.id, role: .{role})", shelf)
+            self.assertIn(f"RuntimeLaunchSource(gameID: selected.id, role: .{role}, active: visible)", shelf)
         self.assertNotIn("RuntimeLaunchSource(gameID: game.id)", shelf)
         self.assertIn("source.window === window", transition)
         self.assertIn("valueOptions: .weakMemory", transition)
@@ -163,8 +189,12 @@ class LaunchPresentationTests(unittest.TestCase):
         self.assertIn("LibraryBackdrop(image:", art)
         self.assertIn("LibraryBackdropScrim", art)
         self.assertIn("LibraryBackdropScrim()", shelf)
-        self.assertIn("guard !emphasized else { return }", art)
-        self.assertIn("RuntimeLaunchMotion.scale(emphasized: emphasized, reduceMotion: reduceMotion)", art)
+        self.assertIn("guard hidden, !settled, !artwork.handoff.hasPresentedFrame else { return }", art)
+        self.assertIn(".easeInOut(duration: RuntimeLaunchMotion.heroDuration)", art)
+        self.assertIn("LibraryBackdropScrim()", art)
+        self.assertNotIn("LibraryBackdropScrim(strength:", art)
+        self.assertNotIn(".scaleEffect", art)
+        self.assertNotIn("var strength", shelf)
         self.assertIn("@State private var artwork: RuntimeLaunchArtworkSnapshot", art)
         self.assertNotIn("@ObservedObject", art)
         self.assertNotIn("repeatForever", art)
@@ -172,17 +202,50 @@ class LaunchPresentationTests(unittest.TestCase):
         self.assertNotIn(".multilineTextAlignment(.center)", art)
         self.assertIn(".libraryGlass()", art)
 
-    def test_early_frame_can_finish_the_opening_without_a_timer_gate(self):
+    def test_early_frame_preserves_the_fade_without_a_timer_gate(self):
         transition = (VIEWS / "RuntimeLaunchTransition.swift").read_text()
         player = (VIEWS / "RuntimePlayerView.swift").read_text()
         presenter = (APP.parent / "MadeiraSupport/MadeiraPlayerPresentation.swift").read_text()
         self.assertIn("if phase == .playing { onLaunchReady() }", player)
         self.assertIn("player?.launchTransition?.revealGame()", presenter)
-        self.assertIn("opening?.finishImmediately()", transition)
-        self.assertIn("animation.finishAnimation(at: .end)", transition)
+        self.assertNotIn("finishImmediately", transition)
+        self.assertNotIn("finishAnimation(at:", transition)
+        self.assertIn("artwork.handoff.hasPresentedFrame = true", transition)
+        self.assertIn(".transition(.opacity)", player)
+        self.assertIn("value: launchPresentation.showsArtwork", player)
         self.assertIn("RuntimeLaunchMotion.revealDuration", player)
         for timer in ("Task.sleep", "asyncAfter", "Timer("):
             self.assertNotIn(timer, transition)
+
+    def test_launch_chrome_is_frozen_before_all_play_entry_points(self):
+        shelf = (VIEWS / "LibraryShelf.swift").read_text()
+        request = shelf.split("private func requestPlay(_ game:", 1)[1].split("private func controllerFocus", 1)[0]
+        self.assertLess(request.index("guard !disabled(game)"), request.index("launchChrome ="))
+        self.assertLess(request.index("launchChrome ="), request.index("play(game)"))
+        self.assertIn("detail: launchDetail(game)", request)
+        self.assertEqual(shelf.count("requestPlay(selected)"), 2)
+        self.assertEqual(shelf.count("requestPlay(game)"), 1)
+        self.assertIn(".disabled(disabled(game))", shelf)
+        self.assertIn("return launchChrome.detail", shelf) # Including nil, not a nil-coalescing fallback.
+        self.assertIn("if !isDisabled { launchChrome = nil }", shelf)
+        self.assertIn(".onAppear { launchChrome = nil;", shelf)
+
+    def test_hero_elements_move_once_instead_of_crossfading(self):
+        shelf = (VIEWS / "LibraryShelf.swift").read_text()
+        art = (VIEWS / "RuntimeLaunchArtworkView.swift").read_text()
+        transition = (VIEWS / "RuntimeLaunchTransition.swift").read_text()
+        self.assertIn("RuntimeLaunchSource(gameID: game.id, role: .cover, active: visible)", shelf)
+        self.assertIn("artwork.retainedFrame(artwork.coverFrame, in: bounds)", art)
+        self.assertIn("artwork.retainedFrame(artwork.titleFrame, in: bounds)", art)
+        self.assertIn(".offset(x: frame.minX, y: frame.minY)", art)
+        self.assertIn(".offset(x: textFrame.minX, y: textFrame.minY)", art)
+        self.assertIn(".onReceive(artwork.handoff.$chromeHidden)", art)
+        self.assertNotIn(".transition(", art)
+        self.assertIn("mask.fillRule = .evenOdd", transition)
+        self.assertIn("artwork.windowID == ObjectIdentifier(window)", transition)
+        self.assertIn("artwork.cover == nil ? nil : artwork.coverFrame", transition)
+        self.assertLess(transition.index("snapshot?.removeFromSuperview()"),
+                        transition.index("self.artwork?.handoff.finishChromeFade()"))
 
     def test_simulator_scenarios_are_in_the_existing_preview_project(self):
         root = APP.parent / "InterfaceTests"

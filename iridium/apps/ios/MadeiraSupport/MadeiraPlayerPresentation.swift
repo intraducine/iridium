@@ -33,12 +33,12 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                 return
             }
             guard controller.view.window != nil, controller.presentedViewController == nil else { return }
-            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window)
+            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window, waitsForPresentation: true)
             let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration, launchArtwork: artwork))
             player.launchArtwork = artwork
             player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, onLaunchReady: { [weak player] in player?.launchTransition?.revealGame() })
             player.modalPresentationStyle = .fullScreen
-            player.launchTransition = RuntimeLaunchTransition()
+            player.launchTransition = RuntimeLaunchTransition(artwork: artwork)
             player.transitioningDelegate = player.launchTransition
             controller.player = player
             controller.present(player, animated: true) { [weak controller] in
