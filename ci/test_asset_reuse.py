@@ -137,12 +137,17 @@ class AssetReuseTests(unittest.TestCase):
         jobs = {'jobs': [{'name': 'media', 'conclusion': 'success'}]}
         artifacts = {'artifacts': [{'name': 'media-sdk-with-source', 'expired': False}]}
         with patch.object(reuse, 'api', side_effect=[run, jobs, artifacts]), \
-             patch.object(reuse.linux, 'producer_revision_is_ancestor', return_value=True), \
+             patch.object(reuse.linux, 'producer_revision_is_in_history', return_value=True), \
              patch.object(reuse, 'compatible'):
             self.assertEqual(reuse.verify_producer(Path('.'), '123', 'media', 'feature'), revision)
         with patch.object(reuse, 'api', side_effect=[run, jobs]), \
-             patch.object(reuse.linux, 'producer_revision_is_ancestor', return_value=False):
-            with self.assertRaisesRegex(ValueError, 'ancestor'):
+             patch.object(reuse.linux, 'producer_revision_is_in_history', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'merged history'):
+                reuse.verify_producer(Path('.'), '123', 'media', 'feature')
+        with patch.object(reuse, 'api', side_effect=[run, jobs, artifacts]), \
+             patch.object(reuse.linux, 'producer_revision_is_in_history', return_value=True), \
+             patch.object(reuse, 'compatible', side_effect=ValueError('Changed producer input')):
+            with self.assertRaisesRegex(ValueError, 'Changed producer input'):
                 reuse.verify_producer(Path('.'), '123', 'media', 'feature')
         with patch.object(reuse, 'api', return_value={'workflow_runs': [run]}), \
              patch.object(reuse, 'verify_producer', return_value=revision) as verify:
