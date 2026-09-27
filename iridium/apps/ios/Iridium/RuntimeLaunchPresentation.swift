@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 
 /// A projection of the existing session and renderer state, not a launch gate.
 enum RuntimeLaunchPresentation: Equatable {
