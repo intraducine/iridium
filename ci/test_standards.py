@@ -12,13 +12,13 @@ class StandardsTests(unittest.TestCase):
             text = '# Iridium 0.2.0-beta.1\n'
             for heading in standards.HEADINGS:
                 text += '\n## ' + heading + '\n\nFixture content.\n'
-                if heading == 'Verification':
+                if heading == 'Source and licenses':
                     text += 'Source commit: ' + 'a' * 40 + '\nBuild run: https://github.com/intraducine/iridium/actions/runs/1\n'
             path.write_text(text)
             self.assertEqual(standards.release_errors(path), [])
             path.write_text(text.replace('Fixture content.', '[Required: fill in]', 1))
             self.assertTrue(standards.release_errors(path))
-            path.write_text(text.replace('## Changes', '## Changes omitted'))
+            path.write_text(text.replace("## What's new", "## What's new omitted"))
             self.assertTrue(standards.release_errors(path))
             path.write_text(text.replace('a' * 40, 'abcd'))
             self.assertTrue(standards.release_errors(path))
