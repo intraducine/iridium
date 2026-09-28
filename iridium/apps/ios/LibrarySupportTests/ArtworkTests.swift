@@ -134,6 +134,28 @@ private final class ArtworkProtocol: URLProtocol {
 }
 
 extension ArtworkTests {
+    @MainActor func testSteamHeaderFallbackUsesMatchingAppAndTrustedImageHost() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ArtworkProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel(); ArtworkProtocol.handler = nil }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = LibraryArtwork(root: root, session: session)
+        for appID: UInt32 in [3768760, 3819230] {
+            let expected = URL(string: "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/\(appID)/hash/header.jpg")!
+            ArtworkProtocol.handler = { request in
+                XCTAssertTrue(request.request.url!.absoluteString.contains("appids=\(appID)"))
+                request.respond(#"{"\#(appID)":{"success":true,"data":{"steam_appid":\#(appID),"header_image":"\#(expected.absoluteString)"}}}"#)
+            }
+            let actual = await store.steamHeaderImageURL(for: appID)
+            XCTAssertEqual(actual, expected)
+        }
+        ArtworkProtocol.handler = { $0.respond(#"{"3768760":{"success":true,"data":{"steam_appid":3768760,"header_image":"https://example.com/image.jpg"}}}"#) }
+        let untrusted = await store.steamHeaderImageURL(for: 3768760)
+        XCTAssertNil(untrusted)
+    }
+
     @MainActor func testLookupAndInFlightRemoval() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root); ArtworkProtocol.handler = nil }

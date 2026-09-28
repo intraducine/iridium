@@ -30,6 +30,7 @@ struct LibraryAppearance { var background: String?; var backgroundY = 0.5 }
     var backdropGameID: UUID?
     func appearance(_ id: UUID) -> LibraryAppearance { LibraryAppearance() }
     func displayImage(_ name: String?) -> UIImage? { nil }
+    func steamHeaderImageURL(for appID: UInt32) async -> URL? { nil }
 }
 struct ArtworkImage: View {
     let image: UIImage

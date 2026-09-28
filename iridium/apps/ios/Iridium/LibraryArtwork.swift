@@ -391,6 +391,21 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    func steamHeaderImageURL(for appID: UInt32) async -> URL? {
+        struct Details: Decodable {
+            struct Game: Decodable { let steam_appid: UInt32; let header_image: URL? }
+            let success: Bool
+            let data: Game?
+        }
+        guard let result: [String: Details] = try? await storeRequest("appdetails?appids=\(appID)"),
+              let details = result[String(appID)], details.success,
+              let game = details.data, game.steam_appid == appID,
+              let url = game.header_image, url.scheme == "https",
+              let host = url.host, host.hasSuffix(".steamstatic.com")
+        else { return nil }
+        return url
+    }
+
     private func request<T: Decodable>(_ path: String) async throws -> [T] {
         guard !apiKey.isEmpty else { throw ArtworkError.message("Connect SteamGridDB in Artwork Settings first.") }
         let url = URL(string: "https://www.steamgriddb.com/api/v2/" + path)!

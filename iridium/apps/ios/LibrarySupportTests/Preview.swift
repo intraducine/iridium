@@ -45,3 +45,11 @@ struct PreviewLibrary: View {
         }.preferredColorScheme(.dark)
     }
 }
+
+// The preview has no runtime player; its library anchors need no transition target.
+struct RuntimeLaunchSource: View {
+    enum Role { case title, cover, backdrop }
+    let gameID: UUID
+    let role: Role
+    var body: some View { Color.clear }
+}
