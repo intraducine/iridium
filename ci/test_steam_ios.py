@@ -33,7 +33,21 @@ class SteamIOSSimulatorTests(unittest.TestCase):
     def test_spawn_probe_treats_command_timeout_as_not_ready(self):
         with patch.object(steam_ios.subprocess, 'run',
                           side_effect=subprocess.TimeoutExpired(['simctl'], 15)):
-            self.assertFalse(steam_ios.simulator_can_spawn('device'))
+            self.assertFalse(steam_ios.simulator_can_spawn('device')[0])
+
+    def test_prefers_an_existing_simulator_and_creates_only_a_compatible_device(self):
+        runtime = {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
+                   'version': '27.0', 'isAvailable': True,
+                   'supportedDeviceTypes': [{'identifier': 'compatible-iphone', 'productFamily': 'iPhone'}]}
+        inventory = {'runtimes': [runtime], 'devices': {runtime['identifier']: [
+            {'name': 'iPhone 18 Pro', 'state': 'Shutdown', 'isAvailable': True, 'udid': 'existing'}]}}
+        with patch.object(steam_ios.subprocess, 'check_output') as create:
+            self.assertEqual(steam_ios.select_device(inventory), ('existing', True, False))
+            create.assert_not_called()
+            inventory['devices'].clear()
+            create.return_value = 'new-device\n'
+            self.assertEqual(steam_ios.select_device(inventory), ('new-device', True, True))
+            self.assertEqual(create.call_args.args[0][4], 'compatible-iphone')
 
 
 if __name__ == '__main__':

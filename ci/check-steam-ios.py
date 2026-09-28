@@ -14,25 +14,47 @@ def simulator_can_spawn(device):
     try:
         result = subprocess.run(
             ['xcrun', 'simctl', 'spawn', device, '/usr/bin/true'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            capture_output=True, text=True,
             check=False, timeout=15,
         )
     except subprocess.TimeoutExpired:
-        return False
-    return result.returncode == 0
+        return False, 'spawn timed out'
+    reason = (result.stderr or '').strip().replace(device, '<simulator>')
+    return result.returncode == 0, reason or f'exit code {result.returncode}'
 
 
 def wait_for_spawn(device, timeout=180, interval=3):
     """Wait for the simulator capability this test actually needs."""
     deadline = time.monotonic() + timeout
     while True:
-        if simulator_can_spawn(device):
+        ready, reason = simulator_can_spawn(device)
+        if ready:
             return
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                f'iOS Simulator {device} booted but did not become spawn-ready within {timeout} seconds'
+                f'iOS Simulator booted but did not become spawn-ready within {timeout} seconds: {reason}'
             )
         time.sleep(interval)
+
+
+def select_device(inventory):
+    runtimes = [item for item in inventory['runtimes']
+                if item.get('isAvailable') and '.iOS-' in item['identifier']]
+    if not runtimes:
+        raise RuntimeError('An available iOS Simulator runtime is required for Steam verification')
+    available = [device for runtime in runtimes
+                 for device in inventory['devices'].get(runtime['identifier'], [])
+                 if device.get('isAvailable') and device['name'].startswith('iPhone')]
+    for state in ('Booted', 'Shutdown'):
+        if device := next((item for item in available if item['state'] == state), None):
+            return device['udid'], state == 'Shutdown', False
+    runtime = max(runtimes, key=lambda item: tuple(map(int, item['version'].split('.'))))
+    device_type = next(item['identifier'] for item in runtime['supportedDeviceTypes']
+                       if item['productFamily'] == 'iPhone')
+    device = subprocess.check_output([
+        'xcrun', 'simctl', 'create', 'Iridium Steam verification', device_type, runtime['identifier'],
+    ], text=True).strip()
+    return device, True, True
 
 
 def main():
@@ -42,17 +64,10 @@ def main():
         '-p:PublishAot=true', '-p:PublishAotUsingRuntimePack=true', '-o', str(output),
     ], cwd=SOURCE, check=True)
     inventory = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', '--json'], text=True))
-    runtime = next((item for item in inventory['runtimes']
-                    if item.get('isAvailable') and '.iOS-' in item['identifier']), None)
-    if runtime is None:
-        raise RuntimeError('An available iOS Simulator runtime is required for Steam verification')
-    device_type = next(item['identifier'] for item in inventory['devicetypes']
-                       if item['name'].startswith('iPhone'))
-    device = subprocess.check_output([
-        'xcrun', 'simctl', 'create', 'Iridium Steam verification', device_type, runtime['identifier'],
-    ], text=True).strip()
+    device, boot, created = select_device(inventory)
     try:
-        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
+        if boot:
+            subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
         # Hosted runners can leave bootstatus waiting on unrelated boot services
         # even after CoreSimulator can execute processes. The Steam verification
         # only requires spawn, so gate on that exact capability instead.
@@ -60,8 +75,10 @@ def main():
         subprocess.run(['xcrun', 'simctl', 'spawn', device, str(output / 'Iridium.Steam.Tests'), '--network'],
                        check=True, timeout=120)
     finally:
-        subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
-        subprocess.run(['xcrun', 'simctl', 'delete', device], check=False)
+        if boot:
+            subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
+        if created:
+            subprocess.run(['xcrun', 'simctl', 'delete', device], check=False)
     print('iOS Simulator Steam initialization, protocol, download verification, and QR/cancel checks passed.')
 
 
