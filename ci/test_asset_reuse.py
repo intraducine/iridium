@@ -87,6 +87,9 @@ class AssetReuseTests(unittest.TestCase):
             app = root / 'iridium/apps/ios/madeira.yml'
             app.parent.mkdir(parents=True)
             app.write_text('app frameworks')
+            project = app.with_name('project.yml')
+            project.write_text('targets:\n  Iridium:\n    dependencies:\n'
+                               '      - package: IridiumPackage\n        product: IridiumCore\n')
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit()
@@ -94,6 +97,20 @@ class AssetReuseTests(unittest.TestCase):
             app.write_text('different app frameworks')
             commit()
             reuse.compatible(root, original, 'native')
+            before_project = git('rev-parse', 'HEAD')
+            # PR #53 only embeds a separately built framework in the app. The
+            # native compiler checkpoint predates this app project change.
+            project.write_text(project.read_text().replace(
+                '    dependencies:\n',
+                '    dependencies:\n'
+                '      - framework: Frameworks/IridiumSteam.xcframework\n'
+                '        embed: true\n        link: false\n'))
+            commit()
+            reuse.compatible(root, before_project, 'native')
+            reuse.compatible(root, original, 'native')
+            # The broader prepared-runtime contract still tracks the project.
+            with self.assertRaisesRegex(ValueError, 'producer input: iridium/apps/ios/project.yml'):
+                reuse.compatible(root, before_project, 'native-runtime')
             for name in ('testrepos/Madeira/tools/check-jit-url.py',
                          'testrepos/Madeira/README.md',
                          'testrepos/Madeira/app/Madeira/Library.swift'):
@@ -110,10 +127,38 @@ class AssetReuseTests(unittest.TestCase):
                 commit()
                 with self.assertRaisesRegex(ValueError, 'producer input'):
                     reuse.compatible(root, before, 'native')
+            for name in ('ci/prepare-native-runtime.sh',
+                         'iridium/apps/ios/Scripts/build_media_runtime.sh',
+                         'iridium-fex-ios/iridium/ios/build_embedded_translator.sh',
+                         'iridium-wine-ios/iridium/ios/build_install_root.sh',
+                         'ci/compiled-components.py'):
+                with self.subTest(input=name):
+                    before = git('rev-parse', 'HEAD')
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('changed native compiler flags or artifact contract')
+                    commit()
+                    with self.assertRaisesRegex(ValueError, 'producer input'):
+                        reuse.compatible(root, before, 'native')
             recipe.write_text('different compiler flags')
             commit()
             with self.assertRaisesRegex(ValueError, 'producer input'):
                 reuse.compatible(root, original, 'native')
+
+    def test_native_workflow_compiler_settings_still_invalidate(self):
+        workflow = ('jobs:\n  build:\n    runs-on: xcode-27\n    steps:\n'
+                    '      - name: Compile native\n        run: bash ci/prepare-native-runtime.sh\n')
+        original = reuse.producer_job(workflow, 'native')
+        for changed in (
+            workflow.replace('xcode-27', 'xcode-28'),
+            workflow.replace('    steps:', '    env:\n      CFLAGS: -O3\n    steps:'),
+            'env:\n  CFLAGS: -O3\n' + workflow,
+            'defaults:\n  run:\n    shell: zsh\n' + workflow,
+            workflow.replace('run: bash', 'env:\n          CFLAGS: -O3\n        run: bash'),
+            workflow.replace('run: bash', 'run: CFLAGS=-O3 bash'),
+        ):
+            with self.subTest(workflow=changed):
+                self.assertNotEqual(original, reuse.producer_job(changed, 'native'))
 
     def test_manual_producer_trust_and_success(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature',

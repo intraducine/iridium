@@ -34,7 +34,11 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
 COMPONENT_INPUTS = {
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
-    'native': tuple(p for p in NATIVE_INPUTS if p not in {'ci', 'iridium/apps/ios/madeira.yml', 'testrepos/Madeira'}) +
+    # Both XcodeGen specs configure the later app build, not these libraries.
+    # Native targets and flags live in the tracked compiler recipes below.
+    'native': tuple(p for p in NATIVE_INPUTS if p not in {
+                  'ci', 'iridium/apps/ios/project.yml',
+                  'iridium/apps/ios/madeira.yml', 'testrepos/Madeira'}) +
               ('testrepos/Madeira/FEX', 'testrepos/Madeira/wine',
                'testrepos/Madeira/build', 'testrepos/Madeira/research/dxmt',
                'testrepos/Madeira/research/freetype', 'testrepos/Madeira/toolchains',
