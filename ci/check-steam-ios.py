@@ -3,9 +3,36 @@
 import json
 from pathlib import Path
 import subprocess
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'iridium/packages/steam'
+
+
+def simulator_can_spawn(device):
+    """Return whether CoreSimulator can execute a process on this device."""
+    try:
+        result = subprocess.run(
+            ['xcrun', 'simctl', 'spawn', device, '/usr/bin/true'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False, timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return result.returncode == 0
+
+
+def wait_for_spawn(device, timeout=180, interval=3):
+    """Wait for the simulator capability this test actually needs."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if simulator_can_spawn(device):
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f'iOS Simulator {device} booted but did not become spawn-ready within {timeout} seconds'
+            )
+        time.sleep(interval)
 
 
 def main():
@@ -26,7 +53,10 @@ def main():
     ], text=True).strip()
     try:
         subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
-        subprocess.run(['xcrun', 'simctl', 'bootstatus', device, '-b'], check=True, timeout=180)
+        # Hosted runners can leave bootstatus waiting on unrelated boot services
+        # even after CoreSimulator can execute processes. The Steam verification
+        # only requires spawn, so gate on that exact capability instead.
+        wait_for_spawn(device)
         subprocess.run(['xcrun', 'simctl', 'spawn', device, str(output / 'Iridium.Steam.Tests'), '--network'],
                        check=True, timeout=120)
     finally:
