@@ -162,6 +162,7 @@ class MediaTransferTests(unittest.TestCase):
         self.assertIn('needs: [asset-plan, linux-userland, media, prefix, steam, steam_simulator]', workflow)
         self.assertIn("needs.steam.result == 'success'", workflow)
         self.assertIn("needs.steam_simulator.result == 'success'", workflow)
+        self.assertIn('runs-on: macos-26', workflow)
         self.assertIn("needs.media.result == 'success'", workflow)
         self.assertIn('--only cerbero-source', workflow)
         self.assertIn('name: media-sdk-with-source', workflow)
