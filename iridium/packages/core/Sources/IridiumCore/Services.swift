@@ -1,5 +1,24 @@
 import Foundation
 
+public enum GameImportStorage: Sendable {
+    case managedCopy
+    case filesFolder(URL)
+}
+
+public enum GameImportError: LocalizedError {
+    case alreadyInLibrary
+    case nameAlreadyUsed
+    case invalidFilesFolder
+
+    public var errorDescription: String? {
+        switch self {
+        case .alreadyInLibrary: "This game is already in your library."
+        case .nameAlreadyUsed: "Another game uses this name. Choose a different name."
+        case .invalidFilesFolder: "Put a game folder directly inside Iridium/Games. Links are not supported."
+        }
+    }
+}
+
 public protocol GameLibraryService: Sendable {
     func allGames() async -> [GameRecord]
     func register(_ game: GameRecord) async
@@ -256,16 +275,58 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         runtimeBundleIdentifier: String? = nil,
         runtimeBundleVersion: String? = nil
     ) async throws -> GameRecord {
+        try await importGame(
+            title: title, installPath: installPath, executablePath: executablePath,
+            compatibilityProfileName: compatibilityProfileName, inputProfileName: inputProfileName,
+            deviceTier: deviceTier, rendererPreset: rendererPreset,
+            managedArtifactIdentifier: managedArtifactIdentifier,
+            executableFingerprint: executableFingerprint,
+            runtimeBundleIdentifier: runtimeBundleIdentifier,
+            runtimeBundleVersion: runtimeBundleVersion,
+            storage: .managedCopy
+        )
+    }
+
+    public func importGame(
+        title: String,
+        installPath: String,
+        executablePath: String,
+        compatibilityProfileName: String,
+        inputProfileName: String,
+        deviceTier: DeviceTier,
+        rendererPreset: RendererPreset,
+        managedArtifactIdentifier: String? = nil,
+        executableFingerprint: String? = nil,
+        runtimeBundleIdentifier: String? = nil,
+        runtimeBundleVersion: String? = nil,
+        storage: GameImportStorage
+    ) async throws -> GameRecord {
         let resolved: (directory: String, executable: String)
-        if let imports = importsRootURL() {
-            let copied = try ManagedGameFiles.importCopy(
-                from: URL(fileURLWithPath: installPath),
+        switch storage {
+        case .managedCopy:
+            if let imports = importsRootURL() {
+                let copied = try ManagedGameFiles.importCopy(
+                    from: URL(fileURLWithPath: installPath),
+                    executable: URL(fileURLWithPath: executablePath),
+                    into: imports, title: title)
+                resolved = (copied.directory.path, copied.executable.path)
+            } else {
+                // In-memory fixtures do not perform filesystem operations.
+                resolved = (installPath, executablePath)
+            }
+        case let .filesFolder(gamesRoot):
+            let checked = try ManagedGameFiles.validateGameInPlace(
+                at: URL(fileURLWithPath: installPath),
                 executable: URL(fileURLWithPath: executablePath),
-                into: imports, title: title)
-            resolved = (copied.directory.path, copied.executable.path)
-        } else {
-            // In-memory fixtures do not perform filesystem operations.
-            resolved = (installPath, executablePath)
+                in: gamesRoot
+            )
+            resolved = (checked.directory.path, checked.executable.path)
+            if games.contains(where: { $0.installPath == resolved.directory }) {
+                throw GameImportError.alreadyInLibrary
+            }
+            if games.contains(where: { $0.title == title }) {
+                throw GameImportError.nameAlreadyUsed
+            }
         }
         let game = upsertGame(
             source: .manualImport,
@@ -292,7 +353,7 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         recordActivity(
             kind: .imported,
             title: "Imported \(game.title)",
-            detail: "Copied the title into managed imports and bound it to prefix \(game.launchProfile.prefixID.uuidString).",
+            detail: "Added the title to the library and bound it to prefix \(game.launchProfile.prefixID.uuidString).",
             relatedTitle: game.title
         )
         persist()
@@ -438,17 +499,32 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         return isValid
     }
 
-    public func relocateLibraryEntry(gameID: UUID, folder: URL, executable: URL, identifier: String, fingerprint: String) async throws {
-        guard let index = games.firstIndex(where: { $0.id == gameID }), let imports = importsRootURL() else {
+    public func relocateLibraryEntry(
+        gameID: UUID, folder: URL, executable: URL, identifier: String, fingerprint: String,
+        storage: GameImportStorage = .managedCopy
+    ) async throws {
+        guard let index = games.firstIndex(where: { $0.id == gameID }) else {
             throw CocoaError(.fileNoSuchFile)
         }
-        let copied = try ManagedGameFiles.importCopy(
-            from: folder, executable: executable, into: imports, title: games[index].title)
-        games[index].installPath = copied.directory.path
-        games[index].launchProfile.executablePath = copied.executable.path
+        let resolved: (directory: URL, executable: URL)
+        switch storage {
+        case .managedCopy:
+            guard let imports = importsRootURL() else { throw CocoaError(.fileNoSuchFile) }
+            let copied = try ManagedGameFiles.importCopy(
+                from: folder, executable: executable, into: imports, title: games[index].title)
+            resolved = (copied.directory, copied.executable)
+        case let .filesFolder(gamesRoot):
+            resolved = try ManagedGameFiles.validateGameInPlace(
+                at: folder, executable: executable, in: gamesRoot)
+            if games.contains(where: { $0.id != gameID && $0.installPath == resolved.directory.path }) {
+                throw GameImportError.alreadyInLibrary
+            }
+        }
+        games[index].installPath = resolved.directory.path
+        games[index].launchProfile.executablePath = resolved.executable.path
         games[index].managedArtifactIdentifier = identifier
         games[index].executableFingerprint = fingerprint
-        games[index].installedSizeGB = ManagedGameFiles.sizeGB(at: copied.directory)
+        games[index].installedSizeGB = ManagedGameFiles.sizeGB(at: resolved.directory)
         persist()
     }
 
@@ -2048,6 +2124,19 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         }
 
         let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        let containerMarker = "/Containers/Data/Application/"
+        let gamesMarker = "/Documents/Games/"
+        if let containerRange = standardizedPath.range(of: containerMarker),
+           let gamesRange = standardizedPath.range(of: gamesMarker),
+           containerRange.upperBound < gamesRange.lowerBound {
+            let containerID = standardizedPath[containerRange.upperBound..<gamesRange.lowerBound]
+            if !containerID.isEmpty, !containerID.contains("/"),
+               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                let relativePath = standardizedPath[gamesRange.upperBound...]
+                return documents.appending(path: "Games", directoryHint: .isDirectory)
+                    .appending(path: String(relativePath)).path
+            }
+        }
         let marker = "/Library/Application Support/Iridium/"
 
         guard let markerRange = standardizedPath.range(of: marker) else {

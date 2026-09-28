@@ -5,26 +5,12 @@ final class BuiltinJIT: NSObject, JITHost {
     static let shared = BuiltinJIT()
     static let settingKey = "IridiumBuiltinJIT"
     static var selected: Bool { UserDefaults.standard.bool(forKey: settingKey) }
-    static var pairingURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("StikJIT/pairingFile.plist")
-    }
+    static var filesPairingURL: URL { JITPairingStore.live.filesURL }
     static var isHosted: Bool {
         LiveContainerIntegration.isHosted()
     }
     static func importPairing(_ url: URL) throws {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size > 0, size <= 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
-        let data = try Data(contentsOf: url)
-        try JITPairing.validate(data)
-        try FileManager.default.createDirectory(at: pairingURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: pairingURL, options: [.atomic, .completeFileProtection])
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var storedURL = pairingURL
-        try storedURL.setResourceValues(values)
+        try JITPairingStore.live.importFrom(url)
     }
 
     private var launcher: JITExtension?
@@ -48,7 +34,7 @@ final class BuiltinJIT: NSObject, JITHost {
         guard IRHasDebugEntitlement() else { report("This installation lacks debugging permission. Sign Iridium with get-task-allow."); return false }
         guard !jit_check_debugged() else { report("A debugger is already attached. Restart Iridium without Xcode before using built-in JIT."); return false }
         let data: Data
-        do { data = try Data(contentsOf: Self.pairingURL); try JITPairing.validate(data) }
+        do { data = try JITPairingStore.live.read() }
         catch { report("Import a valid pairing file in Settings → Launch Support → Built-in JIT."); return false }
         self.onListening = onListening
         self.report = report

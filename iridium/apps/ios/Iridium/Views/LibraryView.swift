@@ -7,8 +7,14 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isPresentingStandaloneImportPicker = false
-    @State private var isPresentingHostedImportPicker = false
+    @State private var isPresentingImportPicker = false
+    @State private var isShowingImportChoices = false
+    @State private var isPresentingGamesFolder = false
+    @State private var filesGameFolders: [URL] = []
+    @State private var filesGamesError: String?
+    @State private var isLoadingFilesGames = false
+    @State private var filesGamesRequestID = UUID()
+    @State private var selectedFilesGame: URL?
     @State private var liveContainerStatus = LiveContainerIntegration.processLaunchStatus
     @State private var isShowingLiveContainerRepair = false
     @State private var isShowingLiveContainerRelaunchRequired = false
@@ -39,7 +45,7 @@ struct LibraryView: View {
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
             importGame: { relocatingGame = nil; requestGameImport() }, settings: { appSettings = true },
-            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingStandaloneImportPicker && !isPresentingHostedImportPicker && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && !isShowingLiveContainerRelaunchRequired && artwork.error == nil)
+            acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingImportPicker && !isShowingImportChoices && !isPresentingGamesFolder && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && !isShowingLiveContainerRelaunchRequired && artwork.error == nil)
             .toolbar(.hidden, for: .navigationBar)
         }
         }
@@ -56,6 +62,16 @@ struct LibraryView: View {
                 if let result = viewModel.importScanResult { importReviewCard(result) }
             }
         }
+        .sheet(isPresented: $isPresentingGamesFolder, onDismiss: {
+            filesGamesRequestID = UUID()
+            isLoadingFilesGames = false
+            if let selectedFilesGame {
+                self.selectedFilesGame = nil
+                viewModel.scanImportFolder(at: selectedFilesGame, storage: .filesFolder(filesGamesRoot))
+            }
+        }) {
+            gamesFolderSheet
+        }
         .navigationDestination(item: $detailGame) { game in
             GameDetailView(game: game, viewModel: viewModel, locate: {
                 relocatingGame = game; requestGameImport()
@@ -65,28 +81,16 @@ struct LibraryView: View {
         .alert("Artwork", isPresented: Binding(get: { artwork.error != nil }, set: { if !$0 { artwork.error = nil } })) {
             Button("OK") { artwork.error = nil }
         } message: { Text(artwork.error ?? "") }
-        .fileImporter(
-            isPresented: $isPresentingStandaloneImportPicker,
-            allowedContentTypes: [.folder]
-        ) { result in
-            switch result {
-            case let .success(url):
-                print("[IridiumRuntime] importPicker: selected \(url.path) mode=standalone")
-                viewModel.scanImportFolder(at: url)
-            case let .failure(error):
-                let nsError = error as NSError
-                if nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError {
-                    print("[IridiumRuntime] importPicker: cancelled mode=standalone")
-                } else {
-                    print("[IridiumRuntime] importPicker: failed mode=standalone error=\(error.localizedDescription)")
-                    viewModel.reportImportSelectionFailure(error)
-                }
-            }
+        .confirmationDialog(relocatingGame == nil ? "Add Game" : "Locate Game", isPresented: $isShowingImportChoices) {
+            Button("Choose Folder") { openImportPicker() }
+            Button("Find Games in Iridium Folder") { isPresentingGamesFolder = true }
+        } message: {
+            Text("To use Files, place each game in \(filesDeviceLocation) → Iridium → Games.")
         }
-        .fullScreenCover(isPresented: $isPresentingHostedImportPicker) {
+        .fullScreenCover(isPresented: $isPresentingImportPicker) {
             GameImportDocumentPicker(
                 selection: {
-                    isPresentingHostedImportPicker = false
+                    isPresentingImportPicker = false
                     switch $0 {
                     case let .success(url):
                         viewModel.scanImportFolder(at: url)
@@ -95,7 +99,7 @@ struct LibraryView: View {
                     }
                 },
                 cancellation: {
-                    isPresentingHostedImportPicker = false
+                    isPresentingImportPicker = false
                 }
             )
             .ignoresSafeArea()
@@ -216,6 +220,81 @@ struct LibraryView: View {
     }
 
     private func requestGameImport() {
+        if !liveContainerStatus.isHosted {
+            isShowingImportChoices = true
+            return
+        }
+        openImportPicker()
+    }
+
+    private var filesDeviceLocation: String {
+        UIDevice.current.userInterfaceIdiom == .pad ? "On My iPad" : "On My iPhone"
+    }
+
+    private var filesGamesRoot: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appending(path: "Games", directoryHint: .isDirectory)
+    }
+
+    private var gamesFolderSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Place each game in its own folder at \(filesDeviceLocation) → Iridium → Games. Your files stay there when you add a game.")
+                        .foregroundStyle(.secondary)
+                }
+                if isLoadingFilesGames {
+                    ProgressView("Finding game folders")
+                } else if let filesGamesError {
+                    Text(filesGamesError).foregroundStyle(.secondary)
+                } else if filesGameFolders.isEmpty {
+                    Text("No game folders yet. In Files, open \(filesDeviceLocation) → Iridium → Games, add a game folder, then tap Refresh.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(filesGameFolders, id: \.self) { folder in
+                        MenuButton(folder.lastPathComponent) {
+                            selectedFilesGame = folder
+                            isPresentingGamesFolder = false
+                        }
+                    }
+                }
+                MenuButton("Refresh") { Task { await loadFilesGames() } }
+                    .disabled(isLoadingFilesGames)
+            }
+            .iridiumListChrome(onBack: { isPresentingGamesFolder = false })
+            .navigationTitle("Games in Files")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresentingGamesFolder = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+            .task { await loadFilesGames() }
+        }
+    }
+
+    @MainActor private func loadFilesGames() async {
+        let requestID = UUID()
+        filesGamesRequestID = requestID
+        isLoadingFilesGames = true
+        filesGamesError = nil
+        do {
+            let root = filesGamesRoot
+            let folders = try await Task.detached(priority: .userInitiated) {
+                try ManagedGameFiles.gameFolders(in: root)
+            }.value
+            guard requestID == filesGamesRequestID, isPresentingGamesFolder else { return }
+            filesGameFolders = folders
+        } catch {
+            guard requestID == filesGamesRequestID, isPresentingGamesFolder else { return }
+            filesGameFolders = []
+            filesGamesError = "Could not read Iridium's Games folder: \(error.localizedDescription)"
+        }
+        isLoadingFilesGames = false
+    }
+
+    private func openImportPicker() {
         refreshLiveContainerSetup()
         // Saved settings cannot activate hooks in an already-running guest.
         if liveContainerRepairRequiresRelaunch {
@@ -228,12 +307,7 @@ struct LibraryView: View {
             isShowingLiveContainerRepair = true
             return
         }
-        if liveContainerStatus.isHosted {
-            isPresentingHostedImportPicker = true
-        } else {
-            print("[IridiumRuntime] importPicker: presented mode=standalone")
-            isPresentingStandaloneImportPicker = true
-        }
+        isPresentingImportPicker = true
     }
 
     private func repairLiveContainerIntegration() {
@@ -260,8 +334,7 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // LiveContainer's hosted-app picker hooks need the delegate-backed UIKit
-        // path. Standalone installs use SwiftUI's native fileImporter instead.
+        // Opening a folder must use asCopy: false on both standalone and hosted installs.
         let picker = UIDocumentPickerViewController(
             // LiveContainer's safe picker hook recognizes an exact folder-only
             // request and translates it into its hosted-app compatibility flow.
@@ -271,7 +344,7 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
         picker.delegate = context.coordinator
         picker.allowsMultipleSelection = false
         picker.shouldShowFileExtensions = true
-        print("[IridiumRuntime] importPicker: presented mode=livecontainer")
+        print("[IridiumRuntime] importPicker: presented folder picker")
         return picker
     }
 
@@ -303,11 +376,11 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
             completed = true
             guard let url = urls.first else {
                 let error = CocoaError(.fileReadUnknown)
-                print("[IridiumRuntime] importPicker: empty selection mode=livecontainer")
+                print("[IridiumRuntime] importPicker: empty selection")
                 selection(.failure(error))
                 return
             }
-            print("[IridiumRuntime] importPicker: selected \(url.path) mode=livecontainer")
+            print("[IridiumRuntime] importPicker: folder selected")
             selection(.success(url))
         }
 
@@ -316,7 +389,7 @@ private struct GameImportDocumentPicker: UIViewControllerRepresentable {
                 return
             }
             completed = true
-            print("[IridiumRuntime] importPicker: cancelled mode=livecontainer")
+            print("[IridiumRuntime] importPicker: cancelled")
             cancellation()
         }
     }

@@ -543,6 +543,7 @@ final class AppViewModel: ObservableObject {
     private var pendingExternalJITProvider: ExternalJITProvider?
     private var importScanTask: Task<Void, Never>?
     private var importSourceURL: URL?
+    private var importStorage: GameImportStorage = .managedCopy
     private var importSourceAccessActive = false
     private var importMetadataCache: [String: (identifier: String, fingerprint: String)] = [:]
     // Title the cached identifiers were derived from. Launch validation
@@ -1218,13 +1219,14 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func scanImportFolder(at url: URL) {
+    func scanImportFolder(at url: URL, storage: GameImportStorage = .managedCopy) {
         print("[IridiumRuntime] scanImportFolder: buildMarker=\(Self.importDebugBuildMarker)")
         importScanTask?.cancel()
         releaseImportSecurityScopedAccess()
         importMetadataCache = [:]
         importMetadataCacheTitle = nil
         importScanResult = nil
+        importStorage = storage
 
         let installURL = resolvedImportInstallURL(for: url)
         let resolvedInstallPath = installURL.path
@@ -1310,6 +1312,7 @@ final class AppViewModel: ObservableObject {
         guard !isImportingGame else { return }
         guard let scan = importScanResult, let executable = scan.recommendedExecutable else { return }
         let source = importSourceURL
+        let storage = importStorage
         isImportingGame = true
         Task {
             defer { isImportingGame = false }
@@ -1318,7 +1321,8 @@ final class AppViewModel: ObservableObject {
             guard let metadata = validatedImportMetadata(title: game.title, executablePath: executable.path, installPath: scan.installPath) else { return }
             do {
                 try await store.relocateLibraryEntry(gameID: game.id, folder: URL(fileURLWithPath: scan.installPath),
-                    executable: URL(fileURLWithPath: executable.path), identifier: metadata.identifier, fingerprint: metadata.fingerprint)
+                    executable: URL(fileURLWithPath: executable.path), identifier: metadata.identifier,
+                    fingerprint: metadata.fingerprint, storage: storage)
                 dismissImportScan()
                 await refresh()
                 importStatusMessage = "Game location updated. Existing files and saves were kept."
@@ -1375,6 +1379,7 @@ final class AppViewModel: ObservableObject {
             cachedMetadata = nil
         }
         let importSourceURL = importSourceURL
+        let importStorage = importStorage
         let requestID = importScanRequestID
         let importInstallPath =
             importSourceURL.map { resolvedImportInstallURL(for: $0).path } ?? scan.installPath
@@ -1417,11 +1422,16 @@ final class AppViewModel: ObservableObject {
                     managedArtifactIdentifier: metadata.identifier,
                     executableFingerprint: metadata.fingerprint,
                     runtimeBundleIdentifier: hostCapabilities.selectedRuntimeBundle?.id,
-                    runtimeBundleVersion: hostCapabilities.selectedRuntimeBundle?.version
+                    runtimeBundleVersion: hostCapabilities.selectedRuntimeBundle?.version,
+                    storage: importStorage
                     )
                 }
             } catch {
-                importStatusMessage = "Import failed. Existing game files were kept: \(error.localizedDescription)"
+                if case .filesFolder = importStorage {
+                    importStatusMessage = "Could not add game: \(error.localizedDescription)"
+                } else {
+                    importStatusMessage = "Import failed. Existing game files were kept: \(error.localizedDescription)"
+                }
                 return
             }
 
@@ -1458,6 +1468,7 @@ final class AppViewModel: ObservableObject {
         importMetadataCacheTitle = nil
         releaseImportSecurityScopedAccess()
         importScanResult = nil
+        importStorage = .managedCopy
         importStatusMessage = nil
     }
 

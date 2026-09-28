@@ -6,6 +6,8 @@ scratch=$(mktemp -d "${TMPDIR:-/tmp}/iridium-stikjit-check.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 xcrun swiftc "$root/Shared/JITMessages.swift" "$root/Tests/PairingCheck.swift" -o "$scratch/pairing-check"
 "$scratch/pairing-check"
+xcrun swiftc "$root/Shared/JITMessages.swift" "$root/Host/JITPairingStore.swift" "$root/Tests/PairingStoreCheck.swift" -o "$scratch/pairing-store-check"
+"$scratch/pairing-store-check"
 node "$root/Tests/script-check.js"
 python3 "$root/Tests/HandshakeCheck.py"
 xcrun clang -fobjc-arc -framework Foundation "$root/Tests/DecoderCheck.m" -o "$scratch/decoder-check"
