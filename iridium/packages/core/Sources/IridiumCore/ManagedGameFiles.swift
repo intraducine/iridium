@@ -1,11 +1,59 @@
 import Foundation
 
-/// File operations shared by import and relocation. Existing installs are never
-/// replaced in place: only a validated, uniquely named copy is returned.
+/// File operations shared by import and relocation. Existing game folders are
+/// never overwritten.
 public enum ManagedGameFiles {
     public struct ImportCopy: Sendable {
         public let directory: URL
         public let executable: URL
+    }
+
+    /// The user owns these files in the app's Documents/Games folder. No copy is made.
+    public static func gameFolders(in gamesRoot: URL) throws -> [URL] {
+        let fm = FileManager.default
+        try fm.createDirectory(at: gamesRoot, withIntermediateDirectories: true)
+        guard try gamesRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isSymbolicLink != true else {
+            throw GameImportError.invalidFilesFolder
+        }
+        return try fm.contentsOfDirectory(
+            at: gamesRoot,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ).filter { url in
+            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    public static func validateGameInPlace(
+        at source: URL,
+        executable: URL,
+        in gamesRoot: URL
+    ) throws -> (directory: URL, executable: URL) {
+        let suppliedRoot = gamesRoot.standardizedFileURL
+        let suppliedFolder = source.standardizedFileURL
+        let suppliedFile = executable.standardizedFileURL
+        let root = suppliedRoot.resolvingSymlinksInPath()
+        let folder = suppliedFolder.resolvingSymlinksInPath()
+        let file = suppliedFile.resolvingSymlinksInPath()
+        guard try suppliedRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true,
+              try suppliedRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isSymbolicLink != true,
+              folder.deletingLastPathComponent() == root,
+              isDescendant(file, of: folder),
+              file.pathExtension.lowercased() == "exe",
+              try suppliedFolder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true,
+              try suppliedFolder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isSymbolicLink != true,
+              try suppliedFile.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]).isRegularFile == true,
+              try suppliedFile.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]).isSymbolicLink != true
+        else {
+            throw GameImportError.invalidFilesFolder
+        }
+        do {
+            try validateTree(suppliedFolder)
+        } catch let error as CocoaError where error.code == .fileReadUnsupportedScheme {
+            throw GameImportError.invalidFilesFolder
+        }
+        return (folder, file)
     }
 
     public static func importCopy(
