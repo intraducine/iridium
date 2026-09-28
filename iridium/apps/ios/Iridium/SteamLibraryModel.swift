@@ -5,7 +5,7 @@ import Darwin
 
 struct SteamDownloadSnapshot: Decodable {
     var phase = "signedOut"
-    var message = "Sign in to download your Steam games."
+    var message = "Sign in to Steam."
     var busy = false
     var signedIn = false
     var accountName: String?

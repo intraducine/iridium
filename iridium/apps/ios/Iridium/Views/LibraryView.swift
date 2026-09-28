@@ -45,6 +45,7 @@ struct LibraryView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         }
+        .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom) {
             if !appSettings, detailGame == nil, let message = liveContainerIntegrationMessage ?? viewModel.importStatusMessage ?? artwork.lookupNote {
                 Text(message).font(.footnote).padding(12).frame(maxWidth: .infinity).background(.regularMaterial)

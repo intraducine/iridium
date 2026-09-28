@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Protect the touch-controller layout, XInput merge, and input settings wiring."""
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[1]
 app = root / "Iridium"
@@ -50,6 +51,33 @@ assert "editorControlSize" not in editor
 assert "touchControllerRenderedSize(" in editor
 assert "MoonlightStickArtwork(size: renderedSize" in editor
 assert "MoonlightDPadArtwork(size: renderedSize)" in editor
+
+# Default hit frames must remain separate on compact portrait and landscape phones.
+controls = [
+    (name, float(x), float(y), float(size))
+    for name, x, y, size in re.findall(
+        r"\.init\(mapping: \.(\w+), centerX: ([0-9.]+), centerY: ([0-9.]+), size: ([0-9.]+)",
+        layout,
+    )
+]
+assert len(controls) >= 15
+for screen_width, screen_height in [(375, 812), (393, 852), (852, 393)]:
+    frames = []
+    for name, x, y, size in controls:
+        base = max(38, size * min(screen_width, screen_height))
+        if name in ("menu", "view"):
+            width, height = base * 1.45, max(44, base * 0.65)
+        elif name in ("leftStick", "rightStick", "dpad", "leftTrigger", "rightTrigger", "leftBumper", "rightBumper"):
+            width = height = base
+        else:
+            width = height = max(44, base)
+        frames.append((name, x * screen_width, y * screen_height, width, height))
+    for index, first in enumerate(frames):
+        for second in frames[index + 1:]:
+            overlap_x = (first[3] + second[3]) / 2 - abs(first[1] - second[1])
+            overlap_y = (first[4] + second[4]) / 2 - abs(first[2] - second[2])
+            assert overlap_x <= 0 or overlap_y <= 0, (screen_width, first[0], second[0])
+
 assert "DragGesture(minimumDistance: 0, coordinateSpace: .local)" not in overlay
 for image in [
     "AButton", "BButton", "XButton", "YButton", "UpButton", "DownButton",
