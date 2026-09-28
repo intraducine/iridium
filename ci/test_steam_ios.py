@@ -19,7 +19,7 @@ class SteamIOSSimulatorTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(1)
         self.assertEqual(run.call_args_list[0].args[0],
-                         ['xcrun', 'simctl', 'spawn', 'device', '/usr/bin/true'])
+                         ['xcrun', 'simctl', 'spawn', 'device', 'launchctl', 'list'])
 
     def test_spawn_readiness_rejects_a_simulator_that_never_becomes_usable(self):
         failed = subprocess.CompletedProcess([], 1)

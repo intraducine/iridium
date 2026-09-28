@@ -13,8 +13,8 @@ def simulator_can_spawn(device):
     """Return whether CoreSimulator can execute a process on this device."""
     try:
         result = subprocess.run(
-            ['xcrun', 'simctl', 'spawn', device, '/usr/bin/true'],
-            capture_output=True, text=True,
+            ['xcrun', 'simctl', 'spawn', device, 'launchctl', 'list'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
             check=False, timeout=15,
         )
     except subprocess.TimeoutExpired:
