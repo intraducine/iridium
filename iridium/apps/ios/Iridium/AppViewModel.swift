@@ -533,6 +533,9 @@ final class AppViewModel: ObservableObject {
     private var externalJITEnablementTask: Task<Void, Never>?
     private var runtimePlayerReservation: ReservedRuntimePlayerSession?
     private var runtimePlayerPreparedSession: RuntimePlayerPreparedSession?
+    #if MADEIRA_RUNTIME
+    private var pendingMadeiraStart: (sessionID: String, start: @MainActor () -> Void)?
+    #endif
     private var runningSessionMonitorTask: Task<Void, Never>?
     private var runtimePlayerFirstFrameWatchdogTask: Task<Void, Never>?
     private var runtimePlayerVerificationContext: RuntimePlayerVerificationContext?
@@ -1448,13 +1451,18 @@ final class AppViewModel: ObservableObject {
     }
 
     func registerSteamDownload(title: String, appID: String, directory: String, executable: String) async throws {
-        guard UInt32(appID) != nil, !isImportingGame else { throw CocoaError(.fileReadInvalidFileName) }
+        guard let numericAppID = UInt32(appID), numericAppID > 0, !isImportingGame else { throw CocoaError(.fileReadInvalidFileName) }
+        guard activeRuntimePlayerSession == nil else {
+            throw NSError(domain: "IridiumSteam", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Close the running game before registering a Steam installation."])
+        }
         let managedRoot = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: false).appendingPathComponent("SteamGames").resolvingSymlinksInPath()
         let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL
         let file = root.appendingPathComponent(executable.replacingOccurrences(of: "\\", with: "/"))
             .resolvingSymlinksInPath().standardizedFileURL
-        guard root.path.hasPrefix(managedRoot.path + "/"), file.path.hasPrefix(root.path + "/"),
+        let expectedAppRoot = managedRoot.appendingPathComponent(String(numericAppID))
+        guard root.path.hasPrefix(expectedAppRoot.path + "/"), file.path.hasPrefix(root.path + "/"),
               file.pathExtension.lowercased() == "exe",
               try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
             throw CocoaError(.fileReadInvalidFileName)
@@ -1463,6 +1471,10 @@ final class AppViewModel: ObservableObject {
         let artifact = try await Task.detached(priority: .utility) {
             try inventory.makeManagedArtifact(title: title, executablePath: file.path, installPath: root.path)
         }.value
+        guard activeRuntimePlayerSession == nil else {
+            throw NSError(domain: "IridiumSteam", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Close the running game before registering a Steam installation."])
+        }
         let compatibility = BuiltInCompatibilityProfiles.recommendedCompatibilityProfile(forTitle: title)
         var game = await store.registerSteamGame(title: title, appID: appID, installPath: root.path,
             executablePath: file.path, compatibilityProfileName: compatibility.slug,
@@ -1910,6 +1922,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func launchActionDetail(for game: GameRecord) -> String? {
+        // The player is taking over this screen. A new detail row would move
+        // the library artwork while its launch position is being captured.
+        if activeRuntimePlayerSession?.gameID == game.id || runtimePlayerReservation?.gameID == game.id {
+            return nil
+        }
         if !FileManager.default.fileExists(atPath: game.launchProfile.executablePath) {
             return "Game file moved or missing. Open Game Options to locate its folder."
         }
@@ -2075,34 +2092,38 @@ final class AppViewModel: ObservableObject {
                     launchTicketPath: "", sessionLogPath: prepared.bridgeConfiguration.wineDebugLogPath,
                     telemetryPath: "", state: .running, stateHistory: [.running],
                     statusSummary: "Preparing Madeira. No rendered frame yet.", launchedAt: Date())
-                MadeiraRuntimeAdapter.start(executable: launchSession(for: game).executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launchSession(for: game).arguments,
-                    steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) }) { [weak self] message in
+                let launch = launchSession(for: game)
+                pendingMadeiraStart = (id, { [weak self] in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    if message.contains("failed") || message.hasPrefix("Cannot") {
+                    MadeiraRuntimeAdapter.start(executable: launch.executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launch.arguments,
+                        steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) }) { [weak self] message in
+                        guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                        if message.contains("failed") || message.hasPrefix("Cannot") {
+                            UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
+                        }
+                        self?.activeRuntimePlayerSession?.statusSummary = message
+                        self?.activityStatusMessage = message
+                        print("[IridiumMadeira] \(message)")
+                    } fail: { [weak self] message in
+                        guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
+                        self.activeRuntimePlayerSession?.state = .failed
+                        self.activeRuntimePlayerSession?.stateHistory.append(.failed)
+                        self.activeRuntimePlayerSession?.statusSummary = message
+                        self.activityStatusMessage = message
+                        RuntimeLogCapture.writeLine("[Launch] \(message)")
+                    } exited: { [weak self] in
+                        guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
+                        let presented = madeira_get_present_count() > 0
+                        self.madeiraShutdownUnconfirmed = false
+                        self.activeRuntimePlayerSession?.state = presented ? .completed : .failed
+                        self.activeRuntimePlayerSession?.stateHistory.append(presented ? .completed : .failed)
+                        let message = presented ? "The game stopped. Restart Iridium before another session." : "The game exited before displaying a frame. Restart Iridium before retrying."
+                        self.activeRuntimePlayerSession?.statusSummary = message
+                        self.activityStatusMessage = message
+                        RuntimeLogCapture.writeLine("[Launch] \(message)")
                     }
-                    self?.activeRuntimePlayerSession?.statusSummary = message
-                    self?.activityStatusMessage = message
-                    print("[IridiumMadeira] \(message)")
-                } fail: { [weak self] message in
-                    guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
-                    self.activeRuntimePlayerSession?.state = .failed
-                    self.activeRuntimePlayerSession?.stateHistory.append(.failed)
-                    self.activeRuntimePlayerSession?.statusSummary = message
-                    self.activityStatusMessage = message
-                    RuntimeLogCapture.writeLine("[Launch] \(message)")
-                } exited: { [weak self] in
-                    guard let self, self.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    let presented = madeira_get_present_count() > 0
-                    self.madeiraShutdownUnconfirmed = false
-                    self.activeRuntimePlayerSession?.state = presented ? .completed : .failed
-                    self.activeRuntimePlayerSession?.stateHistory.append(presented ? .completed : .failed)
-                    let message = presented ? "The game stopped. Restart Iridium before another session." : "The game exited before displaying a frame. Restart Iridium before retrying."
-                    self.activeRuntimePlayerSession?.statusSummary = message
-                    self.activityStatusMessage = message
-                    RuntimeLogCapture.writeLine("[Launch] \(message)")
-                }
+                })
             }
             return
         }
@@ -2260,6 +2281,14 @@ final class AppViewModel: ObservableObject {
             launchTimer.mark("executeLaunchReturned")
         }
     }
+
+    #if MADEIRA_RUNTIME
+    func startPendingMadeiraLaunch(sessionID: String) {
+        guard let pendingMadeiraStart, pendingMadeiraStart.sessionID == sessionID else { return }
+        self.pendingMadeiraStart = nil
+        pendingMadeiraStart.start()
+    }
+    #endif
 
     private func buildLaunchSession(for game: GameRecord, jitStatus: JITStatus) -> LaunchSession {
         let resolvedPolicy = runtimePolicy(for: game)
@@ -2629,6 +2658,7 @@ final class AppViewModel: ObservableObject {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             guard sessionIdentifier == nil || activeRuntimePlayerSession?.sessionIdentifier == sessionIdentifier else { return }
+            pendingMadeiraStart = nil
             MadeiraRuntimeAdapter.stop()
             runtimePlayerReservation = nil
             runtimePlayerPreparedSession?.teardown()

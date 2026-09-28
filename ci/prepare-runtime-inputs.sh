@@ -3,6 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MADEIRA="$ROOT/testrepos/Madeira"
+# Resolve and verify the converter before compilation.
+source "$MADEIRA/build/madeira-d3d12/deps.sh"
 # Resolve the separately installed Metal compiler before LLVM/FEX compilation.
 xcodebuild -downloadComponent MetalToolchain
 xcrun --sdk iphoneos metal --version
@@ -20,12 +22,5 @@ done
 modules+=(testrepos/Madeira/research/dxmt/include/native/directx)
 git submodule update --init --depth 1 -- "${modules[@]}"
 
-# Keep the local allocator change reproducible without changing its upstream gitlink.
-allocator="$MADEIRA/FEX/External/rpmalloc"
-patch="$ROOT/ci/patches/rpmalloc-host-arena.patch"
-if git -C "$allocator" apply --reverse --check "$patch" 2>/dev/null; then
-    : # Already applied.
-else
-    git -C "$allocator" apply --check "$patch"
-    git -C "$allocator" apply "$patch"
-fi
+# Upstream now supplies the arena handoff. Apply the remaining Iridium fixes.
+python3 "$ROOT/ci/apply-fex-runtime-corrections.py"

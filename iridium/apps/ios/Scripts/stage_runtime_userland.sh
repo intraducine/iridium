@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+case "${1:-}" in
+  ""|--check) ;;
+  *) echo "Usage: stage_runtime_userland.sh [--check]" >&2; exit 64 ;;
+esac
+
 runtime_bundle_root="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BundledRuntime/iridium-runtime-base"
 support_root="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/IridiumWineUserland"
 frameworks_root="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH:-Frameworks}"
@@ -30,7 +35,14 @@ ${SRCROOT}/../../../iridium-runtime-sdk/build/wine-userland-host/staged-root
 ${SRCROOT}/../../../iridium-wine-ios/build-iridium-ios/staged-root
 "
 
-for required_command in python3 ditto grep; do
+# An explicit root is a contract, not a hint. Do not silently use stale files
+# from another tree when validation of the selected local archive fails.
+if [ -n "${IRIDIUM_WINE_STAGED_ROOT:-}" ]; then
+  candidate_roots="${IRIDIUM_WINE_STAGED_ROOT}"
+fi
+required_commands="python3 grep"
+if [ "${1:-}" != "--check" ]; then required_commands="$required_commands ditto"; fi
+for required_command in ${required_commands}; do
   if ! command -v "${required_command}" >/dev/null 2>&1; then
     echo "error: ${required_command} is required to stage the bundled runtime userland." >&2
     exit 69
@@ -362,6 +374,12 @@ fi
 source_root=""
 embedded_guest_wine_loader=""
 source_root_validation_error=""
+# Candidate paths are newline separated. Preserve spaces and glob characters
+# in checkout paths without changing the whitespace rules of the other loops.
+saved_ifs=$IFS
+IFS='
+'
+set -f
 for candidate in ${candidate_roots}; do
   if [ ! -d "${candidate}" ] || [ ! -f "${candidate}/bin/wineserver" ]; then
     continue
@@ -429,6 +447,22 @@ if [ -z "${source_root}" ]; then
     echo "error: ${source_root_validation_error}" >&2
   fi
   exit 1
+fi
+
+IFS=$saved_ifs
+set +f
+
+# Validate the same source contract before Xcode and before modifying an app.
+for framework_name in libEGL libGLESv2; do
+  framework_source="${amethyst_root}/Natives/resources/Frameworks/${framework_name}.framework"
+  if [ ! -s "${framework_source}/${framework_name}" ]; then
+    echo "error: Missing framework binary ${framework_source}/${framework_name}" >&2
+    exit 1
+  fi
+done
+if [ "${1:-}" = "--check" ]; then
+  echo "Validated runtime staging sources; guest loader: ${embedded_guest_wine_loader}"
+  exit 0
 fi
 
 mkdir -p "${runtime_bundle_root}"

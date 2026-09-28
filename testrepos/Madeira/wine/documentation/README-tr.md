@@ -8,7 +8,7 @@ ve X11 eşdeğer çağrılarını kullanarak gerçekleyen Winelib isimli bir
 kitaplıktan oluşur. Kitaplık ayrıca Win32 kodlarını doğal Unix
 çalıştırılabilir dosyalarına çevirmek için kullanılabilir.
 
-Wine, GNU GPL altında dağıtılan özgür bir yazılımdır; ayrıntılar için
+Wine, GNU LGPL altında dağıtılan özgür bir yazılımdır; ayrıntılar için
 LICENSE dosyasına bakabilirsiniz.
 
 ## HIZLI BAŞLANGIÇ

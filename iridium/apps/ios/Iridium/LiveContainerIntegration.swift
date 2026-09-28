@@ -33,9 +33,11 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
         configurationFilePresent && !launchWithJITEnabled
     }
 
+    // JIT launch timing is a policy choice, not a validity check. The actual
+    // hosted repair enables startup JIT, while the lower-level repair helper
+    // keeps its historical default for callers that explicitly want late JIT.
     var fullyConfigured: Bool {
-        filePickerConfigured && automaticJITDisabled && jitScriptMatches
-            && usesLiveContainerBundleID
+        filePickerConfigured && jitScriptMatches && usesLiveContainerBundleID
     }
 
     func setupFeedback(launchStatus: LiveContainerIntegrationStatus) -> String? {
@@ -46,8 +48,12 @@ struct LiveContainerIntegrationStatus: Equatable, Sendable {
         guard fullyConfigured else {
             return "LiveContainer setup is incomplete. Use Add Game to repair its settings."
         }
-        guard launchStatus.fullyConfigured else {
+        guard launchStatus.fullyConfigured,
+              launchStatus.launchWithJITEnabled == launchWithJITEnabled else {
             return "Setup saved and verified. Restart required: fully close Iridium, then open it from LiveContainer. LiveContainer loads these per-app settings only when Iridium starts."
+        }
+        if launchWithJITEnabled {
+            return "LiveContainer setup complete. LiveContainer will prepare JIT before Iridium starts."
         }
         return "LiveContainer setup complete. Iridium will request JIT when you play."
     }
@@ -85,9 +91,8 @@ enum LiveContainerIntegration {
             return nil
         }
 
-        // Legacy configurations may have been launched by LiveContainer with
-        // this exact StikDebug script. Never infer that provider from the safe
-        // configuration where automatic host JIT is disabled.
+        // A hosted process launched through LiveContainer's matching StikDebug
+        // script already owns debugger-backed JIT before Iridium guest code runs.
         return ExternalJITProvider.stikDebug.runtimeIdentifier
     }
 
@@ -201,14 +206,16 @@ enum LiveContainerIntegration {
         }
         return try repair(
             configurationURL: bundleURL.appending(path: configurationFileName),
-            expectedJITScriptData: expectedJITScriptData
+            expectedJITScriptData: expectedJITScriptData,
+            launchWithJIT: true
         )
     }
 
     @discardableResult
     static func repair(
         configurationURL: URL,
-        expectedJITScriptData: Data
+        expectedJITScriptData: Data,
+        launchWithJIT: Bool = false
     ) throws -> LiveContainerIntegrationStatus {
         guard FileManager.default.fileExists(atPath: configurationURL.path) else {
             throw LiveContainerIntegrationError.missingConfiguration
@@ -217,14 +224,14 @@ enum LiveContainerIntegration {
             throw LiveContainerIntegrationError.malformedConfiguration
         }
 
-        // Keep host startup JIT disabled. Iridium requests JIT for its running
-        // process only after the user starts a game. StikDebug uses the bundle ID
-        // to return after JIT; hosted guests therefore need LiveContainer's bundle
-        // ID mode enabled in the same app-specific configuration.
+        // A hosted guest cannot safely depend on switching its already-running
+        // host to StikDebug. The real LiveContainer repair therefore requests JIT
+        // before Iridium starts. Bundle-ID mode lets StikDebug return to the
+        // hosted guest. The parameter keeps the lower-level helper reusable.
         configuration["doSymlinkInbox"] = true
         configuration["fixFilePickerNew"] = true
         configuration["doUseLCBundleId"] = true
-        configuration["isJITNeeded"] = false
+        configuration["isJITNeeded"] = launchWithJIT
         configuration["jitLaunchScriptJs"] = expectedJITScriptData.base64EncodedString()
 
         let encoded = try PropertyListSerialization.data(

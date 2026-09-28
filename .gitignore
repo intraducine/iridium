@@ -13,3 +13,8 @@ __pycache__/
 iridium/packages/steam/**/bin/
 iridium/packages/steam/**/obj/
 iridium/apps/ios/Frameworks/IridiumSteam.xcframework/
+
+# Apple converter installer and generated runtime binaries
+testrepos/Madeira/research/GPTK/*.pkg
+testrepos/Madeira/app/Madeira/d3d12/*.dylib
+testrepos/Madeira/build/madeira-d3d12/out*/

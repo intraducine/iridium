@@ -15,7 +15,7 @@ public static class SteamErrors
         var stage = phase switch
         {
             "initializing" or "connecting" or "authenticating" or "syncing" or "resolving"
-                or "downloading" or "finalizing" or "guard" or "approval" or "qr" => phase,
+                or "downloading" or "verifying" or "finalizing" or "guard" or "approval" or "qr" => phase,
             _ => "request",
         };
         var (kind, message) = error switch
@@ -28,7 +28,7 @@ public static class SteamErrors
             AuthenticationException => ("authentication", "Steam rejected the sign-in. Check your credentials and Steam Guard, then retry."),
             HttpRequestException or WebSocketException or System.Net.Sockets.SocketException
                 => ("network", "Could not connect to Steam. Check your connection and retry."),
-            IOException => ("io", stage is "downloading" or "finalizing"
+            IOException => ("io", stage is "downloading" or "verifying" or "finalizing"
                 ? "The download could not be saved. Check free storage and resume."
                 : "Steam communication was interrupted. Please retry."),
             _ => ("unexpected", "The Steam module could not complete this operation. Report the error code below."),

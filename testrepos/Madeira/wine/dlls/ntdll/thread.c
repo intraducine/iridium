@@ -4,16 +4,16 @@
  * Copyright 1996, 2003 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -236,6 +236,20 @@ void set_native_thread_name( DWORD tid, const char *name )
 void WINAPI RtlExitUserThread( ULONG status )
 {
     ULONG last;
+
+    /* iOS-Madeira ml806: name the SELF-shutdown path.
+     *
+     * A render thread exits while still owning a critical section and eight
+     * threads deadlock behind it permanently. The unix-side NtTerminateThread
+     * probe sees the tail of this (line below, with self=1), but only here are
+     * the exit STATUS and the CALLER visible -- and only here is it before
+     * LdrShutdownThread, which is the last point at which anything could still
+     * release what this thread holds. "It shut itself down after a timeout" and
+     * "something told it to stop" need different fixes, and the wineserver's
+     * violent=0 distinguishes neither. */
+    ERR( "[thr-exit] ml806 RtlExitUserThread tid=%04x status=%08x caller=%p\n",
+         (unsigned)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread,
+         (unsigned)status, __builtin_return_address(0) );
 
     NtQueryInformationThread( GetCurrentThread(), ThreadAmILastThread, &last, sizeof(last), NULL );
     if (last) RtlExitUserProcess( status );

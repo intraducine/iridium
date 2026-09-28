@@ -43,17 +43,25 @@ public sealed class SteamEngine(string root) : IAuthenticator
                 state = new();
                 return true;
             }
-            if (command.Action is not ("signIn" or "qr" or "restore" or "library" or "install")) return false;
-            if (command.Action is "library" or "install" && connection?.IsLoggedOn != true) return false;
+            if (command.Action is not ("signIn" or "qr" or "restore" or "library" or "details" or "install")) return false;
+            if (command.Action is "library" or "details" or "install" && connection?.IsLoggedOn != true) return false;
             if (command.Action == "signIn" && (string.IsNullOrWhiteSpace(command.AccountName) || string.IsNullOrEmpty(command.Password))) return false;
+            if (command.OperationId?.Length > 64) return false;
+            if (command.Action == "install")
+            {
+                try { _ = command.Options?.Validate() ?? throw new SteamFailure("Missing download options."); }
+                catch (SteamFailure) { return false; }
+            }
             operation?.Dispose();
             operation = new();
             if (command.Action is "signIn" or "qr" or "restore") operation.CancelAfter(TimeSpan.FromMinutes(5));
             state = state with { Busy = true, Error = null, ChallengeUrl = null, Installed = null,
                 Phase = command.Action == "install" ? "resolving" : "connecting",
                 Message = command.Action == "install" ? "Checking Windows game files…" : "Connecting to Steam…",
-                AppId = command.Action == "install" ? command.AppId : null, CompletedBytes = 0, TotalBytes = 0 };
-            _ = Task.Run(() => Run(command, operation.Token));
+                AppId = command.Action is "install" or "details" ? command.AppId : null, CompletedBytes = 0, TotalBytes = 0,
+                NetworkBytes = 0, OperationId = command.OperationId, Details = null };
+            var token = operation.Token;
+            _ = Task.Run(() => Run(command, token));
             return true;
         }
     }
@@ -66,7 +74,7 @@ public sealed class SteamEngine(string root) : IAuthenticator
             if (authenticating)
             {
                 connection?.Dispose();
-                Update(s => s with { Phase = "initializing", Message = "Starting the Steam client…" });
+                Update(s => s with { Phase = "initializing", Message = "Starting the Steam connection…" });
                 connection = new();
                 Update(s => s with { Phase = "connecting", Message = "Connecting to Steam…", SignedIn = false, Games = [], AccountName = null });
                 await connection.Connect(ct);
@@ -82,6 +90,11 @@ public sealed class SteamEngine(string root) : IAuthenticator
                 var games = await connection!.Library(ct);
                 Update(s => s with { Phase = "ready", Games = games, Message = "Choose a game to download." });
             }
+            if (command.Action == "details")
+            {
+                var info = await connection!.AppInfo(command.AppId, ct);
+                Update(s => s with { Phase = "ready", Details = SteamDepotSelection.Details(command.AppId, info), Message = "Download options are ready." });
+            }
             if (command.Action == "install")
             {
                 var game = Read().Games.FirstOrDefault(g => g.AppId == command.AppId)
@@ -89,14 +102,19 @@ public sealed class SteamEngine(string root) : IAuthenticator
                 var installed = await new SteamInstaller(connection!).Install(game, root,
                     (done, total) => Update(s => s with { CompletedBytes = Math.Max(s.CompletedBytes, done), TotalBytes = total }),
                     phase => Update(s => s with { Phase = phase,
-                        Message = phase == "finalizing" ? "Finishing installation…" : "Downloading and verifying on this device…" }), ct);
+                        Message = phase switch {
+                            "finalizing" => "Finishing installation…",
+                            "verifying" => "Checking saved game files…",
+                            _ => "Downloading and verifying on this device…" } }), ct,
+                    command.Options, command.ReuseDirectory,
+                    bytes => Update(s => s with { NetworkBytes = checked(s.NetworkBytes + bytes) }), command.OperationId);
                 Update(s => s with { Phase = "installed", Installed = installed, Message = "Verified. Choose the game's executable to add it to your library." });
             }
         }
         catch (OperationCanceledException)
         {
             Update(s => s with { Phase = authenticating ? "signedOut" : "paused",
-                Message = authenticating ? "Sign-in cancelled or expired." : "Paused. Choose Download / resume to continue." });
+                Message = authenticating ? "Sign-in cancelled or expired." : "Paused. Resume from Downloads to continue." });
         }
         catch (Exception e)
         {

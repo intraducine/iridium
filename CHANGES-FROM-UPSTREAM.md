@@ -1,8 +1,23 @@
 # Changes from upstream
 
+## Moonlight iOS touch input
+
+Source: https://github.com/moonlight-stream/moonlight-ios/blob/85af0f75622bb2636481afda8b0fc5cc33d5956e/Limelight/Input/OnScreenControls.m
+Original by Diego Waxemberg; copyright (c) 2014 Moonlight Stream.
+
+`TouchControllerOverlay.swift` uses a separate UIKit touch target for each
+control, following Moonlight's touch-down, move, release, and cancellation
+pattern. It does not port Moonlight's `OnScreenControls` class. The controller
+images in `iridium/apps/ios/Iridium/Assets.xcassets/` are copied from
+Moonlight iOS at the same revision. Iridium retains its saved positions and
+uses its own XInput bridge; it does not use Moonlight's streaming transport.
+The GPL-3.0 license is retained in
+`iridium/apps/ios/MadeiraSupport/Notices/Moonlight-LICENSE.txt`.
+
 ## Launch and shutdown corrections
 
 - `WineProcessBridge.m`: accept bounded JSON argv arrays from Iridium without space splitting; expose the root process exit code and use atomic liveness state. Preserve the older Madeira developer argument interface.
+- `WineProcessBridge.m`: set Wine's profile user to `madeira` before startup, repair existing `users\mobile` registry paths, and merge legacy profile files without overwriting saves or following directory links.
 - `Winios/Winios.m`: remove the direct per-keystroke trace, including software-keyboard input.
 - `WineServerBridge.m`: publish atomic liveness and clear it on thread cleanup, including fatal startup exits. No forced thread cancellation is added.
 
@@ -13,12 +28,13 @@ Iridium app changes include Madeira runtime integration, JIT helper support, med
 
 ## testrepos/Madeira
 Upstream: https://github.com/willfaust/Madeira
-Base revision: `97e2ce26e6dc9e4a38976f3b5deb9272d64558eb`
+Base revision: `8c050d03f4d89096e1e2e2c8bb44479fffd86619`
 
 Local modified source paths included in this snapshot:
 - `app/Madeira/ContentView.swift`
 - `app/Madeira/StikJITHelper.swift`
 - `app/Madeira/WineProcessBridge.m`
+- `build/madeira-d3d12/deps.sh` and `fetch-converter.sh`: use a checksum-pinned release dependency for hosted builds, retaining an official local-installer override and Apple notices.
 - `build/ntdll-unix/build.sh`
 - `build/ntdll-unix/signal_arm64_ios.c`: handle integer store-pair address updates in both exception paths.
 - `build/ntdll-unix/virtual_ios.c`: correct bitset indexing when retargeting thread-data reads in JIT code; remove unbounded diagnostic stack scans from allocation paths.
@@ -30,12 +46,12 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 
 ## testrepos/Madeira/FEX
 
-Iridium uses an app-reserved host arena in Wine and FEX. The local rpmalloc
-change is supplied in `ci/patches/rpmalloc-host-arena.patch` and applied by
-`ci/prepare-runtime-inputs.sh`. FEX host allocations remain inside that arena.
+Iridium uses an app-reserved host arena in Wine and FEX. Wine publishes that reservation through the upstream arena handoff.
+FEX host allocations remain inside that arena. The compact allocator and
+thread failure corrections remain in the tracked build patches.
 
 Upstream: https://github.com/willfaust/FEX
-Base revision: `053c385ecc9090702e4959a1d96752ea918a6110`
+Base revision: `0f8edf8f6383ae8085e0ffac511c789cdae97514`
 
 Local modified source paths included in this snapshot:
 - `FEXCore/Source/Interface/Core/Core.cpp`
@@ -45,17 +61,25 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 
 ## testrepos/Madeira/wine
 Upstream: https://github.com/willfaust/wine
-Base revision: `7817e220384e895651f868ba4d97affcf21b3816`
+Base revision: `723d1bf5132768276cea9bc35ab59c83557bb5fb`
+
+`dlls/ntdll/arm64ec_x64_export_iat.c` is supplied from Will Faust's source
+commit `32810bdeb4b9e72b02320e9b72ce3ba03ceee3d7` (LGPL-2.1-or-later).
+The public base includes it from `loader.c` but omits the file. Iridium includes
+the complete helper source so a clean checkout can configure Wine.
 
 Local modified source paths included in this snapshot:
+- `dlls/ntdll/sync.c`: retain ARM64/ARM64EC diagnostic timers and use Wine's performance counter on other architectures.
+- `dlls/ntdll/unix/sync.c`: restrict Apple thread QoS and Mach alert timing to Apple builds, and the ARM yield experiment to ARM64; Linux prefix builds keep their futex wait path.
 - `dlls/ntdll/loader.c`: restrict the JIT alias lifecycle diagnostic to ARM64EC, where its helper is defined; preserve the ARM64EC diagnostic.
+- `dlls/ntdll/signal_arm64ec.c`: guard loader image notifications against recursive FEX memory callbacks while preserving the caller's callback state.
 - `dlls/win32u/dibdrv/bitblt.c`: restrict iOS source-bitmap debug hooks to `WINE_IOS` builds so desktop Wine links without iOS app symbols.
 
 Generated artifacts, personal paths, device identifiers, and local captures were excluded or sanitized where applicable.
 
 ## testrepos/Madeira/research/dxmt
 Upstream: https://github.com/willfaust/dxmt
-Base revision: `b4b89f0a5a1752da3982a7b6c5575506024bf253`
+Base revision: `ca8a2516d819e7e1f366981825ad1f0d26f80fdd`
 
 Local modified source paths included in this snapshot:
 - `src/airconv/shaders/air_tessellation.metal`
@@ -92,6 +116,7 @@ Also restored nine fork-specific templates and required text .spec/.in inputs fr
 
 Restored the remaining legacy Wine .spec export definitions and removed their incorrect ignore rule after the next clean build identified an implicit MODULE dependency. Source checks now cover implicit module export definitions, not only explicitly listed sources.
 - Cerbero 1.28.6: select C++14 for the gperf 3.1 host-tool recipe. Its legacy `register` declarations fail with the newer compiler's C++17 default. The exact recipe patch is retained in `ci/patches/cerbero-gperf-cxx14.patch`; codec language settings are unchanged.
+- Cerbero 1.28.6: fetch spandsp 0.0.6 from GStreamer's source mirror after the original host began redirecting to a domain-sale page. The original SHA-256 remains pinned in `ci/patches/cerbero-spandsp-mirror.patch`.
 - Cerbero source packaging includes a MANIFEST.in patch to retain recipes, nested patches, configuration, package definitions, tools and the launcher. This changes the source archive, not codec compilation.
 - Cerbero restores nested Meson source and patch archives from its supplied cache after checksum verification. The patch is retained in `ci/patches/cerbero-meson-source-cache.patch` so offline WebRTC/Abseil builds do not need a network download.
 

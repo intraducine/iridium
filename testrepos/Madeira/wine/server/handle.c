@@ -4,16 +4,16 @@
  * Copyright (C) 1998 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -37,6 +37,16 @@
 #include "thread.h"
 #include "security.h"
 #include "request.h"
+
+/* iOS-Madeira ml805: events are wrappers whose close_handle is no_close_handle,
+ * so event.c cannot see duplicate or close. Record them from here, where they
+ * actually happen, or the [evt-hist] history would silently omit exactly the
+ * two operations that could explain a waiter left on a dead object. */
+extern void ios_evt_record( void *obj, void *sync, int op, int state );
+extern int ios_obj_is_event( struct object *obj );
+extern void *ios_evt_sync_of( struct object *obj );
+#define IOS_EVT_DUP   4
+#define IOS_EVT_CLOSE 5
 
 struct handle_entry
 {
@@ -433,6 +443,9 @@ unsigned int close_handle( struct process *process, obj_handle_t handle )
     if (!(entry = get_handle( process, handle ))) return STATUS_INVALID_HANDLE;
     if (entry->access & RESERVED_CLOSE_PROTECT) return STATUS_HANDLE_NOT_CLOSABLE;
     obj = entry->ptr;
+    /* ml805: a close is one of the two ways a waiter can be left on an object
+     * nobody will ever signal again, and event.c cannot observe it. */
+    if (ios_obj_is_event( obj )) ios_evt_record( obj, ios_evt_sync_of( obj ), IOS_EVT_CLOSE, -1 );
     if (!obj->ops->close_handle( obj, process, handle )) return STATUS_HANDLE_NOT_CLOSABLE;
 
     table = handle_is_global(handle) ? global_table : process->handles;
@@ -576,6 +589,10 @@ obj_handle_t duplicate_handle( struct process *src, obj_handle_t src_handle, str
     struct handle_entry *entry;
     unsigned int src_access, src_flags;
     struct object *obj = get_handle_obj( src, src_handle, 0, NULL );
+
+    /* ml805: record duplication too -- a duplicated handle means the producer
+     * may be signalling through a different handle than the waiter holds. */
+    if (ios_obj_is_event( obj )) ios_evt_record( obj, ios_evt_sync_of( obj ), IOS_EVT_DUP, -1 );
 
     if (!obj) return 0;
     if ((entry = get_handle( src, src_handle )))

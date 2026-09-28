@@ -25,7 +25,8 @@ class PreparedRuntimeTests(unittest.TestCase):
             (root / 'ci/binary-release-blockers.json').write_text('[]')
             prepared.check_outputs(root)
             self.assertEqual(prepared.prerequisites.blockers(root),
-                             ['native Steam framework: 1 required file(s) missing'])
+                             ['native Steam framework: missing iridium/apps/ios/Frameworks/'
+                              'IridiumSteam.xcframework/ios-arm64/IridiumSteam.framework/IridiumSteam'])
 
     def test_producer_must_complete_transfer_even_if_app_later_fails(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature', 'head_sha': 'a' * 40,

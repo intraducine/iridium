@@ -53,15 +53,3 @@ public enum JITToolRecommendation: String, Codable, CaseIterable, Sendable {
         }
     }
 }
-
-public struct JITReadinessChecker: Sendable {
-    private let provider: any HostCapabilityProvider
-
-    public init(provider: any HostCapabilityProvider = FileSystemHostCapabilityProvider()) {
-        self.provider = provider
-    }
-
-    public func checkStatus() async -> JITStatus {
-        await provider.snapshot().jitStatus
-    }
-}

@@ -7,7 +7,7 @@ bibliotek kalt «Winelib»; en uavhengig utgave av Windows' API som
 bruker Unix- eller X11-funksjoner. Biblioteket kan også brukes til å putte
 Windows-kode i vanlige Unix-programmer.
 
-Wine er fri programvare, utgitt under vilkårene i GNU GPL; se
+Wine er fri programvare, utgitt under vilkårene i GNU LGPL; se
 filen «LICENSE» for detaljer.
 
 

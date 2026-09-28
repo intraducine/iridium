@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <atomic>
+#include <chrono>
 #include "Interface/Context/Context.h"
 #include <FEXCore/Utils/LogManager.h>
 #include <FEXCore/Utils/SHMStats.h>
@@ -254,7 +256,30 @@ public:
     // If host pointer was found in L2 or L3, then add it to the counter.
     // Keeping track not L1 misses, but specifically L2/L3 hits.
     ++L2L3CacheHits;
+#ifdef FEX_IOS_HOST
+    {   /* ml1124: process-wide L1-miss rate (every 2^20 misses, with the time) */
+      static std::atomic<uint64_t> IosL1Misses {0};
+      static std::atomic<int64_t> IosL1LastNs {0};
+      const uint64_t M = IosL1Misses.fetch_add(1, std::memory_order_relaxed) + 1;
+      if ((M & 0xfffff) == 0) {
+        const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const int64_t Last = IosL1LastNs.exchange(Now, std::memory_order_relaxed);
+        if (Last) LogMan::Msg::EFmt("[l1-miss] ml1124 {} L1 misses total, {:.0f}/s over the last 2^20", M, 1048576.0 * 1e9 / double(Now - Last));
+      }
+    }
+#endif
 
+#ifdef FEX_IOS_HOST
+    /* ml1059: this runs on EVERY L1 miss, and system_clock::now() is a call through a
+     * GetProcAddress'd kernelbase pointer. On iOS such a pointer names the image's
+     * non-executable backing, so each call is an exec fault -> Mach exception ->
+     * redirect to the pool copy: measured as the exception thread pinned at 32-54%
+     * CPU and the hottest guest threads stalling a kernel round trip per lookup miss
+     * (>= 1.38M redirects at this one pc in a 10-minute run). The heuristic only
+     * needs a coarse rate, so look at the clock once per 256 hits; the hit COUNT
+     * stays exact. */
+    if (L2L3CacheHits & 0xff) return;
+#endif
     const auto CurrentTime = std::chrono::system_clock::now();
     const auto Period = CurrentTime - LastPeriod;
     if (Period >= SamplePeriod) {

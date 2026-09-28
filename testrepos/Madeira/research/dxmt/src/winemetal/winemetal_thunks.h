@@ -83,6 +83,37 @@ struct unixcall_mtldevice_newdepthstencilstate {
   obj_handle_t ret;
 };
 
+struct unixcall_mtldevice_heaptexturesizealign {   /* ml1072 */
+  obj_handle_t device;
+  struct WMTMemoryPointer info;
+  uint64_t ret_size;
+  uint64_t ret_align;
+};
+struct unixcall_mtldevice_newplacementheap {
+  obj_handle_t device;
+  uint64_t size;
+  uint64_t options;
+  obj_handle_t ret;
+};
+struct unixcall_mtlheap_newtextureatoffset {
+  obj_handle_t heap;
+  struct WMTMemoryPointer info;
+  uint64_t offset;
+  obj_handle_t ret;
+};
+struct unixcall_mtldevice_heapbuffersizealign {   /* ml1145 */
+  obj_handle_t device;
+  uint64_t length;
+  uint64_t options;
+  uint64_t ret_size;
+  uint64_t ret_align;
+};
+struct unixcall_mtlheap_newbufferatoffset {   /* ml1145 */
+  obj_handle_t heap;
+  struct WMTMemoryPointer info;
+  uint64_t offset;
+  obj_handle_t ret;
+};
 struct unixcall_mtldevice_newtexture {
   obj_handle_t device;
   struct WMTMemoryPointer info;
@@ -131,9 +162,25 @@ struct unixcall_mtldevice_newrenderpso {
   obj_handle_t ret_pso;
 };
 
+struct unixcall_mtldevice_newrenderpso_vd {
+  obj_handle_t device;
+  struct WMTConstMemoryPointer info;
+  struct WMTConstMemoryPointer vd;
+  obj_handle_t ret_error;
+  obj_handle_t ret_pso;
+};
+
 struct unixcall_mtldevice_newmeshrenderpso {
   obj_handle_t device;
   struct WMTConstMemoryPointer info;
+  obj_handle_t ret_error;
+  obj_handle_t ret_pso;
+};
+
+struct unixcall_mtldevice_newgeompso {   /* ml927 */
+  obj_handle_t device;
+  struct WMTConstMemoryPointer info;
+  struct WMTConstMemoryPointer ge;
   obj_handle_t ret_error;
   obj_handle_t ret_pso;
 };

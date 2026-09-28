@@ -9,6 +9,7 @@ import IridiumRuntime
     @State private var testFavorites = false
     @State private var plays = 0
     @State private var options = 0
+    @State private var touchButtons = 0
     @StateObject private var model: AppViewModel
     init() {
         let empty = ProcessInfo.processInfo.arguments.contains("--empty")
@@ -33,6 +34,14 @@ import IridiumRuntime
         } else {
             for game in games { try? LibraryArtwork.shared.update(game.id) { $0.cover = nil } }
         }
+        if ProcessInfo.processInfo.arguments.contains("--launch-presentation") {
+            for game in games {
+                try? LibraryArtwork.shared.update(game.id) {
+                    if !ProcessInfo.processInfo.arguments.contains("--covers") { $0.background = nil }
+                    if ProcessInfo.processInfo.arguments.contains("--launch-cover-only") { $0.background = nil }
+                }
+            }
+        }
         _model = StateObject(wrappedValue: AppViewModel.makeForTesting(games: games, importScanResult: scan,
             activeRuntimePlayerSession: ProcessInfo.processInfo.arguments.contains("--presented-player") ? Self.playerSession(game: games[0]) : nil))
     }
@@ -51,7 +60,9 @@ import IridiumRuntime
     }
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--presented-player") {
+            if ProcessInfo.processInfo.arguments.contains("--launch-presentation") {
+                LaunchPresentationPreview(games: model.games)
+            } else if ProcessInfo.processInfo.arguments.contains("--presented-player") {
                 Text("Player closed").accessibilityIdentifier("returnedFromPlayer")
                     .background { MadeiraPlayerPresentation(viewModel: model, presentationConfiguration: Self.playerConfiguration) }
             } else if ProcessInfo.processInfo.arguments.contains("--checks") {
@@ -63,6 +74,18 @@ import IridiumRuntime
             } else if ProcessInfo.processInfo.arguments.contains("--settings") {
                 NavigationStack { SettingsView(viewModel: model) }
                     .environmentObject(controller).environment(\.menuController, controller)
+            } else if ProcessInfo.processInfo.arguments.contains("--touch-controls") {
+                Color.black.ignoresSafeArea()
+                    .overlay { TouchControllerOverlay(gameID: model.games[0].id) }
+                    .overlay(alignment: .top) {
+                        Text("Touch presses: \(touchButtons)")
+                            .foregroundStyle(.white)
+                            .padding(.top, 16)
+                            .accessibilityIdentifier("touchPresses")
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .init("IridiumPreviewTouchButton"))) { _ in
+                        touchButtons += 1
+                    }
             } else if ProcessInfo.processInfo.arguments.contains("--player") {
                 let root = FileManager.default.temporaryDirectory.path
                 let session = RuntimePlayerSession(sessionIdentifier: "ui-only", gameID: model.games[0].id,

@@ -68,6 +68,8 @@ PY
     meson compile -C "$build" -j "$JOBS"
 done
 
+bash "$M/build/madeira-d3d12/build-pe.sh"
+
 # Validate the files consumed by staging before retaining this component.
 python3 - "$ROOT" <<'PY_CHECK'
 import importlib.util
@@ -79,8 +81,9 @@ stage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stage)
 madeira = root / 'testrepos/Madeira'
 stage.check_pe(madeira / 'FEX/build-arm64ec/Source/Windows/ARM64EC/libarm64ecfex.dll', 'arm64ec')
+stage.check_pe(madeira / 'build/madeira-d3d12/out-pe/d3d12.dll', 'arm64ec')
 for arch in stage.MACHINES:
     for module in ('d3d11/d3d11', 'dxgi/dxgi', 'winemetal/winemetal', 'd3d10/d3d10core'):
         stage.check_pe(madeira / f'research/dxmt/build-{arch}-ci/src/{module}.dll', arch)
-print('Verified FEX and all eight DXMT outputs before retention')
+print('Verified FEX, D3D12, and all eight DXMT outputs before retention')
 PY_CHECK

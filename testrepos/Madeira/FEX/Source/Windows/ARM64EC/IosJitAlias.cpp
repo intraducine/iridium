@@ -18,6 +18,8 @@
 // their own TU sidesteps the issue.
 
 #include <cstdint>
+#include <atomic>
+#include <FEXCore/Utils/LogManager.h>
 #include <windows.h>
 #include <winternl.h>
 #include "IosMonoBridge.h"
@@ -39,6 +41,14 @@ constexpr int kMaxEntries = 256;
 extern "C" {
 IosAliasEntry IosAliasEntries[kMaxEntries];
 volatile int IosAliasCount = 0;
+/* ml1116: the entry that satisfied the last translation, checked first by
+ * Module.S before the walk. A pointer (one atomic 8-byte store) rather than a
+ * copy of the fields, so a reader can never see a torn entry; a retired entry
+ * has Size 0 and simply misses. The walk itself now runs NEWEST-FIRST: the
+ * images the game calls (its own EC ntdll/kernel32/kernelbase, the D3D12
+ * runtime) are registered late, so oldest-first cost ~150 iterations per
+ * x64->EC call at up to a million calls a second. */
+IosAliasEntry* volatile IosAliasLast = nullptr;
 }
 
 namespace {
@@ -208,7 +218,149 @@ void ios_fex_mono_count_helper(int Miss) {
 }
 /* ========================== end ml648 MONO BRIDGE ========================= */
 
+/* ========================= ml951 SUB-FLOOR WINDOWS =======================
+ *
+ * iOS reserves the low 4GB of every task, so a PE whose preferred base is below
+ * it cannot be mapped there (measured four ways -- see the ml938 block in
+ * ntdll-unix/signal_arm64_ios.c). Such an image is mapped high instead, and
+ * Wine's fault handler services data accesses to the vacated low range against
+ * the real mapping.
+ *
+ * That covers faults, but not QUESTIONS. FEX's QueryGuestExecutableRange asks
+ * the InvalidationTracker whether an address is executable; the tracker is
+ * built from actually-mapped sections, so a low address answers "no" and FEX
+ * refuses to build the entry block ("NoExec instruction in entry block"). No
+ * fault occurs, so there is nothing for the handler to service. This table
+ * lets that one lookup be answered.
+ *
+ * ⛔ DELIBERATELY SEPARATE FROM IosAliasEntries. Module.S's ExitFunctionEC
+ * translates branch targets PeBase -> JitBase through that table inline, so an
+ * entry there REWRITES CONTROL FLOW. Putting a sub-floor window in it would
+ * silently move the guest RIP to the high backing address, which is exactly
+ * what must not happen: the guest's address identity has to stay low. This
+ * table is query-only and Module.S never sees it.
+ *
+ * Registration reuses BTCpu64IosAddAliasMapping rather than adding an export,
+ * because a new export would need a PE-side binding and these are ARM64EC PE
+ * entry points -- NOT callable from native Mach-O code (ml613 armed such a
+ * call and crashed every launch). The discriminator is self-identifying and
+ * disjoint: a real JIT alias's PeBase is a mapped PE image base, which on iOS
+ * is always >= 4GB; a sub-floor window's low base is by definition < 4GB.
+ */
+static constexpr uint64_t kIosSubfloorFloor = 0x100000000ull;
+static constexpr int kMaxSubfloorEntries = 8;
+
+struct IosSubfloorEntry {
+  uint64_t LowBase;   // what the guest uses (below the floor)
+  uint64_t RealBase;  // where the image actually is
+  uint64_t Size;
+  uint64_t _Padding;
+};
+static IosSubfloorEntry g_Subfloor[kMaxSubfloorEntries];
+static int g_SubfloorCount;
+
+// low -> real, or Addr unchanged when it is not in a window.
+uint64_t IosSubfloorToReal(uint64_t Addr) {
+  if (Addr >= kIosSubfloorFloor) {
+    return Addr; // fast reject: the overwhelmingly common case
+  }
+  const int count = g_SubfloorCount;
+  for (int i = 0; i < count; i++) {
+    const uint64_t lb = g_Subfloor[i].LowBase;
+    const uint64_t sz = g_Subfloor[i].Size;
+    if (sz && Addr >= lb && Addr < lb + sz) {
+      return g_Subfloor[i].RealBase + (Addr - lb);
+    }
+  }
+  return Addr;
+}
+
+// ml1057: is this guest RIP code that belongs to a sub-floor image -- either at the
+// image's real (high) mapping, which is where it executes, or named by its low
+// address? If so report the window so the JIT can translate that image's own
+// memory operands inline instead of faulting on each one.
+extern "C" int IosSubfloorWindowForCode(uint64_t Rip, uint64_t* Low, uint64_t* Size, uint64_t* Real) {
+  const int count = g_SubfloorCount;
+  for (int i = 0; i < count; i++) {
+    const uint64_t lb = g_Subfloor[i].LowBase, rb = g_Subfloor[i].RealBase, sz = g_Subfloor[i].Size;
+    if (!sz || !rb) continue;
+    if ((Rip >= rb && Rip < rb + sz) || (Rip >= lb && Rip < lb + sz)) {
+      static std::atomic<int> Said {0};
+      if (Said.fetch_add(1, std::memory_order_relaxed) < 4) {
+        LogMan::Msg::EFmt("[iOS-subfloor-xlate] ml1057 block at {:#x} lives in window [{:#x},+{:#x}) -> {:#x}: translating its "
+                          "memory operands inline", Rip, lb, sz, rb);
+      }
+      *Low = lb; *Size = sz; *Real = rb;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// real -> low, or Addr unchanged. Used to map a tracker result back into the
+// guest's own address domain so the guest RIP is never moved high.
+uint64_t IosSubfloorToLow(uint64_t Addr) {
+  const int count = g_SubfloorCount;
+  for (int i = 0; i < count; i++) {
+    const uint64_t rb = g_Subfloor[i].RealBase;
+    const uint64_t sz = g_Subfloor[i].Size;
+    if (sz && Addr >= rb && Addr < rb + sz) {
+      return g_Subfloor[i].LowBase + (Addr - rb);
+    }
+  }
+  return Addr;
+}
+
+// Clip a range to the end of the window containing LowAddr, so a tracker range
+// can never be reported as extending past the window we actually back.
+uint64_t IosSubfloorClipSize(uint64_t LowAddr, uint64_t Size) {
+  const int count = g_SubfloorCount;
+  for (int i = 0; i < count; i++) {
+    const uint64_t lb = g_Subfloor[i].LowBase;
+    const uint64_t sz = g_Subfloor[i].Size;
+    if (sz && LowAddr >= lb && LowAddr < lb + sz) {
+      const uint64_t avail = (lb + sz) - LowAddr;
+      return Size < avail ? Size : avail;
+    }
+  }
+  return Size;
+}
+
+static bool IosSubfloorAdd(uint64_t LowBase, uint64_t RealBase, uint64_t Size) {
+  const int count = g_SubfloorCount;
+  for (int i = 0; i < count; i++) {
+    if (g_Subfloor[i].LowBase == LowBase) {
+      // Re-registration: a second pseudo-process mapped the same image. Last
+      // writer wins, which is unsafe with two live loaders -- see the ml938
+      // note; ownership is owed before this is durable.
+      g_Subfloor[i].RealBase = RealBase;
+      __sync_synchronize();
+      g_Subfloor[i].Size = Size;
+      return true;
+    }
+  }
+  if (count >= kMaxSubfloorEntries) {
+    return false;
+  }
+  g_Subfloor[count].LowBase = LowBase;
+  g_Subfloor[count].RealBase = RealBase;
+  __sync_synchronize();
+  g_Subfloor[count].Size = Size; // published last
+  g_SubfloorCount = count + 1;
+  return true;
+}
+/* ======================= end ml951 SUB-FLOOR WINDOWS ===================== */
+
 void BTCpu64IosAddAliasMapping(uint64_t PeBase, uint64_t JitBase, uint64_t Size) {
+  /* ml951: a sub-floor window arrives through this same entry point, marked by
+   * a below-4GB "PeBase" (no real PE base can be there on iOS). Route it to the
+   * query-only table and return -- it must NEVER land in IosAliasEntries, which
+   * Module.S uses to rewrite branch targets. */
+  if (PeBase < kIosSubfloorFloor) {
+    IosSubfloorAdd(PeBase, JitBase, Size);
+    return;
+  }
+
   int count = g_EntryCount;
 
   // Identical re-registration: nothing to do.
@@ -244,6 +396,13 @@ void BTCpu64IosAddAliasMapping(uint64_t PeBase, uint64_t JitBase, uint64_t Size)
   }
 
   if (count >= kMaxEntries) {
+    /* ml1106: a silent refusal here means ExitFunctionEC never translates this
+     * image, so EVERY x64->EC call into it pays a Mach exec-fault redirect
+     * (ph-rdr59: 69k of every 100k redirects were one kernelbase export). */
+    static int said = 0;
+    if (said++ < 8) {
+      LogMan::Msg::EFmt("[jit-alias] ml1106 IosAliasEntries FULL ({} entries): image 0x{:x}+0x{:x} NOT registered -- its calls will fault-redirect", count, PeBase, Size);
+    }
     return;
   }
   g_Entries[count].PeBase = PeBase;

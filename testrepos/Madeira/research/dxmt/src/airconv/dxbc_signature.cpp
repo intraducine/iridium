@@ -402,6 +402,22 @@ void handle_signature_ps(
     if (sig.mask() == 0) break;
     signature_handlers.push_back([=, type = sig.componentType(), name = sig.fullSemanticString()]
     (SignatureContext &ctx) {
+      /* ml1031: if we know which interpolants the paired vertex stage writes and
+       * this is not one of them, do NOT declare a stage_in entry for it --
+       * Metal would reject the whole pipeline. Zero the register instead; the
+       * value is undefined in D3D anyway. */
+      ctx.ps_inputs_seen++;
+      if (ctx.provided_interpolants && !ctx.provided_interpolants->contains(name)) {
+        ctx.ps_inputs_zeroed++;
+        if (ctx.ps_inputs_zeroed_names.size() < 160) {
+          if (!ctx.ps_inputs_zeroed_names.empty()) ctx.ps_inputs_zeroed_names += ",";
+          ctx.ps_inputs_zeroed_names += name;
+        }
+        ctx.prologue << init_input_reg_zero(
+          reg, mask, type != RegisterComponentType::Float
+        );
+        return;
+      }
       bool pull_mode = bool(ctx.pull_mode_reg_mask & (1 << reg)) && interpolation != air::Interpolation::flat;
       auto assigned_index = ctx.func_signature.DefineInput(InputFragmentStageIn{
         .user = name, .type = to_msl_type(type), .interpolation = interpolation, .pull_mode = pull_mode
@@ -566,7 +582,7 @@ void handle_signature_ps(
         if (type == RegisterComponentType::Float && ctx.unorm_output_reg_mask & (1 << reg))
           ctx.epilogue >> pop_output_reg_fix_unorm(reg, mask, assigned_index);
         else
-          ctx.epilogue >> pop_output_reg(reg, mask, assigned_index);
+          ctx.epilogue >> pop_output_reg_fill(reg, mask, assigned_index);   /* ml1109 */
       });
       break;
     }

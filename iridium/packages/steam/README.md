@@ -2,7 +2,7 @@
 
 This module implements direct Steam client sign-in, Steam Guard/QR authentication,
 authenticated library retrieval, and resumable Windows depot downloads. The iOS
-shell exposes it under **Add Game → Download from Steam**. No PC or API key is used.
+shell exposes a native **Downloads** tab, also reachable through **Add Game → Download from Steam**. No PC or API key is used.
 
 ## Build and test
 
@@ -62,18 +62,21 @@ including exception messages, passwords, tokens, or local paths.
 
 - Passwords are held only during authentication. Saved sessions go to an iOS
   Keychain item with `WhenUnlockedThisDeviceOnly`; sign-out deletes the item.
-- Only one account operation/download runs at a time. Download uses up to four
-  concurrent chunks, pooled buffers, bounded retries, and manifest/file hashes.
+- Only one account operation/download runs at a time. Downloads use one to eight
+  concurrent chunks (four by default), pooled buffers, bounded retries, and manifest/file hashes.
   Steam cache and CDN hosts are used over TLS only, including hosts that report
   HTTPS as optional; there is no plain-HTTP, proxy, simulated account, or download
   fallback.
-- Downloads pause when backgrounded. Select the same game to resume after reopening;
+- Downloads pause when backgrounded. Explicitly resume the saved queue job after reopening;
   valid chunks are reused, including after a process restart.
 - Installs live in Application Support, excluded from device backups. Each build
   has a separate directory. Existing imported games and their saves stay in place.
 - The initial selection is the public Windows 64-bit/neutral English build.
-  Encrypted beta branches, 32-bit-only depots, conflicting depot overlays, Cloud
-  saves, automatic updates, and desktop Steam IPC are not implemented.
+  Unprotected branch, language,
+  32/64-bit depot and DLC selection are available in Download Options. Password-protected
+  branches, Cloud saves, automatic update scheduling and desktop Steam IPC are not implemented.
+  Case-only and file/directory collisions fail safely; see the architecture decision
+  for exact-path overlay rules and the remaining specialized entitlement gaps.
 - Download authorization does not make a game compatible with Wine/FEX. Steam DRM,
   third-party launchers, anti-cheat, and device/JIT limitations can prevent play.
 
@@ -90,3 +93,20 @@ See the architecture decision and third-party notices for storage migration and
 source/relink requirements. The source collector retains the new dependencies;
 the binary inventory must be updated against a real compiled iOS framework before
 an IPA containing this module is distributed.
+
+
+## Native Downloads tab
+
+The Swift front end now maintains an account-scoped, atomic persistent queue, with
+explicit pause/resume, retry/cancel, priority and completed-install history. Jobs
+carry an operation UUID through the native ABI; callbacks cannot cross jobs.
+`Command.options` selects branch, language, Windows architecture, DLC and bounded
+chunk concurrency. `Command.reuseDirectory` enables verified-chunk reuse only from
+a previous managed installation of the same app. Repairs and redownloads do not
+modify committed game folders. Unsigned Steam build/manifest IDs remain strings.
+
+Run `python3 ci/check-steam-queue.py` from the repository root for the Foundation-only
+queue tests. The managed and NativeAOT test programs also run `DownloadFeatureTests`.
+Core `SteamDownloadRegistrationTests` check identity and custom-setting preservation.
+See `docs/decisions/native-steam-downloads.md` for storage rules, device validation,
+rollback, and explicit WinNative parity boundaries. No full-parity claim is made.

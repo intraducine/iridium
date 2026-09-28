@@ -4,16 +4,16 @@
  * Copyright (C) 1998 Alexandre Julliard
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -1183,6 +1183,16 @@ void reset_sync( struct object *obj )
 }
 
 /* finish waiting */
+/* iOS-Madeira ml808: the ml807 wait-begin/end hooks were REMOVED from here.
+ *
+ * wait_on/end_wait are the hottest and earliest paths in the server -- they run
+ * long before any guest code -- and instrumenting them wedged startup outright:
+ * FEX never reached ProcessInit, the log stopped after the first send_client_fd,
+ * and the app sat at 8 threads. The per-object SET/reset counters in event.c
+ * answer the primary question ("was this event ever signalled") without
+ * touching this path at all. If wait timing is needed later it must be
+ * collected somewhere cold, not here. */
+
 static unsigned int end_wait( struct thread *thread, unsigned int status )
 {
     struct thread_wait *wait = thread->wait;
@@ -1922,7 +1932,9 @@ DECL_HANDLER(init_first_thread)
     if ((fd = get_inproc_device_fd()) >= 0)
     {
         reply->inproc_device = get_process_id( process ) | 1;
+#ifndef WINE_IOS   /* ml1058: the device is a constant pseudo fd on iOS; nothing to send */
         send_client_fd( process, fd, reply->inproc_device );
+#endif
     }
 }
 
@@ -2546,6 +2558,11 @@ DECL_HANDLER(get_inproc_alert_fd)
     else
     {
         reply->handle = get_thread_id( current ) | 1; /* arbitrary token */
+#ifdef WINE_IOS
+        { extern void madsync_post( unsigned int pid, unsigned int handle, int fd );
+          madsync_post( get_process_id( current->process ), reply->handle, fd ); }   /* ml1058 */
+#else
         send_client_fd( current->process, fd, reply->handle );
+#endif
     }
 }

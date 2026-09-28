@@ -9,7 +9,11 @@ enum StikJITHelper {
     private static let persistentScriptRequestKey = "IridiumPersistentJITScriptRequested"
 
     static var persistentScriptRequested: Bool {
-        UserDefaults.standard.bool(forKey: persistentScriptRequestKey) &&
+        // LiveContainer can attach StikDebug before Iridium starts, so there is
+        // no in-app UserDefaults request marker in that path. CS_DEBUGGED is the
+        // authoritative state for whether this process already has JIT.
+        if jit_check_debugged() { return true }
+        return UserDefaults.standard.bool(forKey: persistentScriptRequestKey) &&
             UserDefaults.standard.double(forKey: "IridiumJITDeadline") > Date().timeIntervalSince1970
     }
 

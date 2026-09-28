@@ -3992,9 +3992,23 @@ void OpDispatchBuilder::CreateJumpBlocks(const fextl::vector<FEXCore::Frontend::
   }
 }
 
+#if defined(FEX_IOS_HOST) && defined(_WIN32)
+}  // namespace FEXCore::IR
+extern "C" int IosSubfloorWindowForCode(uint64_t Rip, uint64_t* Low, uint64_t* Size, uint64_t* Real);
+namespace FEXCore::IR {
+#endif
 void OpDispatchBuilder::BeginFunction(uint64_t RIP, const fextl::vector<FEXCore::Frontend::Decoder::DecodedBlocks>* Blocks,
                                       uint32_t NumInstructions, bool _Is64BitMode, bool MonoBackpatcherBlock) {
   Entry = RIP;
+#if defined(FEX_IOS_HOST) && defined(_WIN32)
+  {
+    uint64_t Low = 0, Sz = 0, Real = 0;
+    IosXl.On = false;
+    if (IosSubfloorWindowForCode(RIP, &Low, &Sz, &Real) && Sz && Sz < (1ull << 40)) {
+      IosXl.On = true; IosXl.Low = Low; IosXl.Size = Sz; IosXl.Delta = Real - Low;
+    }
+  }
+#endif
   Is64BitMode = _Is64BitMode;
   LOGMAN_THROW_A_FMT(Is64BitMode == CTX->Config.Is64BitMode, "Expected operating mode to not change at runtime!");
   IsMonoBackpatcherBlock = MonoBackpatcherBlock;

@@ -34,6 +34,7 @@ IOS = 'iridium/apps/ios/'
 TREES = (
     'iridium-runtime-sdk/build/iridium-runtime-base',
     APP + 'aarch64-windows', APP + 'arm64ec-windows', APP + 'nls', APP + 'fonts',
+    APP + 'd3d12', APP + 'licenses',
     IOS + 'MediaRuntime', IOS + 'ControllerRuntime',
     IOS + 'BuiltinJIT/Vendor/StikJIT.xcframework',
     'Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework',

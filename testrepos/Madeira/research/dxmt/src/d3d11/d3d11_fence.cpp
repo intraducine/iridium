@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "d3d11_fence.hpp"
 #include "d3d11_device_child.hpp"
 #include "d3d11_resource.hpp"
@@ -83,6 +84,18 @@ public:
   HRESULT STDMETHODCALLTYPE SetEventOnCompletion(UINT64 Value,
                                                  HANDLE Event) final {
     auto shared_event_listener = this->m_parent->GetDXMTDevice().queue().GetSharedEventListener();
+    /* ml805: trace the fence path so its SILENCE is evidence.
+     *
+     * In remote mode MTLSharedEvent_setWin32EventAtValue is unimplemented
+     * (wmt_remote_guard.h) and its result is discarded below, so a caller is
+     * told S_OK while nothing will ever signal the event -- a credible way to
+     * strand a waiter forever. The run under investigation shows no
+     * "unrouted: MTLSharedEvent_setWin32EventAtValue" marker, which suggests
+     * this path is never taken, but absence of one probe's string is not proof.
+     * This line makes the branch report itself either way. */
+    fprintf(stderr, "[fence] ml805 SetEventOnCompletion event=%p value=%llu win32=%p listener=%p\n",
+            (void *)event.handle, (unsigned long long)Value, (void *)Event,
+            (void *)shared_event_listener);
     MTLSharedEvent_setWin32EventAtValue(event.handle, shared_event_listener, Event, Value);
     return S_OK;
   };

@@ -35,3 +35,30 @@ Three limits, stated plainly rather than left implied:
 ## Contributing
 
 Contributions are accepted under **GPL-3.0-or-later**. See `CONTRIBUTING.md`.
+
+## Additional permission for the Apple Metal Shader Converter (adopted 2026-09-24)
+
+The Madeira-authored modifications and new files in this repository (the
+commits by Will Faust) are offered under GPL-3.0-or-later **with** the
+following additional permission, reproduced here in full so this grant is
+self-contained. Upstream code keeps its own licence and notices and needs
+no exception. Prepared 2026-09-16; the copyright holder adopted it on
+2026-09-24, as recorded in the adoption line of the top-level Madeira
+repository's LICENSE-EXCEPTION.md, before any public push.
+
+### Madeira Converter Exception, version 1 (of 2026-09-16; in effect from the adoption recorded in the top-level LICENSE-EXCEPTION.md)
+
+Additional permission under GNU GPL version 3 section 7.
+
+If you modify this Program, or any covered work, by linking or combining it
+with the Apple Metal Shader Converter dynamic library
+(libmetalirconverter.dylib, in any version) or with Apple's Metal,
+Foundation, CoreGraphics, QuartzCore, UIKit, AppKit and related system
+frameworks, or with modified versions of those libraries, the licensors of
+this Program grant you additional permission to convey the resulting work.
+Corresponding Source for a non-source form of such a combination shall
+include the source code for the parts of the Program used in the
+combination, but need not include the source code of those Apple libraries.
+This permission does not extend to those libraries, which remain subject to
+Apple's own licence terms. You may remove this additional permission from
+copies you convey, as GPL-3.0 section 7 allows.

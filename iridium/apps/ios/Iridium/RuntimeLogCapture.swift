@@ -117,9 +117,9 @@ enum RuntimeLogCapture {
 
     static func launchSummary(_ line: String) -> String? {
         if let range = line.range(of: "[Launch] ") { return String(line[range.upperBound...]) }
-        if line.contains("first-present") || line.contains("firstFrameObserved") {
-            return "First game frame received."
-        }
+        // First-frame state is intentionally never inferred from log text. The player
+        // owns that milestone directly from the current render host's present counter.
+        if line.contains("first-present") || line.contains("firstFrameObserved") { return nil }
         if line.contains("[IridiumMadeira]"), line.contains("failed") || line.contains("Cannot") {
             return line
         }

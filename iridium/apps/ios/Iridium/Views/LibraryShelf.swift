@@ -40,15 +40,9 @@ struct LibraryShelf: View {
                     isLoading: selected.map { artwork.appearance($0.id).background != nil } ?? false,
                     position: selected.map { artwork.appearance($0.id).backgroundY } ?? 0.5,
                     reduceMotion: reduceMotion)
-                .overlay {
-                    LinearGradient(stops: [
-                        .init(color: .black.opacity(0.6), location: 0),
-                        .init(color: .black.opacity(0.6), location: 0.3),
-                        .init(color: .black.opacity(0.12), location: 0.6),
-                        .init(color: .black.opacity(0.5), location: 1)
-                    ], startPoint: .top, endPoint: .bottom)
-                }.overlay {
-                    LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
+                .overlay { LibraryBackdropScrim() }
+                .background {
+                    if let selected { RuntimeLaunchSource(gameID: selected.id, role: .backdrop) }
                 }.ignoresSafeArea()
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: landscape ? 10 : 24) {
@@ -80,6 +74,8 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.title2.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
+                                        .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: true, showReason: false).fixedSize()
                                 }
                                 if let reason = launchDetail(selected) {
@@ -90,6 +86,8 @@ struct LibraryShelf: View {
                                     Text(artwork.title(selected)).font(.largeTitle.bold())
                                         .lineLimit(1).truncationMode(.tail)
                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background { RuntimeLaunchSource(gameID: selected.id, role: .title) }
+                                        .accessibilityIdentifier("libraryGameTitle")
                                     actions(selected, landscape: false)
                                 }
                             }
@@ -173,6 +171,9 @@ struct LibraryShelf: View {
                                                 VStack(alignment: .leading, spacing: 8) {
                                                     ArtworkImage(image: artwork.displayImage(artwork.appearance(game.id).cover), title: "", position: artwork.appearance(game.id).coverY, fit: !artwork.appearance(game.id).customCover)
                                                         .frame(height: coverHeight)
+                                                        .background {
+                                                            if game.id == selected.id { RuntimeLaunchSource(gameID: game.id, role: .cover) }
+                                                        }
                                                         .clipShape(RoundedRectangle(cornerRadius: 18))
                                                         .padding(4)
                                                         .overlay { RoundedRectangle(cornerRadius: 22).stroke(game.id == selected.id && (!controller.showingControllerHints || menuFocus == .covers) ? .white : .clear, lineWidth: 3) }
@@ -333,8 +334,8 @@ struct LibraryShelf: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 16) {
                 Button { menuFocus = .play; searching = false; play(game) } label: {
-                    Label { Text(launchTitle(game)).fontWeight(.semibold) } icon: { inputIcon("play.fill", position: 1) }
-                        .padding(.horizontal, 12).frame(minHeight: 34)
+                    Label { Text(launchTitle(game)).fontWeight(.semibold).lineLimit(1) } icon: { inputIcon("play.fill", position: 1) }
+                        .padding(.horizontal, 12).frame(minWidth: landscape ? 180 : nil).frame(minHeight: 34)
                 }.libraryGlass(prominent: true).disabled(disabled(game)).focused($keyboardFocus, equals: .play).overlay { controllerFocus(.play) }.onHover { if $0 { menuFocus = .play } }
                 Button { menuFocus = .options; details(game) } label: {
                     Label { Text("Game Options") } icon: { Group {
@@ -363,23 +364,6 @@ struct LibraryShelf: View {
     }
 }
 
-private struct LibraryGlass: ViewModifier {
-    let prominent: Bool
-    @Environment(\.isEnabled) private var isEnabled
-    @ViewBuilder func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            if prominent && isEnabled { content.buttonStyle(.glassProminent).tint(.white).foregroundStyle(.black) }
-            else { content.buttonStyle(.glass) }
-        } else {
-            if prominent && isEnabled { content.buttonStyle(.borderedProminent).tint(.white).foregroundStyle(.black) }
-            else { content.buttonStyle(.bordered) }
-        }
-    }
-}
-extension View {
-    func libraryGlass(prominent: Bool = false) -> some View { modifier(LibraryGlass(prominent: prominent)) }
-}
-
 private struct LibraryPanel: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 26.0, *) { content.glassEffect(.regular, in: Capsule()) }
@@ -390,45 +374,26 @@ private extension View {
     func libraryPanel() -> some View { modifier(LibraryPanel()) }
 }
 
-/// Shared backdrop for native settings, editors, activity and game details.
-struct IridiumPageSurface: ViewModifier {
-    @ObservedObject var artwork: LibraryArtwork
-    var gameID: UUID?
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    func body(content: Content) -> some View {
-        content
-            .scrollContentBackground(.hidden)
-            .background {
-                ZStack {
-                    Color.black
-                    if !reduceTransparency, let id = gameID ?? artwork.backdropGameID,
-                       let image = artwork.displayImage(artwork.appearance(id).background) {
-                        ArtworkImage(image: image, title: "", position: artwork.appearance(id).backgroundY)
-                            .blur(radius: 14).overlay(.black.opacity(0.62))
-                    }
-                }.ignoresSafeArea()
-            }
-            // Leave native controls on their semantic tint. White is only a local
-            // Play button fill, paired with black text, never a page-wide accent.
-            .preferredColorScheme(.dark)
-            .toolbarBackground(.hidden, for: .navigationBar)
+/// Used by both the library and its launch continuation; only strength changes.
+struct LibraryBackdropScrim: View {
+    var strength = 1.0
+    var body: some View {
+        LinearGradient(stops: [
+            .init(color: .black.opacity(0.6), location: 0),
+            .init(color: .black.opacity(0.6), location: 0.3),
+            .init(color: .black.opacity(0.12), location: 0.6),
+            .init(color: .black.opacity(0.5), location: 1)
+        ], startPoint: .top, endPoint: .bottom)
+        .overlay {
+            LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing)
+        }
+        .opacity(strength)
+        .allowsHitTesting(false)
     }
 }
-extension View {
-    @MainActor func iridiumPageSurface(artwork: LibraryArtwork? = nil, gameID: UUID? = nil) -> some View {
-        modifier(IridiumPageSurface(artwork: artwork ?? .shared, gameID: gameID))
-    }
-    @MainActor func iridiumListChrome(onBack: (() -> Void)? = nil) -> some View {
-        listStyle(.insetGrouped)
-            .environment(\.defaultMinListRowHeight, 54)
-            .iridiumPageSurface()
-            .controllerMenuScope(onBack: onBack)
-    }
-}
-
 
 // Keep image layers alive while fading, so another selection can reverse their current opacity.
-private struct LibraryBackdrop: UIViewRepresentable {
+struct LibraryBackdrop: UIViewRepresentable {
     let image: UIImage?
     let isLoading: Bool
     let position: Double

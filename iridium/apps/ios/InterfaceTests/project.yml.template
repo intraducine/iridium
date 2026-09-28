@@ -12,6 +12,7 @@ targets:
         excludes: [IridiumApp.swift, Info.plist, Iridium.entitlements, LaunchScreen.storyboard]
       - path: __REPOSITORY__/apps/ios/MadeiraSupport/MadeiraPlayerPresentation.swift
       - path: __REPOSITORY__/apps/ios/InterfaceTests/Preview.swift
+      - path: __REPOSITORY__/apps/ios/InterfaceTests/LaunchPresentationPreview.swift
       - path: __REPOSITORY__/apps/ios/InterfaceTests/UnavailableWine.c
     dependencies:
       - package: Iridium
@@ -66,6 +67,7 @@ targets:
     deploymentTarget: '18.0'
     sources:
       - path: __REPOSITORY__/apps/ios/InterfaceTests/InterfaceTests.swift
+      - path: __REPOSITORY__/apps/ios/InterfaceTests/LaunchPresentationUITests.swift
     dependencies:
       - target: InterfacePreview
     settings:

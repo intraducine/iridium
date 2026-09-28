@@ -427,6 +427,32 @@ llvm::Error convert_dxbc_pixel_shader(
     pso_unorm_output_reg_mask = pso_data->unorm_output_reg_mask;
     pso_sample_mask = pso_data->sample_mask;
   }
+
+  /* ml1031: the interpolants the paired vertex stage actually writes.
+   *
+   * Parsed HERE, from the vertex bytecode, rather than handed to us as strings:
+   * the names must match Signature::fullSemanticString() exactly (lowercased
+   * semantic + index, e.g. "texcoord4"), and the only way to guarantee that is
+   * to build them with the same code that builds this shader's own. */
+  std::unordered_set<std::string> provided_interpolants;
+  bool have_vertex_interface = false;
+  {
+    SM50_SHADER_PSO_VERTEX_INTERFACE_DATA *vs_iface = nullptr;
+    if (args_get_data<SM50_SHADER_PSO_VERTEX_INTERFACE, SM50_SHADER_PSO_VERTEX_INTERFACE_DATA>(
+          pArgs, &vs_iface
+        ) &&
+        vs_iface->vertex_bytecode && vs_iface->vertex_bytecode_size) {
+      CSignatureParser5 vs_out;
+      if (DXBCGetOutputSignature(vs_iface->vertex_bytecode, &vs_out) == S_OK) {
+        const D3D11_SIGNATURE_PARAMETER *vs_params;
+        vs_out.RastSignature()->GetParameters(&vs_params);
+        for (unsigned i = 0; i < vs_out.RastSignature()->GetNumParameters(); i++)
+          provided_interpolants.insert(Signature(vs_params[i]).fullSemanticString());
+        have_vertex_interface = true;
+      }
+    }
+  }
+
   SM50_SHADER_METAL_VERSION metal_version = SM50_SHADER_METAL_310;
   SM50_SHADER_COMMON_DATA *sm50_common = nullptr;
   if (args_get_data<SM50_SHADER_COMMON, SM50_SHADER_COMMON_DATA>(pArgs, &sm50_common)) {
@@ -451,8 +477,27 @@ llvm::Error convert_dxbc_pixel_shader(
     sig_ctx.disable_depth_output = pso_disable_depth_output;
     sig_ctx.pull_mode_reg_mask = shader_info->pull_mode_reg_mask;
     sig_ctx.unorm_output_reg_mask = pso_unorm_output_reg_mask;
+    if (have_vertex_interface)
+      sig_ctx.provided_interpolants = &provided_interpolants;
     for (auto &p : pShaderInternal->signature_handlers) {
       p(sig_ctx);
+    }
+    /* ml1033: say what the filter did. Zeroing an interpolant the vertex stage
+     * DOES write corrupts shading silently, so this must never be inferred --
+     * a healthy shader zeroes few or none, and "zeroed most of them" is the
+     * signature of a broken match. */
+    if (have_vertex_interface && sig_ctx.ps_inputs_zeroed) {
+      static unsigned reported;
+      unsigned n = ++reported;
+      if (n <= 24 || (n % 128) == 0)
+        fprintf(
+          stderr,
+          "[airconv] ml1033 PS zero-filled %u of %u interpolants the paired VS "
+          "does not write (VS writes %u): %s\n",
+          sig_ctx.ps_inputs_zeroed, sig_ctx.ps_inputs_seen,
+          (unsigned)provided_interpolants.size(),
+          sig_ctx.ps_inputs_zeroed_names.c_str()
+        );
     }
   }
   if (pso_sample_mask != 0xffffffff) {
@@ -1351,6 +1396,65 @@ AIRCONV_API void SM50GetArgumentsInfo(
       sm50_shader->args_reflection.size() *
         sizeof(struct MTL_SM50_SHADER_ARGUMENT)
     );
+}
+
+/* ml1008: see MTL_SM50_RANGE_INFO. Iterates the SAME reflection arrays the
+ * encoder consumes, in the SAME order, and joins each entry with its parsed
+ * declaration record -- so record i here describes reflected argument i, and
+ * Flags/StructurePtrOffset cannot drift from what the encoder was told. The
+ * range identity (space, lower_bound, size) was always parsed; it was simply
+ * unreachable from outside the compiler. */
+AIRCONV_API uint32_t SM50GetRangeInfo(
+  sm50_shader_t pShader, struct MTL_SM50_RANGE_INFO *pRanges, uint32_t Capacity
+) {
+  auto sm50_shader = (dxmt::dxbc::SM50ShaderInternal *)pShader;
+  auto &info = sm50_shader->shader_info;
+  uint32_t total = 0;
+
+  auto emit = [&](const MTL_SM50_SHADER_ARGUMENT &arg, uint32_t is_cb_table) {
+    const dxmt::dxbc::ResourceRange *r = nullptr;
+    switch (arg.Type) {
+    case SM50BindingType::ConstantBuffer: {
+      auto it = info.cbufferMap.find(arg.SM50BindingSlot);
+      if (it != info.cbufferMap.end()) r = &it->second.range;
+      break;
+    }
+    case SM50BindingType::Sampler: {
+      auto it = info.samplerMap.find(arg.SM50BindingSlot);
+      if (it != info.samplerMap.end()) r = &it->second.range;
+      break;
+    }
+    case SM50BindingType::SRV: {
+      auto it = info.srvMap.find(arg.SM50BindingSlot);
+      if (it != info.srvMap.end()) r = &it->second.range;
+      break;
+    }
+    case SM50BindingType::UAV: {
+      auto it = info.uavMap.find(arg.SM50BindingSlot);
+      if (it != info.uavMap.end()) r = &it->second.range;
+      break;
+    }
+    }
+    if (pRanges && total < Capacity) {
+      auto &o = pRanges[total];
+      o.Type = arg.Type;
+      o.RangeID = arg.SM50BindingSlot;
+      /* A missing declaration record cannot happen for a reflected argument,
+       * but report it as an unbounded range in space ~0 rather than silently
+       * as b0/space0 -- the caller refuses those, which is the safe direction. */
+      o.RegisterSpace = r ? r->space : ~0u;
+      o.LowerBound = r ? r->lower_bound : ~0u;
+      o.RangeSize = r ? r->size : ~0u;
+      o.StructurePtrOffset = arg.StructurePtrOffset;
+      o.Flags = (uint32_t)arg.Flags;
+      o.IsConstantBufferTable = is_cb_table;
+    }
+    total++;
+  };
+
+  for (auto &arg : sm50_shader->args_reflection_cbuffer) emit(arg, 1);
+  for (auto &arg : sm50_shader->args_reflection) emit(arg, 0);
+  return total;
 }
 
 AIRCONV_API void SM50Destroy(sm50_shader_t pShader) {

@@ -204,4 +204,5 @@ if (args.Contains("--network"))
     while (qr.Read().Busy) await Task.Delay(200, timeout.Token);
     Check(!qr.Read().SignedIn && qr.TakeSecret() == null, "cancelled QR login does not create a session");
 }
+checks += await DownloadFeatureTests.Run();
 Console.WriteLine($"PASS: {checks} Steam integration checks.");

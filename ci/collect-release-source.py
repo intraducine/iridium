@@ -167,13 +167,14 @@ def source_tree(source, output):
                 archive.add(path, arcname=str(path.relative_to(source)), recursive=False)
 
 
-def package_sources(source, debian, output):
-    # Keep the release layout without copying the Linux sources onto this volume.
+def write_source_package(source, linux, output):
+    if not linux.is_dir():
+        raise ValueError('Missing Linux dependency sources')
     if (source / 'linux').exists():
-        raise ValueError('Duplicate Linux source directory in corresponding-source')
+        raise ValueError('Stale Linux source copy in package staging')
     with tarfile.open(output, 'w:gz') as archive:
         archive.add(source, arcname='corresponding-source')
-        archive.add(debian, arcname='corresponding-source/linux')
+        archive.add(linux, arcname='corresponding-source/linux')
 
 
 def collect(kind):
@@ -244,12 +245,10 @@ def collect(kind):
             if not (OUT / name).is_file() or not (OUT / name).stat().st_size:
                 raise ValueError('Missing corresponding source: ' + name)
         debian = ROOT / '.build/linux-transfer/sources'
-        if not debian.is_dir():
-            raise ValueError('Missing Linux dependency sources')
         destination = ROOT / '.build/ipa-output'
         destination.mkdir(parents=True, exist_ok=True)
         output = destination / 'Iridium-corresponding-source.tar.gz'
-        package_sources(OUT, debian, output)
+        write_source_package(OUT, debian, output)
         with output.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         (destination / 'SOURCE-SHA256SUMS').write_text(digest + '  ' + output.name + '\n')

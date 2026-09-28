@@ -10,9 +10,8 @@ other documented public contracts require a major version. Additive behavior
 uses a minor version; compatible fixes use a patch. Never reuse a released tag
 or replace a published artifact silently.
 
-The first release has the maintainer-approved tag `v0.1`, mapped to app
-version `0.1.0` and description `docs/releases/0.1.0.md`. This is a specific
-tag spelling exception; later releases use the full three-part tag.
+The first release uses tag `v0.1.0`, app version `0.1.0`, and description
+`docs/releases/0.1.0.md`.
 
 The maintainer chooses the release version. Do not infer it from the number of
 commits. Set the app's marketing version to the numeric release core and record
@@ -23,10 +22,14 @@ before publishing. No version is assigned by this policy change.
 ## One source for the description
 
 Copy `docs/releases/TEMPLATE.md` to `docs/releases/VERSION.md`. Replace every
-placeholder and retain all headings. Write for users. State concrete changes,
-not commit titles or unsupported performance claims. Group changes using the
-Keep a Changelog categories: Added, Changed, Deprecated, Removed, Fixed,
-Security. Omit empty categories. State when there are no user-visible changes.
+placeholder and retain all headings. Lead with the IPA download, requirements, and a short installation flow. Use
+short player-facing changes and known issues. Keep source, license, checksum,
+and build evidence inside the template's collapsed details section. Put notices
+and build/relink instructions in one source-guide ZIP, with one checksum file
+for the downloadable assets. Split large source archives only when required by
+the hosting limit. Preserve the complete source and required notices; simplifying
+the page must not remove them. Avoid internal audit history and unsupported
+compatibility claims.
 
 The reviewed file is the GitHub release description. Do not use automatic
 GitHub-generated notes as the final description. Validate and render it with:

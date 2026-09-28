@@ -3,6 +3,8 @@
 #include "d3d11_device.hpp"
 #include "d3d11_pipeline.hpp"
 #include "log/log.hpp"
+#include "config/config.hpp"   /* ml754 */
+#include <atomic>
 
 namespace dxmt {
 
@@ -111,6 +113,22 @@ public:
 
     info.raster_sample_count = SampleCount;
 
+    /* ml867: with d3d11.noMeshShaders=1 the mesh pipeline is never compiled.
+     * Apple's shader compiler aborted the remote host (SIGABRT inside AGX
+     * while compiling the object program of one of these), which kills every
+     * other pipeline with it. Leaving the state null takes the existing
+     * mesh-fail path: the draws that needed it are skipped, everything else
+     * renders. Real devices keep the default and compile as before. */
+    {
+      static const int no_mesh = Config::getInstance().getOption<int>("d3d11.noMeshShaders", 0);
+      if (no_mesh) {
+        static std::atomic<uint32_t> suppressed{0};
+        uint32_t n = suppressed.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n == 1 || (n & 0x3F) == 0)
+          ERR("[mesh-skip] ml867 suppressed ", n, " GEOMETRY mesh pipeline compile(s) (d3d11.noMeshShaders=1)");
+        return this;
+      }
+    }
     state_mesh_ = device_->GetMTLDevice().newRenderPipelineState(info, err);
 
     if (state_mesh_ == nullptr) {

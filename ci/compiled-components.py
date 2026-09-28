@@ -28,7 +28,8 @@ PATHS = {
         'iridium/apps/ios/.build/media',
     ) + tuple(name for name in prepared.FILES if name.endswith('.a')),
     'wine': (M + 'wine/build-macos',),
-    'windows': (M + 'FEX/build-arm64ec/Source/Windows/ARM64EC',
+    'windows': (M + 'build/madeira-d3d12/out-pe',
+                M + 'FEX/build-arm64ec/Source/Windows/ARM64EC',
                 M + 'research/dxmt/build-arm64ec-ci/src', M + 'research/dxmt/build-aarch64-ci/src'),
     'graphics': tuple(t for t in prepared.TREES if t.endswith('.framework')) +
                 (M + 'app/Madeira/legal/ANGLE-LICENSE.txt', '.build/corresponding-source'),

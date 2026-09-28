@@ -1142,3 +1142,142 @@ MTLSharedEvent_waitUntilSignaledValue(obj_handle_t event, uint64_t value, uint64
   UNIX_CALL(126, &params);
   return params.ret_timeout;
 }
+
+/* madeira-d3d12: runtime DXIL -> metallib conversion.
+ *
+ * Slot 127, appended. The argument block is described once in
+ * research/madeira-d3d12/src/madeira_ir_abi.h and passed straight through;
+ * winemetal does not interpret it, so the D3D12 runtime and the converter
+ * service are the only two places that need to agree on its shape. */
+WINEMETAL_API void
+MadeiraIRConvert(void *args) {
+  UNIX_CALL(127, args);
+}
+
+/* Slot 128: render pipeline with a vertex descriptor (see winemetal.h). */
+WINEMETAL_API obj_handle_t
+MTLDevice_newRenderPipelineStateVD(obj_handle_t device, const struct WMTRenderPipelineInfo *info,
+                                   const struct WMTVertexDescriptorInfo *vd, obj_handle_t *err_out) {
+  struct unixcall_mtldevice_newrenderpso_vd params;
+  params.device = device;
+  WMT_MEMPTR_SET(params.info, info);
+  WMT_MEMPTR_SET(params.vd, vd);
+  params.ret_error = 0;
+  params.ret_pso = 0;
+  UNIX_CALL(128, &params);
+  if (err_out)
+    *err_out = params.ret_error;
+  return params.ret_pso;
+}
+
+/* ml880: residency sets, slots 129-132. */
+WINEMETAL_API obj_handle_t
+MTLDevice_newResidencySet(obj_handle_t device, uint64_t initial_capacity) {
+  struct unixcall_generic_obj_uint64_obj_ret params;
+  params.handle = device;
+  params.arg = initial_capacity;
+  params.ret = 0;
+  UNIX_CALL(129, &params);
+  return params.ret;
+}
+
+WINEMETAL_API void
+MTLResidencySet_addAllocation(obj_handle_t set, obj_handle_t allocation) {
+  struct unixcall_generic_obj_obj_noret params;
+  params.handle = set;
+  params.arg = allocation;
+  UNIX_CALL(130, &params);
+}
+
+WINEMETAL_API void
+MTLResidencySet_commit(obj_handle_t set) {
+  struct unixcall_generic_obj_noret params;
+  params.handle = set;
+  UNIX_CALL(131, &params);
+}
+
+WINEMETAL_API void
+MTLCommandQueue_addResidencySet(obj_handle_t queue, obj_handle_t set) {
+  struct unixcall_generic_obj_obj_noret params;
+  params.handle = queue;
+  params.arg = set;
+  UNIX_CALL(132, &params);
+}
+
+/* ml927: geometry-shader emulation pipeline, slot 133. */
+WINEMETAL_API obj_handle_t
+MTLDevice_newGeometryEmulationPipelineState(obj_handle_t device, const struct WMTMeshRenderPipelineInfo *info,
+                                            const struct WMTGeometryEmulationInfo *ge, obj_handle_t *err_out) {
+  struct unixcall_mtldevice_newgeompso params;
+  params.device = device;
+  WMT_MEMPTR_SET(params.info, info);
+  WMT_MEMPTR_SET(params.ge, ge);
+  params.ret_error = 0;
+  params.ret_pso = 0;
+  UNIX_CALL(133, &params);
+  if (err_out)
+    *err_out = params.ret_error;
+  return params.ret_pso;
+}
+
+WINEMETAL_API void
+MTLResidencySet_removeAllocation(obj_handle_t set, obj_handle_t allocation) {
+  struct unixcall_generic_obj_obj_noret params;
+  params.handle = set;
+  params.arg = allocation;
+  UNIX_CALL(134, &params);
+}
+
+WINEMETAL_API void
+MTLDevice_heapTextureSizeAndAlign(obj_handle_t device, const struct WMTTextureInfo *info, uint64_t *size, uint64_t *align) {
+  struct unixcall_mtldevice_heaptexturesizealign params;
+  params.device = device;
+  WMT_MEMPTR_SET(params.info, (void *)info);
+  params.ret_size = 0; params.ret_align = 0;
+  UNIX_CALL(135, &params);
+  *size = params.ret_size; *align = params.ret_align;
+}
+
+WINEMETAL_API obj_handle_t
+MTLDevice_newPlacementHeap(obj_handle_t device, uint64_t size, enum WMTResourceOptions options) {
+  struct unixcall_mtldevice_newplacementheap params;
+  params.device = device; params.size = size; params.options = options; params.ret = 0;
+  UNIX_CALL(136, &params);
+  return params.ret;
+}
+
+WINEMETAL_API obj_handle_t
+MTLHeap_newTextureAtOffset(obj_handle_t heap, struct WMTTextureInfo *info, uint64_t offset) {
+  struct unixcall_mtlheap_newtextureatoffset params;
+  params.heap = heap;
+  WMT_MEMPTR_SET(params.info, info);
+  params.offset = offset; params.ret = 0;
+  UNIX_CALL(137, &params);
+  return params.ret;
+}
+
+/* ml1145: slots 139-140, see winemetal.h. */
+WINEMETAL_API void
+MTLDevice_heapBufferSizeAndAlign(obj_handle_t device, uint64_t length, enum WMTResourceOptions options, uint64_t *size, uint64_t *align) {
+  struct unixcall_mtldevice_heapbuffersizealign params;
+  params.device = device; params.length = length; params.options = options;
+  params.ret_size = 0; params.ret_align = 0;
+  UNIX_CALL(139, &params);
+  *size = params.ret_size; *align = params.ret_align;
+}
+
+WINEMETAL_API obj_handle_t
+MTLHeap_newBufferAtOffset(obj_handle_t heap, struct WMTBufferInfo *info, uint64_t offset) {
+  struct unixcall_mtlheap_newbufferatoffset params;
+  params.heap = heap;
+  WMT_MEMPTR_SET(params.info, info);
+  params.offset = offset; params.ret = 0;
+  UNIX_CALL(140, &params);
+  return params.ret;
+}
+
+/* ml1098: slot 138, see winemetal.h. */
+WINEMETAL_API void
+MadeiraCtl(struct madeira_ctl_args *args) {
+  UNIX_CALL(138, args);
+}

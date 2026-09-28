@@ -32,6 +32,13 @@ enum MadeiraRuntimeAdapter {
                       exited: @escaping () -> Void = {}) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !started else { fail("Restart Iridium before another Madeira session."); return }
+        #if os(iOS)
+        for line in MadeiraLaunchEntitlements.logLines(
+            isHosted: LiveContainerIntegration.isHosted()
+        ) {
+            RuntimeLogCapture.writeLine(line)
+        }
+        #endif
         let encodedArguments: String
         do { encodedArguments = try MadeiraLaunchArguments.encode(arguments) }
         catch { fail("Invalid launch arguments: \(error.localizedDescription)"); return }
@@ -114,9 +121,12 @@ enum MadeiraRuntimeAdapter {
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
-                        DispatchQueue.main.async {
+                        DispatchQueue.main.sync {
                             guard launchID == token, !launchCancelled, !failureReported else { return }
-                            MadeiraController.start(prefix: prefix)
+                            MadeiraController.start(
+                                prefix: prefix,
+                                touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
+                            )
                         }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
                         setenv("MADEIRA_EXE", path, 1)
@@ -154,7 +164,7 @@ enum MadeiraRuntimeAdapter {
                 }
                 #endif
                 guard current() else { return }
-                guard winios_reserve_fex_memory() != 0 else {
+                guard iridium_reserve_fex_memory() != 0 else {
                     failure("Cannot start the runtime: too little usable address space. Restart Iridium and try again.")
                     return
                 }

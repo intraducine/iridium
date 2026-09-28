@@ -29,15 +29,27 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                 controller.player = nil
             }
             if let player = controller.player {
-                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration)
+                player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: player.launchArtwork, launchMotionState: player.launchMotionState, onLaunchReady: { [weak player] in player?.fadeLaunchArtwork() })
                 return
             }
             guard controller.view.window != nil, controller.presentedViewController == nil else { return }
-            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration))
-            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration)
+            let artwork = RuntimeLaunchArtworkSnapshot.capture(session: session, in: controller.view.window)
+            let animate = !UIAccessibility.isReduceMotionEnabled
+                && !UIApplication.shared.preferredContentSizeCategory.isAccessibilityCategory
+                && (artwork.titleFrame != nil || (artwork.cover != nil && artwork.coverFrame != nil))
+            let motionState = RuntimeLaunchMotionState(animate: animate)
+            let player = Player(rootView: RuntimePlayerView(session: session, viewModel: viewModel, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, launchMotionState: motionState))
+            player.launchArtwork = artwork
+            player.launchMotionState = motionState
+            player.rootView = RuntimePlayerView(session: session, viewModel: viewModel, onCaptureChange: { [weak player] in player?.captureRequested = $0 }, presentationConfiguration: presentationConfiguration, launchArtwork: artwork, launchMotionState: motionState, onLaunchReady: { [weak player] in player?.fadeLaunchArtwork() })
             player.modalPresentationStyle = .fullScreen
+            player.launchTransition = RuntimeLaunchTransition(motionState: motionState)
+            player.transitioningDelegate = player.launchTransition
             controller.player = player
-            controller.present(player, animated: true)
+            controller.present(player, animated: true) { [weak controller] in
+                // Reconcile a failure/cancellation that arrived during the fade.
+                controller?.synchronize?()
+            }
         }
         if controller.sessionObservation == nil {
             // A full-screen presentation can suspend SwiftUI updates in the covered library.
@@ -86,7 +98,31 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
     }
 
     final class Player: UIHostingController<RuntimePlayerView> {
+        var launchTransition: RuntimeLaunchTransition?
+        var launchArtwork: RuntimeLaunchArtworkSnapshot?
+        var launchMotionState = RuntimeLaunchMotionState(animate: false)
+        private var didFadeLaunchArtwork = false
+        private var launchFadeSnapshot: UIView?
         var captureRequested = false { didSet { refreshCapture() } }
+
+        func fadeLaunchArtwork() {
+            guard !didFadeLaunchArtwork else { return }
+            didFadeLaunchArtwork = true
+            guard let snapshot = view.snapshotView(afterScreenUpdates: false) else { return }
+            snapshot.frame = view.bounds
+            snapshot.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            snapshot.isUserInteractionEnabled = false
+            snapshot.accessibilityElementsHidden = true
+            view.addSubview(snapshot)
+            launchFadeSnapshot = snapshot
+            UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0.15 : RuntimeLaunchMotion.revealDuration,
+                           delay: 0, options: .curveEaseOut) {
+                snapshot.alpha = 0
+            } completion: { [weak self] _ in
+                snapshot.removeFromSuperview()
+                self?.launchFadeSnapshot = nil
+            }
+        }
         private var observers: [NSObjectProtocol] = []
 
         // The presented player owns capture, not its nested SwiftUI event host.
@@ -96,9 +132,19 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
             captureQueries += 1
             return wantsPointerCapture
         }
+        private var playerSceneIsForeground: Bool {
+            if let scene = viewIfLoaded?.window?.windowScene {
+                return scene.activationState == .foregroundActive
+            }
+            return UIApplication.shared.applicationState == .active
+        }
         private var wantsPointerCapture: Bool {
+            #if INTERFACE_PREVIEW
+            false
+            #else
             captureRequested && !MadeiraHardwareInput.softwareKeyboardActive && UIApplication.shared.applicationState == .active
                 && !UIAccessibility.isAssistiveTouchRunning && !GCMouse.mice().isEmpty
+            #endif
         }
 
         override func viewDidLoad() {
@@ -111,24 +157,40 @@ struct MadeiraPlayerPresentation: UIViewControllerRepresentable {
                     MainActor.assumeIsolated { self?.refreshCapture() }
                 })
             }
+            for name in [UIScene.didActivateNotification, UIScene.willDeactivateNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                    MainActor.assumeIsolated {
+                        guard let self, let scene = notification.object as? UIScene,
+                              scene === self.viewIfLoaded?.window?.windowScene else { return }
+                        self.refreshCapture(sceneIsDeactivating: notification.name == UIScene.willDeactivateNotification)
+                    }
+                })
+            }
         }
 
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
+            launchMotionState.settle(animated: false)
+            launchMotionState.finish()
+            #if MADEIRA_RUNTIME
+            rootView.viewModel.startPendingMadeiraLaunch(sessionID: rootView.session.sessionIdentifier)
+            #endif
             refreshCapture()
         }
 
         override func viewWillDisappear(_ animated: Bool) {
             captureRequested = false
+            launchFadeSnapshot?.removeFromSuperview()
+            launchFadeSnapshot = nil
             super.viewWillDisappear(animated)
         }
 
-        private func refreshCapture() {
+        private func refreshCapture(sceneIsDeactivating: Bool = false) {
             setNeedsUpdateOfPrefersPointerLocked()
             #if MADEIRA_RUNTIME
-            MadeiraHardwareInput.acceptingInput = captureRequested && UIApplication.shared.applicationState == .active
-            MadeiraHardwareInput.pointerCaptured = wantsPointerCapture && viewIfLoaded?.window?.windowScene?.pointerLockState?.isLocked == true
-            RuntimeLogCapture.writeLine("[Launch] Pointer capture requested=\(wantsPointerCapture), systemQueries=\(captureQueries), sceneActive=\(viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive), active=\(MadeiraHardwareInput.pointerCaptured), AssistiveTouch=\(UIAccessibility.isAssistiveTouchRunning).")
+            MadeiraHardwareInput.acceptingInput = captureRequested && playerSceneIsForeground && !sceneIsDeactivating
+            MadeiraHardwareInput.pointerCaptured = !sceneIsDeactivating && wantsPointerCapture && viewIfLoaded?.window?.windowScene?.pointerLockState?.isLocked == true
+            RuntimeLogCapture.writeLine("[Launch] Pointer capture requested=\(wantsPointerCapture), systemQueries=\(captureQueries), sceneActive=\(viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive), appActive=\(UIApplication.shared.applicationState == .active), inputActive=\(MadeiraHardwareInput.acceptingInput), active=\(MadeiraHardwareInput.pointerCaptured), AssistiveTouch=\(UIAccessibility.isAssistiveTouchRunning).")
             #endif
         }
 

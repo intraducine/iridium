@@ -12,12 +12,26 @@ assert "UIApplicationSupportsIndirectInputEvents: true" in (root / "project.yml"
 source = (root / "MadeiraSupport/MadeiraHardwareInput.swift").read_text()
 start = source.index("    static var acceptingInput")
 end = source.index("    private static var observers")
+presentation = (root / "MadeiraSupport/MadeiraPlayerPresentation.swift").read_text()
+scene_gate = presentation[presentation.index("        private var playerSceneIsForeground"):presentation.index("        private var wantsPointerCapture")].replace("private var", "var")
+assert "captureRequested && playerSceneIsForeground && !sceneIsDeactivating" in presentation
+assert "scene === self.viewIfLoaded?.window?.windowScene" in presentation
 code = """
 import Foundation
 @MainActor final class UIApplication {
     static let shared = UIApplication()
     enum State { case active, inactive }
     var applicationState = State.active
+}
+@MainActor final class TestScene {
+    enum State { case foregroundActive, foregroundInactive, background }
+    var activationState = State.foregroundActive
+}
+@MainActor final class TestWindow { var windowScene: TestScene? }
+@MainActor final class TestView { var window: TestWindow? }
+@MainActor final class PlayerGate {
+    var viewIfLoaded: TestView?
+""" + scene_gate + """
 }
 @MainActor enum UIAccessibility { static var isAssistiveTouchRunning = false }
 @MainActor var events: [(Int32, Int32)] = []
@@ -31,6 +45,18 @@ import Foundation
 }
 @main struct Check {
     @MainActor static func main() {
+        let gate = PlayerGate()
+        precondition(gate.playerSceneIsForeground)
+        UIApplication.shared.applicationState = .inactive
+        precondition(!gate.playerSceneIsForeground)
+        let view = TestView(), window = TestWindow(), scene = TestScene()
+        view.window = window; window.windowScene = scene; gate.viewIfLoaded = view
+        precondition(gate.playerSceneIsForeground)
+        scene.activationState = .foregroundInactive
+        precondition(!gate.playerSceneIsForeground)
+        UIApplication.shared.applicationState = .active
+        scene.activationState = .background
+        precondition(!gate.playerSceneIsForeground)
         let defaults = UserDefaults.standard
         let savedScroll = defaults.object(forKey: "IridiumScrollSensitivity")
         defer { defaults.set(savedScroll, forKey: "IridiumScrollSensitivity") }

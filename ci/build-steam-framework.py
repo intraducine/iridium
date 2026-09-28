@@ -26,6 +26,7 @@ def main():
     if subprocess.check_output(['dotnet', '--version'], cwd=SOURCE, text=True).strip() != '10.0.401':
         parser.error('Use the pinned .NET SDK 10.0.401.')
     host = 'osx-arm64' if platform.machine() == 'arm64' else 'osx-x64'
+    run(sys.executable, ROOT / 'ci/check-steam-queue.py')
     run(sys.executable, ROOT / 'ci/prepare-steamkit.py')
     run('dotnet', 'run', '--project', 'Iridium.Steam.Tests', '-c', 'Release')
     run('dotnet', 'publish', 'Iridium.Steam.Tests', '-c', 'Release', '-r', host,

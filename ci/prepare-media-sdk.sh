@@ -43,7 +43,7 @@ apply_source_patch() {
     fi
 }
 # Supplied source already includes these patches. Reject any other patch state.
-for patch in cerbero-gperf-cxx14.patch cerbero-assets-library.patch cerbero-source-manifest.patch cerbero-cargo-source-cache.patch cerbero-meson-source-cache.patch; do
+for patch in cerbero-gperf-cxx14.patch cerbero-assets-library.patch cerbero-source-manifest.patch cerbero-cargo-source-cache.patch cerbero-meson-source-cache.patch cerbero-spandsp-mirror.patch; do
     apply_source_patch "$patch"
 done
 "$PACKAGING_PYTHON" "$ROOT/ci/check-media-source-package.py" "$CERBERO"

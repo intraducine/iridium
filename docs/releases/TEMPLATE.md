@@ -1,35 +1,33 @@
 # Iridium VERSION
 
-## Summary
+[Required: one short sentence about the release; say if it is experimental.]
 
-[Required: describe the result and whether this is experimental.]
+## Download
 
-## Changes
+[Required: direct IPA download link, minimum OS, JIT/game-file requirements. Tell players which file to download.]
 
-[Required: user-visible changes grouped by relevant changelog categories.]
+## Install
 
-## Installation and requirements
+[Required: a short numbered installation flow using actual app labels. Include a brief data-safe update note.]
 
-[Required: supported minimum OS, unsigned sideloading and helper-extension
-requirements, JIT setup, and a link to the installation instructions.]
+## What's new
 
-## Migration and saves
+[Required: short user-visible changes. Omit internal build and audit history.]
 
-[Required: upgrade steps, data effects, backup/recovery, or explicitly no migration.]
+## Known issues
 
-## Verification
+[Required: concrete player-facing limits or unresolved problems. Do not claim untested compatibility.]
+
+<details>
+<summary>Source code, licenses, and build details</summary>
+
+## Source and licenses
+
+[Required: matching source assets, a single source guide with notices and build/relink instructions, one download checksum file, and exact verification/reassembly commands. Keep this section collapsed.]
 
 Source commit: [Required: full 40-character commit]
 Build run: [Required: GitHub Actions run URL]
 
-[Required: list passed source/build/package/device checks with exact scope.
-Explicitly state untested items. Do not include private identifiers.]
+[Required: actual app/helper version and build number, concise verification scope, untested behavior, and applicable residual risks.]
 
-## Known limitations
-
-[Required: observed problems and unsupported or unverified paths.]
-
-## Downloads and source
-
-[Required: unsigned IPA, corresponding-source archive, checksum files and
-license notices attached to this release. Include checksum verification steps.]
+</details>

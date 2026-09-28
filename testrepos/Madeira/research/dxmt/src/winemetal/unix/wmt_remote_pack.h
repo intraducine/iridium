@@ -5,8 +5,8 @@
  * survives a machine boundary, so every pointer becomes an offset into a
  * sidecar region travelling with the records.
  *
- * Only the 15 render opcodes an ARM64 D3D11 cube actually emits are handled --
- * measured, not assumed: 28,800 records over 12,288 batches, zero compute,
+ * Began as the 15 render opcodes an ARM64 D3D11 cube emits (measured, not
+ * assumed: 28,800 records over 12,288 batches, zero compute,
  * zero blit. An unhandled opcode is a NAMED failure carrying the encoder kind,
  * the opcode and the record index, because "packing failed" one machine away
  * from the GPU is close to undebuggable.
@@ -61,6 +61,62 @@ wmtw_pack_render(const struct wmtcmd_base *head, struct wmtw_packer *p,
             const struct wmtcmd_render_setbufferoffset *b = (const void *)c;
             ALLOC(setvertexbufferoffset, WMTW_OP_SetVertexBufferOffset);
             w->offset = b->offset; w->index = b->index;
+            break;
+        }
+        case WMTRenderCommandSetMeshBuffer: {
+            const struct wmtcmd_render_setbuffer *b = (const void *)c;
+            ALLOC(setmeshbuffer, WMTW_OP_SetMeshBuffer);
+            w->buffer = b->buffer; w->offset = b->offset; w->index = b->index;
+            break;
+        }
+        case WMTRenderCommandSetMeshBufferOffset: {
+            const struct wmtcmd_render_setbufferoffset *b = (const void *)c;
+            ALLOC(setmeshbufferoffset, WMTW_OP_SetMeshBufferOffset);
+            w->offset = b->offset; w->index = b->index;
+            break;
+        }
+        case WMTRenderCommandSetObjectBuffer: {
+            const struct wmtcmd_render_setbuffer *b = (const void *)c;
+            ALLOC(setobjectbuffer, WMTW_OP_SetObjectBuffer);
+            w->buffer = b->buffer; w->offset = b->offset; w->index = b->index;
+            break;
+        }
+        case WMTRenderCommandDrawMeshThreadgroups: {
+            const struct wmtcmd_render_draw_meshthreadgroups *b = (const void *)c;
+            ALLOC(drawmeshthreadgroups, WMTW_OP_DrawMeshThreadgroups);
+            w->grid_w = b->threadgroup_per_grid.width;
+            w->grid_h = b->threadgroup_per_grid.height;
+            w->grid_d = b->threadgroup_per_grid.depth;
+            w->obj_w  = b->object_threadgroup_size.width;
+            w->obj_h  = b->object_threadgroup_size.height;
+            w->obj_d  = b->object_threadgroup_size.depth;
+            w->mesh_w = b->mesh_threadgroup_size.width;
+            w->mesh_h = b->mesh_threadgroup_size.height;
+            w->mesh_d = b->mesh_threadgroup_size.depth;
+            w->pad = 0;
+            break;
+        }
+        case WMTRenderCommandSetObjectBufferOffset: {
+            const struct wmtcmd_render_setbufferoffset *b = (const void *)c;
+            ALLOC(setobjectbufferoffset, WMTW_OP_SetObjectBufferOffset);
+            w->offset = b->offset; w->index = b->index;
+            break;
+        }
+        case WMTRenderCommandSetVisibilityMode: {
+            const struct wmtcmd_render_setvisibilitymode *b = (const void *)c;
+            ALLOC(setvisibilitymode, WMTW_OP_SetVisibilityMode);
+            w->offset = b->offset; w->mode = (uint32_t)b->mode; w->pad = 0;
+            break;
+        }
+        case WMTRenderCommandDrawIndexedIndirect: {
+            const struct wmtcmd_render_draw_indexed_indirect *b = (const void *)c;
+            ALLOC(drawindexedindirect, WMTW_OP_DrawIndexedIndirect);
+            w->index_buffer = b->index_buffer;
+            w->index_buffer_offset = b->index_buffer_offset;
+            w->indirect_args_buffer = b->indirect_args_buffer;
+            w->indirect_args_offset = b->indirect_args_offset;
+            w->primitive_type = (uint32_t)b->primitive_type;
+            w->index_type = (uint32_t)b->index_type;
             break;
         }
         case WMTRenderCommandSetFragmentBufferOffset: {
@@ -155,6 +211,142 @@ wmtw_pack_render(const struct wmtcmd_base *head, struct wmtw_packer *p,
             w->base_instance = b->base_instance;
             break;
         }
+        /* ---- ml817: everything below was UNSUPPORTED in the first in-game run.
+         * A batch containing one unsupported command is dropped WHOLE, so the
+         * two geometry-shader draws alone removed 2,700+ batches: every draw in
+         * them, on top of the record-cap drops. Nothing here is a new Metal
+         * concept -- each one packs to what the native encoder does. */
+        case WMTRenderCommandDrawIndirect: {
+            const struct wmtcmd_render_draw_indirect *b = (const void *)c;
+            ALLOC(drawindirect, WMTW_OP_DrawIndirect);
+            w->indirect_buffer = b->indirect_args_buffer; w->indirect_offset = b->indirect_args_offset;
+            w->primitive = (uint32_t)b->primitive_type; w->pad0 = 0;
+            break;
+        }
+        case WMTRenderCommandDrawMeshThreadgroupsIndirect: {
+            const struct wmtcmd_render_draw_meshthreadgroups_indirect *b = (const void *)c;
+            ALLOC(drawmeshthreadgroupsindirect, WMTW_OP_DrawMeshThreadgroupsIndirect);
+            w->indirect_buffer = b->indirect_args_buffer; w->indirect_offset = b->indirect_args_offset;
+            w->obj_w = b->object_threadgroup_size.width;  w->obj_h = b->object_threadgroup_size.height;
+            w->obj_d = b->object_threadgroup_size.depth;
+            w->mesh_w = b->mesh_threadgroup_size.width;   w->mesh_h = b->mesh_threadgroup_size.height;
+            w->mesh_d = b->mesh_threadgroup_size.depth;
+            break;
+        }
+        case WMTRenderCommandMemoryBarrier: {
+            const struct wmtcmd_render_memory_barrier *b = (const void *)c;
+            ALLOC(memorybarrier, WMTW_OP_MemoryBarrier);
+            w->scope = (uint32_t)b->scope; w->stages_after = (uint32_t)b->stages_after;
+            w->stages_before = (uint32_t)b->stages_before; w->pad0 = 0;
+            break;
+        }
+        /* Single viewport / scissor: the array forms with count 1. */
+        case WMTRenderCommandSetViewport: {
+            const struct wmtcmd_render_setviewport *b = (const void *)c;
+            ALLOC(setviewports, WMTW_OP_SetViewports);
+            struct wmtw_viewport v = { b->viewport.originX, b->viewport.originY, b->viewport.width,
+                                       b->viewport.height, b->viewport.znear, b->viewport.zfar };
+            uint32_t off = wmtw_side_put(p, &v, sizeof v);
+            if (off == 0xffffffffu) FAIL(WMTW_PACK_SIDECAR_OVERFLOW);
+            w->viewports_offset = off; w->viewports_count = 1;
+            break;
+        }
+        case WMTRenderCommandSetScissorRect: {
+            const struct wmtcmd_render_setscissorrect *b = (const void *)c;
+            ALLOC(setscissorrects, WMTW_OP_SetScissorRects);
+            struct wmtw_scissor sc = { b->scissor_rect.x, b->scissor_rect.y,
+                                       b->scissor_rect.width, b->scissor_rect.height };
+            uint32_t off = wmtw_side_put(p, &sc, sizeof sc);
+            if (off == 0xffffffffu) FAIL(WMTW_PACK_SIDECAR_OVERFLOW);
+            w->scissors_offset = off; w->scissors_count = 1;
+            break;
+        }
+        /* DXMT geometry-shader emulation: an object/mesh pipeline whose draw
+         * arguments sit in a buffer already bound at object index 21 (and the
+         * index buffer at 20). Exactly what the native encoder issues. */
+#define MESH_DRAW(GW, GH, OW, OH, MW) do { \
+            ALLOC(drawmeshthreadgroups, WMTW_OP_DrawMeshThreadgroups); \
+            w->grid_w = (GW); w->grid_h = (GH); w->grid_d = 1; \
+            w->obj_w = (OW); w->obj_h = (OH); w->obj_d = 1; \
+            w->mesh_w = (MW); w->mesh_h = 1; w->mesh_d = 1; w->pad = 0; } while (0)
+#define OBJ_BUF(BUF, OFF, IDX) do { \
+            ALLOC(setobjectbuffer, WMTW_OP_SetObjectBuffer); \
+            w->buffer = (BUF); w->offset = (OFF); w->index = (IDX); } while (0)
+#define OBJ_OFF(OFF, IDX) do { \
+            ALLOC(setobjectbufferoffset, WMTW_OP_SetObjectBufferOffset); \
+            w->offset = (OFF); w->index = (IDX); } while (0)
+        case WMTRenderCommandDXMTGeometryDraw: {
+            const struct wmtcmd_render_dxmt_geometry_draw *b = (const void *)c;
+            { OBJ_OFF(b->draw_arguments_offset, 21); }
+            { MESH_DRAW(b->warp_count, b->instance_count, b->vertex_per_warp, 1, 1); }
+            break;
+        }
+        case WMTRenderCommandDXMTGeometryDrawIndexed: {
+            const struct wmtcmd_render_dxmt_geometry_draw_indexed *b = (const void *)c;
+            { OBJ_BUF(b->index_buffer, b->index_buffer_offset, 20); }
+            { OBJ_OFF(b->draw_arguments_offset, 21); }
+            { MESH_DRAW(b->warp_count, b->instance_count, b->vertex_per_warp, 1, 1); }
+            break;
+        }
+        case WMTRenderCommandDXMTGeometryDrawIndirect: {
+            const struct wmtcmd_render_dxmt_geometry_draw_indirect *b = (const void *)c;
+            { OBJ_BUF(b->indirect_args_buffer, b->indirect_args_offset, 21); }
+            { ALLOC(drawmeshthreadgroupsindirect, WMTW_OP_DrawMeshThreadgroupsIndirect);
+              w->indirect_buffer = b->dispatch_args_buffer; w->indirect_offset = b->dispatch_args_offset;
+              w->obj_w = b->vertex_per_warp; w->obj_h = 1; w->obj_d = 1;
+              w->mesh_w = 1; w->mesh_h = 1; w->mesh_d = 1; }
+            { OBJ_BUF(b->imm_draw_arguments, 0, 21); }
+            break;
+        }
+        case WMTRenderCommandDXMTGeometryDrawIndexedIndirect: {
+            const struct wmtcmd_render_dxmt_geometry_draw_indexed_indirect *b = (const void *)c;
+            { OBJ_BUF(b->index_buffer, b->index_buffer_offset, 20); }
+            { OBJ_BUF(b->indirect_args_buffer, b->indirect_args_offset, 21); }
+            { ALLOC(drawmeshthreadgroupsindirect, WMTW_OP_DrawMeshThreadgroupsIndirect);
+              w->indirect_buffer = b->dispatch_args_buffer; w->indirect_offset = b->dispatch_args_offset;
+              w->obj_w = b->vertex_per_warp; w->obj_h = 1; w->obj_d = 1;
+              w->mesh_w = 1; w->mesh_h = 1; w->mesh_d = 1; }
+            { OBJ_BUF(b->imm_draw_arguments, 0, 21); }
+            break;
+        }
+        /* DXMT tessellation emulation: same shape, mesh threadgroup of 32. */
+        case WMTRenderCommandDXMTTessellationMeshDraw: {
+            const struct wmtcmd_render_dxmt_tessellation_mesh_draw *b = (const void *)c;
+            { OBJ_OFF(b->draw_arguments_offset, 21); }
+            { MESH_DRAW(b->patch_per_mesh_instance, b->instance_count, b->threads_per_patch, b->patch_per_group, 32); }
+            break;
+        }
+        case WMTRenderCommandDXMTTessellationMeshDrawIndexed: {
+            const struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed *b = (const void *)c;
+            { OBJ_BUF(b->index_buffer, b->index_buffer_offset, 20); }
+            { OBJ_OFF(b->draw_arguments_offset, 21); }
+            { MESH_DRAW(b->patch_per_mesh_instance, b->instance_count, b->threads_per_patch, b->patch_per_group, 32); }
+            break;
+        }
+        case WMTRenderCommandDXMTTessellationMeshDrawIndirect: {
+            const struct wmtcmd_render_dxmt_tessellation_mesh_draw_indirect *b = (const void *)c;
+            { OBJ_BUF(b->indirect_args_buffer, b->indirect_args_offset, 21); }
+            { ALLOC(drawmeshthreadgroupsindirect, WMTW_OP_DrawMeshThreadgroupsIndirect);
+              w->indirect_buffer = b->dispatch_args_buffer; w->indirect_offset = b->dispatch_args_offset;
+              w->obj_w = b->threads_per_patch; w->obj_h = b->patch_per_group; w->obj_d = 1;
+              w->mesh_w = 32; w->mesh_h = 1; w->mesh_d = 1; }
+            { OBJ_BUF(b->imm_draw_arguments, 0, 21); }
+            break;
+        }
+        case WMTRenderCommandDXMTTessellationMeshDrawIndexedIndirect: {
+            const struct wmtcmd_render_dxmt_tessellation_mesh_draw_indexed_indirect *b = (const void *)c;
+            { OBJ_BUF(b->index_buffer, b->index_buffer_offset, 20); }
+            { OBJ_BUF(b->indirect_args_buffer, b->indirect_args_offset, 21); }
+            { ALLOC(drawmeshthreadgroupsindirect, WMTW_OP_DrawMeshThreadgroupsIndirect);
+              w->indirect_buffer = b->dispatch_args_buffer; w->indirect_offset = b->dispatch_args_offset;
+              w->obj_w = b->threads_per_patch; w->obj_h = b->patch_per_group; w->obj_d = 1;
+              w->mesh_w = 32; w->mesh_h = 1; w->mesh_d = 1; }
+            { OBJ_BUF(b->imm_draw_arguments, 0, 21); }
+            break;
+        }
+#undef MESH_DRAW
+#undef OBJ_BUF
+#undef OBJ_OFF
         default:
             /* Name it. A title needing a new command family should say which
              * one, not fail anonymously on the far side of the wire. */

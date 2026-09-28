@@ -251,9 +251,9 @@ des auteurs, référez-vous au fichier
 .I AUTHORS
 à la racine de la distribution des sources.
 .SH COPYRIGHT
-Wine peut être distribué selon les termes de la licence GPL. Une copie de cette
+Wine peut être distribué selon les termes de la licence LGPL. Une copie de cette
 licence se trouve dans le fichier
-.I COPYING
+.I COPYING.LIB
 à la racine de la distribution des sources.
 .SH BUGS
 .PP

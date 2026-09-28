@@ -22,7 +22,7 @@ struct GameDetailView: View {
             }
             Section {
                 MenuButton("Rename & Artwork", systemImage: "photo") { rename = true }
-                MenuNavigationLink { GameControlsView(game: game) } label: { Label("Controls", systemImage: "gamecontroller") }
+                MenuNavigationLink { GameInputSettingsView(game: game) } label: { Label("Controls", systemImage: "gamecontroller") }
                     .accessibilityIdentifier("gameControlsLink")
                 MenuNavigationLink { GameStorageView(game: game, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
                     Label("Files & Saves", systemImage: "folder")

@@ -32,6 +32,11 @@ REQUIRED = {
         "testrepos/Madeira/FEX/build-ios/FEXCore/Source/libFEXCore_Base.a",
     ],
     "Windows modules and clean prefix": [
+        "testrepos/Madeira/app/Madeira/arm64ec-windows/d3d12.dll",
+        "testrepos/Madeira/app/Madeira/d3d12/libmetalirconverter.dylib",
+        "testrepos/Madeira/app/Madeira/d3d12/METAL-SHADER-CONVERTER-AGREEMENT.txt",
+        "testrepos/Madeira/app/Madeira/d3d12/LICENSE-metal-shader-converter-headers.txt",
+        "testrepos/Madeira/app/Madeira/d3d12/NOTICE.txt",
         "testrepos/Madeira/app/Madeira/arm64ec-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/aarch64-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/prefix-template.tar.gz",
@@ -57,7 +62,7 @@ def blockers(root, package=False):
     for group, paths in REQUIRED.items():
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
-            result.append(f"{group}: {len(missing)} required file(s) missing")
+            result.append(f"{group}: missing " + ", ".join(missing))
     records = ['binary-release-blockers.json']
     if package:
         records.append('binary-package-blockers.json')

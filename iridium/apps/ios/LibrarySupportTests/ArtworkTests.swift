@@ -1,4 +1,5 @@
 import XCTest
+import IridiumCore
 import UIKit
 @testable import LibraryPreview
 
@@ -123,8 +124,11 @@ private final class ArtworkProtocol: URLProtocol {
     override func startLoading() { Self.handler?(self) }
     override func stopLoading() {}
     func respond(_ body: String, status: Int = 200) {
+        respond(Data(body.utf8), status: status)
+    }
+    func respond(_ body: Data, status: Int = 200) {
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocol(self, didLoad: body)
         client?.urlProtocolDidFinishLoading(self)
     }
 }
@@ -165,6 +169,102 @@ extension ArtworkTests {
 }
 
 extension ArtworkTests {
+    @MainActor func testAutomaticRetryPreservesChangedMatch() async throws {
+        for portrait in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root); ArtworkProtocol.handler = nil }
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            try "123".write(to: root.appendingPathComponent("steam_appid.txt"), atomically: true, encoding: .utf8)
+            let config = URLSessionConfiguration.ephemeral
+            config.protocolClasses = [ArtworkProtocol.self]
+            let session = URLSession(configuration: config)
+            defer { session.invalidateAndCancel() }
+            let store = LibraryArtwork(root: root, session: session, testCredential: "")
+            let game = GameRecord(
+                id: UUID(), title: "Custom Game", source: .manualImport, installPath: root.path,
+                savePathMapping: root.appendingPathComponent("saves").path, compatibilityProfileName: "",
+                inputProfileName: "", touchOverlayName: "", controllerPresetName: "",
+                keyboardMouseEnabled: true, prefixState: .clean, deviceTier: .tier1,
+                rendererPreset: .dxvkBalanced,
+                launchProfile: .init(executablePath: "Custom Game.exe", arguments: [], prefixID: UUID(),
+                                     rendererPreset: .dxvkBalanced, deviceTier: .tier1, titleFlags: []), summary: "")
+            if portrait {
+                try store.update(game.id) { $0.matchID = 123; $0.matchSource = "steam" }
+            }
+            let failed = expectation(description: "First request failed")
+            var requests = 0
+            ArtworkProtocol.handler = { request in
+                requests += 1
+                request.respond("{}", status: 503)
+                if requests == 1 { failed.fulfill() }
+            }
+            let task = Task { await store.prepare([game]) }
+            await fulfillment(of: [failed], timeout: 3)
+            // Change the saved choice before the delayed retry can apply its old match.
+            try store.removeMatch(game.id)
+            try store.update(game.id) { $0.matchID = 456; $0.matchName = "My choice" }
+            await task.value
+            XCTAssertEqual(requests, 1, "Stale lookup retried after a user edit")
+            XCTAssertEqual(store.appearance(game.id).matchID, 456)
+            XCTAssertEqual(store.appearance(game.id).matchName, "My choice")
+            XCTAssertFalse(store.appearance(game.id).automaticLookup)
+            XCTAssertNil(store.lookupNote)
+        }
+    }
+
+    @MainActor func testAutomaticLookupRetriesAndContinuesAfterFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root); ArtworkProtocol.handler = nil }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ArtworkProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let store = LibraryArtwork(root: root, session: session, testCredential: "")
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).jpegData(withCompressionQuality: 0.9) { context in
+            UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        var searchRequests: [String: Int] = [:]
+        ArtworkProtocol.handler = { request in
+            let url = request.request.url!
+            if url.host?.hasSuffix(".steamstatic.com") == true {
+                request.respond(image)
+            } else if url.path.contains("storesearch") {
+                let term = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "term" })?.value ?? ""
+                searchRequests[term, default: 0] += 1
+                let count = searchRequests[term]!
+                let unavailable = term == "Unavailable Game"
+                let body = unavailable || count == 1
+                    ? Data()
+                    : Data(#"{"items":[{"id":123,"name":"Custom Game","type":"app"}]}"#.utf8)
+                request.respond(body, status: unavailable || count == 1 ? 503 : 200)
+            } else {
+                request.respond(#"{"123":{"success":true,"data":{"type":"game","steam_appid":123,"name":"Custom Game"}}}"#)
+            }
+        }
+        func game(_ title: String) -> GameRecord { GameRecord(
+            id: UUID(), title: title, source: .manualImport, installPath: root.path,
+            savePathMapping: root.appendingPathComponent("saves").path, compatibilityProfileName: "",
+            inputProfileName: "", touchOverlayName: "", controllerPresetName: "",
+            keyboardMouseEnabled: true, prefixState: .clean, deviceTier: .tier1,
+            rendererPreset: .dxvkBalanced,
+            launchProfile: .init(
+                executablePath: title + ".exe", arguments: [], prefixID: UUID(),
+                rendererPreset: .dxvkBalanced, deviceTier: .tier1, titleFlags: []),
+            summary: "") }
+        let unavailable = game("Unavailable Game")
+        let recovered = game("Custom Game")
+
+        await store.prepare([unavailable, recovered])
+
+        XCTAssertEqual(searchRequests["Unavailable Game"], 2)
+        XCTAssertEqual(searchRequests["Custom Game"], 2)
+        XCTAssertNil(store.appearance(unavailable.id).matchID)
+        XCTAssertEqual(store.appearance(recovered.id).matchID, 123)
+        XCTAssertNotNil(store.image(store.appearance(recovered.id).cover))
+        XCTAssertNil(store.lookupNote)
+    }
+
     @MainActor func testPublicCatalogNeedsNoCredentials() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root); ArtworkProtocol.handler = nil }
@@ -183,7 +283,8 @@ extension ArtworkTests {
             if request.request.url!.path.contains("storesearch") {
                 request.respond(#"{"items":[{"id":123,"name":"Custom Game","type":"app"},{"id":456,"name":"Bundle","type":"sub"}]}"#)
             } else {
-                request.respond(#"{"123":{"success":true,"data":{"type":"game"}}}"#)
+                XCTAssertTrue(request.request.url!.absoluteString.contains("appids=123"))
+                request.respond(#"{"999":{"success":true,"data":{"type":"game","steam_appid":123}}}"#)
             }
         }
         let matches = try await store.search("Custom Game")

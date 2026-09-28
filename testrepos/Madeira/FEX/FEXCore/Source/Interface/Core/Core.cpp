@@ -8,6 +8,7 @@ desc: Glues Frontend, OpDispatcher and IR Opts & Compilation, LookupCache, Dispa
 $end_info$
 */
 
+#include <new>
 #include <cstdint>
 #ifdef ZYDIS_DISASSEMBLER
 #include <Zydis/Zydis.h>
@@ -527,7 +528,48 @@ void ContextImpl::InitializeCompiler(FEXCore::Core::InternalThreadState* Thread)
 FEXCore::Core::InternalThreadState*
 ContextImpl::CreateThread(uint64_t InitialRIP, uint64_t StackPointer, const FEXCore::Core::CPUState* NewThreadState) {
   LogMan::Msg::EFmt("[TI-IC] createthread-enter");
-  FEXCore::Core::InternalThreadState* Thread = new FEXCore::Core::InternalThreadState {
+
+  /* ml790: ALLOCATE, CHECK, THEN CONSTRUCT.
+   *
+   * `new InternalThreadState{...}` cannot be made safe by checking its result:
+   * when the aligned allocation returns null the aggregate initialisation
+   * writes `.CTX` THROUGH THAT NULL before this function can return, so the
+   * caller never gets a chance. That is a store to address zero on a thread
+   * with no state yet, and the fault then recurses through the exception path
+   * until the stack is gone -- with the thread still owning the loader lock.
+   *
+   * The band is finite and a title with enough threads exhausts it, so this is
+   * an ordinary outcome, not a theoretical one. Placement-new after an explicit
+   * check makes the failure returnable. */
+  void* ThreadMem = FEXCore::Allocator::aligned_alloc(alignof(FEXCore::Core::InternalThreadState),
+                                                      sizeof(FEXCore::Core::InternalThreadState));
+#ifdef FEX_IOS_HOST
+  /* MADEIRA_FEX_FAIL_CALLRET=threadstate:N fails the Nth thread-state
+   * allocation, so this containment path can be proven rather than assumed --
+   * it only occurs naturally once the band is exhausted. */
+  {
+    static std::atomic<unsigned> TSCount {0};
+    const unsigned ThisTS = ++TSCount;
+    const char* Env = getenv("MADEIRA_FEX_FAIL_CALLRET");
+    if (Env && !strncmp(Env, "threadstate:", 12) && ThisTS == (unsigned)atoi(Env + 12)) {
+      LogMan::Msg::EFmt("[TI-IC] INJECTED thread-state allocation failure on call #{}", ThisTS);
+      if (ThreadMem) {
+        FEXCore::Allocator::aligned_free(ThreadMem);
+        ThreadMem = nullptr;
+      }
+    }
+  }
+#endif
+  if (!ThreadMem) {
+    LogMan::Msg::EFmt("[TI-IC] THREADSTATE ALLOC FAILED: {} bytes, {} alignment -- the emulator "
+                      "address band is exhausted; refusing to start this thread",
+                      sizeof(FEXCore::Core::InternalThreadState),
+                      alignof(FEXCore::Core::InternalThreadState));
+    return nullptr;
+  }
+  /* ::new -- the class inherits its own operator new overloads, which hide the
+   * global placement form. */
+  FEXCore::Core::InternalThreadState* Thread = ::new (ThreadMem) FEXCore::Core::InternalThreadState {
     .CTX = this,
   };
   LogMan::Msg::EFmt("[TI-IC] threadstate-alloc");

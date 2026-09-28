@@ -103,6 +103,22 @@ def check_payload(app):
             raise ValueError("Helper extension executable is missing")
 
 
+def check_asset_catalog(app):
+    source = Path(__file__).resolve().parents[1] / "iridium/apps/ios/Iridium/Assets.xcassets"
+    expected = {path.stem for path in source.glob("*.imageset")}
+    if not expected:
+        return
+    catalog = app / "Assets.car"
+    if not catalog.is_file():
+        raise ValueError("App asset catalog is missing")
+    result = subprocess.run(["xcrun", "assetutil", "--info", str(catalog)],
+                            capture_output=True, text=True, check=True)
+    actual = {item.get("Name") for item in json.loads(result.stdout)}
+    missing = expected - actual
+    if missing:
+        raise ValueError("App asset catalog is missing images: " + ", ".join(sorted(missing)))
+
+
 def unsigned_status(path):
     result = subprocess.run(["/usr/bin/codesign", "-d", str(path)], capture_output=True, text=True)
     if result.returncode == 0:
@@ -158,6 +174,7 @@ def package(app, output):
     if output.resolve().is_relative_to(app.resolve()):
         raise ValueError("Output directory must be outside the app bundle")
     check_payload(app)
+    check_asset_catalog(app)
     output.mkdir(parents=True, exist_ok=True)
     ipa = output / "Iridium-unsigned.ipa"
     if ipa.exists():

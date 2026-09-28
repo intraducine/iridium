@@ -11,6 +11,22 @@ from test_manual_build import load
 source = load('release_source', 'collect-release-source.py')
 
 class SourceTests(unittest.TestCase):
+    def test_source_package_streams_linux_tree_without_staging_copy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            staged = root / 'staged'
+            linux = root / 'linux'
+            staged.mkdir()
+            linux.mkdir()
+            (staged / 'app.txt').write_text('app source')
+            (linux / 'lib.txt').write_text('linux source')
+            output = root / 'release.tar.gz'
+            source.write_source_package(staged, linux, output)
+            self.assertFalse((staged / 'linux').exists())
+            with tarfile.open(output) as archive:
+                self.assertEqual(archive.extractfile('corresponding-source/app.txt').read(), b'app source')
+                self.assertEqual(archive.extractfile('corresponding-source/linux/lib.txt').read(), b'linux source')
+
     def test_media_rust_registry_sources_are_verified(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

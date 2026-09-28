@@ -35,6 +35,26 @@ typedef uint32_t ShaderType;
 typedef uint32_t SM50BindingType;
 #endif
 
+/* ml1008: D3D12 needs each declaration range's REGISTER IDENTITY, which
+ * MTL_SM50_SHADER_ARGUMENT does not carry. That struct's SM50BindingSlot is the
+ * declaration RANGE ID; under SM 5.0 the range id doubles as the register, but
+ * under SM 5.1 it does not (a shader can declare range id 0 at b17). Binding by
+ * the reflected slot therefore silently binds the wrong resource.
+ *
+ * This is purely ADDITIVE -- no existing struct, field or entry point changes
+ * meaning -- so the D3D11 path, which relies on the SM 5.0 coincidence, is
+ * unaffected. */
+struct MTL_SM50_RANGE_INFO {
+  SM50BindingType Type;
+  uint32_t RangeID;            /* matches MTL_SM50_SHADER_ARGUMENT::SM50BindingSlot */
+  uint32_t RegisterSpace;
+  uint32_t LowerBound;         /* the actual D3D register, e.g. 17 for b17 */
+  uint32_t RangeSize;          /* 1 == singleton; 0xffffffff == unbounded */
+  uint32_t StructurePtrOffset; /* 64-bit WORD offset into the argument table */
+  uint32_t Flags;              /* MTL_SM50_SHADER_ARGUMENT_FLAG: picks the encoding */
+  uint32_t IsConstantBufferTable; /* 1 = belongs to the table at ConstanttBufferTableBindIndex */
+};
+
 enum MTL_SM50_SHADER_ARGUMENT_FLAG : uint32_t {
   MTL_SM50_SHADER_ARGUMENT_BUFFER = 1 << 0,
   MTL_SM50_SHADER_ARGUMENT_TEXTURE = 1 << 1,
@@ -192,12 +212,44 @@ enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE {
   SM50_SHADER_GS_PASS_THROUGH = 5,
   SM50_SHADER_PSO_GEOMETRY_SHADER = 6,
   SM50_SHADER_PSO_TESSELLATOR = 7,
+  /* ml1031: the vertex stage this pixel shader will be paired with. */
+  SM50_SHADER_PSO_VERTEX_INTERFACE = 8,
   SM50_SHADER_ARGUMENT_TYPE_MAX = 0xffffffff,
 };
 
 struct SM50_SHADER_COMPILATION_ARGUMENT_DATA {
   void *next;
   enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE type;
+};
+
+/* ml1031: VS/PS INTERPOLANT RECONCILIATION.
+ *
+ * D3D lets a pixel shader read an interpolant the vertex shader never writes --
+ * the value is simply undefined. Metal does not: newRenderPipelineState fails
+ * with "Fragment input(s) `user(texcoord4),user(texcoord7)` mismatching vertex
+ * shader output type(s) or not written by vertex shader", and a failed pipeline
+ * is a NULL pipeline, so every draw through it silently disappears. RDR2's
+ * deferred G-buffer (5 targets + depth) died exactly this way on 4 pipelines,
+ * which is why its first-boot screens rendered the UI but no scene.
+ *
+ * Chain this when compiling a PIXEL shader to declare which vertex stage it will
+ * be paired with. The converter parses that shader's own output signature and,
+ * for any input the vertex stage does not write, declines to declare the
+ * stage_in entry and zero-initialises the input register instead -- which is a
+ * legal value for something D3D leaves undefined.
+ *
+ * Zero-filling in the PS is deliberate: the alternative (synthesising the
+ * missing outputs in the VS) would need a VS variant per pixel shader, since one
+ * VS is shared across many pipelines.
+ *
+ * Absent => no filtering, i.e. exactly the pre-ml1031 behaviour. Callers that
+ * chain it MUST include the vertex bytecode in their shader-cache key, or a PS
+ * compiled against one vertex stage will be reused against another. */
+struct SM50_SHADER_PSO_VERTEX_INTERFACE_DATA {
+  void *next;
+  enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE type;
+  const void *vertex_bytecode;      /* the paired VS's DXBC container */
+  uint32_t vertex_bytecode_size;
 };
 
 struct SM50_STREAM_OUTPUT_ELEMENT {
@@ -325,6 +377,13 @@ AIRCONV_API int SM50CompileGeometryPipelineGeometry(
 AIRCONV_API void SM50GetArgumentsInfo(
   sm50_shader_t pShader, struct MTL_SM50_SHADER_ARGUMENT *pConstantBuffers,
   struct MTL_SM50_SHADER_ARGUMENT *pArguments
+);
+
+/* ml1008: writes up to Capacity range records and returns the TOTAL number the
+ * shader has, so a caller can size its buffer from a first call with
+ * Capacity 0. See MTL_SM50_RANGE_INFO for why D3D12 needs this. */
+AIRCONV_API uint32_t SM50GetRangeInfo(
+  sm50_shader_t pShader, struct MTL_SM50_RANGE_INFO *pRanges, uint32_t Capacity
 );
 
 #ifdef __cplusplus

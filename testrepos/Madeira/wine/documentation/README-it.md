@@ -8,7 +8,7 @@ che implementa le chiamate alle API Windows usando i loro equivalenti
 Unix o X11. La libreria può essere usata anche per portare codice Windows
 in eseguibili nativi Unix.
 
-Wine è un software libero, rilasciato sotto la GNU GPL; leggere il file
+Wine è un software libero, rilasciato sotto la GNU LGPL; leggere il file
 LICENSE per maggiori dettagli.
 
 

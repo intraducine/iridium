@@ -36,6 +36,9 @@ struct RuntimePlayerView: View {
     var onCaptureChange: (Bool) -> Void = { _ in }
     // UI tests can supply file-backed presentation without starting a runtime.
     var presentationConfiguration: RuntimePlayerBridgeConfiguration? = nil
+    var launchArtwork: RuntimeLaunchArtworkSnapshot? = nil
+    var launchMotionState = RuntimeLaunchMotionState(animate: false)
+    var onLaunchReady: () -> Void = {}
 
     @State private var controllerCount = GCController.controllers().count
     @State private var inputNotice: String?
@@ -43,36 +46,56 @@ struct RuntimePlayerView: View {
     @State private var inputNoticeTask: Task<Void, Never>?
     @State private var touchEventCount = 0
     @State private var frameCount: UInt64 = 0
+    @State private var frameSessionIdentifier: String?
     @State private var timing = FrameTiming()
     @State private var framesPerSecond: Double = 0
     @State private var fpsSampleCount: UInt64 = 0
     @State private var fpsSampleTime = ProcessInfo.processInfo.systemUptime
     @State private var startupEvents: [String] = []
     @State private var totalLogEntries = 0
-    @State private var launchEvents: [String] = []
     @State private var controlsVisible = false
     @State private var isShowingDiagnostics = false
     @State private var isShowingControls = false
-    @State private var showPerformance = true
+    @State private var showPerformance = false
     @State private var deviceKeyboardVisible = false
+    @State private var showKeyboardAfterControlsDismiss = false
     @State private var keyboardInputRejected = false
-    @AppStorage("IridiumMouseSensitivity") private var mouseSensitivity = 1.0
-    @AppStorage("IridiumScrollSensitivity") private var scrollSensitivity = 1.0
+    @State private var touchControlsEnabled = false
     @State private var isConfirmingClose = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { safeGeometry in
-        ControllerMenuHost(nativeNavigation: controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose, backAction: (controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose) ? {
+        ControllerMenuHost(nativeNavigation: launchPresentation.showsArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose, backAction: (launchPresentation.showsArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose) ? {
             if isConfirmingClose { isConfirmingClose = false }
             else if isShowingControls { isShowingControls = false }
             else if isShowingDiagnostics { isShowingDiagnostics = false }
-            else { controlsVisible = false }
+            else { controlsVisible.toggle() }
         } : nil, fullScreen: true) {
         Group {
             if let bridgeConfiguration = presentationConfiguration ?? viewModel.runtimePlayerBridgeConfiguration(
                 for: session.sessionIdentifier
             ) {
+                playerView(configuration: bridgeConfiguration, geometry: safeGeometry)
+            } else {
+                RuntimeLaunchArtworkView(
+                    session: session, phase: .closing, safeInsets: safeGeometry.safeAreaInsets,
+                    artwork: launchArtwork, motionState: launchMotionState,
+                    viewLogs: {}, close: { viewModel.dismissActiveRuntimePlayer() }
+                )
+                .ignoresSafeArea()
+                .statusBarHidden()
+                .task {
+                    viewModel.dismissActiveRuntimePlayer()
+                }
+            }
+        }
+        }.ignoresSafeArea()
+        }.statusBarHidden()
+    }
+
+    private func playerSurface(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                               geometry safeGeometry: GeometryProxy) -> some View {
                     RuntimeRenderHostView(
                         configuration: bridgeConfiguration,
                         isRunning: session.state == .running,
@@ -81,6 +104,7 @@ struct RuntimePlayerView: View {
                     ) { count in
                         touchEventCount += count
                     } onFrameCount: { count in
+                        frameSessionIdentifier = session.sessionIdentifier
                         frameCount = count
                         let now = ProcessInfo.processInfo.systemUptime
                         let elapsed = now - fpsSampleTime
@@ -96,6 +120,7 @@ struct RuntimePlayerView: View {
                     } onFrameTiming: { value in
                         timing = value
                     } onFirstFramePresented: {
+                        onLaunchReady()
                         viewModel.recordRuntimePlayerFirstFramePresented(
                             sessionIdentifier: session.sessionIdentifier
                         )
@@ -105,55 +130,81 @@ struct RuntimePlayerView: View {
                         deviceKeyboardVisible = false
                         keyboardInputRejected = true
                     }
+                    .id(session.sessionIdentifier)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
+                    .overlay {
+                        if launchPresentation.showsArtwork {
+                            RuntimeLaunchArtworkView(
+                                session: session, phase: launchPresentation,
+                                safeInsets: safeGeometry.safeAreaInsets, artwork: launchArtwork,
+                                motionState: launchMotionState,
+                                viewLogs: { deviceKeyboardVisible = false; isShowingDiagnostics = true },
+                                close: { viewModel.dismissActiveRuntimePlayer() }
+                            )
+                            .id(session.sessionIdentifier)
+                            .allowsHitTesting(!controlsVisible)
+                            .accessibilityHidden(controlsVisible)
+                            .transition(.opacity)
+                        }
+                    }
+                    .overlay {
+                        if touchControlsEnabled {
+                            TouchControllerOverlay(gameID: session.gameID)
+                                .opacity(guestInputEnabled && !deviceKeyboardVisible ? 1 : 0)
+                                .allowsHitTesting(guestInputEnabled && !deviceKeyboardVisible)
+                                .animation(.easeOut(duration: 0.12), value: guestInputEnabled && !deviceKeyboardVisible)
+                        }
+                    }
                     .overlay {
                         if controlsVisible {
                             Color.clear
                                 .ignoresSafeArea()
                                 .contentShape(Rectangle())
                                 .onTapGesture { withOptionalAnimation { controlsVisible = false } }
-                                .accessibilityLabel("Dismiss debug panel")
+                                .accessibilityLabel("Dismiss player menu")
                                 .accessibilityAddTraits(.isButton)
                         }
                     }
                     .overlay(alignment: .topTrailing) {
                         VStack(alignment: .trailing, spacing: 12) {
-                            Button {
-                                withOptionalAnimation { controlsVisible.toggle() }
-                            } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
-                            .modifier(PlayerGlassButton()).focusable(false).accessibilityLabel("Player Menu")
+                            if launchPresentation.showsArtwork || !touchControlsEnabled || controlsVisible {
+                                Button {
+                                    withOptionalAnimation { controlsVisible.toggle() }
+                                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                                .modifier(PlayerGlassButton()).focusable(false).accessibilityLabel("Player Menu")
+                            }
                             if controlsVisible {
                                 ScrollView {
-                                VStack(alignment: .leading, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 8) {
                                     Button("Resume", systemImage: "play") { controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Controls", systemImage: "gamecontroller") { deviceKeyboardVisible = false; isShowingControls = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    #if MADEIRA_RUNTIME
-                                    Toggle("Device Keyboard", isOn: Binding(
-                                        get: { deviceKeyboardVisible },
-                                        set: { deviceKeyboardVisible = $0; if $0 { controlsVisible = false } }
-                                    )).frame(minHeight: 44).accessibilityIdentifier("deviceKeyboard")
-                                        .disabled(session.state != .running || viewModel.closingMadeiraSession)
-                                    Stepper(value: $mouseSensitivity, in: 0.25...4, step: 0.25) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Mouse sensitivity")
-                                            Text(mouseSensitivity.formatted(.number.precision(.fractionLength(2))) + "×")
-                                                .font(.caption).monospacedDigit()
-                                        }
+                                    Button("Input Settings", systemImage: "gamecontroller") {
+                                        deviceKeyboardVisible = false
+                                        isShowingControls = true
+                                        controlsVisible = false
                                     }
-                                    .accessibilityIdentifier("mouseSensitivity")
-                                    Stepper(value: $scrollSensitivity, in: 0.25...4, step: 0.25) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Scroll sensitivity")
-                                            Text(scrollSensitivity.formatted(.number.precision(.fractionLength(2))) + "×")
-                                                .font(.caption).monospacedDigit()
-                                        }
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Label("Performance", systemImage: "gauge.with.dots.needle.67percent")
+                                        Text("\(framesPerSecond, specifier: "%.1f") FPS · \(timing.milliseconds, specifier: "%.1f") ms")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                        Text("1% low \(timing.low.map { String(format: "%.1f", $0) } ?? "—") · high \(timing.high.map { String(format: "%.1f", $0) } ?? "—")")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(.secondary)
                                     }
-                                    .accessibilityIdentifier("scrollSensitivity")
-                                    #endif
-                                    Toggle("Performance", isOn: $showPerformance).frame(minHeight: 44)
+                                    .padding(.vertical, 4)
+                                    Toggle("Pin Performance HUD", isOn: $showPerformance).frame(minHeight: 44)
                                     Button("View Log", systemImage: "doc.text") { deviceKeyboardVisible = false; isShowingDiagnostics = true; controlsVisible = false }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    if launchPresentation == .starting {
+                                        Button("Cancel Launch", systemImage: "xmark", role: .destructive) {
+                                            deviceKeyboardVisible = false
+                                            controlsVisible = false
+                                            viewModel.dismissActiveRuntimePlayer()
+                                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    } else {
+                                        Button("Close Game", systemImage: "xmark", role: .destructive) { deviceKeyboardVisible = false; isConfirmingClose = true }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    }
                                 }
                                 .buttonStyle(.plain)
                                 .controlSize(.large)
@@ -161,7 +212,7 @@ struct RuntimePlayerView: View {
                                 .padding(16)
                                 }
                                 .scrollBounceBehavior(.basedOnSize)
-                                .frame(width: 282, height: min(410, max(100, safeGeometry.size.height - safeGeometry.safeAreaInsets.top - safeGeometry.safeAreaInsets.bottom - 80)))
+                                .frame(width: 282, height: min(390, max(100, safeGeometry.size.height - safeGeometry.safeAreaInsets.top - safeGeometry.safeAreaInsets.bottom - 80)))
                                 .modifier(PlayerGlassPanel())
                                 .accessibilityIdentifier("playerMenuPanel")
                                 .contentShape(Rectangle()).onTapGesture {}
@@ -171,23 +222,8 @@ struct RuntimePlayerView: View {
                         .padding(.trailing, max(16, safeGeometry.safeAreaInsets.trailing + 12))
                         .foregroundStyle(.white)
                     }
-                    .overlay(alignment: .topLeading) {
-                        if (!hasPresentedFirstFrame || session.state != .running || viewModel.closingMadeiraSession || viewModel.madeiraShutdownUnconfirmed) && !controlsVisible {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(viewModel.closingMadeiraSession ? "Closing game…" : (viewModel.madeiraShutdownUnconfirmed ? "Shutdown not confirmed" : (session.state == .failed ? "Launch failed" : (session.state == .completed ? "Game stopped" : "Starting game…")))).font(.headline)
-                                Text(session.state == .running && !viewModel.closingMadeiraSession && !viewModel.madeiraShutdownUnconfirmed ? (launchEvents.last ?? "Preparing the game…") : session.statusSummary)
-                                    .font(.footnote).lineLimit(3)
-                            }.padding(16).frame(maxWidth: 280, alignment: .leading)
-                                .modifier(PlayerGlassPanel())
-                                .accessibilityElement(children: .combine)
-                                .accessibilityIdentifier("playerLaunchPanel")
-                                .padding(.top, safeGeometry.safeAreaInsets.top + 12)
-                                .padding(.leading, max(16, safeGeometry.safeAreaInsets.leading + 12))
-                                .allowsHitTesting(false)
-                        }
-                    }
                 .overlay(alignment: .bottomLeading) {
-                    if showPerformance {
+                    if showPerformance && !launchPresentation.showsArtwork {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(framesPerSecond, specifier: "%.1f") FPS · \(timing.milliseconds, specifier: "%.1f") ms")
                         Text("1% low \(timing.low.map { String(format: "%.1f", $0) } ?? "—") · high \(timing.high.map { String(format: "%.1f", $0) } ?? "—")")
@@ -204,7 +240,7 @@ struct RuntimePlayerView: View {
                 }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if let inputNotice {
+                    if let inputNotice, !launchPresentation.showsArtwork {
                         Label(inputNotice, systemImage: inputNoticeSymbol)
                             .font(.callout.weight(.medium))
                             .foregroundStyle(.white)
@@ -223,14 +259,19 @@ struct RuntimePlayerView: View {
                 .preferredColorScheme(.dark)
                 .background(Color.black.ignoresSafeArea())
                 .statusBarHidden()
+    }
+
+    private func playerTasks(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                             geometry safeGeometry: GeometryProxy) -> some View {
+        playerSurface(configuration: bridgeConfiguration, geometry: safeGeometry)
                 .task(id: session.sessionIdentifier) {
-                    frameCount = 0
+                    // Frame ownership is tracked by session, not reset by this log task.
+                    // A fast first frame can arrive before SwiftUI starts the task.
                     framesPerSecond = 0
                     timing = FrameTiming()
                     fpsSampleCount = 0
                     fpsSampleTime = ProcessInfo.processInfo.systemUptime
                     startupEvents = []
-                    launchEvents = []
                     totalLogEntries = 0
                     var logOffsets: [String: UInt64] = [:]
                     while !Task.isCancelled {
@@ -241,12 +282,6 @@ struct RuntimePlayerView: View {
                         logOffsets = batch.offsets
                         let stamp = Date.now.formatted(date: .omitted, time: .standard)
                         totalLogEntries += batch.events.count
-                        for event in batch.events {
-                            if let summary = RuntimeLogCapture.launchSummary(event), launchEvents.last?.hasSuffix(summary) != true {
-                                launchEvents.append("[\(stamp)] \(summary)")
-                            }
-                        }
-                        if launchEvents.count > 500 { launchEvents.removeFirst(launchEvents.count - 500) }
                         startupEvents.append(contentsOf: batch.events.map { "[\(stamp)] \($0)" })
                         // ponytail: retain 500 UI entries; full history stays in the runtime files.
                         if startupEvents.count > 500 { startupEvents.removeFirst(startupEvents.count - 500) }
@@ -273,8 +308,25 @@ struct RuntimePlayerView: View {
                     }
                     RuntimePlayerControllerBridge.shared.stop()
                 }
+    }
+
+    private func playerView(configuration bridgeConfiguration: RuntimePlayerBridgeConfiguration,
+                            geometry safeGeometry: GeometryProxy) -> some View {
+        playerTasks(configuration: bridgeConfiguration, geometry: safeGeometry)
                 .onAppear {
                     controllerCount = GCController.controllers().count
+                    touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: session.gameID)
+                    updatePointerCapture()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: TouchControllerOverlay.playerMenuRequested)) { notification in
+                    guard let changedGame = notification.object as? UUID, changedGame == session.gameID else { return }
+                    deviceKeyboardVisible = false
+                    withOptionalAnimation { controlsVisible = true }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: TouchControllerLayoutStore.settingsChanged)) { notification in
+                    guard let changedGame = notification.object as? UUID, changedGame == session.gameID else { return }
+                    touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: session.gameID)
+                    updatePointerCapture()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in
                     showInputNotice(device: "Keyboard", symbol: "keyboard", connected: true)
@@ -294,6 +346,9 @@ struct RuntimePlayerView: View {
                 }
                 .onChange(of: deviceKeyboardVisible) { _, _ in updatePointerCapture() }
                 .onChange(of: session.state) { _, _ in updatePointerCapture() }
+                .onChange(of: launchPresentation) { _, phase in
+                    updatePointerCapture()
+                }
                 .onChange(of: viewModel.closingMadeiraSession) { _, _ in updatePointerCapture() }
                 .onChange(of: keyboardInputRejected) { _, _ in updatePointerCapture() }
                 .alert("Keyboard input not sent", isPresented: $keyboardInputRejected) {
@@ -302,26 +357,22 @@ struct RuntimePlayerView: View {
                     Text("The device-keyboard bridge supports basic US-layout letters, numbers, and symbols. This insertion contained an unsupported character; nothing from that insertion was sent.")
                 }
                 .onKeyPress(.escape) {
-                    guard controlsVisible else { return .ignored }
-                    controlsVisible = false
+                    guard controlsVisible || launchPresentation.showsArtwork else { return .ignored }
+                    controlsVisible.toggle()
                     return .handled
                 }
-                .sheet(isPresented: $isShowingControls) {
-                    NavigationStack {
-                        if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
-                            GameControlsView(game: game).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction) } }
-                        }
-                    }
+                .sheet(isPresented: $isShowingControls, onDismiss: finishInputSettingsDismissal) {
+                    inputSettingsSheet
                 }
                 .onChange(of: isShowingControls) { _, _ in updatePointerCapture() }
                 .onChange(of: isShowingDiagnostics) { _, _ in updatePointerCapture() }
                 .onChange(of: isConfirmingClose) { _, _ in updatePointerCapture() }
-                .onAppear { updatePointerCapture() }
                 .onDisappear {
                     deviceKeyboardVisible = false
                     #if MADEIRA_RUNTIME
                     MadeiraHardwareInput.softwareKeyboardActive = false
                     MadeiraController.acceptingInput = false
+                    MadeiraController.setTouchControlsActive(false)
                     #endif
                     onCaptureChange(false)
                     inputNoticeTask?.cancel()
@@ -345,42 +396,64 @@ struct RuntimePlayerView: View {
                     )
                     .presentationDetents([.medium, .large])
                 }
-            } else {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 12) {
-                        Text("Runtime Player")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Text("Closing game…")
-                            .font(.footnote)
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.top, 16)
-                }
-                .ignoresSafeArea()
-                .statusBarHidden()
-                .task {
-                    viewModel.dismissActiveRuntimePlayer()
-                }
-            }
-        }
-        }.ignoresSafeArea()
-        }.statusBarHidden()
     }
 
     private var hasPresentedFirstFrame: Bool {
-        frameCount > 0
+        frameSessionIdentifier == session.sessionIdentifier && frameCount > 0
+    }
+
+    private var launchPresentation: RuntimeLaunchPresentation {
+        RuntimeLaunchPresentation.resolve(
+            isRunning: session.state == .running, isFailed: session.state == .failed,
+            isCompleted: session.state == .completed, hasPresentedFrame: hasPresentedFirstFrame,
+            isClosing: viewModel.closingMadeiraSession,
+            shutdownUnconfirmed: viewModel.madeiraShutdownUnconfirmed
+        )
+    }
+
+    private var inputSettingsSheet: some View {
+        NavigationStack {
+            if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
+                GameInputSettingsView(game: game, deviceKeyboardVisible: Binding(
+                    get: { deviceKeyboardVisible || showKeyboardAfterControlsDismiss },
+                    set: { visible in
+                        if visible {
+                            showKeyboardAfterControlsDismiss = true
+                            isShowingControls = false
+                        } else {
+                            showKeyboardAfterControlsDismiss = false
+                            deviceKeyboardVisible = false
+                        }
+                    }
+                ))
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { isShowingControls = false }.keyboardShortcut(.cancelAction)
+                    }
+                }
+            }
+        }
+    }
+
+    private func finishInputSettingsDismissal() {
+        guard showKeyboardAfterControlsDismiss else { return }
+        showKeyboardAfterControlsDismiss = false
+        // Let UIKit finish the sheet's keyboard-focus restoration first.
+        DispatchQueue.main.async {
+            guard session.state == .running, !viewModel.closingMadeiraSession else { return }
+            deviceKeyboardVisible = true
+        }
     }
 
     private var guestInputEnabled: Bool {
-        session.state == .running && !controlsVisible && !isShowingDiagnostics && !isShowingControls
+        launchPresentation == .playing && !controlsVisible && !isShowingDiagnostics && !isShowingControls
             && !isConfirmingClose && !keyboardInputRejected && !viewModel.closingMadeiraSession
     }
 
     private func updatePointerCapture() {
         #if MADEIRA_RUNTIME
         MadeiraHardwareInput.softwareKeyboardActive = deviceKeyboardVisible
+        MadeiraController.setTouchControlsActive(touchControlsEnabled)
         MadeiraController.acceptingInput = guestInputEnabled && !deviceKeyboardVisible
         #endif
         // Capture eligibility stays true while typing, but the presented host
@@ -394,7 +467,7 @@ struct RuntimePlayerView: View {
             inputNoticeSymbol = symbol
             inputNotice = message
         }
-        launchEvents.append("[\(Date.now.formatted(date: .omitted, time: .standard))] \(message)")
+        RuntimeLogCapture.writeLine("[Launch] \(message)")
         UIAccessibility.post(notification: .announcement, argument: message)
         inputNoticeTask?.cancel()
         inputNoticeTask = Task { @MainActor in
@@ -551,9 +624,14 @@ private final class RuntimePlayerHostView: UIView {
     private var noChangeTickCount = 0
     private var lastPollDiagnosticAt: CFTimeInterval?
     private var didNotifyFirstPresentedFrame = false
+    private var acceptsPresentedFrames = true
     private var pendingTouchEventCount = 0
     private var lastTouchEventFlushAt: CFTimeInterval?
     private var touchEventFlushWorkItem: DispatchWorkItem?
+    private var lastMadeiraPresentCount: UInt64?
+    private var lastMadeiraPresentChangeAt: CFTimeInterval?
+    private var lastMadeiraStallLogAt: CFTimeInterval?
+    private var madeiraPresentWasStalled = false
 
     init(
         configuration: RuntimePlayerBridgeConfiguration,
@@ -572,7 +650,7 @@ private final class RuntimePlayerHostView: UIView {
         self.onFirstFramePresented = onFirstFramePresented
         super.init(frame: .zero)
 
-        backgroundColor = UIColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 1.0)
+        backgroundColor = .black
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .clear
         addSubview(imageView)
@@ -586,7 +664,9 @@ private final class RuntimePlayerHostView: UIView {
             hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
             addGestureRecognizer(hover)
             madeiraLayer.didPresent = { [weak self] time in
-                self?.recordFrameTiming(time)
+                guard let self, self.acceptsPresentedFrames, self.window != nil,
+                      time.isFinite, time > 0 else { return }
+                self.recordPresentedFrame(at: time)
             }
             madeiraLayer.device = MTLCreateSystemDefaultDevice()
             madeiraLayer.pixelFormat = .bgra8Unorm
@@ -671,6 +751,12 @@ private final class RuntimePlayerHostView: UIView {
         let changed = focusPolicy.update(inputEnabled: guestInputEnabled && window != nil,
                                          keyboard: wantsDeviceKeyboard)
         guard changed || force else { return }
+        // Responder changes can synchronously start keyboard layout. Never do that
+        // inside SwiftUI's updateUIView or a keyboard visibility notification.
+        DispatchQueue.main.async { [weak self] in self?.applyResponderOwnership() }
+    }
+
+    private func applyResponderOwnership() {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             switch focusPolicy.owner {
@@ -678,17 +764,19 @@ private final class RuntimePlayerHostView: UIView {
                 if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
                 if isFirstResponder { _ = resignFirstResponder() }
             case .keyboard:
+                guard window != nil else { return }
                 if !softwareKeyboardView.isFirstResponder, !softwareKeyboardView.becomeFirstResponder() {
                     keyboardHidden()
                 }
             case .game:
+                guard window != nil else { return }
                 if softwareKeyboardView.isFirstResponder { _ = softwareKeyboardView.resignFirstResponder() }
                 if !isFirstResponder { _ = becomeFirstResponder() }
             }
             return
         }
         #endif
-        if focusPolicy.owner == .game { _ = becomeFirstResponder() }
+        if focusPolicy.owner == .game, window != nil { _ = becomeFirstResponder() }
         else if isFirstResponder { _ = resignFirstResponder() }
     }
 
@@ -782,6 +870,11 @@ private final class RuntimePlayerHostView: UIView {
         noChangeTickCount = 0
         lastPollDiagnosticAt = nil
         didNotifyFirstPresentedFrame = false
+        acceptsPresentedFrames = true
+        lastMadeiraPresentCount = nil
+        lastMadeiraPresentChangeAt = nil
+        lastMadeiraStallLogAt = nil
+        madeiraPresentWasStalled = false
         flushPendingTouchEvents()
         displayLink?.preferredFramesPerSecond = 5
         updateDisplayLinkForRunningState()
@@ -838,11 +931,38 @@ private final class RuntimePlayerHostView: UIView {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             let count = madeira_get_present_count()
-            onFrameCount(count)
-            if count > 0 && !didNotifyFirstPresentedFrame {
-                didNotifyFirstPresentedFrame = true
-                onFirstFramePresented()
+            let now = CACurrentMediaTime()
+            if let previous = lastMadeiraPresentCount {
+                if count != previous {
+                    if madeiraPresentWasStalled {
+                        RuntimeLogCapture.writeLine(
+                            "[IridiumRuntime] runtimePlayer: madeiraPresentResumed session=\(configuration.sessionIdentifier) previous=\(previous) count=\(count)"
+                        )
+                    }
+                    lastMadeiraPresentCount = count
+                    lastMadeiraPresentChangeAt = now
+                    lastMadeiraStallLogAt = nil
+                    madeiraPresentWasStalled = false
+                } else {
+                    if lastMadeiraPresentChangeAt == nil { lastMadeiraPresentChangeAt = now }
+                    let stalledSeconds = now - (lastMadeiraPresentChangeAt ?? now)
+                    let shouldLog = stalledSeconds >= 3
+                        && (lastMadeiraStallLogAt == nil || now - (lastMadeiraStallLogAt ?? now) >= 5)
+                    if shouldLog {
+                        madeiraPresentWasStalled = true
+                        lastMadeiraStallLogAt = now
+                        let phase = count == 0 ? "awaiting-first-present" : "after-present"
+                        RuntimeLogCapture.writeLine(
+                            "[IridiumRuntime] runtimePlayer: madeiraPresentStalled session=\(configuration.sessionIdentifier) count=\(count) stalledSeconds=\(String(format: "%.1f", stalledSeconds)) phase=\(phase)"
+                        )
+                    }
+                }
+            } else {
+                lastMadeiraPresentCount = count
+                lastMadeiraPresentChangeAt = now
             }
+            // This counter diagnoses runtime submission/stalls, not visible frames.
+            // PlayerMetalLayer's drawable-presented callback owns readiness and FPS.
             return
         }
         #endif
@@ -917,9 +1037,8 @@ private final class RuntimePlayerHostView: UIView {
         if timing.updatedAt != previous { onFrameTiming(timing) }
     }
 
-    private func recordPresentedFrame() {
-        recordFrameTiming(CACurrentMediaTime())
-        let now = CACurrentMediaTime()
+    private func recordPresentedFrame(at now: CFTimeInterval = CACurrentMediaTime()) {
+        recordFrameTiming(now)
         let delta = lastPresentedFrameAt.map { now - $0 }
         lastPresentedFrameAt = now
         presentedFrameCount += 1
@@ -963,6 +1082,7 @@ private final class RuntimePlayerHostView: UIView {
     }
 
     func stop() {
+        acceptsPresentedFrames = false
         setInputState(enabled: false, keyboard: false)
         #if MADEIRA_RUNTIME
         if pointerContact.release() { winios_pointer(0, 0, 0x0004, 0) }

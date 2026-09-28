@@ -4,6 +4,8 @@
 #include "d3d11_pipeline.hpp"
 #include "d3d11_shader.hpp"
 #include "log/log.hpp"
+#include "config/config.hpp"   /* ml867 */
+#include <atomic>
 #include "thread.hpp"
 
 namespace dxmt {
@@ -145,6 +147,19 @@ public:
 
     {
       std::lock_guard<dxmt::mutex> lock(ts_global_mutex);
+      /* ml867: see d3d11_pipeline_gs.cpp -- with d3d11.noMeshShaders=1 the mesh
+       * pipeline is never compiled, so a driver-compiler abort on the host
+       * cannot take the process down; the draws that needed it are skipped. */
+      {
+        static const int no_mesh = Config::getInstance().getOption<int>("d3d11.noMeshShaders", 0);
+        if (no_mesh) {
+          static std::atomic<uint32_t> suppressed{0};
+          uint32_t n = suppressed.fetch_add(1, std::memory_order_relaxed) + 1;
+          if (n == 1 || (n & 0x3F) == 0)
+            ERR("[mesh-skip] ml867 suppressed ", n, " TESSELLATION mesh pipeline compile(s) (d3d11.noMeshShaders=1)");
+          return this;
+        }
+      }
       state_rasterization_ =
           device_->GetMTLDevice().newRenderPipelineState(info, err);
     }

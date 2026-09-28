@@ -33,3 +33,11 @@ EXPORTS
   ; the selector finds NO BAND -- exactly the failure that needs explaining.
   ios_va_log DATA
   ios_va_log_len DATA
+  ; ml797: the VA band, written by ntdll from arm64ec_process_init_dispatchers()
+  ; BEFORE the selector runs. The selector cannot read an environment for itself
+  ; -- it runs before the ARM64EC TEB and before ucrtbase's DllMain, where
+  ; getenv() recurses in _lock(17) and GetEnvironmentVariableA faults on the TEB.
+  ios_fex_band_base DATA
+  ios_fex_band_end DATA
+  ; ml1131: transition probe counters (Module.S), read by ntdll-unix's [xp-api] sampler.
+  IosXpFex DATA

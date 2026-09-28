@@ -9,7 +9,7 @@ uitvoeren door overeenkomstige Unix, X11 of Mac varianten. Deze
 bibliotheek kan ook worden gebruikt om Windows code om te zetten in
 echte Unix uitvoerbare bestanden.
 
-Wine is vrije software, uitgebracht onder de GNU GPL. Zie het
+Wine is vrije software, uitgebracht onder de GNU LGPL. Zie het
 LICENCE bestand voor meer informatie.
 
 

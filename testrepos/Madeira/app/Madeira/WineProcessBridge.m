@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <dirent.h>
+#include "../../build/madeira_cfg.h"   /* ml1095: one config file */
 #include <sys/stat.h>
 #include <limits.h>
 #include <string.h>
@@ -125,17 +126,17 @@ static int madeira_prune_keep_tree(const char *dir, int depth)
  * destination already exists the source is left in place for manual review,
  * because that tree holds real user data. */
 
-static int ios_reg_unmangle(const char *path)
+static int ios_reg_replace(const char *path, const char *bad, const char *good)
 {
     FILE *f = fopen( path, "rb" );
-    if (!f) return 0;
+    if (!f) return errno == ENOENT ? 0 : -1;
     fseek( f, 0, SEEK_END ); long n = ftell( f ); fseek( f, 0, SEEK_SET );
-    if (n <= 0 || n > (64 << 20)) { fclose( f ); return 0; }
+    if (n <= 0 || n > (64 << 20)) { fclose( f ); return -1; }
     char *buf = malloc( (size_t)n + 1 );
-    if (!buf) { fclose( f ); return 0; }
+    if (!buf) { fclose( f ); return -1; }
     size_t got = fread( buf, 1, (size_t)n, f );
     fclose( f );
-    if (got != (size_t)n) { free( buf ); return 0; }
+    if (got != (size_t)n) { free( buf ); return -1; }
     buf[n] = 0;
 
     /* ml667: anchored on "C:" originally, which MISSED the one value that has
@@ -143,19 +144,18 @@ static int ios_reg_unmangle(const char *path)
      * standard way to reach the profile, so that single miss left the default
      * path broken while everything else looked repaired. Match the collapsed
      * token itself; it reconstructs correctly with or without a drive prefix. */
-    static const char BAD[]  = "usersmadeira";
-    static const char GOOD[] = "users\\\\madeira";
-    const size_t bl = sizeof(BAD) - 1, gl = sizeof(GOOD) - 1;
+    const size_t bl = strlen(bad), gl = strlen(good);
+    if (!bl || gl < bl) { free( buf ); return -1; }
     size_t hits = 0;
-    for (char *q = buf; (q = strstr( q, BAD )); q += bl) hits++;
+    for (char *q = buf; (q = strstr( q, bad )); q += bl) hits++;
     if (!hits) { free( buf ); return 0; }
 
     char *out = malloc( (size_t)n + hits * (gl - bl) + 1 ), *w;
-    if (!out) { free( buf ); return 0; }
+    if (!out) { free( buf ); return -1; }
     w = out;
     for (const char *r = buf; *r; )
     {
-        if (!strncmp( r, BAD, bl )) { memcpy( w, GOOD, gl ); w += gl; r += bl; }
+        if (!strncmp( r, bad, bl )) { memcpy( w, good, gl ); w += gl; r += bl; }
         else *w++ = *r++;
     }
     *w = 0;
@@ -172,9 +172,9 @@ static int ios_reg_unmangle(const char *path)
         if (ok && rename( tmp, path ) != 0) ok = 0;
         if (!ok) unlink( tmp );
     }
-    LOG( "profile-repair: %{public}s %zu path(s) %{public}s", path, hits, ok ? "rewritten" : "FAILED" );
+    LOG( "profile-repair: registry %zu path(s) %{public}s", hits, ok ? "rewritten" : "FAILED" );
     free( buf ); free( out );
-    return ok ? (int)hits : 0;
+    return ok ? (int)hits : -1;
 }
 
 /* Move src into dst, merging. Existing destinations are never overwritten. */
@@ -182,8 +182,16 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
 {
     DIR *d;
     struct dirent *ent;
+    struct stat src_st;
+    struct stat dst_st;
     if (depth <= 0) return;
-    if (rename( src, dst ) == 0) { LOG( "profile-repair: moved %{public}s", src ); return; }
+    if (lstat( src, &src_st ) != 0 || !S_ISDIR( src_st.st_mode )) return;
+    if (lstat( dst, &dst_st ) == 0)
+    {
+        if (!S_ISDIR( dst_st.st_mode )) return;
+    }
+    else if (errno != ENOENT) return;
+    if (rename( src, dst ) == 0) { LOG( "profile-repair: moved legacy directory" ); return; }
     if (errno != ENOTEMPTY && errno != EEXIST && errno != ENOTDIR) return;
     if (!(d = opendir( src ))) return;
     while ((ent = readdir( d )))
@@ -197,7 +205,8 @@ static void ios_merge_move(const char *src, const char *dst, int depth)
         if (lstat( sp, &st ) == 0 && S_ISDIR( st.st_mode ))
         {
             mkdir( dp, 0755 );
-            ios_merge_move( sp, dp, depth - 1 );
+            if (lstat( dp, &st ) == 0 && S_ISDIR( st.st_mode ))
+                ios_merge_move( sp, dp, depth - 1 );
         }
         /* a colliding FILE is left alone -- never clobber real user data */
     }
@@ -213,7 +222,12 @@ static void madeira_repair_profile(NSString *prefix)
 
     int fixed = 0;
     for (NSString *reg in @[ @"user.reg", @"userdef.reg", @"system.reg" ])
-        fixed += ios_reg_unmangle( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation );
+    {
+        int count = ios_reg_replace( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation,
+                                     "usersmadeira", "users\\\\madeira" );
+        if (count < 0) return;
+        fixed += count;
+    }
 
     NSString *bad  = [prefix stringByAppendingPathComponent:@"drive_c/usersmadeira"];
     NSString *good = [prefix stringByAppendingPathComponent:@"drive_c/users/madeira"];
@@ -236,7 +250,7 @@ static void madeira_repair_profile(NSString *prefix)
     if (![fm fileExistsAtPath:bad])
         [@"ml667" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
     else
-        LOG( "profile-repair: %{public}s still present -- will retry next launch", bad.UTF8String );
+        LOG( "profile-repair: legacy profile still present -- will retry next launch" );
     LOG( "profile-repair: complete (%d registry path(s) rewritten)", fixed );
 }
 
@@ -276,6 +290,33 @@ static void madeira_undo_appdata_skeleton(NSString *prefix)
     [@"ml666" writeToFile:marker atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
+static void madeira_repair_mobile_profile(NSString *prefix)
+{
+    /* iOS calls its account "mobile". Wine uses USER to derive its profile,
+     * and older runs wrote that name into Shell Folders despite the template's
+     * madeira profile. Repair before wineserver loads the registry. */
+    int fixed = 0;
+    for (NSString *reg in @[ @"user.reg", @"userdef.reg", @"system.reg" ])
+    {
+        int count = ios_reg_replace( [prefix stringByAppendingPathComponent:reg].fileSystemRepresentation,
+                                     "users\\\\mobile", "users\\\\madeira" );
+        if (count < 0) return;  /* retain the old tree if the registry could not be repaired */
+        fixed += count;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *bad = [prefix stringByAppendingPathComponent:@"drive_c/users/mobile"];
+    if ([fm fileExistsAtPath:bad])
+    {
+        NSString *good = [prefix stringByAppendingPathComponent:@"drive_c/users/madeira"];
+        [fm createDirectoryAtPath:good withIntermediateDirectories:YES attributes:nil error:nil];
+        ios_merge_move( bad.fileSystemRepresentation, good.fileSystemRepresentation, 12 );
+        if ([fm fileExistsAtPath:bad])
+            LOG( "profile-repair: legacy mobile profile still contains data; existing files were not overwritten" );
+    }
+    if (fixed) LOG( "profile-repair: corrected %d mobile profile path(s)", fixed );
+}
+
 
 // Wine's main entry point (from ntdll unix loader.c, statically linked)
 extern void __wine_main(int argc, char *argv[]);
@@ -309,6 +350,9 @@ static char *g_prefix_path = NULL;
 void madeira_seed_prefix_if_needed(const char *prefix_path) {
     @autoreleasepool {
         if (!prefix_path) return;
+        /* Wine derives its Windows user from USER, not from the template's
+         * USERPROFILE entry. Set it before any Wine process can initialize. */
+        setenv("USER", "madeira", 1);
         NSString *prefix = [NSString stringWithUTF8String:prefix_path];
         NSString *stamp = [prefix stringByAppendingPathComponent:@".update-timestamp"];
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -342,6 +386,7 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+        madeira_repair_mobile_profile( prefix );
     }
 }
 
@@ -582,6 +627,70 @@ static void *wine_process_thread(void *arg) {
             LOG("Wine log file: %{public}s", logPath.UTF8String);
             /* Expose the app Documents dir to Wine code (e.g. for fex-jit-dump.bin) */
             setenv("MADEIRA_DOCS_DIR", docs.UTF8String, 1);
+
+            /* ml1076: file-backed memory canary (Astra's memory-backing-canary.c,
+             * run in-app on the phone, gated by Documents/madeira-swap-canary.txt).
+             * Question: do dirty pages of a MAP_SHARED mapping of a private temp file
+             * stay OUT of phys_footprint on iOS the way they do on macOS? If yes, a
+             * file-backed tier for large guest commits is a real capacity lever. */
+            if (madeira_cfg_bool("swap-canary", 0)) {   /* ml1095: madeira.cfg swap-canary = 1 */
+                extern void madeira_memory_canary(const char *tmpdir);
+                madeira_memory_canary(NSTemporaryDirectory().UTF8String);
+            }
+
+            /* ml1077: file-backed guest data tier. Documents/madeira-swap-mb.txt = cap
+             * in MB; the sparse backing file lives in tmp with NO file protection so
+             * the mapping survives the screen locking. See virtual_ios.c ml1077. */
+            {
+                long capMB = (long)madeira_cfg_int("swap-mb", 0);   /* ml1095: madeira.cfg swap-mb = N */
+                if (capMB >= 64) {
+                    NSString *swapPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"madeira-swap.bin"];
+                    [[NSFileManager defaultManager] removeItemAtPath:swapPath error:nil];
+                    if ([[NSFileManager defaultManager] createFileAtPath:swapPath contents:nil attributes:@{NSFileProtectionKey: NSFileProtectionNone}]) {
+                        setenv("MADEIRA_SWAP_FILE", swapPath.UTF8String, 1);
+                        setenv("MADEIRA_SWAP_MB", [NSString stringWithFormat:@"%ld", capMB].UTF8String, 1);
+                        LOG("ml1077 swap tier armed: %{public}s, %ld MB", swapPath.UTF8String, capMB);
+                        fprintf(stderr, "[swap] ml1077 app: backing file %s, cap %ld MB\n", swapPath.UTF8String, capMB);
+                    }
+                }
+            }
+
+            /* ml1062: Documents/madeira-env.txt -- one KEY=VALUE per line, exported
+             * before Wine starts. FEX reads its whole configuration from FEX_*
+             * environment variables (EnvLoader over the process environment, which
+             * Wine builds from ours), so this turns every FEX option -- TSO emulation,
+             * multiblock, SMC checks, x87 precision -- into a file edit instead of a
+             * rebuild. Lines starting with # are comments. Logged, so a run's log
+             * always says what it ran with. */
+            {
+                /* ml1095: "env.NAME = value" lines of madeira.cfg; the legacy
+                 * madeira-env.txt (KEY=VALUE lines) only when madeira.cfg is absent. */
+                NSString *text = nil;
+                if (madeira_cfg_present()) {
+                    NSMutableString *acc = [NSMutableString string];
+                    NSString *cfg = [NSString stringWithContentsOfFile:[docs stringByAppendingPathComponent:@MADEIRA_CFG_FILE] encoding:NSUTF8StringEncoding error:nil];
+                    for (NSString *raw in [cfg componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+                        NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                        NSRange eq = [line rangeOfString:@"="];
+                        if (![line hasPrefix:@"env."] || eq.location == NSNotFound) continue;
+                        NSString *k = [[line substringWithRange:NSMakeRange(4, eq.location - 4)] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                        NSString *v = [[line substringFromIndex:eq.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                        if (k.length) [acc appendFormat:@"%@=%@\n", k, v];
+                    }
+                    text = acc;
+                } else {
+                    text = [NSString stringWithContentsOfFile:[docs stringByAppendingPathComponent:@"madeira-env.txt"] encoding:NSUTF8StringEncoding error:nil];
+                }
+                for (NSString *raw in [text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]) {
+                    NSString *line = [raw stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+                    NSRange eq = [line rangeOfString:@"="];
+                    if (!line.length || [line hasPrefix:@"#"] || eq.location == NSNotFound || eq.location == 0) continue;
+                    NSString *k = [line substringToIndex:eq.location], *v = [line substringFromIndex:eq.location + 1];
+                    setenv(k.UTF8String, v.UTF8String, 1);
+                    LOG("madeira.cfg env: %{public}s=%{public}s", k.UTF8String, v.UTF8String);
+                    fprintf(stderr, "[madeira-env] ml1062 %s=%s\n", k.UTF8String, v.UTF8String);
+                }
+            }
         }
 
         // Steam S0: root CA trust. iOS has no API to enumerate system
@@ -1061,4 +1170,157 @@ int madeira_write_continue_flag(void) {
     close(fd);
     LOG("continue flag written: %{public}s", path);
     return 0;
+}
+
+
+/* ---- ml1076: in-app memory-backing canary --------------------------------- */
+#include <sys/mman.h>
+#include <os/proc.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <mach/mach.h>
+static void mc_sample(const char *mode, const char *phase, uint64_t *fp_out) {
+    task_vm_info_data_t v; mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    memset(&v, 0, sizeof v);
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&v, &n) != KERN_SUCCESS) return;
+    if (fp_out) *fp_out = v.phys_footprint;
+    fprintf(stderr, "[mem-canary] ml1076 %s %s: footprint=%llu MB resident=%llu MB internal=%llu MB external=%llu MB compressed=%llu MB available=%lld MB\n",
+            mode, phase, (unsigned long long)v.phys_footprint >> 20, (unsigned long long)v.resident_size >> 20,
+            (unsigned long long)v.internal >> 20, (unsigned long long)v.external >> 20,
+            (unsigned long long)v.compressed >> 20, (long long)os_proc_available_memory() >> 20);
+}
+static uint64_t mc_next(uint64_t *s) { *s ^= *s << 13; *s ^= *s >> 7; *s ^= *s << 17; return *s; }
+static void mc_run(const char *mode, size_t bytes, int flags, const char *tmpdir, int punch) {
+    char path[1024]; int fd = -1; uint64_t before = 0, after = 0, seed = 0x192834756abcdefULL;
+    snprintf(path, sizeof path, "%s/madeira-memory-probe-XXXXXX", tmpdir);
+    if (!(flags & MAP_ANON)) {
+        fd = mkstemp(path);
+        if (fd < 0) { fprintf(stderr, "[mem-canary] %s: mkstemp failed errno=%d\n", mode, errno); return; }
+        /* the mapping must survive the device locking: no file protection */
+        [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:[NSString stringWithUTF8String:path] error:nil];
+        unlink(path);
+        if (ftruncate(fd, (off_t)bytes)) { fprintf(stderr, "[mem-canary] %s: ftruncate failed errno=%d\n", mode, errno); close(fd); return; }
+    }
+    mc_sample(mode, "before", &before);
+    uint64_t *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, flags, fd, 0);
+    if (p == MAP_FAILED) { fprintf(stderr, "[mem-canary] %s: mmap failed errno=%d\n", mode, errno); if (fd >= 0) close(fd); return; }
+    for (size_t i = 0; i < bytes / 8; i++) p[i] = mc_next(&seed);
+    mc_sample(mode, "written", &after);
+    fprintf(stderr, "[mem-canary] ml1076 %s: %zu MB written -> footprint +%lld MB\n", mode, bytes >> 20, (long long)(after - before) >> 20);
+    if (fd >= 0) {
+        if (msync(p, bytes, MS_SYNC)) fprintf(stderr, "[mem-canary] %s: msync errno=%d\n", mode, errno);
+        mc_sample(mode, "synced", NULL);
+        if (flags & MAP_SHARED) {
+            /* ask the kernel to drop the pages; a re-read must come back from the file */
+            if (madvise(p, bytes, MADV_DONTNEED)) fprintf(stderr, "[mem-canary] %s: madvise errno=%d\n", mode, errno);
+            mc_sample(mode, "advised", NULL);
+        }
+    }
+    seed = 0x192834756abcdefULL;
+    { size_t bad = 0; for (size_t i = 0; i < bytes / 8; i++) if (p[i] != mc_next(&seed)) { bad++; if (bad == 1) fprintf(stderr, "[mem-canary] %s: DATA MISMATCH at byte %zu\n", mode, i * 8); }
+      fprintf(stderr, "[mem-canary] ml1076 %s: verify %s (%zu bad words)\n", mode, bad ? "FAILED" : "ok", bad); }
+    mc_sample(mode, "verified", NULL);
+    if (punch && fd >= 0) {
+        /* decommit semantics: punch a hole under the first half; it must read as zero and cost nothing */
+        struct fpunchhole ph; memset(&ph, 0, sizeof ph); ph.fp_offset = 0; ph.fp_length = (off_t)(bytes / 2);
+        int r = fcntl(fd, F_PUNCHHOLE, &ph);
+        fprintf(stderr, "[mem-canary] ml1076 %s: F_PUNCHHOLE first half -> %d (errno %d); word0 now %llx, word at half %llx\n",
+                mode, r, r ? errno : 0, (unsigned long long)p[0], (unsigned long long)p[bytes / 16]);
+        mc_sample(mode, "punched", NULL);
+    }
+    munmap(p, bytes);
+    if (fd >= 0) close(fd);
+    mc_sample(mode, "released", NULL);
+}
+void madeira_memory_canary(const char *tmpdir) {
+    fprintf(stderr, "[mem-canary] ml1076 start (page %ld, tmp %s)\n", sysconf(_SC_PAGESIZE), tmpdir);
+    mc_run("anonymous", 64u << 20, MAP_PRIVATE | MAP_ANON, tmpdir, 0);
+    mc_run("file-private-COW", 64u << 20, MAP_PRIVATE, tmpdir, 0);
+    mc_run("file-shared-64MB", 64u << 20, MAP_SHARED, tmpdir, 1);
+    mc_run("file-shared-512MB", 512u << 20, MAP_SHARED, tmpdir, 0);
+    /* ml1079: CONTENTION. ph-rdr46 stalled with a thread blocked in a first-touch
+     * page fault on a fresh 32 MB extent while ~886 MB of earlier extents in the
+     * SAME file were dirty (presumably being written back). Does a fault on a
+     * sparse region block behind writeback of the same vnode? And does a separate
+     * file avoid it? Dirty 512 MB, kick writeback, then time 64 first touches on
+     * a fresh region of the same file and of a second file, several times. */
+    {
+        char pa[1024], pb[1024]; int fa, fb; size_t big = 512u << 20, probe = 64u << 20; unsigned round;
+        snprintf(pa, sizeof pa, "%s/madeira-memory-probe-A-XXXXXX", tmpdir); snprintf(pb, sizeof pb, "%s/madeira-memory-probe-B-XXXXXX", tmpdir);
+        fa = mkstemp(pa); fb = mkstemp(pb);
+        if (fa >= 0 && fb >= 0) {
+            [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:[NSString stringWithUTF8String:pa] error:nil];
+            [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:[NSString stringWithUTF8String:pb] error:nil];
+            unlink(pa); unlink(pb);
+            ftruncate(fa, (off_t)(big + 8 * probe)); ftruncate(fb, (off_t)(8 * probe));
+            uint64_t *dirty = mmap(NULL, big, PROT_READ | PROT_WRITE, MAP_SHARED, fa, 0);
+            if (dirty != MAP_FAILED) {
+                uint64_t seed = 1;
+                for (size_t i = 0; i < big / 8; i++) dirty[i] = mc_next(&seed);
+                msync(dirty, big, MS_ASYNC);
+                for (round = 0; round < 6; round++) {
+                    struct timeval t0, t1, t2; unsigned k; volatile char sink = 0;
+                    char *ra = mmap(NULL, probe, PROT_READ | PROT_WRITE, MAP_SHARED, fa, (off_t)(big + round * probe));
+                    char *rb = mmap(NULL, probe, PROT_READ | PROT_WRITE, MAP_SHARED, fb, (off_t)(round * probe));
+                    if (ra == MAP_FAILED || rb == MAP_FAILED) break;
+                    gettimeofday(&t0, NULL);
+                    for (k = 0; k < 64; k++) sink += ra[(probe / 64) * k];
+                    gettimeofday(&t1, NULL);
+                    for (k = 0; k < 64; k++) sink += rb[(probe / 64) * k];
+                    gettimeofday(&t2, NULL);
+                    fprintf(stderr, "[mem-canary] ml1079 round %u (%s): same-file first-touch %ld us/64 pages, other-file %ld us/64 pages\n", round,
+                            round == 0 ? "right after dirtying 512 MB" : "later",
+                            (long)((t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_usec - t0.tv_usec)),
+                            (long)((t2.tv_sec - t1.tv_sec) * 1000000 + (t2.tv_usec - t1.tv_usec)));
+                    (void)sink;
+                    munmap(ra, probe); munmap(rb, probe);
+                    usleep(500000);
+                }
+                mc_sample("contention", "after", NULL);
+                munmap(dirty, big);
+            }
+        }
+        if (fa >= 0) close(fa); if (fb >= 0) close(fb);
+    }
+    /* ml1080: SUSTAINED DIRTYING THROUGHPUT. Hypothesis for the ph-rdr46 stall:
+     * xnu throttles producers of dirty file-backed pages once the dirty backlog
+     * passes a threshold, pacing them to the (wear-limited) writeback rate. Write
+     * 1.5 GB through one shared mapping in 128 MB chunks and time each chunk; a
+     * cliff after N chunks is the threshold, and the slow rate is the ceiling any
+     * file-backed tier would impose on the game's loading writes. */
+    {
+        char pc[1024]; int fc; size_t total = 1536u << 20, chunk = 128u << 20;
+        snprintf(pc, sizeof pc, "%s/madeira-memory-probe-C-XXXXXX", tmpdir);
+        fc = mkstemp(pc);
+        if (fc >= 0) {
+            [[NSFileManager defaultManager] setAttributes:@{NSFileProtectionKey: NSFileProtectionNone} ofItemAtPath:[NSString stringWithUTF8String:pc] error:nil];
+            unlink(pc); ftruncate(fc, (off_t)total);
+            uint64_t *m = mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_SHARED, fc, 0);
+            if (m != MAP_FAILED) {
+                size_t c; struct timeval t0, t1;
+                for (c = 0; c < total / chunk; c++) {
+                    uint64_t *q = m + (c * chunk) / 8; size_t i;
+                    gettimeofday(&t0, NULL);
+                    for (i = 0; i < chunk / 8; i += 2048) q[i] = (uint64_t)i ^ c;   /* one word per 16 KB page: dirty every page, minimal CPU */
+                    gettimeofday(&t1, NULL);
+                    long us = (t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_usec - t0.tv_usec);
+                    task_vm_info_data_t v; mach_msg_type_number_t n = TASK_VM_INFO_COUNT; memset(&v, 0, sizeof v);
+                    task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&v, &n);
+                    fprintf(stderr, "[mem-canary] ml1080 chunk %zu: dirtied 128 MB in %ld us (%ld MB/s); footprint=%llu MB external=%llu MB\n",
+                            c, us, us > 0 ? (long)(128000000L / us) : -1L, (unsigned long long)v.phys_footprint >> 20, (unsigned long long)v.external >> 20);
+                }
+                {   /* and a re-read of the first chunk after the rest was written: still cheap? */
+                    volatile uint64_t sink = 0; size_t i; gettimeofday(&t0, NULL);
+                    for (i = 0; i < chunk / 8; i += 2048) sink += m[i];
+                    gettimeofday(&t1, NULL);
+                    fprintf(stderr, "[mem-canary] ml1080 re-read of chunk 0: %ld us\n", (long)((t1.tv_sec - t0.tv_sec) * 1000000 + (t1.tv_usec - t0.tv_usec)));
+                    (void)sink;
+                }
+                munmap(m, total);
+            }
+            close(fc);
+        }
+        mc_sample("throughput", "after", NULL);
+    }
+    fprintf(stderr, "[mem-canary] ml1076 done\n");
 }

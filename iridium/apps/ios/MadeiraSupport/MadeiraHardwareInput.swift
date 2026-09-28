@@ -6,6 +6,7 @@ import MadeiraNative
     static var acceptingInput = false {
         didSet {
             if !acceptingInput {
+                cancelSoftwareTaps()
                 for key in held { winios_post_key(key, 0) }
                 held.removeAll()
                 pointerCaptured = false
@@ -29,6 +30,7 @@ import MadeiraNative
 
     static var softwareKeyboardActive = false {
         didSet {
+            if !softwareKeyboardActive { cancelSoftwareTaps() }
             guard softwareKeyboardActive, !oldValue else { return }
             for key in held { winios_post_key(key, 0) }
             held.removeAll()
@@ -39,7 +41,8 @@ import MadeiraNative
 
     @discardableResult
     static func insertText(_ text: String) -> Bool {
-        guard acceptingInput, UIApplication.shared.applicationState == .active else { return true }
+        // The player scene owns eligibility; a LiveContainer host can report inactive.
+        guard acceptingInput else { return true }
         let mappings = text.map { MadeiraKeys.virtualKey(character: $0) }
         // Reject the entire insertion rather than silently dropping or substituting letters.
         guard mappings.allSatisfy({ $0 != nil }) else { return false }
@@ -48,22 +51,54 @@ import MadeiraNative
     }
 
     static func deleteBackward() {
-        guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
+        guard acceptingInput else { return }
         tap(key: 0x08, shift: false)
     }
 
+    private static var pendingTaps: [(key: Int32, shift: Bool)] = []
+    private static var activeTap: (key: Int32, shift: Bool, restore: [Int32])?
+    private static var tapRelease: DispatchWorkItem?
+
     private static func tap(key: Int32, shift: Bool) {
         keyboardEvents += 1
-        keyboardDelivered += 1
+        pendingTaps.append((key, shift))
+        sendNextTap()
+    }
+
+    private static func sendNextTap() {
+        guard activeTap == nil, !pendingTaps.isEmpty else { return }
+        let (key, shift) = pendingTaps.removeFirst()
         let modifiers: Set<Int32> = [0x10, 0x11, 0x12, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0x5b, 0x5c]
         let temporarilyReleased = held.intersection(modifiers.union([key])).sorted()
         for heldKey in temporarilyReleased { winios_post_key(heldKey, 0) }
         let effectiveShift = (0x41...0x5a).contains(key) ? (shift != capsLockEnabled) : shift
         if effectiveShift { winios_post_key(0x10, 1) }
         winios_post_key(key, 1)
-        winios_post_key(key, 0)
-        if effectiveShift { winios_post_key(0x10, 0) }
-        for heldKey in temporarilyReleased { winios_post_key(heldKey, 1) }
+        keyboardDelivered += 1
+        activeTap = (key, effectiveShift, temporarilyReleased)
+        let release = DispatchWorkItem {
+            finishTap(restore: true)
+            sendNextTap()
+        }
+        tapRelease = release
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(60), execute: release)
+    }
+
+    private static func finishTap(restore: Bool) {
+        guard let activeTap else { return }
+        tapRelease?.cancel()
+        tapRelease = nil
+        winios_post_key(activeTap.key, 0)
+        if activeTap.shift { winios_post_key(0x10, 0) }
+        if restore {
+            for heldKey in activeTap.restore where held.contains(heldKey) { winios_post_key(heldKey, 1) }
+        }
+        self.activeTap = nil
+    }
+
+    private static func cancelSoftwareTaps() {
+        pendingTaps.removeAll()
+        finishTap(restore: false)
     }
 
     // Relative deltas and absolute UIKit locations must never drive the cursor together.
@@ -151,6 +186,7 @@ import MadeiraNative
     }
 
     private static func unbind() {
+        cancelSoftwareTaps()
         if keyboardEvents > 0 {
             RuntimeLogCapture.writeLine("[Launch] Keyboard input: received=\(keyboardEvents), forwarded=\(keyboardDelivered), held=\(held.count).")
         }

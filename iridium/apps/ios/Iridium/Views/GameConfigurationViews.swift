@@ -1,46 +1,6 @@
-import GameController
 import IridiumCore
 import IridiumRuntime
 import SwiftUI
-
-struct GameControlsView: View {
-    let game: GameRecord
-    @State private var controllerCount = GCController.controllers().count
-    @State private var keyboardConnected = GCKeyboard.coalesced != nil
-    @State private var mouseCount = GCMouse.mice().count
-
-    var body: some View {
-        List {
-            Section("Connected Devices") {
-                MenuValue("Controllers", value: controllerCount == 0 ? "None detected" : "\(controllerCount) connected")
-                MenuValue("Keyboard", value: keyboardConnected ? "Connected" : "None detected")
-                MenuValue("Mouse", value: mouseCount == 0 ? "None detected" : "\(mouseCount) connected")
-            }
-            Section("Playing with a Controller") {
-                Text("Choose a button layout in the game's controls menu. Controller support varies by game.")
-            }
-            Section("Touch, Keyboard & Mouse") {
-                Text("Use touch to navigate Iridium. Touch, keyboard, and mouse support during play varies by game and runtime.")
-                Text("Check input events in the player diagnostics if a connected device does not respond in the game.")
-            }
-        }
-        .navigationTitle("Controls")
-        .navigationBarTitleDisplayMode(.inline)
-        .iridiumListChrome()
-        .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidConnect)) { _ in refreshDevices() }
-        .onReceive(NotificationCenter.default.publisher(for: .GCControllerDidDisconnect)) { _ in refreshDevices() }
-        .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidConnect)) { _ in refreshDevices() }
-        .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidDisconnect)) { _ in refreshDevices() }
-        .onReceive(NotificationCenter.default.publisher(for: .GCMouseDidConnect)) { _ in refreshDevices() }
-        .onReceive(NotificationCenter.default.publisher(for: .GCMouseDidDisconnect)) { _ in refreshDevices() }
-        .onAppear { refreshDevices() }
-    }
-    private func refreshDevices() {
-        controllerCount = GCController.controllers().count
-        keyboardConnected = GCKeyboard.coalesced != nil
-        mouseCount = GCMouse.mice().count
-    }
-}
 
 struct GameEnvironmentView: View {
     let game: GameRecord

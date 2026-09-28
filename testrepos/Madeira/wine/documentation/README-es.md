@@ -7,7 +7,7 @@ librería (llamada Winelib) que implementa las llamadas a la API de Windows
 usando sus equivalentes Unix o X11. La librería puede también utilizarse para
 portar código Win32 a ejecutables Unix nativos.
 
-Wine es software libre, publicado bajo la licencia GNU GPL; vea el fichero
+Wine es software libre, publicado bajo la licencia GNU LGPL; vea el fichero
 LICENSE para los detalles.
 
 

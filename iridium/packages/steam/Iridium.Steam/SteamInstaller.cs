@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using SteamKit2;
@@ -9,24 +10,13 @@ namespace Iridium.Steam;
 
 public sealed class SteamInstaller(SteamConnection connection)
 {
-    sealed record Depot(uint Id, ulong ManifestId, byte[] Key, DepotManifest Manifest);
+    sealed record Depot(uint Id, ulong ManifestId, uint AuthorizationAppId, byte[] Key, DepotManifest Manifest);
+    sealed record Candidate(uint Id, uint SourceAppId, uint DlcId, KeyValue Section);
 
-    public static bool SelectWindowsDepot(KeyValue depot)
-    {
-        var config = depot["config"];
-        var os = config["oslist"].Value;
-        var arch = config["osarch"].Value;
-        var language = config["language"].Value;
-        return (string.IsNullOrEmpty(os) || os.Split(',').Contains("windows"))
-            && (string.IsNullOrEmpty(arch) || arch == "64")
-            && (string.IsNullOrEmpty(language) || language == "english")
-            && !config["lowviolence"].AsBoolean();
-    }
+    public static bool SelectWindowsDepot(KeyValue depot) => SteamDepotSelection.IsWindows(depot, new());
 
-    // SteamKit marks a host HTTPS only when Steam reports "mandatory". Valve's own
-    // caches usually report "optional" and still serve TLS on 443, so the earlier
-    // Protocol filter left many regions with no server. Accept every TLS-capable
-    // Steam cache or CDN host and always connect over HTTPS; plain HTTP is never used.
+    // SteamKit marks HTTPS only when Steam reports "mandatory". Valve's own
+    // caches usually report "optional" and still serve TLS on 443.
     public static Server[] SelectContentServers(IEnumerable<CContentServerDirectory_ServerInfo> candidates, uint appId, int limit = 6)
         => candidates
             .Where(s => s.type is "SteamCache" or "CDN"
@@ -39,129 +29,229 @@ public sealed class SteamInstaller(SteamConnection connection)
             .Select(s => (Server)new DnsEndPoint(s.host, 443))
             .Take(limit).ToArray();
 
-    public async Task<InstalledGame> Install(Game game, string root, Action<long, long> progress,
-        Action<string> phase, CancellationToken ct)
+    public static string? ValidateReuseDirectory(string root, uint appId, string? directory)
     {
-        var info = await connection.AppInfo(game.AppId, ct);
-        var build = info["depots"]["branches"]["public"]["buildid"].Value;
-        if (!ulong.TryParse(build, out var buildId)) throw new SteamFailure("The public Windows build is unavailable.");
-        var install = VerifiedFiles.SafePath(root, $"{game.AppId}/{buildId}/content");
-        var staging = VerifiedFiles.SafePath(root, $"{game.AppId}/{buildId}/partial");
+        if (string.IsNullOrEmpty(directory)) return null;
+        var appRoot = VerifiedFiles.SafePath(root, appId.ToString(CultureInfo.InvariantCulture));
+        var full = Path.GetFullPath(directory);
+        if (!full.StartsWith(appRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || Path.GetFileName(full) != "content")
+            throw new SteamFailure("Only an existing download of this game can be used for repair or update.");
+        var relative = Path.GetRelativePath(root, full);
+        return VerifiedFiles.SafePath(root, relative);
+    }
+
+    public async Task<InstalledGame> Install(Game game, string root, Action<long, long> progress,
+        Action<string> phase, CancellationToken ct, InstallOptions? requestedOptions = null,
+        string? reuseDirectory = null, Action<long>? networkProgress = null, string? operationId = null)
+    {
+        var options = (requestedOptions ?? new()).Validate();
+        reuseDirectory = ValidateReuseDirectory(root, game.AppId, reuseDirectory);
+        var cache = new Dictionary<uint, KeyValue>();
+        async Task<KeyValue> Info(uint id)
+        {
+            if (cache.TryGetValue(id, out var stored)) return stored;
+            var value = await connection.AppInfo(id, ct);
+            cache[id] = value;
+            return value;
+        }
+        var info = await Info(game.AppId);
+        var buildId = SteamDepotSelection.Build(info, options.Branch);
+        var layout = SteamInstallLayout.Resolve(root, game.AppId, buildId, options, operationId, reuseDirectory);
+        var relativeRoot = layout.RelativeRoot;
+        var install = layout.Content;
+        var staging = layout.Partial;
+        reuseDirectory = layout.ReuseDirectory;
         Directory.CreateDirectory(install);
         var content = connection.Client.GetHandler<SteamContent>()!;
         var apps = connection.Client.GetHandler<SteamApps>()!;
         using var cdn = new Client(connection.Client);
         var directory = connection.Client.GetHandler<SteamUnifiedMessages>()!.CreateService<ContentServerDirectory>();
-        async Task<Server[]> ResolveServers(uint cellId, uint maxServers)
+        async Task<CContentServerDirectory_ServerInfo[]> ResolveServers(uint cellId, uint maxServers)
         {
             var response = await directory.GetServersForSteamPipe(new() { cell_id = cellId, max_servers = maxServers })
                 .ToTask().WaitAsync(TimeSpan.FromSeconds(30), ct);
             if (response.Result != EResult.OK) throw new SteamFailure($"Steam did not provide a download server list ({response.Result}). Try again shortly.");
-            return SelectContentServers(response.Body.servers, game.AppId);
+            return response.Body.servers.ToArray();
         }
-        // The client's cell list can be short; ask again without a cell before giving up.
-        var servers = await ResolveServers(connection.Client.CellID ?? 0, 20);
-        if (servers.Length == 0) servers = await ResolveServers(0, 50);
-        if (servers.Length == 0) throw new SteamFailure("Steam has no secure download servers available. Try again shortly.");
+        var serverDirectory = await ResolveServers(connection.Client.CellID ?? 0, 30);
+        if (SelectContentServers(serverDirectory, game.AppId).Length == 0)
+            serverDirectory = await ResolveServers(0, 50);
         var authTokens = new ConcurrentDictionary<string, string>();
 
-        async Task<T> FromCDN<T>(uint depotId, Func<Server, string?, Task<T>> operation, CancellationToken token)
+        async Task<T> FromCDN<T>(uint depotId, uint appId, Func<Server, string?, Task<T>> operation, CancellationToken token)
         {
-            for (var attempt = 0; attempt < Math.Min(3, servers.Length); attempt++)
+            var servers = SelectContentServers(serverDirectory, appId);
+            if (servers.Length == 0) throw new SteamFailure("Steam has no secure download servers available. Try again shortly.");
+            // Retry even if Steam returns only one server. Rotation and backoff
+            // are bounded; cancellation never starts another attempt.
+            for (var attempt = 0; attempt < 6; attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                var server = servers[attempt];
-                var tokenKey = $"{depotId}:{server.Host}";
+                if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(4000, 300 << (attempt - 1))), token);
+                var server = servers[attempt % servers.Length];
+                var tokenKey = $"{appId}:{depotId}:{server.Host}";
                 try
                 {
                     authTokens.TryGetValue(tokenKey, out var auth);
                     try { return await operation(server, auth); }
-                    catch (SteamKitWebRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                    catch (SteamKitWebRequestException e) when (e.StatusCode == HttpStatusCode.Forbidden)
                     {
-                        var granted = await content.GetCDNAuthToken(game.AppId, depotId, server.Host!)
+                        var granted = await content.GetCDNAuthToken(appId, depotId, server.Host!)
                             .WaitAsync(TimeSpan.FromSeconds(30), token);
                         if (granted.Result != EResult.OK) throw new SteamFailure("Steam denied access to this game's content.");
                         authTokens[tokenKey] = granted.Token;
                         return await operation(server, granted.Token);
                     }
                 }
-                catch (Exception e) when (attempt < Math.Min(3, servers.Length) - 1
+                catch (Exception e) when (!token.IsCancellationRequested
                     && e is HttpRequestException or IOException or TaskCanceledException or SteamKitWebRequestException)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(attempt + 1), token);
+                    if (attempt == 5) break;
                 }
             }
+            token.ThrowIfCancellationRequested();
             throw new SteamFailure("Steam download servers are unavailable. Your partial download is safe to resume.");
         }
 
+        var candidates = new List<Candidate>();
+        void AddCandidates(uint owner, uint dlcId, KeyValue app)
+        {
+            foreach (var section in app["depots"].Children)
+            {
+                var declaredDlc = section["dlcappid"].AsUnsignedInteger();
+                var effectiveDlc = declaredDlc != 0 ? declaredDlc : dlcId;
+                if (uint.TryParse(section.Name, out var id) && id != 0
+                    && SteamDepotSelection.IsWindows(section, options) && options.IncludesDlc(effectiveDlc))
+                    candidates.Add(new(id, owner, effectiveDlc, section));
+            }
+        }
+        AddCandidates(game.AppId, 0, info);
+        // Some DLC publishes its files in its own app rather than in the base
+        // game's depot list. These requests still need Steam's authorization.
+        var declaredDlcIds = SteamDepotSelection.DlcIds(info);
+        if (options.DlcAppIds.Any(id => !declaredDlcIds.Contains(id)))
+            throw new SteamFailure("A selected DLC is not declared by this game. Refresh its download options.");
+        if (options.IncludeDlc)
+        {
+            if (declaredDlcIds.Count(options.IncludesDlc) > 500) throw new SteamFailure("This game's DLC catalog is too large. Select specific DLC to continue.");
+            foreach (var id in declaredDlcIds.Where(options.IncludesDlc))
+            {
+                ct.ThrowIfCancellationRequested();
+                try { AddCandidates(id, id, await Info(id)); }
+                catch (SteamFailure) when (!options.DlcAppIds.Contains(id)) { /* Optional inaccessible DLC metadata. */ }
+            }
+        }
+
         var depots = new List<Depot>();
-        foreach (var section in info["depots"].Children)
+        foreach (var candidate in candidates.DistinctBy(c => c.Id))
         {
             ct.ThrowIfCancellationRequested();
-            if (!uint.TryParse(section.Name, out var id) || !SelectWindowsDepot(section)) continue;
-            var manifestSection = section;
-            var sharedApp = section["depotfromapp"].AsUnsignedInteger();
-            if (sharedApp != 0)
-                manifestSection = (await connection.AppInfo(sharedApp, ct))["depots"][section.Name];
-            if (!ulong.TryParse(manifestSection["manifests"]["public"]["gid"].Value, out var manifestId)) continue;
-            var key = await apps.GetDepotDecryptionKey(id, game.AppId).ToTask().WaitAsync(TimeSpan.FromSeconds(30), ct);
-            if (key.Result != EResult.OK)
+            var section = candidate.Section;
+            var sourceApp = candidate.SourceAppId;
+            var visited = new HashSet<uint> { sourceApp };
+            var manifestInfo = SteamDepotSelection.Manifest(section, options.Branch);
+            while (manifestInfo == null && section["depotfromapp"].AsUnsignedInteger() is var sharedApp && sharedApp != 0)
             {
-                if (section["dlcappid"].AsUnsignedInteger() != 0 && key.Result == EResult.AccessDenied) continue;
-                throw new SteamFailure($"Steam denied depot access ({key.Result}). Check that this account owns the game.");
+                if (visited.Count >= 8 || !visited.Add(sharedApp))
+                    throw new SteamFailure("Steam returned a cyclic shared-depot reference.");
+                sourceApp = sharedApp;
+                section = (await Info(sharedApp))["depots"][candidate.Id.ToString(CultureInfo.InvariantCulture)];
+                manifestInfo = SteamDepotSelection.Manifest(section, options.Branch);
             }
-            var code = await content.GetManifestRequestCode(id, game.AppId, manifestId, "public")
-                .WaitAsync(TimeSpan.FromSeconds(30), ct);
-            if (code == 0) throw new SteamFailure("Steam did not authorize the download manifest.");
-            var manifest = await FromCDN(id, (server, auth) =>
-                cdn.DownloadManifestAsync(id, manifestId, code, server, key.DepotKey, cdnAuthToken: auth), ct);
-            if (manifest.FilenamesEncrypted || manifest.Files == null || manifest.DepotID != id || manifest.ManifestGID != manifestId)
+            if (manifestInfo == null) continue; // Metadata-only depot or entitlement-only DLC.
+            var (manifestBranch, manifestId) = manifestInfo.Value;
+            byte[]? depotKey = null;
+            uint authorizationApp = 0;
+            ulong code = 0;
+            foreach (var appId in SteamDepotSelection.AuthorizationApps(game.AppId, sourceApp, candidate.DlcId))
+            {
+                var key = await apps.GetDepotDecryptionKey(candidate.Id, appId).ToTask().WaitAsync(TimeSpan.FromSeconds(30), ct);
+                if (key.Result == EResult.AccessDenied) continue;
+                if (key.Result != EResult.OK) throw new SteamFailure($"Steam could not authorize a content depot ({key.Result}). Retry shortly.");
+                code = await content.GetManifestRequestCode(candidate.Id, appId, manifestId, manifestBranch)
+                    .WaitAsync(TimeSpan.FromSeconds(30), ct);
+                if (code == 0) continue;
+                authorizationApp = appId;
+                depotKey = key.DepotKey;
+                break;
+            }
+            if (depotKey == null)
+            {
+                if (candidate.DlcId != 0 && !options.DlcAppIds.Contains(candidate.DlcId)) continue;
+                throw new SteamFailure("Steam denied depot access. Check ownership of the game and any selected DLC.");
+            }
+            var manifest = await FromCDN(candidate.Id, authorizationApp, (server, auth) =>
+                cdn.DownloadManifestAsync(candidate.Id, manifestId, code, server, depotKey, cdnAuthToken: auth), ct);
+            if (manifest.FilenamesEncrypted || manifest.Files == null || manifest.DepotID != candidate.Id || manifest.ManifestGID != manifestId)
                 throw new SteamFailure("Steam returned an invalid or unreadable manifest.");
-            depots.Add(new(id, manifestId, key.DepotKey, manifest));
+            depots.Add(new(candidate.Id, manifestId, authorizationApp, depotKey, manifest));
         }
-        if (depots.Count == 0) throw new SteamFailure("No supported Windows 64-bit depots are available for this game.");
+        if (depots.Count == 0) throw new SteamFailure("No authorized Windows depots match these download options.");
 
-        // Validate every path before writing any payload. Reject ambiguous case-only collisions on iOS.
+        // Steam applies later depots over earlier ones. Exact-path overrides are
+        // valid; ambiguous case-only names and file/directory collisions are not.
         var files = new Dictionary<string, (Depot Depot, DepotManifest.FileData File)>(StringComparer.OrdinalIgnoreCase);
         foreach (var depot in depots)
         foreach (var file in depot.Manifest.Files!)
         {
             VerifiedFiles.Validate(file);
             _ = VerifiedFiles.SafePath(install, file.FileName);
-            if (files.TryGetValue(file.FileName.Replace('\\', '/'), out var previous)
-                && (previous.File.FileName != file.FileName || !previous.File.FileHash.AsSpan().SequenceEqual(file.FileHash)))
-                throw new SteamFailure("This game's depots contain conflicting files and need a game-specific install profile.");
-            files[file.FileName.Replace('\\', '/')] = (depot, file);
+            var name = file.FileName.Replace('\\', '/');
+            if (files.TryGetValue(name, out var previous)
+                && (previous.File.FileName.Replace('\\', '/') != name
+                    || previous.File.Flags.HasFlag(EDepotFileFlag.Directory) != file.Flags.HasFlag(EDepotFileFlag.Directory)))
+                throw new SteamFailure("This game's depots contain ambiguous file names that cannot be installed safely on iOS.");
+            files[name] = (depot, file);
+        }
+        foreach (var name in files.Keys)
+        {
+            var slash = name.LastIndexOf('/');
+            while (slash >= 0)
+            {
+                if (files.TryGetValue(name[..slash], out var parent) && !parent.File.Flags.HasFlag(EDepotFileFlag.Directory))
+                    throw new SteamFailure("Steam returned a file where an installation directory is required.");
+                slash = name.LastIndexOf('/', slash - 1);
+            }
         }
         var total = files.Values.Sum(f => checked((long)f.File.TotalSize));
-        // Staging and completed files share this volume. Existing verified files need no second copy.
+        phase("verifying");
+        progress(0, total);
         long required = 256 * 1024 * 1024;
         foreach (var (_, file) in files.Values)
-            if (!file.Flags.HasFlag(EDepotFileFlag.Directory) && !await VerifiedFiles.Matches(VerifiedFiles.SafePath(install, file.FileName), file, ct))
-                required = checked(required + (long)file.TotalSize);
+            required = checked(required + await VerifiedFiles.RequiredStorage(install, staging, file, ct));
         if (new DriveInfo(install).AvailableFreeSpace < required)
-            throw new SteamFailure($"Not enough free storage. Free at least {required / 1_000_000_000.0:F1} GB and resume.");
-        phase("downloading");
+            throw new SteamFailure($"Not enough free storage. This install needs at least {required / 1_000_000_000.0:F1} GB free. Partial downloads are kept.");
         long complete = 0;
-        progress(0, total);
         foreach (var (depot, file) in files.Values)
+        {
+            phase("verifying");
             await VerifiedFiles.Download(install, staging, file,
-                (chunk, buffer, token) => FromCDN(depot.Id, (server, auth) =>
-                    cdn.DownloadDepotChunkAsync(depot.Id, chunk, server, buffer, depot.Key, cdnAuthToken: auth), token),
-                bytes => progress(Interlocked.Add(ref complete, bytes), total), ct);
+                (chunk, buffer, token) =>
+                {
+                    phase("downloading");
+                    return FromCDN(depot.Id, depot.AuthorizationAppId, (server, auth) =>
+                        cdn.DownloadDepotChunkAsync(depot.Id, chunk, server, buffer, depot.Key, cdnAuthToken: auth), token);
+                }, bytes => progress(Interlocked.Add(ref complete, bytes), total), ct,
+                reuseDirectory == null ? null : VerifiedFiles.SafePath(reuseDirectory, file.FileName), options.MaxDownloads, networkProgress);
+        }
 
-        // Each file has already passed its whole-file hash before atomic promotion.
-        // Avoid a second full-library read, which is costly for large games on flash storage.
         phase("finalizing");
-        var executables = files.Values.Select(f => f.File.FileName)
+        var executables = files.Values.Where(f => !f.File.Flags.HasFlag(EDepotFileFlag.Directory)).Select(f => f.File.FileName)
             .Where(f => f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f.Count(c => c is '/' or '\\')).ThenBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();
         if (executables.Length == 0) throw new SteamFailure("Downloaded content has no Windows executable.");
-        var installed = new InstalledGame(game.AppId, game.Name, install, executables);
+        var installed = new InstalledGame(game.AppId, game.Name, install, executables)
+        {
+            BuildId = buildId, Options = options, OperationId = operationId,
+            Depots = depots.Select(d => new InstalledDepot(d.Id, d.ManifestId.ToString(CultureInfo.InvariantCulture), d.AuthorizationAppId)).ToArray()
+        };
         ct.ThrowIfCancellationRequested();
-        var receipt = VerifiedFiles.SafePath(root, $"{game.AppId}/{buildId}/installed.json");
-        await File.WriteAllTextAsync(receipt + ".tmp", JsonSerializer.Serialize(installed, SteamJson.Default.InstalledGame), ct);
-        File.Move(receipt + ".tmp", receipt, true);
+        var receipt = VerifiedFiles.SafePath(root, relativeRoot + "/installed.json");
+        var temporaryReceipt = VerifiedFiles.SafePath(root, relativeRoot + "/installed.json.tmp");
+        await File.WriteAllTextAsync(temporaryReceipt, JsonSerializer.Serialize(installed, SteamJson.Default.InstalledGame), ct);
+        ct.ThrowIfCancellationRequested();
+        File.Move(temporaryReceipt, receipt, true);
         return installed;
     }
 }

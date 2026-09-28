@@ -15,6 +15,7 @@ void wine_log_set_file(const char *);
 void madeira_display_set_layer(CAMetalLayer *);
 void winios_cursor_attach(CAMetalLayer * _Nullable);
 int winios_reserve_fex_memory(void);
+int iridium_reserve_fex_memory(void);
 int wineserver_start(const char *);
 void wineserver_stop(void);
 int wine_process_start(const char *);

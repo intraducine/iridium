@@ -22,8 +22,35 @@ fi
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || {
     echo 'Requires an Apple Silicon macOS runner with Xcode 27.' >&2; exit 1;
 }
-for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do command -v "$tool" >/dev/null; done
-export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+
+# Local builds use the digest-locked LLVM-MinGW tree prepared by
+# prepare-local-runtime-inputs.py. Put it on PATH before checking compiler
+# prerequisites; the previous order silently exited on Macs that did not also
+# have a separate system MinGW installation.
+for package in bison llvm; do
+    prefix="$(brew --prefix "$package" 2>/dev/null)" || {
+        echo "Missing Homebrew package: $package (run: brew install $package)" >&2
+        exit 69
+    }
+    PATH="$prefix/bin:$PATH"
+done
+PATH="$MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH"
+export PATH
+
+for tool in python3 cmake ninja brew xcrun xcodebuild git rustup xcodegen meson \
+            x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "Missing native-build tool: $tool" >&2
+        if [[ "$tool" == *-w64-mingw32-gcc ]]; then
+            echo "The prepared LLVM-MinGW toolchain is missing its expected compiler alias: $MADEIRA/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin" >&2
+        fi
+        exit 69
+    fi
+done
+
+# Reject unsafe publication paths before doing any native compilation.
+python3 "$ROOT/iridium-fex-ios/iridium/ios/publish_build_aliases.py" --check
+
 bash "$MADEIRA/build/gnutls-ios/build.sh"
 bash "$MADEIRA/build/freetype-ios/build.sh"
 for name in gnutls hogweed nettle gmp; do
@@ -31,16 +58,21 @@ for name in gnutls hogweed nettle gmp; do
 done
 
 # LLVM 15 assumes every Apple target is named Darwin. Apply the documented
-# Madeira iOS linker correction to the downloaded source, preserving the patch.
+# Madeira iOS linker correction idempotently so repeated local builds can reuse
+# the extracted source tree instead of requiring a fresh Actions checkout.
 python3 - "$MADEIRA/toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 old = 'MATCHES "Darwin"'
-if text.count(old) != 2:
+new = 'MATCHES "Darwin|iOS"'
+if text.count(old) == 2:
+    path.write_text(text.replace(old, new))
+elif text.count(new) == 2:
+    print('LLVM iOS linker correction already applied')
+else:
     raise SystemExit('Unexpected LLVM source; refusing to apply linker patch')
-path.write_text(text.replace(old, 'MATCHES "Darwin|iOS"'))
 PY
 LLVM="$MADEIRA/toolchains/llvm-project/llvm"
 HOST="$MADEIRA/toolchains/llvm-host-build"
@@ -93,7 +125,12 @@ bash "$MADEIRA/build/dxmt-ios/build.sh"
 xcrun --sdk iphoneos libtool -static -o "$APP/libdxmt_combined.a" \
     "$MADEIRA/build/dxmt-ios/obj/"*.o "$IOS/lib/"*.a
 
-bash "$ROOT/iridium-fex-ios/iridium/ios/build_embedded_translator.sh" --platform device --jobs "$JOBS"
+# Keep the canonical build directory (and completed objects) in place. Explicit
+# --build-root disables the standalone helper's strict alias replacement; the
+# publisher preserves real directories restored at the compatibility paths.
+bash "$ROOT/iridium-fex-ios/iridium/ios/build_embedded_translator.sh" \
+    --platform device --build-root "$ROOT/iridium-fex-ios/build-iridium-ios-device" --jobs "$JOBS"
+python3 "$ROOT/iridium-fex-ios/iridium/ios/publish_build_aliases.py"
 # The iOS Wine configure step needs host-built Wine tools first.
 mkdir -p "$ROOT/iridium-wine-ios/build-iridium-ios/wine-build"
 (

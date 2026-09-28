@@ -6,16 +6,16 @@
  * Copyright 2021 Jacek Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public
+ * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
- * version 3 of the License, or (at your option) any later version.
+ * version 2.1 of the License, or (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public
+ * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
@@ -7583,6 +7583,13 @@ ULONG_PTR WINAPI NtUserCallOneParam( ULONG_PTR arg, ULONG code )
     }
 }
 
+/* ml668: the gamepad slot reader, in build/win32u-unix/driver_ios.c (same
+ * unix library). Declared rather than headered for the same reason every other
+ * winios bridge symbol in that file is. */
+#ifdef WINE_IOS
+extern ULONG_PTR ios_gamepad_query( UINT index, UINT op, void *buffer );
+#endif
+
 /***********************************************************************
  *	     NtUserCallTwoParam    (win32u.@)
  */
@@ -7620,6 +7627,17 @@ ULONG_PTR WINAPI NtUserCallTwoParam( ULONG_PTR arg1, ULONG_PTR arg2, ULONG code 
     case NtUserCallTwoParam_GetVirtualScreenRect:
         *(RECT *)arg1 = get_virtual_screen_rect( 0, arg2 );
         return 1;
+
+    /* Madeira/iOS (ml668): the host gamepad slot. Body in
+     * build/win32u-unix/driver_ios.c; arg1 packs the user index in its low
+     * byte and a NtUserGamepadOp_* selector above it, arg2 is the guest
+     * output buffer (translated by wow64win for a 32-bit caller). */
+    case NtUserCallTwoParam_GetGamepadState:
+#ifdef WINE_IOS
+        return ios_gamepad_query( arg1 & 0xff, (arg1 >> 8) & 0xff, (void *)arg2 );
+#else
+        return 0;   /* no host gamepad transport off iOS -- see ntuser.h */
+#endif
 
     /* temporary exports */
     case NtUserAllocWinProc:

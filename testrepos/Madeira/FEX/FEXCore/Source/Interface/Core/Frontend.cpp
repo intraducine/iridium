@@ -1341,6 +1341,13 @@ void Decoder::AddBranchTarget(uint64_t Target) {
   }
 }
 
+#ifdef FEX_IOS_HOST
+/* ml954: defined in Source/Windows/ARM64EC/IosJitAlias.cpp (same DLL). Returns
+ * Addr unchanged when it is not inside a registered sub-floor window, so the
+ * fast path is one compare. */
+extern "C" uint64_t IosSubfloorToReal(uint64_t Addr);
+#endif
+
 const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _InstStream, uint64_t EntryPoint, uint64_t RIP) {
   constexpr uint64_t VSyscall_Base = 0xFFFF'FFFF'FF60'0000ULL;
   constexpr uint64_t VSyscall_End = VSyscall_Base + 0x1000;
@@ -1357,6 +1364,49 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
       .AdjustedInstStream = VSyscallData + Offset,
     };
   }
+
+#ifdef FEX_IOS_HOST
+  /* ml954: read sub-floor code from its BACKING memory, not through faults.
+   *
+   * iOS reserves the low 4GB of every task, so a PE whose preferred base is
+   * below it is mapped high and Wine's Mach handler services accesses to the
+   * vacated low range. That made the code reachable, but the decoder was still
+   * reading it through the fault path: measured 598,000+ serviced accesses on a
+   * single block-decode burst, the last of them a `ldrb w0,[x8,xM]` byte-copy
+   * loop inside libarm64ecfex, ~3us per byte via a Mach round trip -- and the
+   * faulting thread holds fexlock throughout, so the JIT stops process-wide and
+   * the app presents as frozen (the documented CodeInvalidationMutex wedge
+   * shape: a blocking op under a shared hold).
+   *
+   * This is the same split AdjustAddrForSpecialRegion already performs for
+   * VSyscall: InstStream keeps the GUEST address, so RIP arithmetic, block
+   * identity, SMC tracking and every address the decoder reports are unchanged,
+   * while AdjustedInstStream -- the pointer the byte reads actually go through
+   * (see ReadByte/ReadData above) -- points at the real mapping. No faults, and
+   * no change to guest address semantics.
+   *
+   * Only the byte source moves. Executable-range classification still goes
+   * through the ml951 query translation, and data accesses still go through the
+   * fault handler. */
+  {
+    const uint64_t RealRIP = IosSubfloorToReal(RIP);
+    if (RealRIP != RIP) {
+      /* Capped, and it is the only way to confirm this path ran: the change
+       * itself emits no string, so without this the build carries no log
+       * fingerprint and "absence of evidence" becomes unreadable. Hot path --
+       * keep the cap small. */
+      static uint32_t SubfloorDecodeCount = 0;
+      if (SubfloorDecodeCount < 8) {
+        SubfloorDecodeCount++;
+        LogMan::Msg::EFmt("[iOS-subfloor-decode] ml954 reading block bytes from backing: guest RIP={:#x} -> {:#x}", RIP, RealRIP);
+      }
+      return DecodeStream {
+        .InstStream = _InstStream - EntryPoint + RIP,
+        .AdjustedInstStream = reinterpret_cast<const uint8_t*>(RealRIP),
+      };
+    }
+  }
+#endif
 
   return DecodeStream {
     .InstStream = _InstStream - EntryPoint + RIP,

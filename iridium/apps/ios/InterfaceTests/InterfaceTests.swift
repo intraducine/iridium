@@ -1,6 +1,25 @@
 import XCTest
 
 final class InterfaceTests: XCTestCase {
+    func testTouchControllerQuickTap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--touch-controls"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        for (index, orientation) in [UIDeviceOrientation.portrait, .landscapeLeft].enumerated() {
+            XCUIDevice.shared.orientation = orientation
+            let button = app.buttons["touchControl-A"]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            button.tap()
+            XCTAssertEqual(app.staticTexts["touchPresses"].label, "Touch presses: \(index + 1)")
+        }
+        app.buttons["touchControl-D-Pad"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertEqual(app.staticTexts["touchPresses"].label, "Touch presses: 3")
+        app.buttons["touchControl-LT"].tap()
+        XCTAssertEqual(app.staticTexts["touchPresses"].label, "Touch presses: 4")
+    }
+
     func testRepeatedLibraryFilterWithHints() {
         let app = XCUIApplication()
         app.launchArguments = ["--covers", "--hints"]

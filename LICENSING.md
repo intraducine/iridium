@@ -6,9 +6,11 @@ Original Iridium-authored code in `iridium/`, `iridium-runtime-sdk/`, and the ro
 
 - `iridium-fex-ios/`: upstream FEX MIT license and component notices are retained. Existing fork material is distributed under its existing notices.
 - `iridium-wine-ios/`: Wine LGPL-2.1-or-later and component-specific notices are retained. Existing fork material is distributed under its existing notices.
-- `testrepos/Madeira/`: Madeira GPL-3.0-or-later. Its FEX and DXMT forks retain upstream MIT grants while Madeira modifications use GPL-3.0-or-later. Its Wine fork documents GPL-3.0-or-later conversion in LICENSE-MADEIRA.md. Those terms are not replaced with AGPL.
+- `testrepos/Madeira/`: Madeira GPL-3.0-or-later. Its FEX and DXMT forks retain upstream MIT grants while Madeira modifications use GPL-3.0-or-later. The current Wine source comes from its `madeira-lgpl` branch under LGPL-2.1-or-later, as recorded in LICENSE-MADEIRA.md. Iridium modifications retain their existing notices. Those terms are not replaced with AGPL.
 - Madeira-derived portions within Iridium, including the adapted JIT script, retain GPL-3.0-or-later. The copied notices in `iridium/apps/ios/MadeiraSupport/Notices/` and `iridium/apps/ios/BuiltinJIT/StikJITNotices/` remain applicable. New independently authored Iridium integration code is AGPL-3.0-only.
+- The on-screen controller in `iridium/apps/ios/Iridium/Input/TouchControllerOverlay.swift` follows Moonlight iOS's touch-event pattern. Its button and stick images are copied into `iridium/apps/ios/Iridium/Assets.xcassets/`. The Moonlight material is GPL-3.0; its license is retained in `iridium/apps/ios/MadeiraSupport/Notices/Moonlight-LICENSE.txt`.
 - StikJIT source and textual-interface modifications retain MPL-2.0 where applicable; idevice retains MIT. The binary is not included. Source URLs and the pinned archive digest are in BuiltinJIT.
+- The D3D12 runtime uses Apple Metal Shader Converter 4.0 beta 2. The separately downloaded iOS dynamic library retains Apple's agreement; its headers retain Apache-2.0. Those notices are in `testrepos/Madeira/app/Madeira/d3d12/`. Madeira's adopted converter exception is retained in `testrepos/Madeira/LICENSE-EXCEPTION.md` and applies only within its stated copyright scope. It does not change Iridium's license.
 - Other libraries, test data, fonts, and tools retain their embedded notices. The root license does not override them. Public upstream copyright names and contact details are retained as attribution, not presented as Iridium maintainer identity.
 
 GPLv3 and AGPLv3 section 13 permit combining the covered components under their respective terms. This is a mixed-license repository, not a blanket AGPL relicensing of upstream work. Previously granted licenses are not revoked.
@@ -17,7 +19,10 @@ GPLv3 and AGPLv3 section 13 permit combining the covered components under their 
 
 Keep the supplied licenses and attribution files with redistributed copies. Modification information is recorded in CHANGES-FROM-UPSTREAM.md.
 
-An IPA release needs the corresponding source for the exact binary, build scripts, required license notices, and clear source-download instructions beside the IPA. Keep that source available, including any modified dependencies. A moving upstream branch URL is not a replacement for exact corresponding source.
+If you publish an IPA, also publish the matching source code, including changes
+to third-party libraries, and the instructions needed to rebuild it. Include
+the required license notices. Keep these files available with that release;
+a branch that changes later is not enough.
 
 CI replaces StikJIT's opaque idevice archive with a pinned source build. The script comparison and AGPL notice are recorded in StikJITNotices/SOURCES.md. Resolved crate notices still require review. Resolve the recorded audit items before distributing a binary. GStreamer, codecs, crypto libraries, and the runtime must also be inventoried at their actual build revisions. Do not include game files, commercial artwork, Apple SDKs, Developer Disk Images, Microsoft runtime installers, or personal signing/pairing material.
 
@@ -215,12 +220,6 @@ permit LGPL replacement/relinking, and packaged binaries have component owners.
 The accepted inventory covers 2,423 binaries and 24 static archives. Reuse it;
 do not require prose for each binary, intermediate-object hashes, reproducible
 builds, or per-library marker tests. Runtime testing is a separate release task.
-
-Ship the IPA with the required source archive or fixed complete repository,
-build/relink instructions, license texts, third-party notices, and component
-manifest. Temporary local audit paths are not a permanent source delivery method.
-The archive must include corrected source inputs and modifications, not just the
-older archive used before those corrections.
 
 Residual risks: Apple compiler-runtime grant coverage remains uncertain; the
 public unsigned-IPA route has a separately acknowledged contractual risk. These

@@ -22,13 +22,74 @@ struct CallRetStackInfo {
 };
 
 CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!Thread) return {};
   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
+  if (!Base) return {};
   // Leave some room from the base for the default location to allow for underflows without constant exceptions
   return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
           Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4};
 }
 
-void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+/* Returns false if the call-ret stack could not be placed.
+ *
+ * This region has no unconstrained fallback ON PURPOSE (see below), so failure
+ * is a real outcome, not a theoretical one -- a title that creates enough
+ * threads exhausts the band and the 37th thread gets nothing. Previously the
+ * nullptr was carried straight into arithmetic: base + one guard page = 0x1000,
+ * dereferenced immediately, and the resulting fault recursed through the
+ * exception path until the thread's stack was gone. The thread then died
+ * OWNING wine's loader_section, so the next module load blocked forever and the
+ * process sat inert with no error anywhere. Report it and let the caller
+ * unwind. */
+#ifdef FEX_IOS_HOST
+/* Deterministic failure injection for the call-ret stack, default OFF.
+ *
+ *   MADEIRA_FEX_FAIL_CALLRET=reserve:N   fail the Nth reservation
+ *   MADEIRA_FEX_FAIL_CALLRET=commit:N    let the Nth reservation succeed, then
+ *                                        fail its commit
+ *
+ * Both paths exist in the field -- a title that creates enough threads
+ * exhausts the band -- but only the reserve path reproduces naturally, and a
+ * containment path that has never executed is an assumption. One-shot and
+ * counted, so a single run exercises exactly one failure and everything after
+ * it proceeds normally, which is what proves the process SURVIVES rather than
+ * merely fails. */
+enum class CallRetInject { None, Reserve, Commit, ThreadState };
+
+static CallRetInject GetInjectMode(unsigned& TargetOut) {
+  static CallRetInject Mode = CallRetInject::None;
+  static unsigned Target = 0;
+  static std::once_flag Once;
+  std::call_once(Once, [] {
+    const char* Env = getenv("MADEIRA_FEX_FAIL_CALLRET");
+    if (!Env) return;
+    const char* Colon = strchr(Env, ':');
+    if (!Colon) return;
+    Target = (unsigned)atoi(Colon + 1);
+    if (!Target) return;
+    if (!strncmp(Env, "reserve:", 8)) Mode = CallRetInject::Reserve;
+    else if (!strncmp(Env, "commit:", 7)) Mode = CallRetInject::Commit;
+    else if (!strncmp(Env, "threadstate:", 12)) Mode = CallRetInject::ThreadState;
+    if (Mode != CallRetInject::None) {
+      LogMan::Msg::EFmt("[callret] INJECTION ARMED: {} -- will fail call #{}", Env, Target);
+    }
+  });
+  TargetOut = Target;
+  return Mode;
+}
+#endif
+
+[[nodiscard]] bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!Thread || Thread->CallRetStackBase) return false;
+#ifdef FEX_IOS_HOST
+  unsigned InjectTarget = 0;
+  const CallRetInject InjectMode = GetInjectMode(InjectTarget);
+  static std::atomic<unsigned> CallCount {0};
+  const unsigned ThisCall = ++CallCount;
+  const bool InjectReserve = (InjectMode == CallRetInject::Reserve && ThisCall == InjectTarget);
+  const bool InjectCommit  = (InjectMode == CallRetInject::Commit  && ThisCall == InjectTarget);
+#endif
+
   // Allocate the call-ret stack with guard pages on both sides
   const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
   const void* CallRetStackAlloc = nullptr;
@@ -52,7 +113,10 @@ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
     AddrReq.HighestEndingAddress = reinterpret_cast<void*>(ios_fex_band_end);
     AddrParam.Type = MemExtendedParameterAddressRequirements;
     AddrParam.Pointer = &AddrReq;
-    if (ios_fex_band_base) {
+      if (InjectReserve) {
+        LogMan::Msg::EFmt("[callret] INJECTED reserve failure on call #{} -- taking the real "
+                          "containment path", ThisCall);
+      } else if (ios_fex_band_base) {
       CallRetStackAlloc = ::VirtualAlloc2(nullptr, nullptr, CallRetStackAllocSize, MEM_RESERVE, PAGE_NOACCESS, &AddrParam, 1);
     }
   }
@@ -65,13 +129,47 @@ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
   }
 #endif
 
+  if (!CallRetStackAlloc) {
+    /* No unconstrained fallback exists here BY DESIGN (see above), so this is
+     * a real outcome once the band fills: a title that creates enough threads
+     * exhausts it and a later thread gets nothing. Carrying the nullptr on
+     * meant base + one guard page = 0x1000, dereferenced at once, and the
+     * fault recursed until the stack was gone -- with the thread still owning
+     * the loader lock. */
+    LogMan::Msg::EFmt("[callret] RESERVE FAILED: {:#x} bytes in band [{:#x},{:#x}] -- thread cannot start",
+                      (unsigned long long)CallRetStackAllocSize,
+                      (unsigned long long)ios_fex_band_base, (unsigned long long)ios_fex_band_end);
+    return false;
+  }
+
   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
                                   FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
   FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
                                         FEXCore::Allocator::THPControl::Disable);
 
   Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
-  ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
+  /* The COMMIT can fail on its own: the reservation only claims addresses.
+   * Hand the reservation back rather than leaking a 16MB hole in a band that
+   * is already too small to satisfy the next thread. */
+#ifdef FEX_IOS_HOST
+  if (InjectCommit) {
+    LogMan::Msg::EFmt("[callret] INJECTED commit failure on call #{} -- the reservation succeeded "
+                      "and must now be released", ThisCall);
+  }
+#endif
+  if (
+#ifdef FEX_IOS_HOST
+      InjectCommit ||
+#endif
+      ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT,
+                     PAGE_READWRITE) != Thread->CallRetStackBase) {
+    LogMan::Msg::EFmt("[callret] COMMIT FAILED: {:#x} bytes at {} -- releasing the reservation",
+                      (unsigned long long)FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE,
+                      Thread->CallRetStackBase);
+    ::VirtualFree(const_cast<void*>(CallRetStackAlloc), 0, MEM_RELEASE);
+    Thread->CallRetStackBase = nullptr;
+    return false;
+  }
 
   /* iOS-Madeira: VirtualAlloc(MEM_COMMIT) on a previously-MEM_RESERVE'd
    * PAGE_NOACCESS region might not zero-initialize the pages on iOS. The
@@ -132,14 +230,25 @@ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
     }
   }
 #endif
+
+  return true;
 }
 
 void DestroyThread(FEXCore::Core::InternalThreadState* Thread) {
+  if (!Thread || !Thread->CallRetStackBase) return;
   auto CallRetStackInfo = GetInfoThread(Thread);
-  ::VirtualFree(reinterpret_cast<void*>(CallRetStackInfo.AllocationBase), 0, MEM_RELEASE);
+  if (!::VirtualFree(reinterpret_cast<void*>(CallRetStackInfo.AllocationBase), 0, MEM_RELEASE)) {
+    LogMan::Msg::EFmt("[callret-alloc] release failed base={:#x}", CallRetStackInfo.AllocationBase);
+  }
+  Thread->CallRetStackBase = nullptr;
+  if (Thread->CurrentFrame) {
+    Thread->CurrentFrame->State.callret_sp = 0;
+    Thread->CurrentFrame->State.callret_sp_base = 0;
+  }
 }
 
 bool HandleAccessViolation(FEXCore::Core::InternalThreadState* Thread, uint64_t Address, uint64_t& CallRetSPReg) {
+  if (!Thread || !Thread->CallRetStackBase) return false;
   auto CallRetStackInfo = GetInfoThread(Thread);
   if (Address >= CallRetStackInfo.AllocationBase && Address < CallRetStackInfo.AllocationEnd) {
     LogMan::Msg::DFmt("Call-ret stack inbalance: {:X}", Address);

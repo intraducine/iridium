@@ -18,7 +18,7 @@ class BuildSpaceTests(unittest.TestCase):
             (source / 'iridium.tar.gz').write_bytes(b'app source')
             (debian / 'wine.source').write_bytes(b'linux source')
             output = root / 'release.tar.gz'
-            collector.package_sources(source, debian, output)
+            collector.write_source_package(source, debian, output)
             with tarfile.open(output) as archive:
                 self.assertEqual(archive.extractfile('corresponding-source/iridium.tar.gz').read(), b'app source')
                 self.assertEqual(archive.extractfile('corresponding-source/linux/wine.source').read(), b'linux source')
@@ -26,7 +26,7 @@ class BuildSpaceTests(unittest.TestCase):
             self.assertEqual((debian / 'wine.source').read_bytes(), b'linux source')
             (source / 'linux').mkdir()
             with self.assertRaises(ValueError):
-                collector.package_sources(source, debian, output)
+                collector.write_source_package(source, debian, output)
 
     def test_linked_transfer_parent_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:

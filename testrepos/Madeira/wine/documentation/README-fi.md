@@ -7,7 +7,7 @@ ohjelmatiedostoja, sekä kirjastosta nimeltä Winelib, joka toteuttaa
 Windowsin API-kutsuja niiden Unix- ja X11-vastineiden avulla. Kirjaston
 avulla voidaan myös kääntää Windows-koodia natiiveiksi Unix-ohjelmiksi.
 
-Wine on vapaa ohjelma, ja se on julkaistu GNU GPL:n alaisena; lisätietoja
+Wine on vapaa ohjelma, ja se on julkaistu GNU LGPL:n alaisena; lisätietoja
 lisenssistä on englanniksi tiedostossa LICENSE.
 
 

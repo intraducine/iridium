@@ -16,6 +16,9 @@ for arch in arm64ec aarch64; do
     done
 done
 
+cp "$M/build/madeira-d3d12/out-pe/d3d12.dll" "$APP/arm64ec-windows/d3d12.dll"
+bash "$M/build/madeira-d3d12/fetch-converter.sh"
+
 # Wine's build-tree PE modules contain DWARF debug sections. They are useful to
 # developers but are not read by the Windows runtime, and retaining them makes
 # the app bundle several times larger. Strip debug data only; keep PE code,

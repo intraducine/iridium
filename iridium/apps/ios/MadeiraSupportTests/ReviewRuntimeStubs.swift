@@ -62,7 +62,7 @@ final class BuiltinJIT {
 func jit_check_debugged()->Bool { false }
 func jit_install_trap_handler() {}
 func madeira_seed_prefix_if_needed(_ path:String) {}
-func winios_reserve_fex_memory()->Int32 { scenario == "arena-failure" ? 0 : 1 }
+func iridium_reserve_fex_memory()->Int32 { scenario == "arena-failure" ? 0 : 1 }
 var ws_log_quiet:Int32=0
 func wineserver_start(_ path:String)->Int32 {
     if scenario == "server-failure" { return -1 }

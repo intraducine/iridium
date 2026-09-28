@@ -91,7 +91,8 @@ wine-ios-build/
 # StikDebug scripts (reference only)
 MeloNX.js
 build/gnutls-ios/src/*
-!build/gnutls-ios/src/*.tar.*
+# CI fetches these source archives by checksum.
+build/gnutls-ios/src/*.tar.*
 !build/gnutls-ios/src/SHA256SUMS
 
 build/gnutls-ios/obj/
@@ -102,6 +103,7 @@ build/gnutls-ios/obj/
 # slash, which makes any negation inside it silently ineffective.
 research/*
 !research/remote-metal/
+!research/madeira-d3d12/
 *.bak
 photorec.se2
 .DS_Store

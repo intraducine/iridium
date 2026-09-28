@@ -21,12 +21,28 @@ def fetch_revision(root, revision):
                     'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
 
 
-def producer_revision_is_ancestor(root, revision):
+def producer_revision_is_in_history(root, revision):
     current = subprocess.check_output(
         ['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-    comparison = json.loads(subprocess.check_output(
-        ['gh', 'api', f'repos/{REPO}/compare/{revision}...{current}'], text=True))
-    return comparison.get('merge_base_commit', {}).get('sha') == revision
+    def is_ancestor(commit):
+        comparison = json.loads(subprocess.check_output(
+            ['gh', 'api', f'repos/{REPO}/compare/{commit}...{current}'], text=True))
+        return comparison.get('merge_base_commit', {}).get('sha') == commit
+
+    if is_ancestor(revision):
+        return True
+    # A squash merge retains the reviewed source, but not the producer commits.
+    pulls = json.loads(subprocess.check_output(
+        ['gh', 'api', f'repos/{REPO}/commits/{revision}/pulls'], text=True))
+    for pull in pulls:
+        merged = pull.get('merge_commit_sha')
+        head = (pull.get('head') or {}).get('repo') or {}
+        base = (pull.get('base') or {}).get('repo') or {}
+        if (pull.get('merged_at') and re.fullmatch(r'[0-9a-f]{40}', merged or '')
+                and head.get('full_name') == REPO and base.get('full_name') == REPO
+                and is_ancestor(merged)):
+            return True
+    return False
 
 
 def validate_run(run, jobs, revision, branch="main", allow_other_branch=False):
@@ -56,8 +72,8 @@ def verify(root, run_id):
         jobs = api('/jobs?per_page=100')['jobs']
         other_branch = run.get('head_branch') not in ('main', branch)
         validate_run(run, jobs, revision, branch, allow_other_branch=other_branch)
-        if other_branch and not producer_revision_is_ancestor(root, revision):
-            raise ValueError('Linux producer revision is not an ancestor of the current build')
+        if other_branch and not producer_revision_is_in_history(root, revision):
+            raise ValueError('Linux producer revision is not in trusted merged history')
         fetch_revision(root, revision)
         for path in INPUTS:
             if git('rev-parse', revision + ':' + path) != git('rev-parse', 'HEAD:' + path):

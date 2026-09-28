@@ -7,8 +7,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
-HEADINGS = ('Summary', 'Changes', 'Installation and requirements', 'Migration and saves',
-            'Verification', 'Known limitations', 'Downloads and source')
+HEADINGS = ('Download', 'Install', "What's new", 'Known issues', 'Source and licenses')
 
 
 def release_errors(path):

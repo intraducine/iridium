@@ -42,9 +42,11 @@ extension RuntimeLogCaptureTests {
 
 extension RuntimeLogCaptureTests {
     @Test
-    func launchLogKeepsContextAndDropsRuntimeNoise() {
+    func launchLogKeepsContextAndNeverInfersFirstFrameFromLogs() {
         #expect(RuntimeLogCapture.launchSummary("[Launch] Game files are ready.") == "Game files are ready.")
-        #expect(RuntimeLogCapture.launchSummary("[IridiumMadeira] first-present") == "First game frame received.")
+        #expect(RuntimeLogCapture.launchSummary("[IridiumMadeira] first-present session=old") == nil)
+        #expect(RuntimeLogCapture.launchSummary("[IridiumRuntime] runtimePlayer: firstFrameObserved session=old milestonePersisted=true") == nil)
+        #expect(RuntimeLogCapture.launchSummary("[IridiumRuntime] runtimePlayer: madeiraPresentStalled session=current count=0 stalledSeconds=18.4 phase=awaiting-first-present") == nil)
         #expect(RuntimeLogCapture.launchSummary("[IridiumMadeira] Wine launch failed.") != nil)
         #expect(RuntimeLogCapture.launchSummary("err: [mem-census] buffers=40") == nil)
     }
