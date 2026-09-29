@@ -1,0 +1,6 @@
+UNIXLIB   = wineios.so
+UNIX_LIBS = $(COREAUDIO_LIBS)
+
+SOURCES = \
+	coreaudio.c \
+	coremidi.c
