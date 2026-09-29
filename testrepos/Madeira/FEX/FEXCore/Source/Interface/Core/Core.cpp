@@ -136,6 +136,12 @@ ContextImpl::ContextImpl(const FEXCore::HostFeatures& Features)
   if (!Config.Is64BitMode()) {
     // When operating in 32-bit mode, the virtual memory we care about is only the lower 32-bits.
     Config.VirtualMemSize = 1ULL << 32;
+#ifdef FEX_GUEST_WINDOW
+    // Resolve the guest window base (see Context.h). VirtualMemSize stays 4GiB: it describes the
+    // guest address space, which the window does not enlarge.
+    Config.GuestBase = Config.Guest32BaseOption();
+    LOGMAN_THROW_A_FMT((Config.GuestBase & (FEXCore::Utils::FEX_PAGE_SIZE - 1)) == 0, "GUEST32BASE must be page aligned");
+#endif
   }
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira: shrink the per-thread LookupCache L2 page table from 128MB
@@ -833,7 +839,8 @@ static void IRDumper(FEXCore::Core::InternalThreadState* Thread, IR::IREmitter* 
 };
 
 bool ContextImpl::CheckIfBlockIsCacheable(FEXCore::Core::InternalThreadState& Thread, uint64_t GuestRIP, uint64_t MaxInst) {
-  return Thread.FrontendDecoder->CheckIfCacheable(Thread, reinterpret_cast<const uint8_t*>(GuestRIP), GuestRIP, MaxInst);
+  // Guest window: the byte pointer is a host pointer, the RIP stays guest (as in GenerateIR).
+  return Thread.FrontendDecoder->CheckIfCacheable(Thread, reinterpret_cast<const uint8_t*>(GetGuestBase() + GuestRIP), GuestRIP, MaxInst);
 }
 
 /* iOS-Madeira ml623: targeted IR capture (PassManager.cpp). FEX_MadeiraIRCapTarget is the
@@ -897,7 +904,9 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
 
   if (!HasCustomIR) {
     const uint8_t* GuestCode {};
-    GuestCode = reinterpret_cast<const uint8_t*>(GuestRIP);
+    // Guest window: instruction fetch reads from `GuestBase + RIP`. GuestRIP itself is passed on
+    // unchanged - the block info, the LookupCache and every later consumer key on the guest address.
+    GuestCode = reinterpret_cast<const uint8_t*>(GetGuestBase() + GuestRIP);
 
     /* perf-silenced GenerateIR GuestCode log */
 
@@ -975,7 +984,8 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
 
 #ifdef ZYDIS_DISASSEMBLER
         if (FEXCore::Config::Get_X86DISASSEMBLE()) {
-          const uint8_t* InstBytes = reinterpret_cast<const uint8_t*>(InstAddress);
+          // Guest window: host byte pointer, guest runtime address for RIP-relative operands.
+          const uint8_t* InstBytes = reinterpret_cast<const uint8_t*>(GetGuestBase() + InstAddress);
           ZydisDisassembledInstruction ZydisInst;
           if (ZYAN_SUCCESS(ZydisDisassembleIntel(ZydisMachineMode, InstAddress, InstBytes, DecodedInfo->InstSize, &ZydisInst))) {
             LogMan::Msg::IFmt("    {:#x}: {}", InstAddress, ZydisInst.text);
@@ -1006,7 +1016,9 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
         }
 
         if (Config.SMCChecks == FEXCore::Config::CONFIG_SMC_FULL || Block.ForceFullSMCDetection) {
-          auto ExistingCodePtr = reinterpret_cast<uint8_t*>(Block.Entry + BlockInstructionsLength);
+          // Guest window: snapshotting the guest's code bytes is a guest read. The address handed to
+          // _ValidateCode below stays guest; DEF_OP(ValidateCode) applies the window itself.
+          auto ExistingCodePtr = reinterpret_cast<uint8_t*>(GetGuestBase() + Block.Entry + BlockInstructionsLength);
           auto InstAddressReg = Thread->OpDispatcher->_EntrypointOffset(GPRSize, InstAddress - GuestRIP);
           std::array<uint8_t, 0x10> CodeOriginal;
           memcpy(CodeOriginal.data(), ExistingCodePtr, DecodedInfo->InstSize);
@@ -1296,6 +1308,7 @@ ContextImpl::CompileCodeResult ContextImpl::CompileCode(FEXCore::Core::InternalT
 }
 
 #ifdef FEX_IOS_HOST
+#ifdef ARCHITECTURE_arm64ec
 /* iOS-Madeira ml306 (task #51): CallbackPtr entry-state capture buffer, defined in Dispatcher.cpp
  * and written by emitted code at CallbackPtr entry. Read by the [cb-entry] reporter below. */
 extern "C" uint64_t IosCbEntryLog[8];
@@ -1305,6 +1318,17 @@ extern "C" uint64_t IosJitReverseTranslate(uint64_t Addr);
 /* iOS-Madeira ml316: ExitToX64's FFS-bypass counters, defined in Module.cpp and written by
  * the bypass asm in Module.S. Reported below the same way as [cb-entry]. */
 extern "C" uint64_t IosFfsBypassLog[4];
+#else
+/* The WOW64 module (libwow64fex.dll) is a plain aarch64 PE with no Module.S, no EC entry thunks
+ * and no FFS bypass, so the last two symbols above do not exist in its link. Zeroed storage and an
+ * identity translation: the FFS reporter below compares against counters nothing increments, and
+ * the module has no PE-image-to-pool alias table (its guest images are mapped normally). */
+extern "C" uint64_t IosCbEntryLog[8];
+static uint64_t IosFfsBypassLog[4] {};
+static inline uint64_t IosJitReverseTranslate(uint64_t Addr) {
+  return Addr;
+}
+#endif
 #endif
 
 #ifdef FEX_IOS_HOST
@@ -1383,7 +1407,8 @@ static void IosMonoTryActivate(ContextImpl* CTX, FEXCore::Core::InternalThreadSt
     return;
   }
   static constexpr uint8_t XChgOp = 0x87;
-  const uint8_t* Code = reinterpret_cast<const uint8_t*>(InsnRIP);
+  // Guest window: InsnRIP is a guest RIP, so reading the opcode byte at it is a guest read.
+  const uint8_t* Code = reinterpret_cast<const uint8_t*>(CTX->GetGuestBase() + InsnRIP);
   if (Code[0] != XChgOp && Code[1] != XChgOp) {
     LogMan::Msg::EFmt("[mono-bridge] ml648 REJECT: not an XCHG at {:#x} ({:#x} {:#x})", InsnRIP, Code[0], Code[1]);
     return;
@@ -1582,7 +1607,8 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
    * as "pool" produced 17 false positives. IsAddressInCodeBuffer is the exact discriminator that
    * was missing -- FEX knows its own code-buffer bounds, so a guest RIP inside them is
    * unambiguously a host-PC leak with no possibility of a guest-image false positive. */
-  const bool RIPInFEXCodeBuffer = IsAddressInCodeBuffer(Thread, GuestRIP);
+  // Guest window: code-buffer bounds are host addresses, so compare the host form of the RIP.
+  const bool RIPInFEXCodeBuffer = IsAddressInCodeBuffer(Thread, GetGuestBase() + GuestRIP);
 
   /* iOS-Madeira ml300 (task #52): ALSO catch pool MODULE-COPY addresses, not just FEX's code buffer.
    *
@@ -2415,7 +2441,9 @@ void ContextImpl::MonoBackpatcherWrite(FEXCore::Core::CpuStateFrame* Frame, uint
   {
     auto lk = GuardSignalDeferringSection(CTX->CodeInvalidationMutex, Thread);
 
-    uint64_t Dest = Address;
+    // Guest window: `Address` is a guest address (InvalidateGuestCodeRange below is keyed on it),
+    // so the window applies to the dereference only.
+    uint64_t Dest = Address + CTX->GetGuestBase();
 #ifdef FEX_IOS_HOST
     /* ml648: THE STORE MUST GO TO THE WRITABLE ALIAS.
      *

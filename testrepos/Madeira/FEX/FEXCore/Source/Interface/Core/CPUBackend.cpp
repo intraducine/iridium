@@ -363,7 +363,15 @@ namespace CPU {
       bool Reentered {false};
       static uint64_t Me() {
         uint64_t Teb = 0;
+#if defined(ARCHITECTURE_arm64ec)
         __asm volatile("mov %0, x18" : "=r"(Teb));
+#else
+        /* The aarch64 WOW64 module on iOS: x18 is not the TEB here and reads as 0 on these
+         * threads, which would make every owner look the same (1) and turn the re-entry check
+         * off - a fault inside the critical section would then wait for itself. TPIDRRO_EL0 is
+         * the host thread pointer: non-zero, unique per thread, preserved across switches. */
+        __asm volatile("mrs %0, tpidrro_el0" : "=r"(Teb));
+#endif
         return Teb | 1;   /* never 0, even for a thread with no TEB */
       }
       explicit IosMigrateLockGuard(std::atomic<uint64_t>& Lock)
@@ -419,7 +427,10 @@ namespace CPU {
       {
         static std::atomic<int> PinLogCount {0};
         uint64_t Teb = 0;
+#if defined(ARCHITECTURE_arm64ec)
         __asm volatile("mov %0, x18" : "=r"(Teb));
+#endif
+        // (WOW64 module: x18 is not a TEB, so the tid is reported as 0.)
         if (PinLogCount.fetch_add(1, std::memory_order_relaxed) < 40) {
           LogMan::Msg::EFmt("[pool-tail] PIN old CodeBuffer size=0x{:x} refcnt={} pinned_now={} tid={:#x} rev=ml459",
                             CodeBuffer ? CodeBuffer->AllocatedSize : 0, ThreadState->CurrentFrame->SignalHandlerRefCounter,
@@ -695,6 +706,12 @@ namespace CPU {
     struct IosSweepSlot {
       FEXCore::Core::InternalThreadState* Thread;
       volatile uint8_t* InSim;
+#if !defined(ARCHITECTURE_arm64ec)
+      // WOW64 syscall parking: optional; set to 1 when the sweeper migrates this thread. The WOW64
+      // module parks threads inside a syscall whose return address points into the generation
+      // being dropped, and must know to resume at the dispatcher instead.
+      volatile uint8_t* Migrated;
+#endif
     };
     constexpr size_t IosSweepSlotMax = 512;
     IosSweepSlot IosSweepSlots[IosSweepSlotMax];
@@ -709,6 +726,26 @@ namespace CPU {
     }
   } // namespace
 
+#if !defined(ARCHITECTURE_arm64ec)
+  extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thread, volatile uint8_t* InSimPtr,
+                                           volatile uint8_t* MigratedPtr) {
+    std::scoped_lock lk {IosSweepRegistryLock()};
+    for (size_t i = 0; i < IosSweepSlotMax; i++) {
+      if (!IosSweepSlots[i].Thread) {
+        IosSweepSlots[i] = {Thread, InSimPtr, MigratedPtr};
+        if (i + 1 > IosSweepSlotHighWater) {
+          IosSweepSlotHighWater = i + 1;
+        }
+        return;
+      }
+    }
+    LogMan::Msg::EFmt("[gen-sweep] registry FULL — thread unswept rev=ml460");
+  }
+
+  extern "C" void IosSweepRegisterThread(FEXCore::Core::InternalThreadState* Thread, volatile uint8_t* InSimPtr) {
+    IosSweepRegisterThreadEx(Thread, InSimPtr, nullptr);
+  }
+#else
   extern "C" void IosSweepRegisterThread(FEXCore::Core::InternalThreadState* Thread, volatile uint8_t* InSimPtr) {
     std::scoped_lock lk {IosSweepRegistryLock()};
     for (size_t i = 0; i < IosSweepSlotMax; i++) {
@@ -722,13 +759,18 @@ namespace CPU {
     }
     LogMan::Msg::EFmt("[gen-sweep] registry FULL — thread unswept rev=ml460");
   }
+#endif
 
   extern "C" void IosSweepUnregisterThread(FEXCore::Core::InternalThreadState* Thread) {
     {
       std::scoped_lock lk {IosSweepRegistryLock()};
       for (size_t i = 0; i < IosSweepSlotMax; i++) {
         if (IosSweepSlots[i].Thread == Thread) {
+#if !defined(ARCHITECTURE_arm64ec)
+          IosSweepSlots[i] = {nullptr, nullptr, nullptr};
+#else
           IosSweepSlots[i] = {nullptr, nullptr};
+#endif
           break;
         }
       }
@@ -797,7 +839,18 @@ namespace CPU {
         continue;
       }
       switch (Snap[i].Thread->CPUBackend->IosRemoteMigrateStale(Latest)) {
+#if !defined(ARCHITECTURE_arm64ec)
+      case 1:
+        Migrated++;
+        // Written while the gate is still set: the owner reads it only after its own gate spin,
+        // so it observes the flag before it can return from the parked syscall.
+        if (Snap[i].Migrated) {
+          *Snap[i].Migrated = 1;
+        }
+        break;
+#else
       case 1: Migrated++; break;
+#endif
       case -1: SigPinSkip++; break;
       case -2: Raced++; break;
       default: break;

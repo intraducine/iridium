@@ -217,7 +217,13 @@ namespace {
  * target instruction. Containment, NOT entry RIP: with multiblock the block
  * routinely starts hundreds of bytes earlier, so an entry-range gate (which is
  * what I first proposed) would have missed this block entirely. */
+#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)
+// Not thread_local in the WOW64 module (see AllocWatch.cpp): process-global, so two threads
+// compiling at once share the mark. For a diagnostic that can only cost a missed capture.
+std::atomic<uint64_t> IRCapRIP {0};
+#else
 thread_local uint64_t IRCapRIP = 0;
+#endif
 std::atomic<uint32_t> IRCapTaken {0};
 
 constexpr uint32_t IRCapMaxCaptures = 4; // a LATER generation may be the faulty one

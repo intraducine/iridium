@@ -50,6 +50,17 @@ constexpr size_t MAX_DISPATCHER_CODE_SIZE = FEXCore::Utils::FEX_PAGE_SIZE * 4;
 Dispatcher::Dispatcher(FEXCore::Context::ContextImpl* ctx)
   : Arm64Emitter(ctx, FEXCore::Allocator::VirtualAlloc(MAX_DISPATCHER_CODE_SIZE, true), MAX_DISPATCHER_CODE_SIZE)
   , CTX {ctx} {
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+  // The dispatcher is the first thing emitted in a process, and FEXCore::Allocator::VirtualAlloc
+  // refuses an executable allocation outside the JIT pool. Emitting into `nullptr + WriteOffset`
+  // is exactly the wild store that refusal exists to prevent, and nothing can run without a
+  // dispatcher, so stop here with the reason.
+  if (!GetBufferBase()) {
+    ERROR_AND_DIE_FMT("[jit-pool] dispatcher code buffer allocation failed ({} bytes, WriteOffset={:#x}) - no executable JIT-pool "
+                      "memory is available",
+                      MAX_DISPATCHER_CODE_SIZE, FEXCore::DualMap::WriteOffset);
+  }
+#endif
   SetWriteOffset(FEXCore::DualMap::WriteOffset);
   EmitDispatcher();
 
@@ -707,7 +718,11 @@ void Dispatcher::EmitDispatcher() {
       (void)Bind(&l_callret_ok);
     }
 #endif
+#ifndef FEX_CALLRET_STACK_UNUSED
+    // The sentinel makes a RET taken inside the callback pop {0,0} and mispredict. Without a
+    // shadow stack there is neither a push nor a pop, so there is nothing to seed.
     stp<ARMEmitter::IndexType::PRE>(ARMEmitter::XReg::zr, ARMEmitter::XReg::zr, REG_CALLRET_SP, -0x10);
+#endif
 
     // Now go back to the regular dispatcher loop
     (void)b(&LoopTop);

@@ -112,6 +112,42 @@ extern "C" uint32_t IosTebTsdOffset;
 constexpr uint64_t EC_CODE_BITMAP_MAX_ADDRESS = 1ULL << 47;
 #endif
 
+// Guest window registers. Reserved only in 32-bit mode and only when a non-zero GUEST32BASE is
+// configured (ContextImpl::Config.GuestBase, FEX_GUEST_WINDOW builds). Otherwise they stay in the
+// 32-bit dynamic register pool (x32::RA) and nothing changes.
+//
+// REG_GUEST_BASE holds the host address of guest address 0 for the lifetime of a JIT entry.
+// REG_GUEST_ADDR_TMP receives `REG_GUEST_BASE + zext32(EA)` just before a guest memory access (see
+// Arm64JITCore::GetGuestMemReg). It is never register allocated, so no emitter site has to reason
+// about collisions with TMP1-TMP4 or a live IR value.
+//
+// Both come from the tail of x32::RA:
+//  - x19 and x24 are AAPCS64 callee-saved, so they survive every host call the JIT makes (including
+//    `preserve_all` calls) and need no spill/fill around calls.
+//  - Neither is in x32::RA's pair-allocatable prefix (x32::RAPairs == 10), so pairing is undisturbed.
+//  - Neither is in x32::NotPreserved_Dynamic.
+// x18 is the platform register on both Windows and iOS and cannot be used.
+constexpr auto REG_GUEST_BASE = ARMEmitter::XReg::x19;
+constexpr auto REG_GUEST_ADDR_TMP = ARMEmitter::XReg::x24;
+
+// On the iOS WOW64 module the call-ret shadow stack is not used at all.
+//
+// The stack is a pure return-address predictor: a CALL pushes {guest_ret_rip, host_label} and a RET
+// pops it and branches to the host label when the guest half matches. Upstream bounds an unbalanced
+// stack (SEH unwinds, longjmp and C++ throws skip guest RETs) with PAGE_NOACCESS guard pages, but
+// Wine on iOS does not enforce PAGE_NOACCESS, so the pointer walks out of its allocation; on the
+// WOW64 module it ran ~20 MB below its base, through the thread's CpuStateFrame, and the JIT then
+// branched to a guest address loaded from the overwritten fallback-handler table. The RET-side
+// consumer (the `cbz` shortcut in BranchOps.cpp) is already compiled out on iOS, so the pushes and
+// pops only maintain a structure nothing reads.
+//
+// Scoped to `FEX_IOS_HOST && !ARCHITECTURE_arm64ec`: the ARM64EC module keeps its sequence byte for
+// byte, and every non-iOS build keeps the shadow stack. What remains is the lone `adr` at a linked
+// CALL, the known-call marker Arm64JITCore::ExitFunctionLink reads to relink the callsite as `bl`.
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+#define FEX_CALLRET_STACK_UNUSED 1
+#endif
+
 // Will force one single instruction block to be generated first if set when entering the JIT filling SRA.
 // FillStaticRegs must preserve this
 constexpr auto ENTRY_FILL_SRA_SINGLE_INST_REG = TMP2;
@@ -144,6 +180,18 @@ public:
 
 protected:
   FEXCore::Context::ContextImpl* EmitterCTX;
+
+  // Host address of guest address 0, or 0 for the usual identity mapping. Mirrors
+  // ContextImpl::Config.GuestBase and is only ever non-zero in 32-bit mode. A constant 0 in builds
+  // without FEX_GUEST_WINDOW, where every `if (GuestBase)` path compiles away.
+#ifdef FEX_GUEST_WINDOW
+  uint64_t GuestBase {};
+
+  // Emits the load of REG_GUEST_BASE. No-op unless a guest window is configured.
+  void LoadGuestBaseReg();
+#else
+  static constexpr uint64_t GuestBase = 0;
+#endif
 
   std::span<const ARMEmitter::Register> StaticRegisters {};
   std::span<const ARMEmitter::Register> GeneralRegisters {};

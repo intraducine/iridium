@@ -24,3 +24,8 @@ EXPORTS
   BTCpuThreadTerm
   BTCpuUpdateProcessorInformation
   __wine_get_unix_opcode
+
+; MADEIRA: the iOS-host extension BTCpuIosSetMonoBridge (the WoW64 counterpart of ARM64EC's
+; BTCpu64IosSetMonoBridge) is deliberately NOT listed here. It only exists in an iOS-host build, and
+; a DEF entry for a symbol that does not exist is a link error - so it is exported with
+; __declspec(dllexport) from IosMonoBridge.cpp instead, under the same #ifdef as its implementation.
