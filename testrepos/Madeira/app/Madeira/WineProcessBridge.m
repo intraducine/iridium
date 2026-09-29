@@ -329,6 +329,38 @@ static _Atomic int g_wine_running = 0;
 static _Atomic int g_wine_exit_code = -1;
 static char *g_prefix_path = NULL;
 
+/* Export MADEIRA_DOCS_DIR before main(), while HOME is still the app container.
+ * The wineserver moves HOME into the Wine prefix before native readers such as
+ * madsync first inspect madeira.cfg, so the later guest-side export is too late.
+ * MADEIRA_CFG_EARLY_DOCS=0 (environment or madeira.cfg env entry) restores the
+ * previous lookup behavior. */
+static const char *g_madeira_docs_early = "not-run";
+static int madeira_cfg_off_word(const char *v)
+{
+    return v && (!strcmp(v, "0") || !strcmp(v, "off") || !strcmp(v, "no"));
+}
+static const char *madeira_docs_dir_early(void)
+{
+    char docs[1024], v[16];
+    const char *home = getenv("HOME"), *have = getenv("MADEIRA_DOCS_DIR");
+    if (madeira_cfg_off_word(getenv("MADEIRA_CFG_EARLY_DOCS"))) return "off-env";
+    if (have && *have) return "already-set";
+    if (!home || !*home || strlen(home) + 11 >= sizeof(docs)) return "no-home";
+    snprintf(docs, sizeof(docs), "%s/Documents", home);
+    setenv("MADEIRA_DOCS_DIR", docs, 0);
+    if (madeira_cfg_get("env.MADEIRA_CFG_EARLY_DOCS", v, sizeof(v)) && madeira_cfg_off_word(v))
+    {
+        unsetenv("MADEIRA_DOCS_DIR");
+        setenv("MADEIRA_CFG_EARLY_DOCS", "0", 1);
+        return "off-cfg";
+    }
+    return "set";
+}
+__attribute__((constructor)) static void madeira_docs_dir_ctor(void)
+{
+    g_madeira_docs_early = madeira_docs_dir_early();
+}
+
 /***********************************************************************
  *           madeira_seed_prefix_if_needed
  *
@@ -627,6 +659,9 @@ static void *wine_process_thread(void *arg) {
             LOG("Wine log file: %{public}s", logPath.UTF8String);
             /* Expose the app Documents dir to Wine code (e.g. for fex-jit-dump.bin) */
             setenv("MADEIRA_DOCS_DIR", docs.UTF8String, 1);
+            dprintf(STDERR_FILENO, "[config-dir] early MADEIRA_DOCS_DIR=%s; native madeira.cfg readers that run "
+                    "before this point use it (MADEIRA_CFG_EARLY_DOCS=0 disables)\n",
+                    g_madeira_docs_early);
 
             /* ml1076: file-backed memory canary (Astra's memory-backing-canary.c,
              * run in-app on the phone, gated by Documents/madeira-swap-canary.txt).
