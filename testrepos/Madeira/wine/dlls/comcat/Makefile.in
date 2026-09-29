@@ -1,4 +1,0 @@
-MODULE    = comcat.dll
-IMPORTS   = ole32
-
-VER_OLESELFREGISTER = 1
