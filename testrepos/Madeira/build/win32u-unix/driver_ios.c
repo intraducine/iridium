@@ -128,6 +128,24 @@ void winios_drv_post_mouse(int x, int y, unsigned int flags, unsigned int mouse_
     winios_log_input("mouse", flags, st);
 }
 
+/* Navigation keys share scan codes with numpad keys. Wine's VK-to-scan
+ * lookup can therefore return the non-E0 alias; DirectInput/raw-input then
+ * sees a numpad key. Keep Iridium's current corrected behavior by default,
+ * with Madeira's rollback switch for compatibility testing. */
+static UINT winios_key_extended_flag( UINT vk, UINT scan, int nav_e0 )
+{
+    if (scan & 0xe000) return KEYEVENTF_EXTENDEDKEY;
+    if (!nav_e0) return 0;
+    switch (vk)
+    {
+    case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
+    case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN:
+    case VK_INSERT: case VK_DELETE:
+        return KEYEVENTF_EXTENDEDKEY;
+    }
+    return 0;
+}
+
 /* Keyboard sibling of winios_drv_post_key: packages an INPUT_KEYBOARD
  * event. vk is a Windows virtual-key code (VK_RETURN=0x0D, VK_SPACE=0x20,
  * VK_ESCAPE=0x1B, ...); flags is 0 for key-down, KEYEVENTF_KEYUP (0x2)
@@ -138,14 +156,21 @@ void winios_drv_post_key(unsigned short vk, unsigned int flags)
     INPUT input = {0};
     NTSTATUS st;
     UINT scan;
+    static int nav_e0 = -1;
 
     /* The layout lookup can choose the non-extended keypad alias for navigation
      * keys. Preserve dedicated navigation keys for Raw Input and DirectInput. */
     scan = NtUserMapVirtualKeyEx( vk, MAPVK_VK_TO_VSC_EX, NtUserGetKeyboardLayout(0) );
-    if ((scan & 0xe000) || (vk >= VK_PRIOR && vk <= VK_DOWN) ||
-        vk == VK_INSERT || vk == VK_DELETE || vk == VK_DIVIDE ||
-        vk == VK_RCONTROL || vk == VK_RMENU || vk == VK_LWIN ||
-        vk == VK_RWIN || vk == VK_APPS || vk == VK_SNAPSHOT)
+    if (nav_e0 < 0)
+    {
+        const char *e = getenv( "MADEIRA_NAV_KEYS_E0" );
+        nav_e0 = !(e && e[0] == '0');
+    }
+    flags |= winios_key_extended_flag( vk, scan, nav_e0 );
+    /* Preserve Iridium's existing explicit treatment of physical extended keys
+     * even if a platform keyboard map returns a short scan code for one. */
+    if (vk == VK_DIVIDE || vk == VK_RCONTROL || vk == VK_RMENU ||
+        vk == VK_LWIN || vk == VK_RWIN || vk == VK_APPS || vk == VK_SNAPSHOT)
         flags |= KEYEVENTF_EXTENDEDKEY;
 
     input.type           = INPUT_KEYBOARD;
