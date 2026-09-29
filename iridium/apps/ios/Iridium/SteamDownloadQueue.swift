@@ -20,7 +20,7 @@ struct SteamInstallOptions: Codable, Equatable, Sendable {
 struct SteamDownloadedGame: Codable, Equatable, Sendable {
     let appId: UInt32
     let name: String
-    let directory: String
+    var directory: String
     let executables: [String]
     var buildId: String?
     var options: SteamInstallOptions?
@@ -93,6 +93,26 @@ struct SteamDownloadQueue: Codable, Equatable, Sendable {
     var version = 1
     private(set) var jobs: [SteamDownloadJob] = []
     var isPaused = false
+
+    mutating func rebaseInstalledDirectories(steamGamesRoot: URL, fileManager: FileManager = .default) {
+        let marker = "/Library/Application Support/SteamGames/"
+        func rebase(_ path: String) -> String {
+            let source = URL(fileURLWithPath: path).standardizedFileURL.path
+            guard let container = source.range(of: "/Containers/Data/Application/"),
+                  let range = source.range(of: marker), container.upperBound < range.lowerBound,
+                  !source[container.upperBound..<range.lowerBound].contains("/") else { return path }
+            let candidate = steamGamesRoot.appending(path: String(source[range.upperBound...])).standardizedFileURL.path
+            guard candidate.hasPrefix(steamGamesRoot.standardizedFileURL.path + "/") else { return path }
+            return fileManager.fileExists(atPath: candidate) ? candidate : path
+        }
+        for index in jobs.indices {
+            if var installed = jobs[index].installed {
+                installed.directory = rebase(installed.directory)
+                jobs[index].installed = installed
+            }
+            if let reuse = jobs[index].reuseDirectory { jobs[index].reuseDirectory = rebase(reuse) }
+        }
+    }
 
     mutating func recoverAfterRelaunch() {
         // A process death is not a clean pause. The native downloader re-hashes
@@ -175,6 +195,24 @@ enum SteamQueueError: LocalizedError {
     case invalidDocument
     var errorDescription: String? {
         "The saved download queue could not be read. It has been kept unchanged; no game files were removed."
+    }
+}
+
+enum SteamManagedFiles {
+    static func delete(_ job: SteamDownloadJob, from root: URL) throws {
+        guard job.status == .completed, let installed = job.installed,
+              installed.appId == job.appId else { throw CocoaError(.fileReadInvalidFileName) }
+        let managedRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let content = URL(fileURLWithPath: installed.directory).resolvingSymlinksInPath().standardizedFileURL
+        let appRoot = managedRoot.appendingPathComponent(String(job.appId), isDirectory: true)
+        let folder = content.deletingLastPathComponent()
+        guard content.lastPathComponent == "content",
+              content.path.hasPrefix(appRoot.path + "/"),
+              folder.path.hasPrefix(appRoot.path + "/"),
+              let receipt = try? Data(contentsOf: folder.appendingPathComponent("installed.json")),
+              let recorded = try? JSONDecoder().decode(SteamDownloadedGame.self, from: receipt),
+              recorded.appId == job.appId else { throw CocoaError(.fileReadInvalidFileName) }
+        try FileManager.default.removeItem(at: folder)
     }
 }
 

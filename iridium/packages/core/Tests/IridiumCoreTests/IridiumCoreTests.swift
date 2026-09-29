@@ -1223,6 +1223,33 @@ final class IridiumCoreTests: XCTestCase {
         XCTAssertTrue(isVerified)
     }
 
+    func testPersistentStoreRebasesNativeSteamInstallAfterUpdate() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("Iridium/state.json")
+        let current = root.appendingPathComponent("SteamGames/42/99/content")
+        try FileManager.default.createDirectory(at: current, withIntermediateDirectories: true)
+        try Data("game".utf8).write(to: current.appendingPathComponent("game.exe"))
+        let old = "/var/mobile/Containers/Data/Application/OLD/Library/Application Support/SteamGames/42/99/content"
+        let game = GameRecord(title: "Steam Fixture", source: .steam, installPath: old,
+            savePathMapping: "Documents/Saves/Steam Fixture", compatibilityProfileName: "generic-broad-catalog",
+            inputProfileName: "Touch + Controller", touchOverlayName: "", controllerPresetName: "",
+            keyboardMouseEnabled: true, prefixState: .clean, deviceTier: .tier1,
+            rendererPreset: .metalOpenGLFallback,
+            launchProfile: .init(executablePath: old + "/game.exe", arguments: [], prefixID: UUID(),
+                rendererPreset: .metalOpenGLFallback, deviceTier: .tier1,
+                titleFlags: ["steam-native-download", "steam-app-id:42"]), summary: "")
+        var snapshot = IridiumSnapshot.empty
+        snapshot.games = [game]
+        try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(snapshot).write(to: stateURL)
+        let store = IridiumStore(snapshotURL: stateURL)
+        let games = await store.allGames()
+        let loaded = try XCTUnwrap(games.first)
+        XCTAssertEqual(loaded.installPath, current.path)
+        XCTAssertEqual(loaded.launchProfile.executablePath, current.appendingPathComponent("game.exe").path)
+    }
+
     func testImportGameRefreshesRebasedManualImportAndRestoresManagedExecutable() async throws {
         let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)

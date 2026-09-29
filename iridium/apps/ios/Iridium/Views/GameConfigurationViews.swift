@@ -181,7 +181,10 @@ struct GameCompatibilityView: View {
 
 struct GameStorageView: View {
     let game: GameRecord
+    @ObservedObject var viewModel: AppViewModel
     var usesMadeiraRuntime = false
+    @State private var confirmDelete = false
+    @State private var deleteError: String?
 
     var body: some View {
         List {
@@ -199,6 +202,14 @@ struct GameStorageView: View {
                 pathRow(game.installPath)
             }.listRowBackground(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.06)).padding(.vertical, 2)).listRowSeparator(.hidden)
 
+            if canDeleteImportedFiles {
+                Section {
+                    MenuButton("Delete Imported Game Files", role: .destructive) { confirmDelete = true }
+                } footer: {
+                    Text("Deletes this folder and removes the game from the library. Separate Windows profile saves remain.")
+                }
+            }
+
             if usesMadeiraRuntime {
                 Section("Saves") {
                     Text("Save locations vary by game. Check the game’s documentation for its save location before backing up files.")
@@ -215,6 +226,27 @@ struct GameStorageView: View {
         .navigationTitle("Files & Saves")
         .navigationBarTitleDisplayMode(.inline)
         .iridiumListChrome()
+        .confirmationDialog("Delete imported game files?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete Game Files", role: .destructive) {
+                Task {
+                    do { try await viewModel.deleteImportedGameFiles(game) }
+                    catch { deleteError = error.localizedDescription }
+                }
+            }
+            Button("Keep Files", role: .cancel) {}
+        } message: {
+            Text("This deletes the game folder, including files saved inside it. Separate Windows profile saves remain. The action cannot be undone.")
+        }
+        .alert("Could Not Delete Game Files", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("OK") { deleteError = nil }
+        } message: { Text(deleteError ?? "") }
+    }
+
+    private var canDeleteImportedFiles: Bool {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return false }
+        let root = documents.appendingPathComponent("Games", isDirectory: true).standardizedFileURL
+        let folder = URL(fileURLWithPath: game.installPath).standardizedFileURL
+        return folder.deletingLastPathComponent() == root && FileManager.default.fileExists(atPath: folder.path)
     }
 
     private func pathRow(_ path: String) -> some View {

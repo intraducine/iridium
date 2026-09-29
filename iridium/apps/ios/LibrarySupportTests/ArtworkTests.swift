@@ -156,6 +156,43 @@ extension ArtworkTests {
         XCTAssertNil(untrusted)
     }
 
+    @MainActor func testSteamPortraitCoverUsesHashedSteamAsset() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ArtworkProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel(); ArtworkProtocol.handler = nil }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let artwork = LibraryArtwork(root: root, session: session)
+        let path = "1159a696d257cbeb3f4479be3466cfba2ae938a0/library_600x900_2x.jpg"
+        ArtworkProtocol.handler = { request in
+            XCTAssertTrue(request.request.url!.absoluteString.contains("IStoreBrowseService/GetItems"))
+            request.respond(#"{"response":{"store_items":[{"appid":3768760,"assets":{"asset_url_format":"steam/apps/3768760/${FILENAME}?t=1","library_capsule_2x":"\#(path)"}}]}}"#)
+        }
+        let url = await artwork.steamPortraitCoverURL(for: 3768760)
+        XCTAssertEqual(url?.host, "shared.fastly.steamstatic.com")
+        XCTAssertTrue(url?.absoluteString.contains(path) == true)
+        ArtworkProtocol.handler = { request in
+            request.respond(#"{"response":{"store_items":[{"appid":3768760,"assets":{"asset_url_format":"steam/apps/3768760/${FILENAME}","library_capsule_2x":"../../outside.jpg"}}]}}"#)
+        }
+        let invalid = await artwork.steamPortraitCoverURL(for: 3768760)
+        XCTAssertNil(invalid)
+    }
+
+    @MainActor func testSteamStorageRequirementIsMarkedAsEstimate() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ArtworkProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel(); ArtworkProtocol.handler = nil }
+        let artwork = LibraryArtwork(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), session: session)
+        ArtworkProtocol.handler = { request in
+            XCTAssertTrue(request.request.url!.absoluteString.contains("appdetails?appids=3768760"))
+            request.respond(#"{"3768760":{"success":true,"data":{"pc_requirements":{"minimum":"<strong>Storage:</strong> 80 GB available space"}}}}"#)
+        }
+        let estimate = await artwork.steamStoreStorageEstimate(for: 3768760)
+        XCTAssertEqual(estimate, "80 GB")
+    }
+
     @MainActor func testLookupAndInFlightRemoval() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root); ArtworkProtocol.handler = nil }
@@ -260,6 +297,8 @@ extension ArtworkTests {
                     ? Data()
                     : Data(#"{"items":[{"id":123,"name":"Custom Game","type":"app"}]}"#.utf8)
                 request.respond(body, status: unavailable || count == 1 ? 503 : 200)
+            } else if url.path.contains("IStoreBrowseService/GetItems") {
+                request.respond(#"{"response":{"store_items":[{"appid":123,"assets":{"asset_url_format":"steam/apps/123/${FILENAME}","library_capsule_2x":"cover.jpg"}}]}}"#)
             } else {
                 request.respond(#"{"123":{"success":true,"data":{"type":"game","steam_appid":123,"name":"Custom Game"}}}"#)
             }
@@ -299,6 +338,10 @@ extension ArtworkTests {
             XCTAssertNil(request.request.value(forHTTPHeaderField: "Authorization"))
             if request.request.url?.host?.hasSuffix(".steamstatic.com") == true {
                 request.respond("", status: 404)
+                return
+            }
+            if request.request.url?.host == "api.steampowered.com" {
+                request.respond(#"{"response":{"store_items":[]}}"#)
                 return
             }
             XCTAssertEqual(request.request.url?.host, "store.steampowered.com")

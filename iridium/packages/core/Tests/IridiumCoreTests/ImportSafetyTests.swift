@@ -3,6 +3,24 @@ import IridiumCore
 import XCTest
 
 final class ImportSafetyTests: XCTestCase {
+    func testDeleteGameFolderOnlyRemovesSelectedDirectChild() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let games = root.appendingPathComponent("Documents/Games")
+        let selected = games.appendingPathComponent("Selected")
+        let retained = games.appendingPathComponent("Retained")
+        let outside = root.appendingPathComponent("Outside")
+        for folder in [selected, retained, outside] {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        }
+        XCTAssertThrowsError(try ManagedGameFiles.deleteGameFolder(at: outside, in: games))
+        XCTAssertThrowsError(try ManagedGameFiles.deleteGameFolder(at: games, in: games))
+        try ManagedGameFiles.deleteGameFolder(at: selected, in: games)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: selected.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: retained.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
+    }
+
     func testFilesFolderImportKeepsGameInPlaceAndRejectsOtherFolders() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

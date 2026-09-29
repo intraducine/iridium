@@ -1344,6 +1344,30 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func deleteSteamDownload(_ job: SteamDownloadJob, from steam: SteamLibraryModel) async throws {
+        guard activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+              let path = job.installed?.directory else { throw CocoaError(.fileWriteNoPermission) }
+        let registered = games.filter { $0.installPath == path }
+        try await steam.deleteFiles(job)
+        for game in registered { await store.removeLibraryEntry(gameID: game.id) }
+        await refresh()
+    }
+
+    func deleteImportedGameFiles(_ game: GameRecord) async throws {
+        guard activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+              games.contains(where: { $0.id == game.id && $0.installPath == game.installPath }),
+              !games.contains(where: { $0.id != game.id && $0.installPath == game.installPath }),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { throw CocoaError(.fileWriteNoPermission) }
+        let gamesRoot = documents.appendingPathComponent("Games", isDirectory: true)
+        let folder = URL(fileURLWithPath: game.installPath)
+        try await Task.detached(priority: .utility) {
+            try ManagedGameFiles.deleteGameFolder(at: folder, in: gamesRoot)
+        }.value
+        await store.removeLibraryEntry(gameID: game.id)
+        await refresh()
+    }
+
     func registerScannedImport(title: String? = nil) {
         guard !isImportingGame else { return }
         print("[IridiumRuntime] registerScannedImport: buildMarker=\(Self.importDebugBuildMarker)")

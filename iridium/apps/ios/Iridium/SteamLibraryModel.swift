@@ -160,6 +160,8 @@ final class SteamLibraryModel: ObservableObject {
             let storage = SteamQueuePersistence(url: folder.appendingPathComponent("queue.json"))
             persistence = storage
             queue = try await storage.load()
+            queue.rebaseInstalledDirectories(steamGamesRoot: folder.deletingLastPathComponent()
+                .appendingPathComponent("SteamGames", isDirectory: true))
             queue.recoverAfterRelaunch()
             queueWritable = true
             try await saveQueue()
@@ -286,6 +288,20 @@ final class SteamLibraryModel: ObservableObject {
     }
 
     func remove(_ id: UUID) { if queue.remove(id) { checkpoint() } }
+    func deleteFiles(_ job: SteamDownloadJob) async throws {
+        guard !busy, job.status == .completed, let installed = job.installed,
+              queue.jobs.contains(where: { $0.id == job.id && $0.installed?.directory == installed.directory }),
+              !queue.jobs.contains(where: { $0.id != job.id &&
+                  ($0.installed?.directory == installed.directory || ($0.isPending && $0.reuseDirectory == installed.directory)) })
+        else { throw CocoaError(.fileWriteNoPermission) }
+        starting = true
+        defer { starting = false; startNext() }
+        let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false).appendingPathComponent("SteamGames", isDirectory: true)
+        try await Task.detached(priority: .utility) { try SteamManagedFiles.delete(job, from: root) }.value
+        _ = queue.remove(job.id)
+        checkpoint()
+    }
     func prioritize(_ id: UUID) { queue.prioritize(id); checkpoint() }
     func markAdded(_ id: UUID) { queue.update(id) { $0.addedToLibrary = true }; checkpoint() }
 

@@ -24,7 +24,7 @@ struct GameDetailView: View {
                 MenuButton("Rename & Artwork", systemImage: "photo") { rename = true }
                 MenuNavigationLink { GameInputSettingsView(game: game) } label: { Label("Controls", systemImage: "gamecontroller") }
                     .accessibilityIdentifier("gameControlsLink")
-                MenuNavigationLink { GameStorageView(game: game, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
+                MenuNavigationLink { GameStorageView(game: game, viewModel: viewModel, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
                     Label("Files & Saves", systemImage: "folder")
                 }
             }
@@ -92,6 +92,9 @@ struct GameDetailView: View {
             Text("Conflicting files, including any saves stored in the game folder, will be replaced by the imported versions. The complete previous copy is kept in Documents/MadeiraTestPrefixes/<game ID>/game-backup-<ID>. Windows profile saves are not replaced. Updating first copies the entire game and needs extra storage.")
         }
         .sheet(isPresented: $rename) { LibraryAppearanceEditor(game: game, artwork: artwork) }
+        .onChange(of: viewModel.games.map(\.id)) { _, ids in
+            if !ids.contains(game.id) { dismiss() }
+        }
         .sheet(isPresented: $confirmRemoval) {
             NavigationStack {
                 List {

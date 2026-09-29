@@ -16,6 +16,7 @@ struct SteamLibraryView: View {
     @State private var configuring: SteamOwnedGame?
     @State private var reviewing: SteamDownloadJob?
     @State private var removing: SteamDownloadJob?
+    @State private var deleting: SteamDownloadJob?
 
     private enum Page: String, CaseIterable, Identifiable {
         case queue = "Queue", library = "Steam", installed = "Installed"
@@ -23,62 +24,35 @@ struct SteamLibraryView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                Picker("Downloads section", selection: $page) {
-                    ForEach(Page.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
-                    .menuFocusable(action: { changePage(1) }, adjust: changePage)
-                    .accessibilityIdentifier("steamDownloadsSection")
-            }.listRowBackground(Color.clear).listRowSeparator(.hidden)
-
-            if let error = steam.error {
-                Section {
-                    Text(error).font(.callout)
-                    MenuButton("Dismiss Message") { steam.error = nil }
-                }.modifier(SteamPanel())
+        presentedView
+        .confirmationDialog("Delete game files?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+            Button("Delete Game Files", role: .destructive) {
+                guard let job = deleting else { return }
+                deleting = nil
+                Task {
+                    do { try await viewModel.deleteSteamDownload(job, from: steam) }
+                    catch { steam.error = "Could not delete game files: \(error.localizedDescription)" }
+                }
             }
-            if !steam.state.signedIn && page != .installed { signInSection }
-            if steam.busy && steam.activeJobID == nil {
-                Section {
-                    ProgressView(steam.state.message)
-                    MenuButton("Cancel Request") { steam.perform(["action": "cancel"]) }
-                }.modifier(SteamPanel())
-            }
-            switch page {
-            case .queue: queueSection
-            case .library: librarySection
-            case .installed: installedSection
-            }
+            Button("Keep Files", role: .cancel) { deleting = nil }
+        } message: {
+            Text("This removes the selected Steam copy and its library entry. Iridium keeps separate Windows profile saves. Files saved inside the game folder will be deleted.")
         }
+    }
+
+    private var chromeView: some View {
+        list
         .iridiumListChrome(onBack: onBack)
         .buttonStyle(.borderless)
         .toolbar(.hidden, for: .tabBar)
         .navigationTitle("Downloads")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .toolbar {
-            if let onBack {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Library", systemImage: "chevron.backward", action: onBack)
-                        .labelStyle(.iconOnly).keyboardShortcut(.cancelAction)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    if steam.state.signedIn {
-                        Text(steam.state.accountName ?? "Steam")
-                        if steam.busy { Text("Finish or pause the current Steam task first.") }
-                        Button("Refresh Steam Library", systemImage: "arrow.clockwise") { steam.perform(["action": "library"]) }
-                            .disabled(steam.busy)
-                        Button("Sign Out", role: .destructive) { steam.perform(["action": "signOut"]) }
-                            .disabled(steam.busy)
-                    } else { Button("Steam Sign-in") { page = .library } }
-                } label: {
-                    Label("Steam Account", systemImage: "person.crop.circle")
-                }.accessibilityLabel("Steam account")
-            }
-        }
+        .toolbar { navigationTools }
+    }
+
+    private var presentedView: some View {
+        chromeView
         .task { await steam.restore() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { steam.pauseForBackground() }
@@ -102,6 +76,73 @@ struct SteamLibraryView: View {
             Button("Keep Download", role: .cancel) { removing = nil }
         } message: {
             Text("The download is removed from this list. Game files, partial files, and saves stay on this device.")
+        }
+    }
+
+    private var list: some View {
+        List {
+            pagePicker
+            statusSections
+            pageContent
+        }
+    }
+
+    @ToolbarContentBuilder private var navigationTools: some ToolbarContent {
+        if let onBack {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Library", systemImage: "chevron.backward", action: onBack)
+                    .labelStyle(.iconOnly).keyboardShortcut(.cancelAction)
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) { accountMenu }
+    }
+
+    private var accountMenu: some View {
+        Menu {
+            if steam.state.signedIn {
+                Text(steam.state.accountName ?? "Steam")
+                if steam.busy { Text("Finish or pause the current Steam task first.") }
+                Button("Refresh Steam Library", systemImage: "arrow.clockwise") { steam.perform(["action": "library"]) }
+                    .disabled(steam.busy)
+                Button("Sign Out", role: .destructive) { steam.perform(["action": "signOut"]) }
+                    .disabled(steam.busy)
+            } else { Button("Steam Sign-in") { page = .library } }
+        } label: {
+            Label("Steam Account", systemImage: "person.crop.circle")
+        }.tint(.white).accessibilityLabel("Steam account")
+    }
+
+    private var pagePicker: some View {
+        Section {
+            Picker("Downloads section", selection: $page) {
+                ForEach(Page.allCases) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+                .menuFocusable(action: { changePage(1) }, adjust: changePage)
+                .accessibilityIdentifier("steamDownloadsSection")
+        }.listRowBackground(Color.clear).listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder private var statusSections: some View {
+        if let error = steam.error {
+            Section {
+                Text(error).font(.callout)
+                MenuButton("Dismiss Message") { steam.error = nil }
+            }.modifier(SteamPanel())
+        }
+        if !steam.state.signedIn && page != .installed { signInSection }
+        if steam.busy && steam.activeJobID == nil {
+            Section {
+                ProgressView(steam.state.message)
+                MenuButton("Cancel Request") { steam.perform(["action": "cancel"]) }
+            }.modifier(SteamPanel())
+        }
+    }
+
+    @ViewBuilder private var pageContent: some View {
+        switch page {
+        case .queue: queueSection
+        case .library: librarySection
+        case .installed: installedSection
         }
     }
 
@@ -144,6 +185,7 @@ struct SteamLibraryView: View {
         Section {
             if steam.state.signedIn {
                 MenuTextField("Search your Steam games", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .modifier(SteamCard())
                 if steam.state.games.isEmpty && !steam.busy {
                     Text("No games found.").foregroundStyle(.secondary)
                     MenuButton("Refresh Library") { steam.perform(["action": "library"]) }
@@ -155,7 +197,7 @@ struct SteamLibraryView: View {
                             Text(game.name).font(.headline).lineLimit(2)
                             gameActions(game)
                         }
-                    }.padding(.vertical, 6)
+                    }.modifier(SteamCard())
                 }
             } else {
                 Text("Sign in to see your Steam library.").foregroundStyle(.secondary)
@@ -166,21 +208,18 @@ struct SteamLibraryView: View {
     }
 
     @ViewBuilder private func gameActions(_ game: SteamOwnedGame) -> some View {
-        let queued = steam.queue.jobs.contains { $0.appId == game.appId && $0.isPending && $0.account == SteamDownloadJob.accountKey(steam.account ?? "") }
+        let account = SteamDownloadJob.accountKey(steam.account ?? "")
+        let queued = steam.queue.jobs.contains { $0.appId == game.appId && $0.isPending && $0.account == account }
+        let installed = steam.queue.jobs.contains { $0.appId == game.appId && $0.status == .completed && $0.account == account }
         MenuButton(action: {
-            if steam.enqueue(game) { page = .queue }
+            if installed { page = .installed }
+            else { configuring = game }
         }) {
-            Label(queued ? "Queued" : "Download", systemImage: "arrow.down.circle")
+            Label(queued ? "Queued" : installed ? "Manage Download" : "Download", systemImage: installed ? "checkmark.circle" : "arrow.down.circle")
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
         }
-            .disabled(queued).accessibilityLabel(queued ? "\(game.name) is in the queue" : "Download \(game.name)")
-        MenuButton(action: { configuring = game }) {
-            Label("Options", systemImage: "slider.horizontal.3")
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-            .disabled(steam.busy || queued).accessibilityLabel("Download options for \(game.name)")
+            .disabled(queued).accessibilityLabel(queued ? "\(game.name) is in the queue" : installed ? "Manage \(game.name) download" : "Download \(game.name)")
     }
 
     private var queueSection: some View {
@@ -219,7 +258,7 @@ struct SteamLibraryView: View {
                             }
                             VStack(alignment: .leading, spacing: 0) { queueActions(job) }
                         }
-                    }.padding(.vertical, 6)
+                    }.modifier(SteamCard())
                 }
             }
         } header: { Text("Downloads · \(steam.pendingCount)") }
@@ -243,44 +282,72 @@ struct SteamLibraryView: View {
 
     private var installedSection: some View {
         Section {
-            let completed = steam.queue.jobs.filter { $0.status == .completed && $0.installed != nil }
-            if completed.isEmpty {
+            if completedJobs.isEmpty {
                 ContentUnavailableView("No Completed Downloads", systemImage: "checkmark.circle",
                     description: Text("Verified downloads appear here, ready to add to your library."))
             }
-            ForEach(completed.reversed()) { job in
-                HStack(spacing: 14) {
-                    SteamCover(appId: job.appId, width: 96, height: 144)
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(job.name).font(.headline).lineLimit(2)
-                        if let build = job.installed?.buildId {
-                            Text("Build \(build) · \(job.options.branch)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        if job.addedToLibrary {
-                            Label("Added to Library", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            MenuButton("Add to Library") { reviewing = job }.frame(minHeight: 44)
-                        }
-                        MenuButton("Repair or Update") { steam.repairOrUpdate(job); page = .queue }
-                            .frame(minHeight: 44)
-                            .disabled(!steam.state.signedIn || job.account != SteamDownloadJob.accountKey(steam.account ?? ""))
-                        if let branch = steam.detailsByApp[job.appId]?.branches.first(where: { $0.name == job.options.branch }),
-                           let current = branch.buildId, let installed = job.installed?.buildId {
-                            Text(current == installed ? "This build is up to date." : "A different build is available: \(current).")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Menu {
-                            Button("Check for Updates") { steam.loadDetails(for: SteamOwnedGame(appId: job.appId, name: job.name)) }
-                                .disabled(steam.busy)
-                            Button("Remove from Downloads", role: .destructive) { removing = job }
-                        } label: { Label("More Download Actions", systemImage: "ellipsis.circle") }
-                            .frame(minHeight: 44)
-                    }
-                }.padding(.vertical, 6)
-            }
+            ForEach(latestCompletedJobs) { installedRow($0) }
         } header: { Text("Installed Files") }
         footer: { Text("Repair checks downloaded files. Updates keep older versions and saves.") }
         .modifier(SteamPanel())
+    }
+
+    private var completedJobs: [SteamDownloadJob] {
+        steam.queue.jobs.filter { $0.status == .completed && $0.installed != nil }
+    }
+
+    private var latestCompletedJobs: [SteamDownloadJob] {
+        var seen = Set<String>()
+        return completedJobs.reversed().filter { seen.insert("\($0.account):\($0.appId)").inserted }
+    }
+
+    private func installedRow(_ job: SteamDownloadJob) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            SteamCover(appId: job.appId, width: 96, height: 144)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(job.name).font(.headline).lineLimit(2)
+                if let build = job.installed?.buildId {
+                    Text("Build \(build) · \(job.options.branch)").font(.caption).foregroundStyle(.secondary)
+                }
+                if job.addedToLibrary {
+                    Label("Added to Library", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+                } else { MenuButton("Add to Library") { reviewing = job }.frame(minHeight: 44) }
+                MenuButton("Repair or Update") { steam.repairOrUpdate(job); page = .queue }
+                    .frame(minHeight: 44)
+                    .disabled(!steam.state.signedIn || job.account != SteamDownloadJob.accountKey(steam.account ?? ""))
+                if let branch = steam.detailsByApp[job.appId]?.branches.first(where: { $0.name == job.options.branch }),
+                   let current = branch.buildId, let installed = job.installed?.buildId {
+                    Text(current == installed ? "This build is up to date." : "A different build is available: \(current).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Menu {
+                    Button("Check for Updates") { steam.loadDetails(for: SteamOwnedGame(appId: job.appId, name: job.name)) }
+                        .disabled(steam.busy)
+                    Button("Remove from Downloads", role: .destructive) { removing = job }
+                    Button("Delete Game Files", role: .destructive) { deleting = job }.disabled(steam.busy)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "ellipsis.circle")
+                        Text("More")
+                    }.foregroundStyle(.white)
+                }
+                    .tint(.white).accessibilityLabel("More Download Actions").frame(minHeight: 44)
+                olderCopies(for: job)
+            }
+        }.modifier(SteamCard())
+    }
+
+    @ViewBuilder private func olderCopies(for job: SteamDownloadJob) -> some View {
+        let older = completedJobs.filter { $0.id != job.id && $0.appId == job.appId && $0.account == job.account }
+        if !older.isEmpty {
+            DisclosureGroup("Older Copies (\(older.count))") {
+                ForEach(older.reversed()) { copy in
+                    Text("Build \(copy.installed?.buildId ?? "Unknown")").font(.footnote).foregroundStyle(.secondary)
+                    MenuButton("Use This Copy") { reviewing = copy }
+                    MenuButton("Delete This Copy", role: .destructive) { deleting = copy }.disabled(steam.busy)
+                }
+            }
+        }
     }
 
     private func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }
@@ -338,22 +405,27 @@ private struct SteamCoverFallback: View {
                     .frame(width: width, height: height).background(Color.white.opacity(0.08))
             }
         }
-        .task(id: appId) { url = await LibraryArtwork.shared.steamHeaderImageURL(for: appId) }
+        .task(id: appId) {
+            url = nil
+            let resolved = await LibraryArtwork.shared.steamPortraitCoverURL(for: appId)
+            if !Task.isCancelled { url = resolved }
+        }
     }
 }
 
 private struct SteamPanel: ViewModifier {
-    @ViewBuilder private var background: some View {
-        if #available(iOS 26.0, *) {
-            RoundedRectangle(cornerRadius: 16).fill(.clear)
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-        } else {
-            RoundedRectangle(cornerRadius: 16).fill(.regularMaterial)
-        }
-    }
     func body(content: Content) -> some View {
-        content.listRowBackground(background.padding(.vertical, 2))
+        content.listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+    }
+}
+
+private struct SteamCard: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.vertical, 4)
+            .listRowBackground(Color.clear)
     }
 }
 
@@ -364,6 +436,7 @@ private struct SteamDownloadOptionsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var options = SteamInstallOptions()
     @State private var chooseDlc = false
+    @State private var storageEstimate: String?
 
     private var details: SteamGameDetails? { steam.detailsByApp[game.appId] }
     private var branches: [String] { details?.branches.filter { !$0.passwordRequired }.map(\.name) ?? ["public"] }
@@ -376,6 +449,9 @@ private struct SteamDownloadOptionsView: View {
                     SteamCover(appId: game.appId, width: 56, height: 84)
                     Text(game.name).font(.headline)
                 }
+                Text(storageEstimate.map { "Storage needed: about \($0)" }
+                    ?? "Size not listed. Download size appears after Steam checks the files.")
+                    .font(.callout)
                 if steam.busy && details == nil { ProgressView("Loading download options…") }
                 Picker("Branch", selection: $options.branch) {
                     ForEach(branches, id: \.self) { Text($0 == "public" ? "Default (public)" : $0).tag($0) }
@@ -391,7 +467,7 @@ private struct SteamDownloadOptionsView: View {
                     .menuFocusable(adjust: { options.maxDownloads = min(8, max(1, options.maxDownloads + $0)) })
             } footer: {
                 Text("Choose which version and language to download.")
-            }.modifier(SteamPanel())
+            }.listRowBackground(Rectangle().fill(.regularMaterial)).listRowSeparator(.hidden)
             Section {
                 MenuToggle("Include DLC", isOn: $options.includeDlc)
                 if options.includeDlc, let ids = details?.dlcAppIds, !ids.isEmpty {
@@ -407,7 +483,7 @@ private struct SteamDownloadOptionsView: View {
                 }
             } header: { Text("Additional Content") }
             footer: { Text("Only content owned by your Steam account can be downloaded.") }
-            .modifier(SteamPanel())
+            .listRowBackground(Rectangle().fill(.regularMaterial)).listRowSeparator(.hidden)
             Section {
                 MenuButton("Add to Download Queue") {
                     var selected = options
@@ -418,12 +494,15 @@ private struct SteamDownloadOptionsView: View {
                 if details == nil && !steam.busy {
                     MenuButton("Retry Loading Options") { steam.loadDetails(for: game) }
                 }
-            }.modifier(SteamPanel())
+            }.listRowBackground(Color.clear).listRowSeparator(.hidden)
         }
         .iridiumListChrome()
         .navigationTitle("Download Options").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction) } }
-        .task { steam.loadDetails(for: game) }
+        .task {
+            steam.loadDetails(for: game)
+            storageEstimate = await LibraryArtwork.shared.steamStoreStorageEstimate(for: game.appId)
+        }
     }
 
     private func adjust(_ value: inout String, in choices: [String], by direction: Int) {

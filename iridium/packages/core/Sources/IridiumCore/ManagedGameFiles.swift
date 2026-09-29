@@ -25,6 +25,17 @@ public enum ManagedGameFiles {
         }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 
+    public static func deleteGameFolder(at folder: URL, in gamesRoot: URL) throws {
+        let root = gamesRoot.standardizedFileURL
+        let selected = folder.standardizedFileURL
+        guard selected.deletingLastPathComponent() == root,
+              try root.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true,
+              try selected.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true,
+              try selected.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isSymbolicLink != true
+        else { throw CocoaError(.fileWriteNoPermission) }
+        try FileManager.default.removeItem(at: selected)
+    }
+
     public static func validateGameInPlace(
         at source: URL,
         executable: URL,

@@ -334,7 +334,7 @@ struct MenuTextField: View {
         let fieldFocus = $editing
         return Group {
             if secure { SecureField(title, text: $text) }
-            else { TextField(title, text: $text) }
+            else { TextField(title, text: $text, prompt: Text(title).foregroundStyle(.white.opacity(0.72))) }
         }.focused($editing)
             .menuFocusable(action: { fieldFocus.wrappedValue = true })
             .onChange(of: editing) { _, editing in

@@ -45,6 +45,29 @@ import Foundation
         var recovered = try JSONDecoder().decode(SteamDownloadQueue.self, from: encoded).validated()
         try check(recovered == queue, "Queue and install options round-trip")
         try check(recovered.jobs.first(where: { $0.id == first.id })?.installed?.buildId == "18446744073709551615", "64-bit Steam IDs remain strings")
+        let movedRoot = FileManager.default.temporaryDirectory.appendingPathComponent("steam-rebase-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: movedRoot) }
+        let movedContent = movedRoot.appendingPathComponent("42/99/content")
+        try FileManager.default.createDirectory(at: movedContent, withIntermediateDirectories: true)
+        let oldContent = "/var/mobile/Containers/Data/Application/OLD/Library/Application Support/SteamGames/42/99/content"
+        recovered.update(first.id) { $0.installed?.directory = oldContent; $0.reuseDirectory = oldContent }
+        recovered.rebaseInstalledDirectories(steamGamesRoot: movedRoot)
+        try check(recovered.jobs.first(where: { $0.id == first.id })?.installed?.directory == movedContent.path,
+                  "Installed content follows an iOS container change")
+        try check(recovered.jobs.first(where: { $0.id == first.id })?.reuseDirectory == movedContent.path,
+                  "Repair source follows an iOS container change")
+        let receipt = try JSONEncoder().encode(recovered.jobs.first(where: { $0.id == first.id })!.installed!)
+        try receipt.write(to: movedContent.deletingLastPathComponent().appendingPathComponent("installed.json"))
+        try SteamManagedFiles.delete(recovered.jobs.first(where: { $0.id == first.id })!, from: movedRoot)
+        try check(!FileManager.default.fileExists(atPath: movedContent.path), "Explicit deletion frees the managed install")
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("steam-outside-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        recovered.update(first.id) { $0.installed?.directory = outside.appendingPathComponent("content").path }
+        do { try SteamManagedFiles.delete(recovered.jobs.first(where: { $0.id == first.id })!, from: movedRoot)
+            try check(false, "Outside install accepted")
+        } catch { checks += 1 }
+        try check(FileManager.default.fileExists(atPath: outside.path), "Outside files remain untouched")
         let legacyReceipt = Data("{\"appId\":42,\"name\":\"Old\",\"directory\":\"/fixture\",\"executables\":[\"game.exe\"]}".utf8)
         try check(try JSONDecoder().decode(SteamDownloadedGame.self, from: legacyReceipt).buildId == nil, "PR40 receipt compatibility")
 

@@ -2166,6 +2166,18 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         }
         let marker = "/Library/Application Support/Iridium/"
 
+        // iOS can change the data-container UUID when an app is updated.
+        // Native Steam installs live beside Iridium's state directory.
+        let steamMarker = "/Library/Application Support/SteamGames/"
+        if let container = standardizedPath.range(of: containerMarker),
+           let range = standardizedPath.range(of: steamMarker),
+           container.upperBound < range.lowerBound,
+           !standardizedPath[container.upperBound..<range.lowerBound].contains("/") {
+            let candidate = rootURL.deletingLastPathComponent().appending(path: "SteamGames")
+                .appending(path: String(standardizedPath[range.upperBound...])).path
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+
         guard let markerRange = standardizedPath.range(of: marker) else {
             return path
         }

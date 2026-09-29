@@ -23,6 +23,7 @@ import UIKit
 @MainActor final class AppViewModel: ObservableObject {
     func registerSteamDownload(title: String, appID: String,
         directory: String, executable: String) async throws {}
+    func deleteSteamDownload(_ job: SteamDownloadJob, from steam: SteamLibraryModel) async throws {}
 }
 struct LibraryAppearance { var background: String?; var backgroundY = 0.5 }
 @MainActor final class LibraryArtwork: ObservableObject {
@@ -30,7 +31,8 @@ struct LibraryAppearance { var background: String?; var backgroundY = 0.5 }
     var backdropGameID: UUID?
     func appearance(_ id: UUID) -> LibraryAppearance { LibraryAppearance() }
     func displayImage(_ name: String?) -> UIImage? { nil }
-    func steamHeaderImageURL(for appID: UInt32) async -> URL? { nil }
+    func steamPortraitCoverURL(for appID: UInt32) async -> URL? { nil }
+    func steamStoreStorageEstimate(for appID: UInt32) async -> String? { nil }
 }
 struct ArtworkImage: View {
     let image: UIImage
