@@ -14,6 +14,7 @@ public sealed class SteamConnection : IDisposable
     readonly Task pump;
     readonly TaskCompletionSource connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly TaskCompletionSource<SteamUser.LoggedOnCallback> loggedOn = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    int disposed;
     public bool IsLoggedOn { get; private set; }
 
     // No hardware serial numbers, MAC addresses, or device identifiers leave the app.
@@ -126,10 +127,15 @@ public sealed class SteamConnection : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         IsLoggedOn = false;
-        Client.Disconnect();
         lifetime.Cancel();
-        // Callback pump observes cancellation in at most 100 ms; do not block the UI.
+        // SteamKit waits for server discovery inside Disconnect. It can outlive
+        // the request timeout, so never make sign-out or cancellation wait for it.
+        _ = Task.Run(() => {
+            try { Client.Disconnect(); }
+            catch (Exception error) { System.Diagnostics.Debug.WriteLine("Steam disconnect failed: " + error.GetType().Name); }
+        });
         _ = pump.ContinueWith(_ => lifetime.Dispose(), TaskScheduler.Default);
     }
 }

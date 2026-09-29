@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the on-device Steam framework on macOS. No accounts or signing material."""
 import argparse
+import os
 from pathlib import Path
 import platform
 import plistlib
@@ -29,6 +30,8 @@ def main():
     run(sys.executable, ROOT / 'ci/check-steam-queue.py')
     run(sys.executable, ROOT / 'ci/prepare-steamkit.py')
     run('dotnet', 'run', '--project', 'Iridium.Steam.Tests', '-c', 'Release')
+    # NativeAOT needs Apple's clang wrapper and SDK, not the LLVM-MinGW compiler.
+    os.environ['PATH'] = '/usr/bin' + os.pathsep + os.environ['PATH']
     run('dotnet', 'publish', 'Iridium.Steam.Tests', '-c', 'Release', '-r', host,
         '-p:PublishAot=true', '-o', OUTPUT / 'tests')
     run(OUTPUT / 'tests/Iridium.Steam.Tests')

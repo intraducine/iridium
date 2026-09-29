@@ -186,6 +186,13 @@ finally { Directory.Delete(root, recursive: true); }
 
 if (args.Contains("--network"))
 {
+    using (var abandoned = new SteamConnection())
+    {
+        abandoned.Client.Connect();
+        var start = System.Diagnostics.Stopwatch.StartNew();
+        abandoned.Dispose();
+        Check(start.Elapsed < TimeSpan.FromSeconds(2), "cancelling server discovery does not block sign-out");
+    }
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
     using var connection = new SteamConnection();
     await connection.Connect(timeout.Token);
