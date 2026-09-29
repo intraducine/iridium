@@ -33,7 +33,7 @@ IOS = 'iridium/apps/ios/'
 # Only final link inputs, generated headers, resources, and their notices.
 TREES = (
     'iridium-runtime-sdk/build/iridium-runtime-base',
-    APP + 'aarch64-windows', APP + 'arm64ec-windows', APP + 'nls', APP + 'fonts',
+    APP + 'aarch64-windows', APP + 'arm64ec-windows', APP + 'i386-windows', APP + 'nls', APP + 'fonts',
     APP + 'd3d12', APP + 'licenses',
     IOS + 'MediaRuntime', IOS + 'ControllerRuntime',
     IOS + 'BuiltinJIT/Vendor/StikJIT.xcframework',

@@ -39,6 +39,9 @@ REQUIRED = {
         "testrepos/Madeira/app/Madeira/d3d12/NOTICE.txt",
         "testrepos/Madeira/app/Madeira/arm64ec-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/aarch64-windows/ntdll.dll",
+        "testrepos/Madeira/app/Madeira/aarch64-windows/xtajit.dll",
+        "testrepos/Madeira/app/Madeira/i386-windows/ntdll.dll",
+        "testrepos/Madeira/app/Madeira/i386-windows/d3d9.dll",
         "testrepos/Madeira/app/Madeira/prefix-template.tar.gz",
     ],
     "media and input runtime": [

@@ -59,7 +59,6 @@ static inline ULONGLONG ios_xp_ticks(void)
 }
 void ios_xp_nt_init(void)
 {
-#if defined(__aarch64__) || defined(__arm64ec__)
     if (!ios_xp_nt.freq)
     {
 #if defined(__aarch64__) || defined(__arm64ec__)
@@ -73,7 +72,6 @@ void ios_xp_nt_init(void)
 #endif
         ios_xp_nt.magic = 0x31544e5058444d41ull;   /* 'AMDXPNT1' */
     }
-#endif
 }
 static void ios_xp_cs_waited( RTL_CRITICAL_SECTION *crit, ULONGLONG t0 )
 {

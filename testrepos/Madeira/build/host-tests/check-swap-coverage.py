@@ -5,7 +5,7 @@ extents, whole-host-page copy-back and the [swap] census.
 1. Compiles the production swap-tier core (between the "swap-tier core"
    markers) against small stubs for Wine's view/protection helpers and runs
    it on real memory with a real sparse backing file:
-   - policy parsing: default "blocks" (1 MB floor), "wide", "classic",
+   - policy parsing: default "classic" (8 MB, guest band), "blocks" (1 MB floor), "wide",
      MADEIRA_SWAP_MIN_KB / MADEIRA_SWAP_RESERVE_MAX_MB and their clamps;
    - classic runs the original predicate (8 MB, guest band) and the original
      unmerged free list;
@@ -75,7 +75,12 @@ prelude = r'''
 #include <fcntl.h>
 #include <assert.h>
 #include <sys/mman.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#else
 #include <linux/falloc.h>
+#endif
 typedef unsigned long ULONG_PTR;
 #define VPROT_READ       0x01
 #define VPROT_WRITE      0x02
@@ -141,11 +146,17 @@ static void *anon_mmap_fixed( void *a, size_t l, int prot, int flags )
 static int fail_malloc;
 static void *test_malloc( size_t n ) { return fail_malloc ? NULL : malloc( n ); }
 #define malloc( n ) test_malloc( n )
+#ifndef __APPLE__
 struct fpunchhole { unsigned fp_flags; unsigned reserved; off_t fp_offset; off_t fp_length; };
 #define F_PUNCHHOLE 99
 static int test_fcntl( int fd, int cmd, struct fpunchhole *ph )
 { (void)cmd; return fallocate( fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, ph->fp_offset, ph->fp_length ); }
 #define fcntl( fd, cmd, arg ) test_fcntl( fd, cmd, arg )
+#endif
+#ifndef MAP_FIXED_NOREPLACE
+/* Darwin uses a non-destructive hint; region() verifies the exact result. */
+#define MAP_FIXED_NOREPLACE 0
+#endif
 '''
 
 harness = r'''
@@ -170,6 +181,21 @@ static void env( const char *cov, const char *mn, const char *rmax )
 static const char *prot_of( const void *p )
 {
     static char out[3];
+#ifdef __APPLE__
+    mach_vm_address_t base = (mach_vm_address_t)p;
+    mach_vm_size_t size;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    strcpy( out, "??" );
+    if (mach_vm_region( mach_task_self(), &base, &size, VM_REGION_BASIC_INFO_64,
+                        (vm_region_info_t)&info, &count, &object ) == KERN_SUCCESS && base <= (uintptr_t)p)
+    {
+        out[0] = (info.protection & VM_PROT_READ) ? 'r' : '-';
+        out[1] = (info.protection & VM_PROT_WRITE) ? 'w' : '-';
+    }
+    if (object) mach_port_deallocate( mach_task_self(), object );
+#else
     char line[512];
     FILE *f = fopen( "/proc/self/maps", "r" );
     strcpy( out, "??" );
@@ -180,26 +206,29 @@ static const char *prot_of( const void *p )
         { out[0] = perm[0]; out[1] = perm[1]; break; }
     }
     if (f) fclose( f );
+#endif
     return out;
 }
 
 static void test_config( void )
 {
     env( NULL, NULL, NULL );
-    CHECK( ios_swap_v2 && !strcmp( ios_swap_mode, "blocks" ) && ios_swap_min == (1u << 20) && !ios_swap_wide, "default = blocks, 1 MB" );
+    CHECK( !ios_swap_v2 && !ios_swap_wide && ios_swap_min == (8u << 20) && !strcmp( ios_swap_mode, "classic" ), "default = classic, 8 MB" );
+    env( "junk", NULL, NULL );
+    CHECK( !ios_swap_v2 && !strcmp( ios_swap_mode, "classic" ), "an unknown value means classic" );
     env( "blocks", NULL, NULL );
-    CHECK( ios_swap_v2 && !strcmp( ios_swap_mode, "blocks" ) && !ios_swap_wide, "blocks" );
+    CHECK( ios_swap_v2 && !strcmp( ios_swap_mode, "blocks" ) && ios_swap_min == (1u << 20) && !ios_swap_wide, "blocks, 1 MB" );
     env( "Wide", NULL, NULL );
     CHECK( ios_swap_v2 && !strcmp( ios_swap_mode, "wide" ) && ios_swap_wide && ios_swap_min == (1u << 20) && ios_swap_resv_max == (256u << 20), "wide preset" );
     env( "classic", "512", "64" );
     CHECK( !ios_swap_v2 && !ios_swap_wide && ios_swap_min == (8u << 20) && !strcmp( ios_swap_mode, "classic" ), "classic ignores the other knobs" );
     env( "CLASSIC", NULL, NULL );
     CHECK( !ios_swap_v2, "classic is case-insensitive" );
-    env( NULL, "512", NULL );
+    env( "blocks", "512", NULL );
     CHECK( ios_swap_min == (512u << 10), "MADEIRA_SWAP_MIN_KB" );
-    env( NULL, "1", NULL );
+    env( "blocks", "1", NULL );
     CHECK( ios_swap_min == (64u << 10), "MIN_KB clamped to 64 KB" );
-    env( NULL, "99999999999999999999", NULL );
+    env( "blocks", "99999999999999999999", NULL );
     CHECK( ios_swap_min == ((size_t)1 << 32), "MIN_KB clamped to 4 GB without overflow" );
     env( "wide", NULL, "64" );
     CHECK( ios_swap_resv_max == (64u << 20), "MADEIRA_SWAP_RESERVE_MAX_MB" );
@@ -212,7 +241,7 @@ static void test_why( void )
     void *g = (void *)0x7050000000ULL, *low = (void *)0x1000000000ULL, *fex = (void *)0x7c10000000ULL;
     unsigned rw = VPROT_READ | VPROT_WRITE;
 
-    env( NULL, NULL, NULL );
+    env( "blocks", NULL, NULL );
     CHECK( ios_swap_why( g, 1u << 20, rw, &v ) == IOS_SW_BACKED, "blocks: 1 MB guest RW backed" );
     CHECK( ios_swap_why( g, (1u << 20) - 0x1000, rw, &v ) == IOS_SW_SMALL, "blocks: below 1 MB small" );
     CHECK( ios_swap_why( g, 1u << 20, rw | VPROT_EXEC, &v ) == IOS_SW_PROT, "exec never" );
@@ -248,7 +277,7 @@ static void test_freelist( void )
     uint64_t off[N], len[N];
     int live[N], i, step;
     unsigned seed = 2013;
-    env( NULL, NULL, NULL );
+    env( "blocks", NULL, NULL );
     reset_tier();
     memset( live, 0, sizeof(live) );
     for (step = 0; step < 20000; step++)
@@ -308,7 +337,7 @@ static void test_commit_copyback( void )
     char *r = region( 0x7050000000ULL, 4u << 20 );
     size_t i;
     unsigned k;
-    env( NULL, NULL, NULL );
+    env( "blocks", NULL, NULL );
     reset_tier();
     v.base = r; v.size = 4u << 20;
     /* MEM_RESERVE|MEM_COMMIT of 0x110000 (a 1 MB heap block + header) */
@@ -408,7 +437,7 @@ static void test_reserve( void )
     ios_swap_reserve( r, 0x20000000, rw, &v );
     ios_swap_reserve( r, 0x100000, VPROT_READ, &v );
     CHECK( ios_swap_resv_n == 1, "reserve-time backing refused where it must be" );
-    env( NULL, NULL, NULL );   /* blocks: reserve-time off */
+    env( "blocks", NULL, NULL );   /* blocks: reserve-time off */
     ios_swap_reserve( r + 0xfd0000, 0x20000, rw, &v );
     CHECK( ios_swap_resv_n == 1, "blocks never backs a reservation" );
     ios_swap_release_range( r, 16u << 20, 0 );
@@ -421,7 +450,7 @@ static void test_off( void )
     struct file_view v = { 0, 0, 0 };
     int fd = ios_swap_fd;
     ios_swap_fd = -1;   /* the tier as shipped: swap-mb unset */
-    env( NULL, NULL, NULL );
+    env( "blocks", NULL, NULL );
     reset_tier();
     ios_swap_commit( (void *)0x7050000000ULL, 64u << 20, VPROT_READ | VPROT_WRITE, &v );
     ios_swap_reserve( (void *)0x7050000000ULL, 64u << 20, VPROT_READ | VPROT_WRITE, &v );
@@ -439,7 +468,7 @@ int main( int argc, char **argv )
     close( fd );
     setenv( "MADEIRA_SWAP_FILE", path, 1 );
     setenv( "MADEIRA_SWAP_MB", "256", 1 );
-    unsetenv( "MADEIRA_SWAP_COVERAGE" );
+    setenv( "MADEIRA_SWAP_COVERAGE", "blocks", 1 );
     ios_swap_init();
     unlink( path );
     if (ios_swap_fd < 0) { printf( "FAIL: tier did not start\n" ); return 1; }
@@ -450,7 +479,7 @@ int main( int argc, char **argv )
     test_commit_copyback();
     test_classic_commit();
     test_reserve();
-    env( NULL, NULL, NULL );
+    env( "blocks", NULL, NULL );
     ios_swap_tick( 1 );
     printf( "%d failures\n", bad );
     return bad != 0;

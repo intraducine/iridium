@@ -5,7 +5,7 @@ import shutil
 import struct
 import sys
 
-SUFFIXES = {'.dll', '.exe', '.drv', '.sys', '.acm', '.cpl', '.tlb', '.ax', '.ocx', '.mui', '.rll'}
+SUFFIXES = {'.com', '.msstyles', '.dll', '.exe', '.drv', '.sys', '.acm', '.cpl', '.tlb', '.ax', '.ocx', '.mui', '.rll'}
 # Linked ARM64EC images commonly use AMD64's machine ID; this checks the
 # container, not the hybrid-code metadata. Compiler targets are set by the recipe.
 MACHINES = {'aarch64': {0xaa64, 0xa64e}, 'arm64ec': {0x8664, 0xa641, 0xa64e}}
@@ -37,7 +37,9 @@ def pe_architectures(path):
                 or unpack('<I', pe + 40)[0] != 0
                 or data[section:section + 8] != b'.apiset\0'):
             raise ValueError('Invalid data-only API-set schema')
-        return set(MACHINES)
+        return {'i386'} if machine == 0x14c else set(MACHINES)
+    if machine == 0x14c:
+        return {'i386'}
     if machine == 0xa64e:
         return {'aarch64', 'arm64ec'}
     if machine in MACHINES['arm64ec']:
@@ -72,20 +74,20 @@ def check_pe(path, architecture):
         raise ValueError(f'Wrong PE architecture: {path.name} ({architecture})')
 
 
-def stage(build, app, source=None):
+def stage(build, app, source=None, architectures=tuple(MACHINES)):
     seen = {}
-    for architecture in MACHINES:
+    for architecture in architectures:
         (app / f'{architecture}-windows').mkdir(parents=True, exist_ok=True)
     # Wine's combined build stores ARM64X and EC-only modules under
     # aarch64-windows. Route by the image, not that output directory.
     for group in ['dlls', 'programs']:
         for path in sorted((build / group).glob('*/*-windows/*')):
-            if path.parent.name not in {f'{a}-windows' for a in MACHINES}:
+            if path.parent.name not in {f'{a}-windows' for a in architectures}:
                 continue
             if not path.is_file() or path.suffix.lower() not in SUFFIXES:
                 continue
-            architectures = MACHINES if path.suffix.lower() == '.tlb' else pe_architectures(path)
-            for architecture in architectures:
+            targets = set(architectures) if path.suffix.lower() == '.tlb' else pe_architectures(path) & set(architectures)
+            for architecture in targets:
                 key = (architecture, path.name.casefold())
                 if key in seen:
                     if path.samefile(seen[key]):
@@ -93,8 +95,10 @@ def stage(build, app, source=None):
                     raise ValueError(f'Duplicate Windows resource: {path.name}')
                 seen[key] = path
                 shutil.copyfile(path, app / f'{architecture}-windows' / path.name)
-    for architecture in MACHINES:
+    for architecture in architectures:
         check_pe(app / f'{architecture}-windows/ntdll.dll', architecture)
+    if architectures == ('i386',):
+        return
     for folder, suffix in [('nls', '*.nls'), ('fonts', '*.ttf')]:
         # Wine ships prebuilt TTFs in source; generated fonts take precedence.
         files = {p.name: p for p in (source / folder).glob(suffix)} if source and folder == 'fonts' else {}
@@ -110,6 +114,10 @@ def check(app):
     for architecture in MACHINES:
         for name in ['apisetschema.dll', 'ntdll.dll', 'kernel32.dll', 'kernelbase.dll', 'user32.dll', 'd3d11.dll', 'dxgi.dll', 'winemetal.dll']:
             check_pe(app / f'{architecture}-windows' / name, architecture)
+    for name in ['apisetschema.dll', 'ntdll.dll', 'kernel32.dll', 'kernelbase.dll', 'user32.dll',
+                 'd3d11.dll', 'dxgi.dll', 'winemetal.dll', 'd3d9.dll', 'd3d9-emulated.dll']:
+        check_pe(app / 'i386-windows' / name, 'i386')
+    check_pe(app / 'aarch64-windows/xtajit.dll', 'aarch64')
     translator = app / 'arm64ec-windows/xtajit64.dll'
     check_pe(translator, 'arm64ec')
     translator_data = translator.read_bytes()
@@ -128,7 +136,9 @@ def check(app):
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--check':
         check(Path(sys.argv[2]))
+    elif len(sys.argv) == 4 and sys.argv[1] == '--i386':
+        stage(Path(sys.argv[2]), Path(sys.argv[3]), architectures=('i386',))
     elif len(sys.argv) == 4:
         stage(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
     else:
-        raise SystemExit('usage: stage-windows-runtime.py BUILD APP SOURCE | --check APP')
+        raise SystemExit('usage: stage-windows-runtime.py BUILD APP SOURCE | --i386 BUILD APP | --check APP')

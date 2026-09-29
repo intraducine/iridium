@@ -170,25 +170,6 @@ void winios_drv_post_mouse(int x, int y, unsigned int flags, unsigned int mouse_
         winios_cursor_move(position.x, position.y);
     }
     winios_log_input("mouse", flags, st);
-}
-
-/* Navigation keys share scan codes with numpad keys. Wine's VK-to-scan
- * lookup can therefore return the non-E0 alias; DirectInput/raw-input then
- * sees a numpad key. Keep Iridium's current corrected behavior by default,
- * with Madeira's rollback switch for compatibility testing. */
-static UINT winios_key_extended_flag( UINT vk, UINT scan, int nav_e0 )
-{
-    if (scan & 0xe000) return KEYEVENTF_EXTENDEDKEY;
-    if (!nav_e0) return 0;
-    switch (vk)
-    {
-    case VK_PRIOR: case VK_NEXT: case VK_END: case VK_HOME:
-    case VK_LEFT: case VK_UP: case VK_RIGHT: case VK_DOWN:
-    case VK_INSERT: case VK_DELETE:
-        return KEYEVENTF_EXTENDEDKEY;
-    }
-    return 0;
-    /* The server has already moved (and clipped) its cursor for a MOVE. */
     if ((flags & MOUSEEVENTF_MOVE) && winios_direct_cursor_on()) winios_report_cursor_pos();
 }
 
@@ -380,7 +361,12 @@ static void winios_drv_set_cursor( HWND hwnd, HCURSOR cursor )
     void (*cursor_set)( unsigned int, int, int, int, int, const void * ) = winios_cursor_set;
     void (*cursor_show)( int ) = winios_cursor_show;
 
-    if (!winios_cursor_set) return;
+    if (winios_direct_cursor_on())
+    {
+        cursor_set = winios_direct_cursor_set;
+        cursor_show = winios_direct_cursor_show;
+    }
+    if (!cursor_set) return;
     if (!cursor)
     {
         if (cursor_show) cursor_show( 0 );
@@ -1705,7 +1691,12 @@ static void load_display_driver(void)
         if (winios_pCreateWindow)        winios_user_driver.pCreateWindow        = winios_pCreateWindow;
         if (winios_pDestroyWindow)       winios_user_driver.pDestroyWindow       = winios_pDestroyWindow;
         if (winios_pProcessEvents)       winios_user_driver.pProcessEvents       = winios_pProcessEvents;
-        winios_user_driver.pSetCursor = winios_drv_set_cursor;
+        if (winios_desktop_mode())       winios_user_driver.pSetCursor           = winios_drv_set_cursor;
+        /* direct mode: inert (like winios_pSetCursor) until the app enables it */
+        else if (winios_cursor_set || winios_direct_cursor_set) winios_user_driver.pSetCursor         = winios_drv_set_cursor;
+        else if (winios_pSetCursor)      winios_user_driver.pSetCursor           = winios_pSetCursor;
+        if (!winios_desktop_mode() && winios_direct_cursor_pos)
+            winios_user_driver.pSetCursorPos = winios_drv_set_cursor_pos;
         if (winios_pDestroyCursorIcon)   winios_user_driver.pDestroyCursorIcon   = winios_pDestroyCursorIcon;
         if (winios_pShowWindow)          winios_user_driver.pShowWindow          = winios_pShowWindow;
         /* window-pos wrapper dereferences window_rects on this side and

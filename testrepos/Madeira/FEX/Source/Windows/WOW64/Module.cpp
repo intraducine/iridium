@@ -62,6 +62,8 @@ $end_info$
 #include <wine/debug.h>
 #include <wine/unixlib.h>
 
+extern "C" [[noreturn]] void WINAPI RtlExitUserThread(NTSTATUS status);
+
 #include "IosTeb.h"
 
 using FEX::Windows::WOW64::CurrentTEB;
@@ -1435,6 +1437,11 @@ void BTCpuThreadInit() {
   std::unique_lock<std::mutex> Lock(ThreadCreationMutex);
   FEX::Windows::InitCRTThread();
   auto* Thread = CTX->CreateThread(0, 0);
+  if (!Thread) {
+    Lock.unlock();
+    FEX::Windows::DeinitCRTThread();
+    RtlExitUserThread(STATUS_NO_MEMORY);
+  }
 
   // Default segment setup.
   auto Frame = Thread->CurrentFrame;

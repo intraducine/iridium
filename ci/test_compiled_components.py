@@ -85,6 +85,9 @@ class CompiledComponentsTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_bytes(b'compiled executable')
             binary.chmod(0o755)
+            guest = root / 'testrepos/Madeira/wine/build-i386/dlls/ntdll/i386-windows/ntdll.dll'
+            guest.parent.mkdir(parents=True)
+            guest.write_bytes(b'compiled guest module')
             binary.with_suffix('.o').write_bytes(b'unneeded object')
             env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
             with patch.dict(os.environ, env), patch.object(reuse, 'git', return_value='b' * 40):
@@ -96,6 +99,7 @@ class CompiledComponentsTests(unittest.TestCase):
             with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40):
                 components.restore(root, 'wine', '123')
                 self.assertEqual(binary.read_bytes(), b'compiled executable')
+                self.assertEqual(guest.read_bytes(), b'compiled guest module')
                 self.assertTrue(binary.stat().st_mode & 0o111)
                 archive.write_bytes(b'corrupt')
                 with self.assertRaisesRegex(ValueError, 'checksum'):

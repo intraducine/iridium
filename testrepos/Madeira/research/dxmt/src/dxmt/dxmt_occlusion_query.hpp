@@ -126,6 +126,24 @@ public:
     seq_id_issued = seqId;
   }
 
+  /* MADEIRA (ml998): account for a submission that counted NO visibility
+   * samples.  issue() cannot be used for it -- there is no buffer to read --
+   * but the bookkeeping still has to happen, because getValue() reports a
+   * result only once seq_id_issued has caught up with seq_id_end.  With
+   * nothing counted in this submission there is nothing to accumulate.
+   *
+   * Only ever called from ~VisibilityResultReadback, i.e. on the finish
+   * thread and in submission order, after every earlier submission's
+   * readback has issued -- never from the encode thread, where it would mark
+   * the query complete before the samples of an earlier, still running
+   * submission had been added.  See ArgumentEncodingContext::flushCommands. */
+  void
+  issueEmpty(uint64_t seqId) {
+    assert(seqId >= seq_id_begin);
+    assert(seqId <= seq_id_end);
+    seq_id_issued = seqId;
+  }
+
   bool
   getValue(uint64_t *value) {
     if (seq_id_end <= seq_id_issued) {
@@ -165,6 +183,12 @@ public:
       queries(queries) {
         visibility_result_heap_info.options = WMTResourceHazardTrackingModeUntracked;
         visibility_result_heap_info.memory.set(nullptr);
+        /* MADEIRA (ml998): num_results == 0 is a submission that counted no
+         * samples but ends a query (see flushCommands). It needs no buffer,
+         * only the in-order issueEmpty() in the destructor. */
+        visibility_result_heap_info.length = 0;
+        if (!num_results)
+          return;
 #ifdef __i386__
         visibility_result_heap_info.memory.set(wsi::aligned_malloc(num_results * sizeof(uint64_t), DXMT_PAGE_SIZE));
 #endif
@@ -173,10 +197,14 @@ public:
       }
   ~VisibilityResultReadback() {
     for (auto query : queries) {
-      query->issue(seq_id, (uint64_t *)visibility_result_heap_info.memory.get(), num_results);
+      if (num_results)
+        query->issue(seq_id, (uint64_t *)visibility_result_heap_info.memory.get(), num_results);
+      else
+        query->issueEmpty(seq_id);
     }
 #ifdef __i386__
-    wsi::aligned_free(visibility_result_heap_info.memory.get());
+    if (num_results)
+      wsi::aligned_free(visibility_result_heap_info.memory.get());
 #endif
   }
 

@@ -13,8 +13,13 @@ TRANSFERS = ('media', 'native-compiled', 'wine-compiled', 'windows-compiled',
 OBJECT_TREES = (
     'testrepos/Madeira/toolchains/llvm-ios-build',
     'testrepos/Madeira/wine/build-macos',
+    'testrepos/Madeira/wine/build-i386',
     'testrepos/Madeira/FEX/build-ios',
     'testrepos/Madeira/FEX/build-arm64ec',
+    'testrepos/Madeira/FEX/build-wow64',
+    'testrepos/Madeira/research/dxmt/build-arm64ec-ci',
+    'testrepos/Madeira/research/dxmt/build-aarch64-ci',
+    'testrepos/Madeira/research/dxmt/build-i386-ci',
     '.build/runtime-sources/angle/out/iridium-ios',
     '.build/idevice-target', '.build/StikJIT-derived',
 )

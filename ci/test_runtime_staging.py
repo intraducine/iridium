@@ -44,7 +44,7 @@ class RuntimeStagingTests(unittest.TestCase):
             header = bytearray(512)
             header[:2] = b'MZ'
             struct.pack_into('<I', header, 60, 64)
-            for machine, arch in [(0xaa64, 'aarch64'), (0x8664, 'arm64ec')]:
+            for machine, arch in [(0xaa64, 'aarch64'), (0x8664, 'arm64ec'), (0x14c, 'i386')]:
                 header[64:70] = b'PE\0\0' + struct.pack('<H', machine)
                 path.write_bytes(header)
                 windows.check_pe(path, arch)
@@ -114,6 +114,27 @@ class RuntimeStagingTests(unittest.TestCase):
             broken.write_bytes(image(0xaa64, True)[:600])
             with self.assertRaises(ValueError):
                 windows.pe_architectures(broken)
+
+    def test_i386_staging_keeps_guest_modules_in_their_own_farm(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / 'build/dlls/ntdll/i386-windows/ntdll.dll'
+            source.parent.mkdir(parents=True)
+            image = bytearray(512)
+            image[:2] = b'MZ'
+            struct.pack_into('<I', image, 60, 64)
+            image[64:70] = b'PE\0\0' + struct.pack('<H', 0x14c)
+            source.write_bytes(image)
+            windows.stage(root / 'build', root / 'app', architectures=('i386',))
+            windows.check_pe(root / 'app/i386-windows/ntdll.dll', 'i386')
+            self.assertFalse((root / 'app/arm64ec-windows').exists())
+            self.assertFalse((root / 'app/aarch64-windows').exists())
+            schema = source.with_name('apisetschema.dll')
+            struct.pack_into('<H', image, 70, 1)
+            struct.pack_into('<H', image, 84, 224)
+            image[312:320] = b'.apiset\0'
+            schema.write_bytes(image)
+            self.assertEqual(windows.pe_architectures(schema), {'i386'})
 
     def test_prefix_transfer_checks_revision_checksum_and_members(self):
         with tempfile.TemporaryDirectory() as temp:

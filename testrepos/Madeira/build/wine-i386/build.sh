@@ -105,6 +105,8 @@ if [ ${#FAILED[@]} -gt 0 ]; then
     exit 1
 fi
 
+[ "${COMPILE_ONLY:-0}" = 1 ] && exit 0
+
 mkdir -p "$DEST"
 for t in "${TARGETS[@]}"; do
     b="$(basename "$t")"

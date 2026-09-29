@@ -175,6 +175,7 @@ def native_output_inventory(root):
         'External/cephes/libcephes_128bit.a', 'External/SoftFloat-3e/libsoftfloat_3e.a'))
     for directory in ('testrepos/Madeira/app/Madeira/arm64ec-windows',
                       'testrepos/Madeira/app/Madeira/aarch64-windows',
+                      'testrepos/Madeira/app/Madeira/i386-windows',
                       'iridium/apps/ios/MediaRuntime', 'iridium/apps/ios/ControllerRuntime'):
         names.update(p.relative_to(root).as_posix() for p in (root / directory).rglob('*') if p.is_file())
     missing = [name for name in sorted(names) if not (root / name).is_file() or not (root / name).stat().st_size]

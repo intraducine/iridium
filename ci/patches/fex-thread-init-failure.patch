@@ -116,7 +116,16 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/Common/CallRetStack.h b/testre
 diff --git a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp b/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
 --- a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
 +++ b/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp
-@@ -587,7 +587,7 @@
+@@ -61,6 +61,8 @@
+ #include <winternl.h>
+ #include <wine/debug.h>
+ #include <wine/unixlib.h>
++
++extern "C" [[noreturn]] void WINAPI RtlExitUserThread(NTSTATUS status);
+
+ #include "IosTeb.h"
+
+@@ -1432,9 +1434,14 @@
 
  void BTCpuThreadInit() {
    static constexpr size_t DefaultWow64CS {4};
@@ -124,8 +133,15 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp b/testrepos/M
 +  std::unique_lock<std::mutex> Lock(ThreadCreationMutex);
    FEX::Windows::InitCRTThread();
    auto* Thread = CTX->CreateThread(0, 0);
++  if (!Thread) {
++    Lock.unlock();
++    FEX::Windows::DeinitCRTThread();
++    RtlExitUserThread(STATUS_NO_MEMORY);
++  }
 
-@@ -609,7 +609,17 @@
+   // Default segment setup.
+   auto Frame = Thread->CurrentFrame;
+@@ -1454,7 +1461,17 @@
    Frame->State.cs_idx = DefaultWow64CS << 3;
    Frame->State.cs_cached = FEXCore::Core::CPUState::CalculateGDTBase(GDT);
 
@@ -143,7 +159,7 @@ diff --git a/testrepos/Madeira/FEX/Source/Windows/WOW64/Module.cpp b/testrepos/M
 +  }
 
    const auto TLS = GetTLS();
-   TLS.ThreadState() = Thread;
+   // MADEIRA: one line per thread naming the slot this module's ThreadState lives in, the TEB it is
 diff --git a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
 --- a/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c
 +++ b/testrepos/Madeira/wine/dlls/ntdll/signal_arm64ec.c

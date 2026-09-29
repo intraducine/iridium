@@ -7,6 +7,7 @@
 #include <mutex>
 #include "dxmt_mem_census.hpp"
 #include "dxmt_bcn.hpp"
+#include "util_madeira_switch.hpp"
 
 namespace dxmt {
 
@@ -680,14 +681,38 @@ ResourceInitializer::allocateZeroBuffer(size_t size) {
       return {};
     }
 
+    /* MADEIRA (ml1490): with DXMT_ZERO_BUFFER_POW2, grow to the next power of
+     * two (at least 1 MB) instead of the exact request. Each growth costs a
+     * flushInternal(), and a loading screen asking for slowly rising sizes
+     * regrew the buffer 322 times on device. A Madeira switch
+     * (util_madeira_switch.hpp): on by default only in the i386 build; every
+     * 64-bit build keeps exact sizing unless it is set. */
+    static const bool pow2 = [] {
+      const bool value = madeiraSwitch("DXMT_ZERO_BUFFER_POW2");
+      if (value)
+        Logger::info("[zero-buffer] ml1490 pow2-growth enabled (DXMT_ZERO_BUFFER_POW2=0 disables)");
+      return value;
+    }();
+    size_t length = size;
+    if (pow2) {
+      length = size_t(1) << 20;
+      while (length < size)
+        length <<= 1;
+    }
     WMTBufferInfo buffer_info;
     buffer_info.gpu_address = 0;
-    buffer_info.length = size;
+    buffer_info.length = length;
     buffer_info.memory.set(nullptr);
     buffer_info.options = WMTResourceStorageModePrivate | WMTResourceHazardTrackingModeUntracked;
+    /* ml1490: the buffer being replaced is released by this assignment, so
+     * the memory census drops it here; it used to count every zero buffer
+     * ever made as live. Bookkeeping of the census counter only. */
+    if (zero_buffer_census_)
+      mem_census_sub(MEMOWN_INIT_UPLOAD, zero_buffer_census_);
     zero_buffer_ = device_.newBuffer(buffer_info);
     mem_census_add(MEMOWN_INIT_UPLOAD, buffer_info.length);  /* ml677 */
-    zero_buffer_size_ = size;
+    zero_buffer_census_ = buffer_info.length;
+    zero_buffer_size_ = length;
 
     fill->type = WMTBlitCommandFillBuffer;
     fill->buffer = zero_buffer_;

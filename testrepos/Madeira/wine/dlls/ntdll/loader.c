@@ -4185,7 +4185,6 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
  * in the arm64ec build; without the guard the i386 and plain-aarch64 PE ntdll
  * builds fail to link with "undefined symbol: xlate_ios_jit".
  */
-/* The JIT alias helper is implemented only by signal_arm64ec.c. */
 #ifdef __arm64ec__
 static void iat_life_sweep( const char *when )
 {
@@ -4278,8 +4277,6 @@ static void iat_life_sweep( const char *when )
 }
 #endif  /* __arm64ec__ */
 
-#endif /* __arm64ec__ */
-
 NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_flags,
                                              const UNICODE_STRING *libname, HMODULE* hModule)
 {
@@ -4320,7 +4317,6 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_fl
             LdrUnloadDll(wm->ldr.DllBase);
             wm = NULL;
         }
-
 #ifdef __arm64ec__
         else
         {

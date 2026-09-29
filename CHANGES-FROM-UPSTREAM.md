@@ -175,3 +175,24 @@ iOS/tvOS use the client creation timestamp for job IDs because Process.StartTime
 is unsupported there. Other runtime dependencies are unmodified; NativeAOT reflection and generic roots are
 owned by the integration. See `iridium/packages/steam/THIRD-PARTY-NOTICES.md` and
 `docs/decisions/native-steam-downloads.md` for dependencies and architecture.
+
+## Madeira runtime update (2026-09-29)
+
+The runtime follows Madeira `d5a8e0a6`, Wine `daa17d04`, FEX `2838f3be`,
+and DXMT `a5e0cd3d`. Full revisions are in `UPSTREAM-SOURCES.json`.
+The integration adds the i386 Wine farm, FEX WoW64 translator, native D3D9
+backend, WoW64 Unix-call tables, and updated graphics and media code.
+
+Iridium keeps its Steam interface, controller and keyboard routing, JSON launch
+arguments, profile repair, shutdown handling, and device-budgeted FEX arena.
+The native parser uses the FFmpeg libraries and headers already supplied by
+Iridium’s source-built GStreamer SDK. The existing GStreamer path remains the
+64-bit media default; Madeira’s new native media tables serve WoW64 callers.
+Metal shaders target iOS 18.0. Compiler output for both FEX translators and all
+three Windows architectures is retained before staging.
+
+The D3D9/DXSO import retains LGPL-2.1-or-later and its copyright notices.
+The updated DXMT notice and LGPL text are included in the app notices.
+Madeira’s Swift frontend, Dock Steam client, and unrelated test launchers are
+not part of this integration. Iridium retains its existing verified Apple
+converter download and checksum configuration.
