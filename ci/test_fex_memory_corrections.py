@@ -45,6 +45,42 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             f"forward:\n{forward.stderr}\nreverse:\n{reverse.stderr}",
         )
 
+    def test_rpmalloc_patch_matches_pinned_source_and_preserves_upstream_repairs(self):
+        allocator = ROOT / "testrepos/Madeira/FEX/External/rpmalloc"
+        if not (allocator / ".git").exists():
+            self.skipTest("Pinned rpmalloc submodule is not initialized")
+        expected = subprocess.check_output(
+            ["git", "ls-tree", "HEAD", "testrepos/Madeira/FEX/External/rpmalloc"],
+            cwd=ROOT, text=True,
+        ).split()[2]
+        actual = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=allocator, text=True,
+        ).strip()
+        self.assertEqual(actual, expected)
+        relative = "rpmalloc/rpmalloc.c"
+        base = subprocess.check_output(
+            ["git", "show", f"HEAD:{relative}"], cwd=allocator,
+        )
+        helper = load("rpmalloc_pinned_source", HELPER)
+        with tempfile.TemporaryDirectory() as name:
+            repo = Path(name)
+            subprocess.run(["git", "init", "-q", name], check=True)
+            target = repo / relative
+            target.parent.mkdir()
+            target.write_bytes(base)
+            helper.apply_patch_idempotent(repo, RPMALLOC_PATCH, "pinned rpmalloc")
+            patched = target.read_bytes()
+            helper.apply_patch_idempotent(repo, RPMALLOC_PATCH, "pinned rpmalloc")
+            self.assertEqual(target.read_bytes(), patched)
+            text = patched.decode()
+            self.assertIn("if (UNEXPECTED(page->is_full != 0))", text)
+            self.assertIn("page->next->prev = 0", text)
+            self.assertIn("page->prev = 0", text)
+            self.assertIn("page->next = 0", text)
+            self.assertIn("if (bad)\n\t\treturn;", text)
+            subprocess.run(["git", "apply", "--reverse", str(RPMALLOC_PATCH)], cwd=repo, check=True)
+            self.assertEqual(target.read_bytes(), base)
+
     def test_compact_profile_and_allocator_containment_are_coupled(self):
         text = RPMALLOC_PATCH.read_text()
         for required in (
@@ -60,9 +96,6 @@ class RuntimeCorrectionContractTests(unittest.TestCase):
             "i < (int)sizeof(buf) - 1",
             "if (bad)",
             "return;",
-            "page->next->prev = 0",
-            "page->prev = 0",
-            "page->next = 0",
             "rpm_avail_check(heap, size_class, page, /*is_head=*/1, \"consume\") != 0",
         ):
             self.assertIn(required, text)
