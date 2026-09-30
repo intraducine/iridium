@@ -169,7 +169,7 @@ class RuntimeInputTests(unittest.TestCase):
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
             self.assertEqual(result.returncode, 17, result.stderr.decode())
             self.assertEqual(capture.read_text().splitlines(),
-                             ['-C', str(build), '-j2', 'nls/all', 'fonts/all'] + sorted(targets))
+                             ['-C', str(build), '-j2', 'nls/all'] + sorted(targets))
             capture.unlink()
             makefile.write_text('\n'.join(f'{target}:' for target in excluded))
             result = subprocess.run(['bash', str(script)], env=env, capture_output=True)

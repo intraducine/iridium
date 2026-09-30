@@ -18,7 +18,9 @@ if [ "${#TARGETS[@]}" -eq 0 ]; then
     echo 'Wine Makefile has no ARM64 or ARM64EC Windows module targets' >&2
     exit 1
 fi
-make -C "$M/wine/build-macos" -j"$JOBS" nls/all fonts/all "${TARGETS[@]}"
+# Staging copies the supplied TrueType fonts; bitmap font generation needs
+# host FreeType and produces .fon files that are not included in the app.
+make -C "$M/wine/build-macos" -j"$JOBS" nls/all "${TARGETS[@]}"
 
 # Retain the separate 32-bit compiler tree before bundle staging.
 JOBS="$JOBS" COMPILE_ONLY=1 bash "$M/build/wine-i386/build.sh"
