@@ -74,6 +74,44 @@ class BuildSpaceTests(unittest.TestCase):
                 space.reclaim(root, 'prepare-source')
             self.assertEqual(first.read_bytes(), b'keep')
 
+    def test_package_cleanup_preserves_app_archives_and_outside_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            kept = ('.build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app/Iridium',
+                    '.build/ipa-output/SOURCE-SHA256SUMS',
+                    '.build/app-link-audit/binaries.json',
+                    'testrepos/Madeira/build/ntdll-unix/out/libntdll_unix.a',
+                    'outside/source.tar.gz')
+            for name in kept:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'keep')
+            for name in space.PACKAGE_INPUTS:
+                path = root / name
+                path.mkdir(parents=True)
+                (path / 'consumed').write_bytes(b'retained')
+            (root / space.PACKAGE_INPUTS[0] / 'link').symlink_to(root / 'outside', target_is_directory=True)
+            space.reclaim(root, 'package-ready')
+            space.reclaim(root, 'package-ready')  # Missing consumed copies are safe.
+            self.assertTrue(all(not (root / name).exists() for name in space.PACKAGE_INPUTS))
+            self.assertTrue(all((root / name).read_bytes() == b'keep' for name in kept))
+
+    def test_package_cleanup_validates_all_trees_before_deletion(self):
+        for linked in (False, True):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                first, last = (root / name for name in (space.PACKAGE_INPUTS[0], space.PACKAGE_INPUTS[-1]))
+                first.mkdir(parents=True)
+                (first / 'keep').write_bytes(b'keep')
+                last.parent.mkdir(parents=True)
+                if linked:
+                    last.symlink_to(first, target_is_directory=True)
+                else:
+                    last.write_bytes(b'wrong type')
+                with self.assertRaises(ValueError):
+                    space.reclaim(root, 'package-ready')
+                self.assertTrue((first / 'keep').is_file())
+
     def test_workflow_reclaims_only_after_consumption_and_upload(self):
         text = (space.ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
         self.assertLess(text.index('run: bash ci/prepare-legacy-bundle.sh'),
@@ -82,3 +120,10 @@ class BuildSpaceTests(unittest.TestCase):
                         text.index('reclaim-build-space.py source-uploaded'))
         self.assertLess(text.index('reclaim-build-space.py source-uploaded'),
                         text.index('name: Build without signing'))
+        for step in ('name: Retain source archive for release audit',
+                     'name: Verify modified LGPL library relinking',
+                     'name: Retain app link maps for final audit',
+                     'name: Check final binary audit before packaging'):
+            self.assertLess(text.index(step), text.index('reclaim-build-space.py package-ready'))
+        self.assertLess(text.index('reclaim-build-space.py package-ready'),
+                        text.index('name: Prepare and audit unsigned package'))

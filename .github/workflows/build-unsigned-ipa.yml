@@ -500,6 +500,8 @@ jobs:
           retention-days: 7
       - name: Check final binary audit before packaging
         run: python3 ci/check-ipa-prerequisites.py --package
+      - name: Free retained source and link intermediates
+        run: python3 ci/reclaim-build-space.py package-ready
       - name: Prepare and audit unsigned package
         run: python3 ci/package-unsigned-ipa.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/ipa-output
       - name: Upload unsigned IPA

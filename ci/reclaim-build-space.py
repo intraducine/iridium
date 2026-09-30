@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove consumed transfer copies after verification or successful source upload."""
+"""Remove consumed build copies after verification and successful audit uploads."""
 import argparse
 from pathlib import Path
 import shutil
@@ -12,16 +12,23 @@ TRANSFERS = tuple('.build/' + name + '-compiled-transfer/compiled.tar.gz'
     '.build/steam-transfer/steam-framework.tar.gz',
 )
 SOURCE_OUTPUT = '.build/ipa-output/Iridium-corresponding-source.tar.gz'
+PACKAGE_INPUTS = (
+    '.build/corresponding-source',
+    '.build/linux-transfer/sources',
+    '.build/unsigned-ipa/Build/Intermediates.noindex',
+)
+PHASES = ('prepare-source', 'source-uploaded', 'package-ready')
 
 
 def reclaim(root, phase):
-    if phase not in ('prepare-source', 'source-uploaded'):
+    if phase not in PHASES:
         raise ValueError('Unknown cleanup phase')
     root = root.resolve(strict=True)
-    names = TRANSFERS if phase == 'prepare-source' else (SOURCE_OUTPUT,)
+    trees = phase == 'package-ready'
+    names = PACKAGE_INPUTS if trees else TRANSFERS if phase == 'prepare-source' else (SOURCE_OUTPUT,)
     targets = []
-    # Validate the entire fixed list before deleting anything. Never follow links,
-    # remove trees, or accept caller-provided artifact paths.
+    # Validate the entire fixed list before deleting anything. Never follow links
+    # or accept caller-provided artifact paths. rmtree unlinks nested symlinks.
     for name in names:
         path = root / name
         if any(part.is_symlink() for part in (path, *path.parents) if part != root):
@@ -29,18 +36,21 @@ def reclaim(root, phase):
         if not path.resolve().is_relative_to(root):
             raise ValueError('Build transfer path escapes checkout')
         if path.exists():
-            if not path.is_file():
-                raise ValueError('Expected a build transfer file')
+            if not (path.is_dir() if trees else path.is_file()):
+                raise ValueError('Unexpected build copy type')
             targets.append(path)
-    freed = 0
+    before = shutil.disk_usage(root).free
     for path in targets:
-        freed += path.stat().st_size
-        path.unlink()
-    print(f'Reclaimed {freed // 1048576} MiB of consumed archives; '
+        if trees:
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    freed = max(0, shutil.disk_usage(root).free - before)
+    print(f'Reclaimed {freed // 1048576} MiB of consumed build copies; '
           f'{shutil.disk_usage(root).free // 1048576} MiB available.')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=('prepare-source', 'source-uploaded'))
+    parser.add_argument('phase', choices=PHASES)
     reclaim(ROOT, parser.parse_args().phase)
