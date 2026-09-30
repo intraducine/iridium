@@ -2131,7 +2131,8 @@ final class AppViewModel: ObservableObject {
                 pendingMadeiraStart = (id, { [weak self] in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                     MadeiraRuntimeAdapter.start(executable: launch.executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launch.arguments,
-                        steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) }) { [weak self] message in
+                        steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) },
+                        nativeSteamInstall: game.launchProfile.titleFlags.contains("steam-native-download")) { [weak self] message in
                         guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                         if message.contains("failed") || message.hasPrefix("Cannot") {
                             UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")

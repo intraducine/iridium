@@ -21,12 +21,14 @@ enum MadeiraRuntimeAdapter {
     private static var combatProfile: MadeiraCombatProfile?
     private static var monitorTask: Task<Void, Never>?
     private static var closeTask: Task<Void, Never>?
+    private static var prerequisitePrefix: URL?
 
     // Lifecycle entry points are called on the main queue. Native boot stays on a worker.
     @MainActor
     static func start(executable: String, gameRoot: String, gameID: UUID,
                       arguments: [String] = [],
                       steamAppID: String? = nil,
+                      nativeSteamInstall: Bool = false,
                       report: @escaping (String) -> Void,
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
@@ -120,18 +122,37 @@ enum MadeiraRuntimeAdapter {
                             sourceRoot: URL(fileURLWithPath: gameRoot),
                             windowsExecutable: path, registeredAppID: steamAppID)
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
+                        let mediaProbe = UserDefaults.standard.string(forKey: "IridiumMadeiraTest") == "media"
+                        let prerequisites = try mediaProbe ? nil : IridiumGamePrerequisites.prepare(
+                            prefix: prefix, executable: path, arguments: arguments,
+                            appID: steamAppID.flatMap(Int.init),
+                            sharedRoots: IridiumGamePrerequisites.sharedRoots(
+                                gameRoot: URL(fileURLWithPath: gameRoot), nativeSteamInstall: nativeSteamInstall))
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
                         DispatchQueue.main.sync {
                             guard launchID == token, !launchCancelled, !failureReported else { return }
+                            prerequisitePrefix = prerequisites == nil ? nil : prefix
                             MadeiraController.start(
                                 prefix: prefix,
                                 touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
                             )
                         }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
-                        setenv("MADEIRA_EXE", path, 1)
-                        if UserDefaults.standard.string(forKey: "IridiumMadeiraTest") == "media" {
+                        if let prerequisites {
+                            // Installers can create 32-bit children after a 64-bit launch.
+                            // The GDI table and sync engine are selected once per session.
+                            setenv("MADEIRA_GDI_SHARED_SECTION", "1", 1)
+                            setenv("MADEIRA_MADSYNC_SESSION", "0", 1)
+                            setenv("MADEIRA_EXE", prerequisites.executable, 1)
+                            setenv("IRIDIUM_MADEIRA_ARGS_JSON", try MadeiraLaunchArguments.encode(prerequisites.arguments), 1)
+                            RuntimeLogCapture.writeLine("[Launch] Running \(prerequisites.installerCount) prerequisite installers before the game.")
+                            DispatchQueue.main.async {
+                                guard launchID == token, !launchCancelled else { return }
+                                report("Installing game prerequisites. The game will start next.")
+                            }
+                        } else { setenv("MADEIRA_EXE", path, 1) }
+                        if mediaProbe {
                             guard let probe = Bundle.main.url(forResource: "iridium-mfprobe", withExtension: "exe", subdirectory: "MediaRuntime") else { throw CocoaError(.fileNoSuchFile) }
                             try Data(contentsOf: probe).write(to: prefix.appendingPathComponent("drive_c/iridium-mfprobe.exe"), options: .atomic)
                             setenv("MADEIRA_EXE", "C:\\iridium-mfprobe.exe", 1)
@@ -199,7 +220,10 @@ enum MadeiraRuntimeAdapter {
                         return
                     }
                     if launchCancelled { requestGuestClose() }
-                    else if !failureReported { report("Madeira started; waiting for rendered frames.") }
+                    else if !failureReported {
+                        report(prerequisitePrefix == nil ? "Madeira started; waiting for rendered frames."
+                               : "Installing game prerequisites. The game will start next.")
+                    }
                     monitorTask?.cancel()
                     monitorTask = Task { @MainActor in
                         while wine_process_is_running() != 0 {
@@ -213,7 +237,7 @@ enum MadeiraRuntimeAdapter {
                         combatProfile = nil
                         let code = wine_process_exit_code()
                         if code != 0 {
-                            failure("The game exited with code \(code). Restart Iridium before retrying.")
+                            failure("Launch stopped with exit code \(code). Check View Log for the failed step.")
                             return
                         }
                         let deadline = ProcessInfo.processInfo.systemUptime + 8
@@ -289,6 +313,7 @@ enum MadeiraRuntimeAdapter {
         dispatchPrecondition(condition: .onQueue(.main))
         guard closeTask == nil else { return }
         launchCancelled = true
+        cancelPrerequisites()
         MadeiraHardwareInput.acceptingInput = false
         MadeiraController.acceptingInput = false
         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
@@ -325,6 +350,14 @@ enum MadeiraRuntimeAdapter {
     }
 
     private static let controllerQueue = DispatchQueue(label: "iridium.madeira.keys")
+    @MainActor
+    private static func cancelPrerequisites() {
+        guard let prefix = prerequisitePrefix else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { try IridiumGamePrerequisites.cancel(prefix: prefix) }
+            catch { RuntimeLogCapture.writeLine("[Launch] Cannot cancel prerequisite installer: \(error.localizedDescription)") }
+        }
+    }
     private static var controllerKeys = MadeiraKeys()
     static func releaseKeys() {
         controllerQueue.sync {
@@ -334,6 +367,7 @@ enum MadeiraRuntimeAdapter {
 
     @MainActor
     static func stop() {
+        cancelPrerequisites()
         launchID = UUID()
         monitorTask?.cancel()
         closeTask?.cancel()

@@ -277,7 +277,7 @@ enum MadeiraGamePreparation {
         return data
     }
 
-    private static func validateCompleteTree(_ root: URL) throws {
+    static func validateCompleteTree(_ root: URL) throws {
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
         let rootValues = try root.resourceValues(forKeys: Set(keys))
         guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {

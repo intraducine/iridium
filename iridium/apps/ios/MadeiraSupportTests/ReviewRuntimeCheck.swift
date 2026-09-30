@@ -21,7 +21,7 @@ import Foundation
             return
         }
         let until=ProcessInfo.processInfo.systemUptime+5
-        while failures.isEmpty && reports.isEmpty && ProcessInfo.processInfo.systemUptime < until {
+        while failures.isEmpty && (reports.isEmpty || NativeState.shared.startCount == 0) && ProcessInfo.processInfo.systemUptime < until {
             try await Task.sleep(nanoseconds:10_000_000)
         }
         if scenario.contains("failure") || scenario == "server-died" {
@@ -31,8 +31,16 @@ import Foundation
             print("PASS \(scenario): terminal failure callback and input cleanup")
             return
         }
-        precondition(reports.count == 1 && failures.isEmpty, "startup did not report readiness: \(failures)")
+        precondition(!reports.isEmpty && failures.isEmpty, "startup did not report readiness: \(failures)")
         precondition(NativeState.shared.startCount == 1)
+        if ["prerequisite-success", "prerequisite-cancel"].contains(scenario) {
+            precondition(String(cString: getenv("MADEIRA_EXE")) == "C:\\helper.exe")
+            precondition(String(cString: getenv("IRIDIUM_MADEIRA_ARGS_JSON")) == "[\"C:\\\\plan.ini\"]")
+            precondition(String(cString: getenv("MADEIRA_GDI_SHARED_SECTION")) == "1")
+            precondition(String(cString: getenv("MADEIRA_MADSYNC_SESSION")) == "0")
+        } else {
+            precondition(String(cString: getenv("MADEIRA_EXE")) == "C:\\IridiumGame\\game.exe")
+        }
         if scenario == "exit-failure" { fatalError("unreachable") }
         if scenario == "process-exit" {
             NativeState.shared.write(2,0); NativeState.shared.write(0,0); NativeState.shared.write(1,0)
@@ -50,6 +58,10 @@ import Foundation
                 try await Task.sleep(nanoseconds:400_000_000)
                 precondition(exits == 1, "monitor lost after close timeout")
             } else { precondition(closed == true) }
+            if scenario == "prerequisite-cancel" {
+                try await Task.sleep(nanoseconds:100_000_000)
+                precondition(NativeState.shared.cancelCount >= 1)
+            }
             MadeiraRuntimeAdapter.stop()
             precondition(!MadeiraController.active)
         }

@@ -50,6 +50,7 @@ REQUIRED = {
         "iridium/apps/ios/MediaRuntime/mfreadwrite.dll",
         "iridium/apps/ios/MediaRuntime/winegstreamer.dll",
         "iridium/apps/ios/ControllerRuntime/arm64ec/xinput.dll",
+        "iridium/apps/ios/ControllerRuntime/arm64ec/iridium-prerequisites.exe",
     ],
     "legacy graphics frameworks": [
         "Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework/libEGL",

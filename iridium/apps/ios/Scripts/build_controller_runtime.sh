@@ -11,3 +11,5 @@ for arch in x64 x86 arm64ec; do
   "$compiler" -shared -O2 -static-libgcc "$root/MadeiraSupport/xinput.c" \
     "$root/MadeiraSupport/xinput.def" -o "$root/ControllerRuntime/$arch/xinput.dll"
 done
+"$compiler" -O2 -municode -static-libgcc "$root/MadeiraSupport/prerequisites.c" \
+  -o "$root/ControllerRuntime/arm64ec/iridium-prerequisites.exe" -ladvapi32

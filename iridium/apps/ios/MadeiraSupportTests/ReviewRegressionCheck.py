@@ -54,7 +54,7 @@ def main():
                 if line not in ('import UIKit', 'import MadeiraNative'))+'\n')
             binary=build('adapter', [HERE/'ReviewRuntimeStubs.swift', support/'MadeiraLaunchArguments.swift',
                 under_test, HERE/'ReviewRuntimeCheck.swift'], ['-D','BUILTIN_STIKJIT'])
-            cases=['prepare-failure','jit-failure','pool-failure','arena-failure','server-failure',
+            cases=['prepare-failure','prerequisite-failure','prerequisite-success','prerequisite-cancel','jit-failure','pool-failure','arena-failure','server-failure',
                    'server-died','wine-failure','builtin-start-failure','builtin-detach-failure',
                    'cancel-startup','success','duplicate-jit','process-exit','close-timeout']
             for case in cases:

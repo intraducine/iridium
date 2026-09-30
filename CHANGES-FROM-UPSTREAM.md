@@ -211,3 +211,19 @@ backend includes dormant Dock hooks; Dock and Madeira's frontend are not enabled
 Upstream host checks run with Iridium's existing source checks. CI removes source
 collection copies and link intermediates only after the source and final app
 audit uploads succeed, preserving the archives used to link the app.
+
+## Game prerequisite installers
+
+`IridiumSteamInstallScript.swift` adapts Madeira's `DockInstallers.swift` at
+`40d5e74848e4ee7060e879c07ef74487d9dc8cec`. It preserves repeated installer
+sections and adds a prefix-local default key for manual imports. Invalid pending
+commands fail before any installer group is recorded as complete.
+
+`prerequisites.c` adapts Wine service-manager startup from `willfaust/madeira-dock`
+`src/scm.c` at `3cadfbea700e4da4b04e331dd7ef1ba633dfacef`. It runs included EXE
+and MSI installers, records successful groups through Wine's registry API, then
+starts the requested game in the same session. It does not use the Dock client.
+The sources retain 125hz's copyright, GPL-3.0-or-later, and Madeira's converter
+exception. Shared redistributables are copied only when available. GDI shared
+sections, the session sync setting, and missing-only `fusion.dll` placement
+follow Madeira's installer path. Existing game files and saves are preserved.

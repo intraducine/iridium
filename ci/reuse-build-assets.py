@@ -29,6 +29,7 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/Scripts', 'iridium/apps/ios/MediaSupport',
     'iridium/apps/ios/MediaRuntime', 'iridium/apps/ios/ControllerRuntime',
     'iridium/apps/ios/MadeiraSupport/xinput.c', 'iridium/apps/ios/MadeiraSupport/xinput.def',
+    'iridium/apps/ios/MadeiraSupport/prerequisites.c',
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
