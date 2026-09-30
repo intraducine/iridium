@@ -37,9 +37,16 @@ COMPONENT_INPUTS = {
     # Track Madeira's compiler trees rather than its entire repository.
     # Both XcodeGen specs configure the later app build, not these libraries.
     # Native targets and flags live in the tracked compiler recipes below.
+    # Controller and prerequisite helpers are rebuilt after every restore;
+    # cached copies are replaced before staging, so their edits cannot stale
+    # the library checkpoint. Keep the media compiler script as a library input.
     'native': tuple(p for p in NATIVE_INPUTS if p not in {
                   'ci', 'iridium/apps/ios/project.yml',
-                  'iridium/apps/ios/madeira.yml', 'testrepos/Madeira'}) +
+                  'iridium/apps/ios/madeira.yml', 'testrepos/Madeira',
+                  'iridium/apps/ios/Scripts', 'iridium/apps/ios/ControllerRuntime',
+                  'iridium/apps/ios/MadeiraSupport/xinput.c',
+                  'iridium/apps/ios/MadeiraSupport/xinput.def',
+                  'iridium/apps/ios/MadeiraSupport/prerequisites.c'}) +
               ('testrepos/Madeira/FEX', 'testrepos/Madeira/wine',
                'testrepos/Madeira/build', 'testrepos/Madeira/research/dxmt',
                'testrepos/Madeira/research/freetype', 'testrepos/Madeira/toolchains',
@@ -47,6 +54,7 @@ COMPONENT_INPUTS = {
                'testrepos/Madeira/research/remote-metal',
                'testrepos/Madeira/app/Madeira/Winios',
                'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
+               'iridium/apps/ios/Scripts/build_media_runtime.sh',
                'ci/apply-fex-runtime-corrections.py',
                'ci/patches/rpmalloc-compact-runtime.patch',
                'ci/patches/fex-thread-init-failure.patch'),

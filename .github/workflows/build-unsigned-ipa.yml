@@ -281,6 +281,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Build game input and prerequisite helpers
+        run: PATH="$PWD/testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH" sh iridium/apps/ios/Scripts/build_controller_runtime.sh
       - name: Select wine compilation
         id: compiled_wine
         env:
