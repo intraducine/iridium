@@ -98,6 +98,25 @@ else: sys.exit(2)
         self.assertEqual(tools.shutil.which("bison", path=env["PATH"]), str(self.prefix / "opt/bison/bin/bison"))
         self.assertFalse(any(x[0] == "install" for x in self.commands()))
 
+    def test_pinned_steam_sdk_is_checked_before_installing_or_compiling(self):
+        steam = self.root / "iridium/packages/steam"
+        steam.mkdir(parents=True)
+        (steam / "global.json").write_text(json.dumps({"sdk": {"version": "10.0.401"}}))
+        sdk = self.root / ".build/dotnet/dotnet"
+        for version in (None, "10.0.400", "10.0.401"):
+            with self.subTest(version=version):
+                if version is not None:
+                    self.stub("dotnet", "from pathlib import Path\nassert Path.cwd().resolve() == Path(" + repr(str(steam)) + ").resolve()"
+                              + "\nprint(" + repr(version) + ")\n", sdk)
+                if version == "10.0.401":
+                    self.install_except()
+                    env = tools.prepare_environment(self.root, environ=self.env)
+                    self.assertEqual(tools.shutil.which("dotnet", path=env["PATH"]), str(sdk))
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "Steam requires .NET SDK 10.0.401"):
+                        tools.prepare_environment(self.root, environ=self.env)
+                self.assertFalse(any(x[0] == "install" for x in self.commands()))
+
     def test_system_bison_does_not_mask_missing_homebrew_bison(self):
         self.install_except({"bison"})
         self.stub("bison", "print('old Apple bison')\n")
