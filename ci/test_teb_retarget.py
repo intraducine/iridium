@@ -13,11 +13,13 @@ class RetargetTests(unittest.TestCase):
         source = (ROOT / 'testrepos/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
         start = source.index('    if (ios_teb_tls_slot_offset && text_size >= 12)')
         end = source.index('\n    for (size_t i = 0; i < text_size; i += 4)', start)
+        data_word = next(line for line in source.splitlines() if line.startswith('#define IOS_X18_DATA_WORD'))
         program = '''
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+''' + data_word + '''
 static void run(void) {
  size_t text_size = 4096;
  unsigned ios_teb_tls_slot_offset = 0x908;

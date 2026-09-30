@@ -311,6 +311,7 @@ static unsigned int update_if_table( void )
     struct if_nameindex *indices = if_nameindex(), *entry;
     unsigned int append_count = 0;
 
+    if (!indices) return 0;
     for (entry = indices; entry->if_index; entry++)
     {
         if (!find_entry_from_index( entry->if_index ) && add_entry( entry->if_index, entry->if_name ))
@@ -416,7 +417,7 @@ static void ifinfo_fill_dynamic( struct if_entry *entry, struct nsi_ndis_ifinfo_
     {
         int mib[] = { CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_IFLIST, entry->if_index };
         size_t needed;
-        char *buf = NULL, *end;
+        char *buf = NULL, *end, *cursor;
         struct if_msghdr *ifm;
         struct if_data ifdata;
 
@@ -424,9 +425,10 @@ static void ifinfo_fill_dynamic( struct if_entry *entry, struct nsi_ndis_ifinfo_
         buf = malloc( needed );
         if (!buf) goto done;
         if (sysctl( mib, ARRAY_SIZE(mib), buf, &needed, NULL, 0 ) == -1) goto done;
-        for (end = buf + needed; buf < end; buf += ifm->ifm_msglen)
+        for (cursor = buf, end = buf + needed; end - cursor >= sizeof(*ifm); cursor += ifm->ifm_msglen)
         {
-            ifm = (struct if_msghdr *) buf;
+            ifm = (struct if_msghdr *)cursor;
+            if (ifm->ifm_msglen < sizeof(*ifm) || ifm->ifm_msglen > end - cursor) break;
             if (ifm->ifm_type == RTM_IFINFO)
             {
                 ifdata = ifm->ifm_data;

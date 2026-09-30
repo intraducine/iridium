@@ -674,6 +674,8 @@ private final class RuntimePlayerHostView: UIView {
             madeiraLayer.drawableSize = MadeiraResolution.selected.size
             layer.addSublayer(madeiraLayer)
             madeira_display_set_layer(madeiraLayer)
+            NotificationCenter.default.addObserver(self, selector: #selector(displayModeChanged),
+                name: NSNotification.Name(MadeiraDisplayModeChangedNotification), object: nil)
             addInteraction(UIPointerInteraction(delegate: self))
             softwareKeyboardView.isAccessibilityElement = false
             softwareKeyboardView.accessibilityElementsHidden = true
@@ -1146,6 +1148,10 @@ private final class RuntimePlayerHostView: UIView {
     }
 
     #if MADEIRA_RUNTIME
+    @objc private func displayModeChanged() {
+        setNeedsLayout()
+    }
+
     @objc private func pointerHovered(_ recognizer: UIHoverGestureRecognizer) {
         guard recognizer.state == .began || recognizer.state == .changed else { return }
         moveSystemPointer(to: recognizer.location(in: self))

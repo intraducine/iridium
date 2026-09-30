@@ -416,6 +416,13 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
 extern void dbg_init(void);
 
 extern void close_inproc_sync( HANDLE handle );
+#ifdef WINE_IOS
+/* Madeira fastsync (sync.c): drop a handle from the handle -> cell cache
+ * (from close_inproc_sync()), and drop a reissued process id's
+ * stale entries once at process init.  No-ops while fastsync is off. */
+extern void madeira_fast_close( HANDLE handle );
+extern void madeira_fast_flush_pid(void);
+#endif
 
 extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, unsigned int flags, ULONG_PTR arg1, ULONG_PTR arg2,
                                           ULONG_PTR arg3, PNTAPCFUNC func, NTSTATUS status );

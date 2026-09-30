@@ -59,11 +59,11 @@ public:
 
   FEXCore::CPUID::FunctionResults RunFunctionName(uint32_t Function, uint32_t Leaf, uint32_t CPU) const {
     if (Function == 0x8000'0002U) {
-      return Function_8000_0002h(Leaf, CPU % PerCPUData.size());
+      return Function_8000_0002h(Leaf, WrapCPUIndex(CPU));
     } else if (Function == 0x8000'0003U) {
-      return Function_8000_0003h(Leaf, CPU % PerCPUData.size());
+      return Function_8000_0003h(Leaf, WrapCPUIndex(CPU));
     } else {
-      return Function_8000_0004h(Leaf, CPU % PerCPUData.size());
+      return Function_8000_0004h(Leaf, WrapCPUIndex(CPU));
     }
   }
 
@@ -165,6 +165,38 @@ private:
     bool IsBig {};
   };
   fextl::vector<CPUData> PerCPUData {};
+
+  /* MADEIRA ml980: the ONE place a host CPU index is turned into a PerCPUData subscript.
+   *
+   * PerCPUData is sized from HostFeatures.CPUMIDRs (SetupHostHybridFlag -> `PerCPUData.resize(Cores)'),
+   * while GetCPUID() answers from a completely different source -- getcpu()/TPIDRRO_EL0 on a unix
+   * host, GetCurrentProcessorNumber() -> NtGetCurrentProcessorNumber() on Windows/Wine. Nothing in
+   * the code makes the two agree, and on any host where the MIDR list is shorter than the real core
+   * count (the Windows/iOS branch of FEX::Windows::CPUFeatures::FetchHostFeatures publishes a SINGLE
+   * synthetic MIDR, so PerCPUData.size() == 1 no matter how many cores the device has) every
+   * `PerCPUData[GetCPUID()]' with a thread scheduled onto core != 0 read past the end of a 16-byte
+   * heap allocation and handed the caller whatever const char* the neighbouring object happened to
+   * hold. Function_8000_0002h then called strlen() on it -- a wild-pointer read whose outcome
+   * depended purely on heap layout and on which core the thread was running on at that instant.
+   *
+   * RunFunctionName() already wrapped with `% PerCPUData.size()'; the single-argument overloads that
+   * the JIT actually calls (leaves 0x8000'0002..4 and 0x1A are NONCONSTANT, so they are resolved at
+   * runtime through Pointers.CPUIDFunction -> RunFunction) did not. This makes the bound
+   * unconditional and also removes the divide-by-zero RunFunctionName would take on an empty list.
+   *
+   * Wrapping rather than clamping keeps the existing RunFunctionName behaviour bit-for-bit. */
+  uint32_t WrapCPUIndex(uint32_t CPU) const {
+    const size_t Size = PerCPUData.size();
+    if (Size <= 1) [[unlikely]] {
+      return 0;
+    }
+    return CPU % Size;
+  }
+
+  // The current host CPU's PerCPUData subscript. Always in range, see WrapCPUIndex.
+  uint32_t CurrentCPUIndex() const {
+    return WrapCPUIndex(GetCPUID());
+  }
 
   // Functions
   FEXCore::CPUID::FunctionResults Function_0h(uint32_t Leaf) const;

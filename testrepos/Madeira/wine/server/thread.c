@@ -1319,6 +1319,19 @@ static int object_sync_signaled( struct object *obj, struct wait_queue_entry *en
     return ret;
 }
 
+#ifdef WINE_IOS
+/* Madeira fastsync: give back a token that object_sync_signaled() claimed on
+ * behalf of a wait-all that then turned out not to be satisfiable.  A no-op
+ * for every object except a cell-backed auto-reset event or semaphore. */
+static void object_sync_unclaim( struct object *obj )
+{
+    struct object *sync = get_obj_sync( obj );
+    madeira_event_sync_unclaim( sync );
+    madeira_semaphore_sync_unclaim( sync );   /* both are ops-checked */
+    release_object( sync );
+}
+#endif
+
 void signal_sync( struct object *obj )
 {
     obj->ops->signal( obj, 0, 1 );
@@ -1455,6 +1468,13 @@ static int check_wait( struct thread *thread )
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
             not_ok |= !object_sync_signaled( entry->obj, entry );
         if (!not_ok) return STATUS_WAIT_0;
+#ifdef WINE_IOS
+        /* Madeira fastsync: on the WaitAny path a signaled object is satisfied
+         * at once, so a claim taken in `signaled' is always consumed.  Here
+         * nothing calls satisfied, so hand every claim back. */
+        for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
+            object_sync_unclaim( entry->obj );
+#endif
     }
     else
     {
@@ -1556,6 +1576,16 @@ static void thread_timeout( void *ptr )
     wait->user = NULL;
     if (thread->wait != wait) return; /* not the top-level wait, ignore it */
     if (is_thread_suspended( thread )) return;  /* suspended, ignore it */
+
+#ifdef WINE_IOS
+    /* Madeira fastsync: ask the objects before declaring a timeout.  With
+     * cells, a client can raise an object without a request, and the
+     * wake-only request that follows can still be in the socket when this
+     * timer fires; wake_thread() runs check_wait(), which tests the objects
+     * first and otherwise returns the same STATUS_TIMEOUT by the same path.
+     * Only while fastsync cells exist; otherwise upstream's order. */
+    if (madeira_fastsync_cells_on() && wake_thread( thread ) != 0) return;
+#endif
 
     if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=TIMEOUT\n", thread->id );
     end_wait( thread, STATUS_TIMEOUT );
@@ -1697,6 +1727,68 @@ static inline int is_in_apc_wait( struct thread *thread )
 }
 
 #ifdef WINE_IOS
+/* An async I/O APC for a busy thread was dropped, and the I/O completed with nothing done.
+ *
+ * When an overlapped operation becomes ready, async_terminate queues APC_ASYNC_IO to the thread
+ * that started it; that thread's ntdll then does the client half (the actual recv, or fetching an
+ * accept's addresses) and reports the result. If the thread is not waiting in the server, queue_apc
+ * interrupts it with SIGUSR1. On iOS that can never work: there is no per-process task port, so
+ * send_thread_signal always fails, queue_apc returned 0, and thread_apc_destroy then completed
+ * the async with the APC's own status and 0 bytes: STATUS_ALERTED (0x101) for a ready receive,
+ * STATUS_SUCCESS for one the server finished. The program saw a successful receive of 0 bytes,
+ * which any TCP user reads as the peer closing the connection, or an accept with no addresses.
+ *
+ * The client half of APC_ASYNC_IO is not tied to the issuing thread (queue_apc already hands it
+ * to another thread of the process when the issuer has exited), and the server wakes one alerted
+ * async per queue at a time, so ordering on a socket is unchanged. So instead of dropping it: give
+ * it to a thread of the same process that is waiting in the server. If none is, it is dropped as
+ * before. It is never left queued on the busy thread: that thread's next wait may be an in-process
+ * one (on the very event this I/O will set), which a system APC does not interrupt, since only
+ * user APCs signal alert_sync. Explorer's first RPC call to services.exe hung that way on every
+ * virtual desktop start, and the taskbar never painted. Only this failure path changes, and only
+ * for APC_ASYNC_IO; other system APCs are unchanged. [apc-requeue] logs the first 16 handovers
+ * (then every 1024th) with the APC's status and thread ids only.
+ * MADEIRA_APC_REQUEUE=0 restores the drop. */
+static int ios_apc_requeue_enabled( void )
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+    {
+        /* On by default: an async I/O completion for a busy thread goes to a waiting thread of
+         * its process, if there is one, instead of failing the I/O. 0 always drops it again. */
+        const char *e = getenv( "MADEIRA_APC_REQUEUE" );
+        enabled = !(e && e[0] == '0');
+        fprintf( stderr, "[apc-requeue] %s (MADEIRA_APC_REQUEUE=0 restores dropping async I/O APCs "
+                 "for busy threads)\n", enabled ? "on" : "off" );
+    }
+    return enabled;
+}
+
+/* the thread to queue an undeliverable async I/O APC on, or NULL to drop it as before */
+static struct thread *ios_apc_requeue_target( struct thread *thread, const struct thread_apc *apc )
+{
+    static unsigned int count;
+    struct thread *candidate, *target = NULL;
+
+    if (apc->call.type != APC_ASYNC_IO || !ios_apc_requeue_enabled()) return NULL;
+    LIST_FOR_EACH_ENTRY( candidate, &thread->process->thread_list, struct thread, proc_entry )
+    {
+        if (candidate == thread || candidate->state == TERMINATED || is_thread_suspended( candidate )) continue;
+        if (candidate->wait && (candidate->wait->flags & SELECT_INTERRUPTIBLE))
+        {
+            target = candidate;
+            break;
+        }
+    }
+    count++;
+    if (count <= 16 || !(count & 1023))
+        fprintf( stderr, "[apc-requeue] #%u async I/O APC status=%08x for busy thread %04x -> %s %04x\n",
+                 count, apc->call.async_io.status, thread->id,
+                 target ? "waiting thread" : "dropped, no waiting thread", target ? target->id : 0 );
+    return target;
+}
+
 /* ml2015: a process-wide system APC failed whenever every thread of the target was busy.
  *
  * Another process's handle work (DuplicateHandle with DUPLICATE_CLOSE_SOURCE, remote virtual
@@ -1785,7 +1877,17 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
         /* send signal for system APCs if needed */
         if (queue == &thread->system_apc && list_empty( queue ) && !is_in_apc_wait( thread ))
         {
-            if (!send_thread_signal( thread, SIGUSR1 )) return 0;
+            if (!send_thread_signal( thread, SIGUSR1 ))
+            {
+#ifdef WINE_IOS
+                struct thread *target = ios_apc_requeue_target( thread, apc );
+                if (!target) return 0;
+                thread = target;
+                if (!(queue = get_apc_queue( thread, apc->call.type ))) return 1;
+#else
+                return 0;
+#endif
+            }
         }
         /* cancel a possible previous APC with the same owner */
         if (apc->owner) thread_cancel_apc( thread, apc->owner, apc->call.type );

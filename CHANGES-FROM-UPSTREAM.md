@@ -196,3 +196,18 @@ The updated DXMT notice and LGPL text are included in the app notices.
 Madeira’s Swift frontend, Dock Steam client, and unrelated test launchers are
 not part of this integration. Iridium retains its existing verified Apple
 converter download and checksum configuration.
+
+## Madeira runtime fixes (2026-09-30)
+
+Updated the backend to Madeira `40d5e748`, Wine `4f5b1971`, and FEX `26859e18`.
+DXMT is unchanged. The update includes FastSync, bounded host CPU indices,
+thread cleanup, native network and DNS calls, multichannel audio mixing,
+read-only mapping repair, and guest display-mode changes. The selected monitor
+size now reaches Iridium's touch routing and player layout.
+
+Iridium retains its unconditional image-map callback guard, input routing,
+device memory budgets, save-path repair, and shutdown handling. The shared
+backend includes dormant Dock hooks; Dock and Madeira's frontend are not enabled.
+Upstream host checks run with Iridium's existing source checks. CI removes source
+collection copies and link intermediates only after the source and final app
+audit uploads succeed, preserving the archives used to link the app.

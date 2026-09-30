@@ -267,7 +267,6 @@ void free(void* ptr) {
   return ::free(ptr);
 }
 size_t malloc_usable_size(void* ptr) {
-  IOS_RPM_GUARD();
 #ifdef __APPLE__
   return ::malloc_size(ptr);
 #else

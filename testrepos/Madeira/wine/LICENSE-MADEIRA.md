@@ -34,6 +34,14 @@ distributes under **LGPL-2.1-or-later**. This branch keeps that licence.
   - `3ba35adcbdd` server iOS: queue a process-wide system APC on a live thread when
     none can be signalled. Author: 125hz. Merged from pull request #13 on
     2026-09-29.
+  - Round 3, author 125hz, merged on 2026-09-30:
+    `4e85de8c795`, `8d4c3d9ab5b`, `5c4d1f7a6f2` (nsi reads through the
+    in-process fallback without `\\.\Nsi`, pull request #14);
+    `c3119789ade` (server iOS: hand an undeliverable async I/O APC to a
+    waiting thread, pull request #15); `e200a5e19a9`, `f6848ad4e98` (opt-in
+    fastsync for events and semaphores, pull request #16); `d770df01ae7`
+    (ntdll ARM64EC: opt-in guard against a self-deadlock in the loader's
+    image-map notification, pull request #17).
 
 The LGPL permits combining this library with proprietary components (such
 as Apple's Metal Shader Converter) subject to LGPL-2.1 section 6; see the

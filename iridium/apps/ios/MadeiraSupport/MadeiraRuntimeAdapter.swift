@@ -71,6 +71,7 @@ enum MadeiraRuntimeAdapter {
         setenv("MADEIRA_USE_ARM64EC", "1", 1)
         setenv("MADEIRA_SCREEN_W", String(resolution.rawValue), 1)
         setenv("MADEIRA_SCREEN_H", String(resolution.height), 1)
+        winios_display_mode_changed(Int32(resolution.rawValue), Int32(resolution.height))
         unsetenv("MADEIRA_ARGS")
         setenv("IRIDIUM_MADEIRA_ARGS_JSON", cube ? "[]" : encodedArguments, 1)
         jit_install_trap_handler()
@@ -354,8 +355,10 @@ enum MadeiraRuntimeAdapter {
 
     static func input(type: String, phase: String, x: CGFloat?, y: CGFloat?, value: Double, name: String) {
         if type == "touch", let x, let y {
-            let px = Int32(min(max(x, 0), 1) * CGFloat(resolution.rawValue - 1))
-            let py = Int32(min(max(y, 0), 1) * CGFloat(resolution.height - 1))
+            var width: Int32 = 0, height: Int32 = 0
+            winios_screen_size(&width, &height)
+            let px = Int32(min(max(x, 0), 1) * CGFloat(max(0, width - 1)))
+            let py = Int32(min(max(y, 0), 1) * CGFloat(max(0, height - 1)))
             switch phase {
             case "began": winios_post_touch_down(px, py)
             case "ended", "cancelled": winios_post_touch_up(px, py)

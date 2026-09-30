@@ -31,7 +31,7 @@ jobs:
         run: python3 iridium/apps/ios/MadeiraSupportTests/LibraryStatusCheck.py
       - name: Check imported Madeira runtime
         run: |
-          for check in audio-wow64 d3d9-splitlock d9-upload-commit image-retire lazy-windows nav-keys swap-coverage unixlib-binder win32u-zero-bits wow-context wow-cpu-area wow-sweep filtering-cap scene-batching; do
+          for check in audio-wow64 audio-downmix d3d9-splitlock d9-upload-commit fastsync nsi-network readonly-link section-abort image-retire lazy-windows nav-keys swap-coverage unixlib-binder win32u-zero-bits wow-context wow-cpu-area wow-sweep filtering-cap scene-batching; do
             python3 "testrepos/Madeira/build/host-tests/check-$check.py"
           done
       - name: Check manual build safeguards

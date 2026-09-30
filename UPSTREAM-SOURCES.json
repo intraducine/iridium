@@ -3,17 +3,17 @@
     {
       "path": "testrepos/Madeira",
       "upstream": "https://github.com/willfaust/Madeira",
-      "base_revision": "d5a8e0a60804bddf48a9efa751adec52ba9a4bda"
+      "base_revision": "40d5e74848e4ee7060e879c07ef74487d9dc8cec"
     },
     {
       "path": "testrepos/Madeira/FEX",
       "upstream": "https://github.com/willfaust/FEX",
-      "base_revision": "2838f3be52437620348264ada6c41042a9085290"
+      "base_revision": "26859e184ad90f0e811d7f8bbd943a4b1573a2c3"
     },
     {
       "path": "testrepos/Madeira/wine",
       "upstream": "https://github.com/willfaust/wine",
-      "base_revision": "daa17d0471d88a775cb8c23ef40dd267b94d64c0"
+      "base_revision": "4f5b19718f4de88ecc5cb0dc08b119497a67ba8f"
     },
     {
       "path": "testrepos/Madeira/research/dxmt",
