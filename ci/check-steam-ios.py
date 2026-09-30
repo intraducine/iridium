@@ -37,6 +37,32 @@ def wait_for_spawn(device, timeout=180, interval=3):
         time.sleep(interval)
 
 
+def prepare_simulator(device, boot):
+    """Recover one stalled boot without rerunning tests or resetting user data."""
+    if boot:
+        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True, timeout=60)
+    try:
+        wait_for_spawn(device)
+    except RuntimeError:
+        # Only restart a device this invocation booted. A running developer
+        # simulator belongs to its caller, even when it cannot spawn processes.
+        if not boot:
+            raise
+        print('Simulator startup stalled. Checking boot status before one restart.', flush=True)
+        try:
+            result = subprocess.run(['xcrun', 'simctl', 'bootstatus', device],
+                                    capture_output=True, text=True, timeout=15, check=False)
+            details = (result.stdout or '') + (result.stderr or '')
+        except subprocess.TimeoutExpired as error:
+            details = (error.stdout or b'') + (error.stderr or b'')
+            if isinstance(details, bytes):
+                details = details.decode(errors='replace')
+        print(details[-4000:].replace(device, '<simulator>'), flush=True)
+        subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=True, timeout=60)
+        subprocess.run(['xcrun', 'simctl', 'boot', device], check=True, timeout=60)
+        wait_for_spawn(device)
+
+
 def select_device(inventory):
     runtimes = [item for item in inventory['runtimes']
                 if item.get('isAvailable') and '.iOS-' in item['identifier']]
@@ -47,6 +73,7 @@ def select_device(inventory):
                  if device.get('isAvailable') and device['name'].startswith('iPhone')]
     for state in ('Booted', 'Shutdown'):
         if device := next((item for item in available if item['state'] == state), None):
+            print(f"Steam verification simulator: {device['name']} ({state}).", flush=True)
             return device['udid'], state == 'Shutdown', False
     runtime = max(runtimes, key=lambda item: tuple(map(int, item['version'].split('.'))))
     device_type = next(item['identifier'] for item in runtime['supportedDeviceTypes']
@@ -54,6 +81,7 @@ def select_device(inventory):
     device = subprocess.check_output([
         'xcrun', 'simctl', 'create', 'Iridium Steam verification', device_type, runtime['identifier'],
     ], text=True).strip()
+    print(f"Created Steam verification simulator for iOS {runtime['version']}.", flush=True)
     return device, True, True
 
 
@@ -66,12 +94,10 @@ def main():
     inventory = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', '--json'], text=True))
     device, boot, created = select_device(inventory)
     try:
-        if boot:
-            subprocess.run(['xcrun', 'simctl', 'boot', device], check=True)
         # Hosted runners can leave bootstatus waiting on unrelated boot services
         # even after CoreSimulator can execute processes. The Steam verification
         # only requires spawn, so gate on that exact capability instead.
-        wait_for_spawn(device)
+        prepare_simulator(device, boot)
         started = time.monotonic()
         print('Running native Steam checks; process must exit successfully within 300 seconds.', flush=True)
         # Cold hosted simulators can complete the checks near the old two-minute
@@ -81,10 +107,12 @@ def main():
                        check=True, timeout=300)
         print(f'Native Steam checks exited successfully after {time.monotonic() - started:.1f} seconds.', flush=True)
     finally:
-        if boot:
-            subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)
-        if created:
-            subprocess.run(['xcrun', 'simctl', 'delete', device], check=False)
+        for action, needed in (('shutdown', boot), ('delete', created)):
+            if needed:
+                try:
+                    subprocess.run(['xcrun', 'simctl', action, device], check=False, timeout=60)
+                except subprocess.TimeoutExpired:
+                    print(f'Simulator cleanup timed out: {action}.', flush=True)
     print('iOS Simulator Steam initialization, protocol, download verification, and QR/cancel checks passed.')
 
 

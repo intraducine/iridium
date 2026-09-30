@@ -56,6 +56,39 @@ class SteamIOSSimulatorTests(unittest.TestCase):
                           side_effect=subprocess.TimeoutExpired(['simctl'], 15)):
             self.assertFalse(steam_ios.simulator_can_spawn('device')[0])
 
+    def test_stalled_owned_boot_gets_one_restart_before_running_checks(self):
+        failed = RuntimeError('did not become spawn-ready')
+        for final_error in (None, failed):
+            with self.subTest(final_error=final_error), \
+                 patch.object(steam_ios, 'wait_for_spawn', side_effect=[failed, final_error]) as wait, \
+                 patch.object(steam_ios.subprocess, 'run', return_value=
+                              subprocess.CompletedProcess([], 0, stdout='Boot status', stderr='')) as run:
+                if final_error:
+                    with self.assertRaisesRegex(RuntimeError, 'did not become spawn-ready'):
+                        steam_ios.prepare_simulator('device', True)
+                else:
+                    steam_ios.prepare_simulator('device', True)
+                self.assertEqual(wait.call_count, 2)
+                self.assertEqual([call.args[0][2] for call in run.call_args_list],
+                                 ['boot', 'bootstatus', 'shutdown', 'boot'])
+                self.assertTrue(all(call.kwargs.get('timeout') for call in run.call_args_list))
+
+    def test_stalled_existing_booted_simulator_is_not_restarted(self):
+        with patch.object(steam_ios, 'wait_for_spawn', side_effect=RuntimeError('not ready')), \
+             patch.object(steam_ios.subprocess, 'run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'not ready'):
+                steam_ios.prepare_simulator('device', False)
+            run.assert_not_called()
+
+    def test_boot_diagnostic_timeout_does_not_prevent_bounded_recovery(self):
+        with patch.object(steam_ios, 'wait_for_spawn', side_effect=[RuntimeError('not ready'), None]), \
+             patch.object(steam_ios.subprocess, 'run', side_effect=[
+                 subprocess.CompletedProcess([], 0),
+                 subprocess.TimeoutExpired(['bootstatus'], 15, output=b'Waiting on device'),
+                 subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0)]) as run:
+            steam_ios.prepare_simulator('device', True)
+            self.assertEqual(run.call_count, 4)
+
     def test_prefers_an_existing_simulator_and_creates_only_a_compatible_device(self):
         runtime = {'identifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0',
                    'version': '27.0', 'isAvailable': True,
