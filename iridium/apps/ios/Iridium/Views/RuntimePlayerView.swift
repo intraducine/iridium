@@ -675,7 +675,7 @@ private final class RuntimePlayerHostView: UIView {
             layer.addSublayer(madeiraLayer)
             madeira_display_set_layer(madeiraLayer)
             NotificationCenter.default.addObserver(self, selector: #selector(displayModeChanged),
-                name: NSNotification.Name(MadeiraDisplayModeChangedNotification), object: nil)
+                name: .MadeiraDisplayModeChanged, object: nil)
             addInteraction(UIPointerInteraction(delegate: self))
             softwareKeyboardView.isAccessibilityElement = false
             softwareKeyboardView.accessibilityElementsHidden = true

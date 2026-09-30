@@ -1,5 +1,6 @@
 """Check launch presentation policy and its renderer/UI wiring without running a game."""
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -78,6 +79,31 @@ import Foundation
 
 
 class LaunchPresentationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("xcrun"), "requires Apple Swift importer")
+    def test_display_notification_import(self):
+        source = (VIEWS / "RuntimePlayerView.swift").read_text()
+        observer = re.search(
+            r"NotificationCenter\.default\.addObserver\(self, selector: #selector\(displayModeChanged\),.*?object: nil\)",
+            source, re.S,
+        )
+        self.assertIsNotNone(observer)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            header = APP.parent / "MadeiraSupport/MadeiraNative.h"
+            (root / "module.modulemap").write_text(
+                f'module MadeiraNative {{ header "{header}" export * }}\n'
+            )
+            harness = root / "Check.swift"
+            harness.write_text(
+                "import Foundation\nimport MadeiraNative\n"
+                "class Check: NSObject { @objc func displayModeChanged() {}\n"
+                f"func register() {{ {observer.group()} }} }}\n"
+            )
+            result = subprocess.run([
+                "xcrun", "swiftc", "-typecheck", "-I", str(root), str(harness),
+            ], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     @unittest.skipUnless(shutil.which("swiftc"), "requires Swift compiler")
     def test_real_swift_presentation_policy(self):
         with tempfile.TemporaryDirectory() as temp:
