@@ -72,8 +72,14 @@ def main():
         # even after CoreSimulator can execute processes. The Steam verification
         # only requires spawn, so gate on that exact capability instead.
         wait_for_spawn(device)
+        started = time.monotonic()
+        print('Running native Steam checks; process must exit successfully within 300 seconds.', flush=True)
+        # Cold hosted simulators can complete the checks near the old two-minute
+        # limit. Keep a bounded allowance for process startup and shutdown, and
+        # require the actual exit status rather than accepting a PASS log line.
         subprocess.run(['xcrun', 'simctl', 'spawn', device, str(output / 'Iridium.Steam.Tests'), '--network'],
-                       check=True, timeout=120)
+                       check=True, timeout=300)
+        print(f'Native Steam checks exited successfully after {time.monotonic() - started:.1f} seconds.', flush=True)
     finally:
         if boot:
             subprocess.run(['xcrun', 'simctl', 'shutdown', device], check=False)

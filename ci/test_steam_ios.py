@@ -8,6 +8,27 @@ steam_ios = load('steam_ios_tests', 'check-steam-ios.py')
 
 
 class SteamIOSSimulatorTests(unittest.TestCase):
+    def test_main_allows_cold_runner_time_but_still_rejects_failed_or_stalled_tests(self):
+        command = ['simctl', 'spawn']
+        for error in (None, subprocess.CalledProcessError(1, command, output='PASS: 110 checks'),
+                      subprocess.TimeoutExpired(command, 300, output='PASS: 110 checks')):
+            with self.subTest(error=error), \
+                 patch.object(steam_ios.subprocess, 'check_output', return_value='{}'), \
+                 patch.object(steam_ios, 'select_device', return_value=('device', False, False)), \
+                 patch.object(steam_ios, 'wait_for_spawn'), \
+                 patch.object(steam_ios.subprocess, 'run', side_effect=[
+                     subprocess.CompletedProcess([], 0), error or subprocess.CompletedProcess([], 0)]) as run:
+                if error:
+                    with self.assertRaises(type(error)):
+                        steam_ios.main()
+                else:
+                    steam_ios.main()
+                invocation = run.call_args
+                self.assertEqual(invocation.args[0][:4], ['xcrun', 'simctl', 'spawn', 'device'])
+                self.assertEqual(invocation.args[0][-1], '--network')
+                self.assertTrue(invocation.kwargs['check'])
+                self.assertEqual(invocation.kwargs['timeout'], 300)
+
     def test_spawn_readiness_retries_until_core_simulator_accepts_processes(self):
         responses = [
             subprocess.CompletedProcess([], 1),
