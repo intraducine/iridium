@@ -66,7 +66,8 @@ later packaging steps. Linux and media outputs are also retained. A packaging
 failure does not discard these completed components.
 
 Artifacts expire after seven days. Reuse does not create another copy or extend
-that lifetime. Missing or expired artifacts trigger a rebuild. Reuse requires
+that lifetime. The search includes all retained artifacts, even when their build
+is older than the last 30 runs. Missing or expired artifacts trigger a rebuild. Reuse requires
 matching source inputs, build recipes, toolchain details, and archive checksums.
 Changes to shared inputs can require more than one component to rebuild.
 

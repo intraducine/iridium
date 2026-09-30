@@ -194,13 +194,13 @@ class AssetReuseTests(unittest.TestCase):
              patch.object(reuse, 'compatible', side_effect=ValueError('Changed producer input')):
             with self.assertRaisesRegex(ValueError, 'Changed producer input'):
                 reuse.verify_producer(Path('.'), '123', 'media', 'feature')
-        with patch.object(reuse, 'api', return_value={'workflow_runs': [run]}), \
+        with patch.object(reuse, 'api', return_value={'artifacts': [{'expired': False, 'workflow_run': {'id': 123}}], 'total_count': 1}), \
              patch.object(reuse, 'verify_producer', return_value=revision) as verify:
             self.assertEqual(reuse.select(Path('.'), 'media', 'feature'), '123')
             verify.assert_called_once_with(Path('.'), '123', 'media', 'feature')
 
     def test_rerun_can_select_same_run_media_from_prior_attempt(self):
-        runs = {'workflow_runs': [{'id': 123}]}
+        runs = {'artifacts': [{'expired': False, 'workflow_run': {'id': 123}}], 'total_count': 1}
         env = {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
         with patch.dict(os.environ, env, clear=False), \
              patch.object(reuse, 'api', return_value=runs), \
@@ -230,6 +230,19 @@ class AssetReuseTests(unittest.TestCase):
              patch.object(reuse, 'verify_producer') as verify:
             self.assertEqual(reuse.select(Path('.'), 'native', 'feature'), '')
             verify.assert_not_called()
+
+    def test_all_stages_search_retained_artifacts_without_a_run_count_limit(self):
+        first = {'artifacts': [{'expired': True, 'workflow_run': {'id': 1}},
+                               {'expired': False, 'workflow_run': {'id': 2}}], 'total_count': 101}
+        second = {'artifacts': [{'expired': False, 'workflow_run': {'id': 3}}], 'total_count': 101}
+        for stage in ('media', 'prefix', 'linux-userland', 'native'):
+            with patch.dict(os.environ, {'NATIVE_TOOLCHAIN': 'b' * 64}, clear=False), \
+                 patch.object(reuse, 'api', side_effect=[first, second]) as api, \
+                 patch.object(reuse, 'verify_producer', side_effect=[ValueError('Changed producer input'), 'a' * 40]) as verify:
+                self.assertEqual(reuse.select(Path('.'), stage, 'feature'), '3')
+                self.assertTrue(all('/artifacts?name=' in call.args[0] for call in api.call_args_list))
+                self.assertTrue(api.call_args_list[-1].args[0].endswith('page=2'))
+                self.assertEqual([call.args[1] for call in verify.call_args_list], ['2', '3'])
 
     def test_producer_validation_reads_all_workflow_attempts(self):
         revision = 'a' * 40

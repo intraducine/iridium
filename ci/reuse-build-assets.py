@@ -227,39 +227,27 @@ def select(root, stage, branch, explicit=''):
     if explicit:
         verify_producer(root, explicit, stage, branch)
         return explicit
-    if stage in COMPONENT_INPUTS:
-        # Search retained artifacts, not only the last few runs. A compiler may
-        # remain unchanged through many packaging attempts during its lifetime.
-        page = 1
-        checked = set()
-        while True:
-            result = api('actions/artifacts?name=' + artifact_name(stage) + '&per_page=100&page=' + str(page))
-            for artifact in result['artifacts']:
-                run = artifact.get('workflow_run', {})
-                run_id = str(run.get('id', ''))
-                if (artifact.get('expired') or not run_id or run_id in checked
-                        or not can_reuse_run(run_id)):
-                    continue
-                checked.add(run_id)
-                try:
-                    verify_producer(root, run_id, stage, branch)
-                    return run_id
-                except ValueError as error:
-                    print(f'Skip {stage} run {run_id}: {error}')
-            if page * 100 >= result['total_count']:
-                return ''
-            page += 1
-    runs = api('actions/workflows/build-unsigned-ipa.yml/runs?event=workflow_dispatch&per_page=30')['workflow_runs']
-    for run in runs:
-        run_id = str(run['id'])
-        if not can_reuse_run(run_id):
-            continue
-        try:
-            verify_producer(root, run_id, stage, branch)
-            return run_id
-        except ValueError as error:
-            print(f"Skip {stage} run {run['id']}: {error}")
-    return ''
+    # Search retained artifacts, not only the last few runs. A compiler may
+    # remain unchanged through many packaging attempts during its lifetime.
+    page = 1
+    checked = set()
+    while True:
+        result = api('actions/artifacts?name=' + artifact_name(stage) + '&per_page=100&page=' + str(page))
+        for artifact in result['artifacts']:
+            run = artifact.get('workflow_run', {})
+            run_id = str(run.get('id', ''))
+            if (artifact.get('expired') or not run_id or run_id in checked
+                    or not can_reuse_run(run_id)):
+                continue
+            checked.add(run_id)
+            try:
+                verify_producer(root, run_id, stage, branch)
+                return run_id
+            except ValueError as error:
+                print(f'Skip {stage} run {run_id}: {error}')
+        if page * 100 >= result['total_count']:
+            return ''
+        page += 1
 
 
 if __name__ == '__main__':
