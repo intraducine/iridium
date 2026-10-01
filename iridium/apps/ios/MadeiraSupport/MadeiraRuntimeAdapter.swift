@@ -196,11 +196,10 @@ enum MadeiraRuntimeAdapter {
                 }
                 guard current() else { return }
                 ws_log_quiet = 1
-                // The embedded iOS wineserver's semaphore wake path can crash while
-                // the first Wine request fd becomes active. Prefer the existing
-                // non-semaphore poll path, but preserve an explicit environment
-                // override so the semaphore path can still be tested diagnostically.
-                setenv("MADEIRA_SRV_NOSEM", "1", 0)
+                // Use Madeira's request-triggered wake path. Fixed polling adds
+                // up to 1 ms to each serial server request. Keep an explicit
+                // MADEIRA_SRV_NOSEM=1 override available for comparisons.
+                setenv("MADEIRA_SRV_NOSEM", "0", 0)
                 guard wineserver_start(prefix.path) == 0 else {
                     failure("Madeira Wine server failed to start. Restart Iridium before retrying.")
                     return
