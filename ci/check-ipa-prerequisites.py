@@ -43,6 +43,7 @@ REQUIRED = {
         "testrepos/Madeira/app/Madeira/i386-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/i386-windows/d3d9.dll",
         "testrepos/Madeira/app/Madeira/prefix-template.tar.gz",
+        "testrepos/Madeira/app/Madeira/fonts/tahoma.ttf",
     ],
     "media and input runtime": [
         "iridium/apps/ios/.build/media/libntdll_media.a",
@@ -50,7 +51,7 @@ REQUIRED = {
         "iridium/apps/ios/MediaRuntime/mfreadwrite.dll",
         "iridium/apps/ios/MediaRuntime/winegstreamer.dll",
         "iridium/apps/ios/ControllerRuntime/arm64ec/xinput.dll",
-        "iridium/apps/ios/ControllerRuntime/arm64ec/iridium-prerequisites.exe",
+        "iridium/apps/ios/ControllerRuntime/aarch64/iridium-prerequisites.exe",
     ],
     "legacy graphics frameworks": [
         "Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework/libEGL",

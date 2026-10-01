@@ -1,16 +1,23 @@
 import IridiumCore
 import IridiumRuntime
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct GameDetailView: View {
     let game: GameRecord
     @ObservedObject var viewModel: AppViewModel
     var locate: () -> Void = {}
+    let launch: () -> Void
     @ObservedObject private var artwork = LibraryArtwork.shared
     @Environment(\.dismiss) private var dismiss
     @State private var rename = false
     @State private var confirmRemoval = false
     @State private var confirmRefresh = false
+    @State private var installerPicker = false
+    @State private var installerURL: URL?
+    @State private var confirmInstaller = false
+    @State private var installerError: String?
+    @Environment(\.menuController) private var controller
 
     var body: some View {
         List {
@@ -30,13 +37,18 @@ struct GameDetailView: View {
             }
             if viewModel.usesMadeiraRuntime {
                 Section {
+                    MenuButton("Run Installer", systemImage: "gearshape") { installerPicker = true }
+                        .disabled(viewModel.isLaunchActionDisabled(for: game))
+                    if viewModel.preparingInstaller { ProgressView("Copying installer…") }
+                } footer: { Text("Choose a Windows installer for this game. The game starts after setup.") }
+                Section {
                     MenuButton("Refresh Game Copy", systemImage: "arrow.clockwise") { confirmRefresh = true }
                         .disabled(viewModel.refreshingGameCopy || viewModel.isLaunchActionDisabled(for: game))
                 } footer: {
                     Text("Refreshes the isolated runtime copy from the imported files. The current copy is kept as a backup. Restart Iridium before refreshing after a game session.")
                 }
             }
-            if viewModel.isLaunchActionDisabled(for: game) {
+            if viewModel.isLaunchActionDisabled(for: game) && !viewModel.preparingInstaller {
                 Section("Before You Play") {
                     Text(viewModel.launchActionDetail(for: game) ?? "Check the game files and runtime settings.")
                     if viewModel.jitStatus != .ready {
@@ -66,7 +78,7 @@ struct GameDetailView: View {
             }
             Section {
                 MenuButton("Remove from Library", role: .destructive) { confirmRemoval = true }
-                    .disabled(viewModel.activeRuntimePlayerSession?.gameID == game.id)
+                    .disabled(viewModel.preparingInstaller || viewModel.activeRuntimePlayerSession?.gameID == game.id)
             } footer: { Text("Removes only this library entry. Game files, artwork, and saves stay on your device.") }
         }
         .iridiumListChrome().navigationTitle("Game Options").navigationBarTitleDisplayMode(.inline)
@@ -92,6 +104,37 @@ struct GameDetailView: View {
             Text("Conflicting files, including any saves stored in the game folder, will be replaced by the imported versions. The complete previous copy is kept in Documents/MadeiraTestPrefixes/<game ID>/game-backup-<ID>. Windows profile saves are not replaced. Updating first copies the entire game and needs extra storage.")
         }
         .sheet(isPresented: $rename) { LibraryAppearanceEditor(game: game, artwork: artwork) }
+        .fileImporter(isPresented: $installerPicker, allowedContentTypes: [
+            UTType(filenameExtension: "exe") ?? .data, UTType(filenameExtension: "msi") ?? .data
+        ]) { result in
+            do { installerURL = try result.get(); confirmInstaller = true }
+            catch let error as CocoaError where error.code == .userCancelled { installerURL = nil }
+            catch { installerError = error.localizedDescription }
+        }
+        .confirmationDialog("Run installer for \(artwork.title(game))?", isPresented: $confirmInstaller, titleVisibility: .visible) {
+            Button("Run Installer") {
+                guard let source = installerURL else { return }
+                installerURL = nil
+                Task {
+                    do {
+                        try await viewModel.prepareInstaller(source, for: game)
+                        dismiss()
+                        launch()
+                    } catch { installerError = error.localizedDescription }
+                }
+            }
+            Button("Cancel", role: .cancel) { installerURL = nil }
+        } message: {
+            Text("\(installerURL?.lastPathComponent ?? "The installer") will run in this game's Windows environment. Complete setup to start the game.")
+        }
+        .alert("Could Not Run Installer", isPresented: Binding(
+            get: { installerError != nil }, set: { if !$0 { installerError = nil } }
+        )) {
+            Button("OK", role: .cancel) { installerError = nil }
+        } message: { Text(installerError ?? "") }
+        .onChange(of: installerPicker || confirmInstaller || installerError != nil) { _, presented in
+            controller?.nativeMenuActive = presented
+        }
         .onChange(of: viewModel.games.map(\.id)) { _, ids in
             if !ids.contains(game.id) { dismiss() }
         }

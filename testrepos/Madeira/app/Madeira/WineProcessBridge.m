@@ -459,6 +459,7 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
  * target take exactly the code path they took before.
  * ========================================================================= */
 #define MADEIRA_IMAGE_FILE_MACHINE_I386 0x014c
+#define MADEIRA_IMAGE_FILE_MACHINE_ARM64 0xaa64
 
 /* build/ntdll-unix/virtual_ios.c: nonzero when this session's MAIN image is
  * 32-bit. The unix side reserves the process's guest window before its first
@@ -1169,8 +1170,9 @@ static void *wine_process_thread(void *arg) {
         /* WoW64: a 32-bit (i386) target, from the PE header on disk rather
          * than the name. Its 64-bit half runs on the plain aarch64 core (the
          * unix loader resolves aarch64-windows for a process whose main image
-         * is i386), whatever the heuristic above chose. Any other target
-         * keeps the heuristic's answer unchanged. */
+         * is i386), whatever the heuristic above chose. Native ARM64
+         * targets also require that core, including full-path installer
+         * helpers. Other targets keep the heuristic's answer unchanged. */
         NSString *bundleForProbe = [[NSBundle mainBundle] bundlePath];
         const BOOL has_i386_set = madeira_bundle_has_i386(bundleForProbe);
         const uint16_t target_machine = madeira_target_machine(madeira_exe, g_prefix_path, bundleForProbe);
@@ -1178,7 +1180,7 @@ static void *wine_process_thread(void *arg) {
         dprintf(STDERR_FILENO, "[WineProc] PE probe: machine=0x%x%s\n", target_machine,
                 is_i386_target ? " (i386: WoW64)" :
                 target_machine == MADEIRA_IMAGE_FILE_MACHINE_I386 ? " (i386, but the bundle has no i386-windows)" : "");
-        if (is_i386_target) use_arm64ec = NO;
+        if (is_i386_target || target_machine == MADEIRA_IMAGE_FILE_MACHINE_ARM64) use_arm64ec = NO;
         const char *bundle_subdir = use_arm64ec ? "arm64ec-windows" : "aarch64-windows";
         LOG("Target exe: %{public}s (bundle=%{public}s)", madeira_exe, bundle_subdir);
         dprintf(STDERR_FILENO, "[WineProc] Target exe: %s (bundle=%s)\n", madeira_exe, bundle_subdir);

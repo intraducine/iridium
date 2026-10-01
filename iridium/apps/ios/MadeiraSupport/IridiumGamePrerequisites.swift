@@ -10,6 +10,97 @@ enum IridiumGamePrerequisites {
         let installerCount: Int
     }
 
+    // Install Wine's bundled fonts without replacing a user's existing fonts.
+    static func installFonts(prefix: URL, resources: Bundle = .main) throws {
+        let fm = FileManager.default
+        guard let source = resources.url(forResource: "fonts", withExtension: nil) else {
+            throw failure("This build is missing its Windows fonts.")
+        }
+        let fonts = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            .filter { $0.pathExtension.lowercased() == "ttf" }
+        guard !fonts.isEmpty else { throw failure("This build is missing its Windows fonts.") }
+        let target = prefix.appendingPathComponent("drive_c/windows/fonts", isDirectory: true)
+        try requireUnlinkedPath(target, under: prefix)
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        for font in fonts {
+            let values = try font.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CocoaError(.fileReadUnsupportedScheme) }
+            let destination = target.appendingPathComponent(font.lastPathComponent)
+            try requireUnlinkedPath(destination, under: prefix)
+            if !fm.fileExists(atPath: destination.path) { try fm.copyItem(at: font, to: destination) }
+        }
+    }
+
+    static func status(prefix: URL) -> String? {
+        let file = prefix.appendingPathComponent("drive_c/IridiumPrerequisites/status.txt")
+        guard (try? requireUnlinkedPath(file, under: prefix)) != nil else { return nil }
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 256), data.count < 256,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        let fields = text.split(whereSeparator: \.isWhitespace)
+        if fields == ["services"] { return "Starting Windows installer services…" }
+        if fields == ["game"] { return "Starting the game. Waiting for display output…" }
+        guard fields.count == 5, fields[0] == "installer",
+              let run = Int(fields[1]), let runs = Int(fields[2]),
+              let process = Int(fields[3]), let processes = Int(fields[4]),
+              (1...64).contains(runs), (1...runs).contains(run),
+              (1...64).contains(processes), (1...processes).contains(process) else { return nil }
+        return "Installing prerequisites: \(run) of \(runs), step \(process) of \(processes). Follow the Windows installer."
+    }
+
+    // Keep the selected file outside drive_c until the ordinary prefix setup finishes.
+    // The generated script uses the same planner, services and success records as Steam.
+    static func queueInstaller(_ source: URL, prefix: URL) throws {
+        let fm = FileManager.default
+        let ext = source.pathExtension.lowercased()
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard ["exe", "msi"].contains(ext), values.isRegularFile == true,
+              values.isSymbolicLink != true else { throw failure("Choose a Windows .exe or .msi installer.") }
+        let handle = try FileHandle(forReadingFrom: source)
+        defer { try? handle.close() }
+        let header = try handle.read(upToCount: 64) ?? Data()
+        if ext == "exe" {
+            guard header.count == 64, header.starts(with: [0x4d, 0x5a]) else {
+                throw failure("This file is not a Windows executable.")
+            }
+            let offset = (0..<4).reduce(UInt64(0)) { $0 | UInt64(header[60 + $1]) << (8 * $1) }
+            try handle.seek(toOffset: offset)
+            guard (try handle.read(upToCount: 4) ?? Data()) == Data([0x50, 0x45, 0, 0]) else {
+                throw failure("This file is not a Windows executable.")
+            }
+        } else {
+            guard header.starts(with: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]) else {
+                throw failure("This file is not a Windows Installer package.")
+            }
+        }
+        let root = prefix.appendingPathComponent("ManualInstaller", isDirectory: true)
+        let id = UUID().uuidString.lowercased()
+        let folder = root.appendingPathComponent(id, isDirectory: true)
+        let script = root.appendingPathComponent("installscript.vdf")
+        try requireUnlinkedPath(folder, under: prefix)
+        try requireUnlinkedPath(script, under: prefix)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        var queued = false
+        defer { if !queued { try? fm.removeItem(at: folder) } }
+        try fm.copyItem(at: source, to: folder.appendingPathComponent("setup." + ext))
+        let text = """
+        "InstallScript" { "Run Process" { "\(id)" {
+          "HasRunKey" "HKLM\\\\Software\\\\Iridium\\\\ManualInstallers"
+          "Process 1" "%INSTALLDIR%\\\\\(id)\\\\setup.\(ext)"
+          "Command 1" ""
+        } } }
+        """
+        try Data(text.utf8).write(to: script, options: .atomic)
+        queued = true
+        // Only generated copies are replaced. The selected source and game saves stay intact.
+        for old in try fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey])
+        where old.lastPathComponent != id && UUID(uuidString: old.lastPathComponent) != nil {
+            try requireUnlinkedPath(old, under: prefix)
+            try fm.removeItem(at: old)
+        }
+    }
+
     // Called by the existing boot worker, before wineserver owns the registry.
     static func prepare(prefix: URL, executable: String, arguments: [String], appID: Int?,
                         sharedRoots: [URL] = [], resources: Bundle = .main) throws -> Launch? {
@@ -24,7 +115,10 @@ enum IridiumGamePrerequisites {
         let machine = try registry("system.reg"), user = try registry("user.reg")
         var found: [IridiumInstallProcess] = []
         var sharedToCopy: [(URL, URL)] = []
-        for (index, root) in ([game] + sharedRoots).enumerated() {
+        let manual = prefix.appendingPathComponent("ManualInstaller", isDirectory: true)
+        try requireUnlinkedPath(manual, under: prefix)
+        let manualRoots = fm.fileExists(atPath: manual.path) ? [manual] : []
+        for (index, root) in ([game] + manualRoots + sharedRoots).enumerated() {
             let installDir = index == 0 ? "C:\\IridiumGame" : "C:\\IridiumPrerequisites\\shared\(index)"
             var pending: [IridiumInstallProcess] = []
             for file in try IridiumSteamInstallScript.scripts(folder: root) {
@@ -43,7 +137,7 @@ enum IridiumGamePrerequisites {
         guard !found.isEmpty else { return nil } // Preserve the ordinary launch path.
         guard found.count <= 64 else { throw failure("This game has too many prerequisite installer steps.") }
         guard let helper = resources.url(forResource: "iridium-prerequisites", withExtension: "exe",
-                                         subdirectory: "ControllerRuntime/arm64ec"),
+                                         subdirectory: "ControllerRuntime/aarch64"),
               resources.url(forResource: "ntdll", withExtension: "dll", subdirectory: "i386-windows") != nil else {
             throw failure("This build is missing its prerequisite installer runtime.")
         }
@@ -53,6 +147,9 @@ enum IridiumGamePrerequisites {
         let cancelFile = folder.appendingPathComponent("cancel.flag")
         try requireUnlinkedPath(cancelFile, under: prefix)
         if fm.fileExists(atPath: cancelFile.path) { try fm.removeItem(at: cancelFile) }
+        let statusFile = folder.appendingPathComponent("status.txt")
+        try requireUnlinkedPath(statusFile, under: prefix)
+        if fm.fileExists(atPath: statusFile.path) { try fm.removeItem(at: statusFile) }
         for (source, destination) in sharedToCopy {
             try MadeiraGamePreparation.validateCompleteTree(source)
             try requireUnlinkedPath(destination, under: prefix)
@@ -170,7 +267,7 @@ enum IridiumGamePrerequisites {
         let root = root.standardizedFileURL
         var current = url.standardizedFileURL
         guard current.path.hasPrefix(root.path + "/") else { throw CocoaError(.fileReadInvalidFileName) }
-        while current != root {
+        while current.path != root.path {
             if (try? current.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
                 throw CocoaError(.fileReadUnsupportedScheme)
             }

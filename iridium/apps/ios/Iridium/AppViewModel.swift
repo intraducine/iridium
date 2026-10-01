@@ -1336,7 +1336,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func removeLibraryEntry(_ game: GameRecord) {
-        guard !refreshingGameCopy else { return }
+        guard !refreshingGameCopy, !preparingInstaller else { return }
         guard activeRuntimePlayerSession?.gameID != game.id, runtimePlayerReservation?.gameID != game.id else { return }
         Task {
             await store.removeLibraryEntry(gameID: game.id)
@@ -1345,7 +1345,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func deleteSteamDownload(_ job: SteamDownloadJob, from steam: SteamLibraryModel) async throws {
-        guard activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+        guard !preparingInstaller, activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
               let path = job.installed?.directory else { throw CocoaError(.fileWriteNoPermission) }
         let registered = games.filter { $0.installPath == path }
         try await steam.deleteFiles(job)
@@ -1354,7 +1354,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func deleteImportedGameFiles(_ game: GameRecord) async throws {
-        guard activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+        guard !preparingInstaller, activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
               games.contains(where: { $0.id == game.id && $0.installPath == game.installPath }),
               !games.contains(where: { $0.id != game.id && $0.installPath == game.installPath }),
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -1906,7 +1906,7 @@ final class AppViewModel: ObservableObject {
         MadeiraLaunchReadiness.issue(
             runtimeAvailable: madeiraRuntimeAvailable,
             executableExists: FileManager.default.fileExists(atPath: buildLaunchSession(for: game, jitStatus: jitStatus).executablePath),
-            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy,
+            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy || preparingInstaller,
             started: MadeiraRuntimeAdapter.started
         )
     }
@@ -2080,12 +2080,34 @@ final class AppViewModel: ObservableObject {
     }
 
     @Published private(set) var refreshingGameCopy = false
+    @Published private(set) var preparingInstaller = false
     @Published private(set) var closingMadeiraSession = false
     @Published private(set) var madeiraShutdownUnconfirmed = false
 
+    func prepareInstaller(_ source: URL, for game: GameRecord) async throws {
+        #if MADEIRA_RUNTIME
+        guard MadeiraRuntimeAdapter.enabled else { throw CocoaError(.featureUnsupported) }
+        if let issue = madeiraLaunchIssue(for: game) {
+            throw NSError(domain: "IridiumPrerequisites", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: issue])
+        }
+        preparingInstaller = true
+        defer { preparingInstaller = false }
+        let prefix = MadeiraGamePreparation.prefix(for: game.id)
+        try await Task.detached(priority: .userInitiated) {
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            try IridiumGamePrerequisites.queueInstaller(source, prefix: prefix)
+        }.value
+        activityStatusMessage = "Installer ready. The game will start after setup."
+        #else
+        throw CocoaError(.featureUnsupported)
+        #endif
+    }
+
     func refreshMadeiraGameCopy(_ game: GameRecord) {
         #if MADEIRA_RUNTIME
-        guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy,
+        guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy, !preparingInstaller,
               activeRuntimePlayerSession == nil, !MadeiraRuntimeAdapter.started else { return }
         refreshingGameCopy = true
         Task {

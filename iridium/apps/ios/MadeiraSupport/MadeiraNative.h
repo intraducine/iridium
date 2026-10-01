@@ -1,6 +1,7 @@
 // Iridium adapter declarations, 2026-09-08. Madeira components retain their licenses.
 #import <Foundation/Foundation.h>
 #import <QuartzCore/CAMetalLayer.h>
+@class UIView;
 #include <stdbool.h>
 #include <stdint.h>
 bool jit_check_debugged(void);
@@ -28,6 +29,12 @@ int wine_process_exit_code(void);
 int wineserver_is_running(void);
 int madeira_request_guest_close(void);
 uint64_t madeira_get_present_count(void);
+uint64_t winios_surface_present_count(void);
+void winios_compositor_attach(UIView * _Nullable);
+void winios_set_compositor_frame(double, double, double, double);
+void winios_set_desktop_rect(double, double, double, double, int);
+int winios_desktop_point_from_window(double, double, int *, int *);
+extern NSString * const MadeiraDesktopFramePresentedNotification;
 void winios_post_key(int, int);
 void winios_post_touch_down(int, int);
 void winios_post_touch_move(int, int);

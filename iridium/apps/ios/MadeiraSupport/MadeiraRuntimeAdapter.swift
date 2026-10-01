@@ -22,6 +22,7 @@ enum MadeiraRuntimeAdapter {
     private static var monitorTask: Task<Void, Never>?
     private static var closeTask: Task<Void, Never>?
     private static var prerequisitePrefix: URL?
+    private(set) static var desktopSession = false
 
     // Lifecycle entry points are called on the main queue. Native boot stays on a worker.
     @MainActor
@@ -112,6 +113,7 @@ enum MadeiraRuntimeAdapter {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
                         madeira_seed_prefix_if_needed(prefix.path)
+                        try IridiumGamePrerequisites.installFonts(prefix: prefix)
                         try MadeiraMediaInstall.install(prefix: prefix)
                         let path = try MadeiraGamePreparation.prepare(
                             executable: URL(fileURLWithPath: executable),
@@ -133,6 +135,7 @@ enum MadeiraRuntimeAdapter {
                         DispatchQueue.main.sync {
                             guard launchID == token, !launchCancelled, !failureReported else { return }
                             prerequisitePrefix = prerequisites == nil ? nil : prefix
+                            desktopSession = prerequisites != nil
                             MadeiraController.start(
                                 prefix: prefix,
                                 touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
@@ -143,6 +146,7 @@ enum MadeiraRuntimeAdapter {
                             // Installers can create 32-bit children after a 64-bit launch.
                             // The GDI table and sync engine are selected once per session.
                             setenv("MADEIRA_GDI_SHARED_SECTION", "1", 1)
+                            setenv("MADEIRA_DESKTOP", "1", 1)
                             setenv("MADEIRA_MADSYNC_SESSION", "0", 1)
                             setenv("MADEIRA_EXE", prerequisites.executable, 1)
                             setenv("IRIDIUM_MADEIRA_ARGS_JSON", try MadeiraLaunchArguments.encode(prerequisites.arguments), 1)
@@ -226,9 +230,20 @@ enum MadeiraRuntimeAdapter {
                     }
                     monitorTask?.cancel()
                     monitorTask = Task { @MainActor in
+                        var lastInstallerStatus: String?
                         while wine_process_is_running() != 0 {
                             do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
                             guard launchID == token else { return }
+                            if let prefix = prerequisitePrefix {
+                                let status = await Task.detached(priority: .utility) {
+                                    IridiumGamePrerequisites.status(prefix: prefix)
+                                }.value
+                                guard launchID == token, !launchCancelled else { return }
+                                if let status, status != lastInstallerStatus {
+                                    lastInstallerStatus = status
+                                    report(status)
+                                }
+                            }
                         }
                         guard !Task.isCancelled, launchID == token else { return }
                         MadeiraController.stop()

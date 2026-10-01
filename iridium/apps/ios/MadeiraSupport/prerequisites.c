@@ -14,6 +14,14 @@
 #define CAP 32768
 static wchar_t executable[CAP], command[CAP], directory[CAP], key[CAP], name[CAP];
 static const wchar_t *config;
+static void status(const char *phase, UINT run, UINT runs, UINT process, UINT processes)
+{
+    FILE *file = fopen("C:\\IridiumPrerequisites\\status.txt", "w");
+    if (!file) return; /* Status reporting must not change installer exit handling. */
+    if (!strcmp(phase, "installer")) fprintf(file, "%s %u %u %u %u\n", phase, run, runs, process, processes);
+    else fprintf(file, "%s\n", phase);
+    fclose(file);
+}
 static BOOL cancelled(void)
 {
     return GetFileAttributesW(L"C:\\IridiumPrerequisites\\cancel.flag") != INVALID_FILE_ATTRIBUTES;
@@ -142,6 +150,7 @@ int wmain(int argc, wchar_t **argv)
     config = argv[1];
     UINT runs = GetPrivateProfileIntW(L"plan", L"runs", 0, config);
     if (!runs || runs > 64) return ERROR_INVALID_DATA;
+    status("services", 0, 0, 0, 0);
     DWORD code = services_start();
     fprintf(stderr, "[Prerequisites] Wine services: %lu\n", code);
     if (code) return code;
@@ -157,6 +166,7 @@ int wmain(int argc, wchar_t **argv)
             if (!field(step, L"executable", executable) || !field(step, L"command", command)
                 || !field(step, L"directory", directory)) return ERROR_INVALID_DATA;
             fprintf(stderr, "[Prerequisites] Running installer %u/%u, process %u/%u\n", i + 1, runs, j + 1, count);
+            status("installer", i + 1, runs, j + 1, count);
             BOOL exited;
             code = run_process(600000, &exited);
             fprintf(stderr, "[Prerequisites] Installer %u process %u exited: %lu\n", i + 1, j + 1, code);
@@ -170,5 +180,6 @@ int wmain(int argc, wchar_t **argv)
     if (!field(L"game", L"executable", executable) || !field(L"game", L"command", command)
         || !field(L"game", L"directory", directory)) return ERROR_INVALID_DATA;
     fprintf(stderr, "[Prerequisites] Complete. Starting the selected game.\n");
+    status("game", 0, 0, 0, 0);
     return run_process(INFINITE, NULL);
 }

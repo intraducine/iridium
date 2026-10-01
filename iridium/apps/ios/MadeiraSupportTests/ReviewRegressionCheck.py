@@ -31,7 +31,7 @@ def main():
             run([compiler, '-swift-version', '5', *flags, *sources, '-o', binary])
             return binary
         if args.group in ('all', 'files'):
-            run([build('imports', [core/'ManagedGameFiles.swift', HERE/'ReviewManagedFilesCheck.swift'])])
+            run([build('imports', [*sorted(core.glob('*.swift')), HERE/'ReviewManagedFilesCheck.swift'])])
             run([build('copies', [support/'MadeiraGamePreparation.swift', HERE/'ReviewGamePreparationCheck.swift'])])
         if args.group in ('all', 'input'):
             run([build('viewport', [views/'RuntimeViewportGeometry.swift', support/'MadeiraLaunchArguments.swift', HERE/'ReviewViewportFocusCheck.swift'])])

@@ -6,7 +6,7 @@ import tempfile
 root = Path(__file__).resolve().parents[4]
 source = (root / "testrepos/Madeira/build/win32u-unix/driver_ios.c").read_text()
 start = source.index("void winios_drv_post_mouse(")
-end = source.index("/* Keyboard sibling", start)
+end = source.index("\n}", start) + 2
 code = r"""
 #include <assert.h>
 #include <stdio.h>
@@ -18,6 +18,9 @@ typedef struct { int x, y; } POINT;
 typedef struct { int type; struct { int dx, dy; unsigned mouseData, dwFlags, time, dwExtraInfo; } mi; } INPUT;
 #define INPUT_MOUSE 0
 #define MOUSEEVENTF_ABSOLUTE 0x8000
+#define MOUSEEVENTF_MOVE 1
+static int winios_direct_cursor_on(void) { return 0; }
+static void winios_report_cursor_pos(void) { assert(0); }
 static int desktop;
 static int winios_desktop_mode(void) { return desktop; }
 static HWND NtUserGetForegroundWindow(void) { return (HWND)1; }

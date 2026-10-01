@@ -214,6 +214,10 @@ class ManualBuildTests(unittest.TestCase):
             helper.mkdir(parents=True)
             (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper"}))
             (helper / "Helper").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
+            with self.assertRaisesRegex(ValueError, "Windows fonts"):
+                packager.check_payload(app)
+            (app / "fonts").mkdir()
+            (app / "fonts/tahoma.ttf").write_bytes(b"font fixture")
             packager.check_payload(app)
             with self.assertRaises(ValueError):
                 packager.executable_path(app, {"CFBundleExecutable": "../outside"})

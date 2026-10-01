@@ -79,12 +79,20 @@ import Foundation
         let prefix = root.appendingPathComponent("prefix")
         let game = prefix.appendingPathComponent("drive_c/IridiumGame")
         let resourcesURL = root.appendingPathComponent("Resources.bundle")
-        for path in ["ControllerRuntime/arm64ec/iridium-prerequisites.exe", "i386-windows/ntdll.dll", "i386-windows/fusion.dll"] {
+        for path in ["ControllerRuntime/aarch64/iridium-prerequisites.exe", "i386-windows/ntdll.dll", "i386-windows/fusion.dll", "fonts/tahoma.ttf"] {
             let file = resourcesURL.appendingPathComponent(path)
             try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data("MZfixture".utf8).write(to: file)
         }
         let resources = Bundle(path: resourcesURL.path)!
+        try IridiumGamePrerequisites.installFonts(prefix: prefix, resources: resources)
+        let font = prefix.appendingPathComponent("drive_c/windows/fonts/tahoma.ttf")
+        let installedFont = try Data(contentsOf: font)
+        precondition(installedFont == Data("MZfixture".utf8))
+        try Data("custom font".utf8).write(to: font)
+        try IridiumGamePrerequisites.installFonts(prefix: prefix, resources: resources)
+        let preservedFont = try Data(contentsOf: font)
+        precondition(preservedFont == Data("custom font".utf8))
         try fm.createDirectory(at: prefix.appendingPathComponent("drive_c/windows/system32"), withIntermediateDirectories: true)
         try Data("MZfixture".utf8).write(to: prefix.appendingPathComponent("drive_c/windows/system32/msiexec.exe"))
         try fm.createDirectory(at: game.appendingPathComponent("redist"), withIntermediateDirectories: true)
@@ -98,6 +106,19 @@ import Foundation
         for name in ["First.exe", "Second.msi", "Third.exe"] { try Data("MZfixture".utf8).write(to: game.appendingPathComponent("redist/" + name)) }
         let launch = try IridiumGamePrerequisites.prepare(prefix: prefix, executable: "C:\\IridiumGame\\Game.exe",
             arguments: ["two words"], appID: 42, resources: resources)!
+        let statusFile = prefix.appendingPathComponent("drive_c/IridiumPrerequisites/status.txt")
+        precondition(IridiumGamePrerequisites.status(prefix: prefix) == nil)
+        for (state, expected) in [("services", "Starting Windows installer services…"),
+                                   ("game", "Starting the game. Waiting for display output…")] {
+            try Data(state.utf8).write(to: statusFile)
+            precondition(IridiumGamePrerequisites.status(prefix: prefix) == expected)
+        }
+        try Data("installer 1 2 3 4".utf8).write(to: statusFile)
+        precondition(IridiumGamePrerequisites.status(prefix: prefix)?.contains("1 of 2, step 3 of 4") == true)
+        for invalid in ["installer 0 2 3 4", "installer 3 2 3 4", "installer 1 65 3 4", "installer 1 2 5 4", "incomplete", String(repeating: "x", count: 256)] {
+            try Data(invalid.utf8).write(to: statusFile)
+            precondition(IridiumGamePrerequisites.status(prefix: prefix) == nil)
+        }
         precondition(launch.installerCount == 2)
         let encoded = try Data(contentsOf: prefix.appendingPathComponent("drive_c/IridiumPrerequisites/installers.ini"))
         precondition(encoded.starts(with: [0xff, 0xfe]))
@@ -130,6 +151,64 @@ import Foundation
         precondition(sharedLaunch?.installerCount == 1)
         precondition(IridiumGamePrerequisites.resolve("C:\\IridiumPrerequisites\\shared1\\setup.EXE", drive: prefix.appendingPathComponent("drive_c")) != nil)
         precondition(IridiumGamePrerequisites.resolve("C:\\..\\save.dat", drive: prefix.appendingPathComponent("drive_c")) == nil)
-        print("PASS: repeated scripts, process ordering, registry thresholds/views, custom imports, shared redist, MSI, argv, fusion, cancellation and save preservation")
+
+        // A file chosen in Game Options must survive prefix creation and JIT relaunch.
+        let manualPrefix = root.appendingPathComponent("manual-prefix")
+        var pe = Data(repeating: 0, count: 68)
+        pe[0] = 0x4d; pe[1] = 0x5a; pe[60] = 64; pe[64] = 0x50; pe[65] = 0x45
+        let installer = root.appendingPathComponent("A \"quoted\" installer.EXE")
+        try pe.write(to: installer)
+        try IridiumGamePrerequisites.queueInstaller(installer, prefix: manualPrefix)
+        precondition(!fm.fileExists(atPath: manualPrefix.appendingPathComponent("drive_c").path))
+        let manualRoot = manualPrefix.appendingPathComponent("ManualInstaller")
+        let manualScript = manualRoot.appendingPathComponent("installscript.vdf")
+        let firstPlan = try Data(contentsOf: manualScript)
+        let runs = try IridiumSteamInstallScript.processes(script: firstPlan, installDir: "C:\\IridiumPrerequisites\\shared1")
+        precondition(runs.count == 1 && runs[0].arguments.isEmpty)
+        let badInstaller = root.appendingPathComponent("bad.exe")
+        for bad in [Data("Not an executable".utf8), Data("MZfixture".utf8), Data(repeating: 0x4d, count: 68)] {
+            try bad.write(to: badInstaller)
+            do { try IridiumGamePrerequisites.queueInstaller(badInstaller, prefix: manualPrefix); preconditionFailure("Invalid executable accepted") }
+            catch { }
+            let retained = try Data(contentsOf: manualScript)
+            precondition(retained == firstPlan)
+        }
+        let link = root.appendingPathComponent("linked.exe")
+        try fm.createSymbolicLink(at: link, withDestinationURL: installer)
+        do { try IridiumGamePrerequisites.queueInstaller(link, prefix: manualPrefix); preconditionFailure("Linked installer accepted") }
+        catch { }
+        try fm.createDirectory(at: manualPrefix.appendingPathComponent("drive_c/IridiumGame"), withIntermediateDirectories: true)
+        let profileSave = manualPrefix.appendingPathComponent("drive_c/save.dat")
+        try Data("unchanged save".utf8).write(to: profileSave)
+        let selected = try IridiumGamePrerequisites.prepare(prefix: manualPrefix, executable: "C:\\IridiumGame\\Game.exe",
+            arguments: [], appID: nil, resources: resources)
+        precondition(selected?.installerCount == 1)
+        let copied = IridiumGamePrerequisites.resolve(runs[0].executable, drive: manualPrefix.appendingPathComponent("drive_c"))!
+        let copiedBytes = try Data(contentsOf: copied)
+        precondition(copiedBytes == pe)
+        let recordedKey = "[Software\\\\Iridium\\\\ManualInstallers] 1\n\"\(runs[0].run.name)\"=dword:00000001\n"
+        try Data(recordedKey.utf8).write(to: manualPrefix.appendingPathComponent("system.reg"))
+        let afterInstall = try IridiumGamePrerequisites.prepare(prefix: manualPrefix, executable: "C:\\IridiumGame\\Game.exe",
+            arguments: [], appID: nil, resources: resources)
+        precondition(afterInstall == nil)
+        let msi = root.appendingPathComponent("setup.msi")
+        try pe.write(to: msi)
+        do { try IridiumGamePrerequisites.queueInstaller(msi, prefix: manualPrefix); preconditionFailure("Invalid MSI accepted") }
+        catch { }
+        try Data([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] + [UInt8](repeating: 0, count: 56)).write(to: msi)
+        try IridiumGamePrerequisites.queueInstaller(msi, prefix: manualPrefix)
+        let remaining = try fm.contentsOfDirectory(at: manualRoot, includingPropertiesForKeys: nil).filter { UUID(uuidString: $0.lastPathComponent) != nil }
+        precondition(remaining.count == 1)
+        try fm.createDirectory(at: manualPrefix.appendingPathComponent("drive_c/windows/system32"), withIntermediateDirectories: true)
+        try Data("MZfixture".utf8).write(to: manualPrefix.appendingPathComponent("drive_c/windows/system32/msiexec.exe"))
+        let msiLaunch = try IridiumGamePrerequisites.prepare(prefix: manualPrefix, executable: "C:\\IridiumGame\\Game.exe",
+            arguments: [], appID: nil, resources: resources)
+        precondition(msiLaunch?.installerCount == 1)
+        let msiPlan = try String(contentsOf: manualPrefix.appendingPathComponent("drive_c/IridiumPrerequisites/installers.ini"), encoding: .utf16)
+        precondition(msiPlan.contains("msiexec.exe") && msiPlan.contains(" /i ") && msiPlan.contains("setup.msi"))
+        let keptSave = try Data(contentsOf: profileSave)
+        let keptSource = try Data(contentsOf: installer)
+        precondition(keptSave == Data("unchanged save".utf8) && keptSource == pe)
+        print("PASS: scripts, registry, shared redist, manual EXE/MSI selection and retry, prefix creation, relaunch, argv, fusion, cancellation and save preservation")
     }
 }

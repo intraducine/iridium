@@ -90,6 +90,8 @@ def check_payload(app):
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != "software.iridium":
         raise ValueError("Expected the Iridium application bundle")
+    if not (app / "fonts/tahoma.ttf").is_file():
+        raise ValueError("The bundled Windows fonts are missing")
     executable = executable_path(app, info)
     if not executable.is_file() or executable.read_bytes()[:4] not in MACHO:
         raise ValueError("App executable is missing or is not Mach-O")

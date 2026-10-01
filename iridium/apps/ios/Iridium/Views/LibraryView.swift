@@ -77,7 +77,7 @@ struct LibraryView: View {
         .navigationDestination(item: $detailGame) { game in
             GameDetailView(game: game, viewModel: viewModel, locate: {
                 relocatingGame = game; requestGameImport()
-            })
+            }, launch: { requestGameLaunch(game) })
         }
         .task(id: "\(viewModel.games.map(\.id))-\(artwork.connected)") { await artwork.prepare(viewModel.games) }
         .alert("Artwork", isPresented: Binding(get: { artwork.error != nil }, set: { if !$0 { artwork.error = nil } })) {

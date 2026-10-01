@@ -822,6 +822,35 @@ extern void winios_screen_size(int *w, int *h);
 extern NSString * const MadeiraDisplayModeChangedNotification;
 
 static UIView *g_compositor_view;
+static __weak UIView *g_compositor_host;
+/* Iridium keeps the desktop inside its render view, below its own menus. */
+void winios_compositor_attach(UIView *host) {
+    NSCAssert(NSThread.isMainThread, @"Compositor ownership belongs to the UI thread");
+    if (g_compositor_host == host && (!g_compositor_view || g_compositor_view.superview == host)) return;
+    g_compositor_host = host;
+    if (g_compositor_view) {
+        [g_compositor_view removeFromSuperview];
+        if (host) [host addSubview:g_compositor_view];
+    }
+}
+
+NSString * const MadeiraDesktopFramePresentedNotification = @"MadeiraDesktopFramePresentedNotification";
+/* Desktop swapchains use their own layer, not Iridium's full-screen layer. */
+@interface WiniosPresentedMetalLayer : CAMetalLayer
+@end
+@implementation WiniosPresentedMetalLayer
+- (id<CAMetalDrawable>)nextDrawable {
+    id<CAMetalDrawable> drawable = [super nextDrawable];
+    [drawable addPresentedHandler:^(id<MTLDrawable> frame) {
+        double time = frame.presentedTime;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:MadeiraDesktopFramePresentedNotification
+                object:nil userInfo:@{ @"time": @(time) }];
+        });
+    }];
+    return drawable;
+}
+@end
 static CALayer *g_desk_bg;               /* teal desktop-area backdrop */
 static CGFloat g_px_to_pt = 1.0 / 3.0;   /* desktop px → screen pt (x, and y unless stretched) */
 static CGFloat g_px_to_pt_y;             /* y scale when the display mode stretches; 0 = same as x */
@@ -994,7 +1023,7 @@ static void winios_ensure_compositor(void) {
     g_desk_bg = [CALayer layer];
     g_desk_bg.backgroundColor = [UIColor colorWithRed:0.0 green:0.502 blue:0.502 alpha:1.0].CGColor;
     [g_compositor_view.layer addSublayer:g_desk_bg];
-    [win addSubview:g_compositor_view];
+    [(g_compositor_host ?: win) addSubview:g_compositor_view];
     winios_layout_compositor();
     fprintf(stderr, "[winios] compositor attached inside presentation frame\n");
     fflush(stderr);
@@ -1153,7 +1182,7 @@ CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd) {
         CAMetalLayer *ml = g_metal_layers[key];
         if (!ml) {
             CALayer *win = winios_layer_for(hwnd, true);
-            ml = [CAMetalLayer layer];
+            ml = [WiniosPresentedMetalLayer layer];
             ml.anchorPoint = CGPointMake(0, 0);
             ml.device = MTLCreateSystemDefaultDevice();
             ml.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -1662,7 +1691,7 @@ void winios_cursor_attach(CAMetalLayer *host) {
     if (g_game_cursor_host != host) {
         g_game_cursor_host = host;
         [g_cursor_layer removeFromSuperlayer];
-        if (host && g_cursor_layer) [host addSublayer:g_cursor_layer];
+        if (g_cursor_layer) [(host ?: g_compositor_view.layer) addSublayer:g_cursor_layer];
     }
     winios_cursor_place();
     [CATransaction commit];

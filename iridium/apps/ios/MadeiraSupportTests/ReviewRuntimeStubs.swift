@@ -34,6 +34,8 @@ enum MadeiraMediaInstall { static func install(prefix: URL) throws {} }
 enum MadeiraSteamEnvironment { static func publish(sourceExecutable: URL, sourceRoot: URL, windowsExecutable: String, registeredAppID: String?) {} }
 enum TouchControllerLayoutStore { static func isEnabled(for id: UUID) -> Bool { false } }
 enum IridiumGamePrerequisites {
+    static func installFonts(prefix: URL) throws {}
+    static func status(prefix: URL) -> String? { nil }
     struct Launch { let executable: String; let arguments: [String]; let installerCount: Int }
     static func sharedRoots(gameRoot: URL, nativeSteamInstall: Bool) -> [URL] { [] }
     static func prepare(prefix: URL, executable: String, arguments: [String], appID: Int?, sharedRoots: [URL]) throws -> Launch? {

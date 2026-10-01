@@ -19,6 +19,7 @@ The GPL-3.0 license is retained in
 - `WineProcessBridge.m`: accept bounded JSON argv arrays from Iridium without space splitting; expose the root process exit code and use atomic liveness state. Preserve the older Madeira developer argument interface.
 - `WineProcessBridge.m`: set Wine's profile user to `madeira` before startup, repair existing `users\mobile` registry paths, and merge legacy profile files without overwriting saves or following directory links.
 - `Winios/Winios.m`: remove the direct per-keystroke trace, including software-keyboard input.
+- `Winios/Winios.m`: attach installer desktops below Iridium's player controls; report desktop Metal frames through drawable-presented callbacks and keep the cursor on the active surface.
 - `WineServerBridge.m`: publish atomic liveness and clear it on thread cleanup, including fatal startup exits. No forced thread cancellation is added.
 
 
@@ -33,7 +34,7 @@ Base revision: `8c050d03f4d89096e1e2e2c8bb44479fffd86619`
 Local modified source paths included in this snapshot:
 - `app/Madeira/ContentView.swift`
 - `app/Madeira/StikJITHelper.swift`
-- `app/Madeira/WineProcessBridge.m`
+- `app/Madeira/WineProcessBridge.m`: select native ARM64 Wine for ARM64 executables by their PE header, including installer helpers given as full Windows paths.
 - `build/madeira-d3d12/deps.sh` and `fetch-converter.sh`: use a checksum-pinned release dependency for hosted builds, retaining an official local-installer override and Apple notices.
 - `build/ntdll-unix/build.sh`
 - `build/ntdll-unix/signal_arm64_ios.c`: handle integer store-pair address updates in both exception paths.

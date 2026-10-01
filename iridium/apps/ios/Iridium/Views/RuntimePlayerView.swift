@@ -24,8 +24,10 @@ private struct PlayerGlassPanel: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if #available(iOS 26.0, macOS 26.0, *) {
             content.glassEffect(.regular, in: .rect(corners: .concentric(minimum: .fixed(24))))
+                .environment(\.colorScheme, .dark)
         } else {
             content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .environment(\.colorScheme, .dark)
         }
     }
 }
@@ -47,6 +49,8 @@ struct RuntimePlayerView: View {
     @State private var touchEventCount = 0
     @State private var frameCount: UInt64 = 0
     @State private var frameSessionIdentifier: String?
+    @State private var desktopVisible = false
+    @State private var memory: RuntimeMemorySnapshot?
     @State private var timing = FrameTiming()
     @State private var framesPerSecond: Double = 0
     @State private var fpsSampleCount: UInt64 = 0
@@ -66,7 +70,7 @@ struct RuntimePlayerView: View {
 
     var body: some View {
         GeometryReader { safeGeometry in
-        ControllerMenuHost(nativeNavigation: launchPresentation.showsArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose, backAction: (launchPresentation.showsArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose) ? {
+        ControllerMenuHost(nativeNavigation: showsLaunchArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose, backAction: (showsLaunchArtwork || controlsVisible || isShowingControls || isShowingDiagnostics || isConfirmingClose) ? {
             if isConfirmingClose { isConfirmingClose = false }
             else if isShowingControls { isShowingControls = false }
             else if isShowingDiagnostics { isShowingDiagnostics = false }
@@ -134,10 +138,10 @@ struct RuntimePlayerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
                     .overlay {
-                        if launchPresentation.showsArtwork {
+                        if showsLaunchArtwork {
                             RuntimeLaunchArtworkView(
                                 session: session, phase: launchPresentation,
-                                safeInsets: safeGeometry.safeAreaInsets, artwork: launchArtwork,
+                                safeInsets: safeGeometry.safeAreaInsets, memory: memory, artwork: launchArtwork,
                                 motionState: launchMotionState,
                                 viewLogs: { deviceKeyboardVisible = false; isShowingDiagnostics = true },
                                 close: { viewModel.dismissActiveRuntimePlayer() }
@@ -149,7 +153,7 @@ struct RuntimePlayerView: View {
                         }
                     }
                     .overlay {
-                        if touchControlsEnabled {
+                        if touchControlsEnabled && launchPresentation == .playing {
                             TouchControllerOverlay(gameID: session.gameID)
                                 .opacity(guestInputEnabled && !deviceKeyboardVisible ? 1 : 0)
                                 .allowsHitTesting(guestInputEnabled && !deviceKeyboardVisible)
@@ -168,7 +172,7 @@ struct RuntimePlayerView: View {
                     }
                     .overlay(alignment: .topTrailing) {
                         VStack(alignment: .trailing, spacing: 12) {
-                            if launchPresentation.showsArtwork || !touchControlsEnabled || controlsVisible {
+                            if showsLaunchArtwork || desktopVisible || !touchControlsEnabled || controlsVisible {
                                 Button {
                                     withOptionalAnimation { controlsVisible.toggle() }
                                 } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
@@ -223,24 +227,43 @@ struct RuntimePlayerView: View {
                         .foregroundStyle(.white)
                     }
                 .overlay(alignment: .bottomLeading) {
-                    if showPerformance && !launchPresentation.showsArtwork {
+                    if showPerformance && !showsLaunchArtwork {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(framesPerSecond, specifier: "%.1f") FPS · \(timing.milliseconds, specifier: "%.1f") ms")
                         Text("1% low \(timing.low.map { String(format: "%.1f", $0) } ?? "—") · high \(timing.high.map { String(format: "%.1f", $0) } ?? "—")")
+                        if let memory { RuntimeMemoryReadout(memory: memory) }
                     }
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16).padding(.vertical, 12)
+                    .frame(width: min(280, max(0, safeGeometry.size.width - safeGeometry.safeAreaInsets.leading - safeGeometry.safeAreaInsets.trailing - 32)), alignment: .leading)
                     .modifier(PlayerGlassPanel())
+                    .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("playerPerformancePanel")
                     .padding(.leading, max(16, safeGeometry.safeAreaInsets.leading + 12))
                     .padding(.bottom, max(12, safeGeometry.safeAreaInsets.bottom + 8))
                     .allowsHitTesting(false)
-                    .accessibilityLabel("Performance. FPS and frame time. One percent low and high over the latest 600 frames.")
+                    .accessibilityHint("One percent low and high use the latest 600 frames.")
                 }
+                }
+                .overlay(alignment: .topLeading) {
+                    if desktopVisible && launchPresentation == .starting {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(session.statusSummary).font(.callout)
+                            if let memory { RuntimeMemoryReadout(memory: memory) }
+                        }
+                        .foregroundStyle(.white)
+                        .padding(12)
+                        .frame(maxWidth: min(340, max(160, safeGeometry.size.width - safeGeometry.safeAreaInsets.leading - safeGeometry.safeAreaInsets.trailing - 84)), alignment: .leading)
+                        .modifier(PlayerGlassPanel())
+                        .padding(.top, safeGeometry.safeAreaInsets.top + 12)
+                        .padding(.leading, max(16, safeGeometry.safeAreaInsets.leading + 12))
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("playerInstallerStatus")
+                    }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    if let inputNotice, !launchPresentation.showsArtwork {
+                    if let inputNotice, !showsLaunchArtwork {
                         Label(inputNotice, systemImage: inputNoticeSymbol)
                             .font(.callout.weight(.medium))
                             .foregroundStyle(.white)
@@ -280,6 +303,14 @@ struct RuntimePlayerView: View {
                             RuntimeLogCapture.startupSummaries(offsets: previousOffsets)
                         }.value
                         logOffsets = batch.offsets
+                        memory = RuntimeMemorySnapshot.sample()
+                        #if MADEIRA_RUNTIME
+                        if MadeiraRuntimeAdapter.desktopSession && !desktopVisible && winios_surface_present_count() > 0 {
+                            desktopVisible = true
+                            onLaunchReady()
+                            updatePointerCapture()
+                        }
+                        #endif
                         let stamp = Date.now.formatted(date: .omitted, time: .standard)
                         totalLogEntries += batch.events.count
                         startupEvents.append(contentsOf: batch.events.map { "[\(stamp)] \($0)" })
@@ -357,7 +388,7 @@ struct RuntimePlayerView: View {
                     Text("The device-keyboard bridge supports basic US-layout letters, numbers, and symbols. This insertion contained an unsupported character; nothing from that insertion was sent.")
                 }
                 .onKeyPress(.escape) {
-                    guard controlsVisible || launchPresentation.showsArtwork else { return .ignored }
+                    guard controlsVisible || showsLaunchArtwork else { return .ignored }
                     controlsVisible.toggle()
                     return .handled
                 }
@@ -411,6 +442,10 @@ struct RuntimePlayerView: View {
         )
     }
 
+    private var showsLaunchArtwork: Bool {
+        launchPresentation.showsArtwork && !(desktopVisible && launchPresentation == .starting)
+    }
+
     private var inputSettingsSheet: some View {
         NavigationStack {
             if let game = viewModel.games.first(where: { $0.id == session.gameID }) {
@@ -446,7 +481,7 @@ struct RuntimePlayerView: View {
     }
 
     private var guestInputEnabled: Bool {
-        launchPresentation == .playing && !controlsVisible && !isShowingDiagnostics && !isShowingControls
+        (launchPresentation == .playing || (desktopVisible && session.state == .running)) && !controlsVisible && !isShowingDiagnostics && !isShowingControls
             && !isConfirmingClose && !keyboardInputRejected && !viewModel.closingMadeiraSession
     }
 
@@ -676,6 +711,8 @@ private final class RuntimePlayerHostView: UIView {
             madeira_display_set_layer(madeiraLayer)
             NotificationCenter.default.addObserver(self, selector: #selector(displayModeChanged),
                 name: .MadeiraDisplayModeChanged, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(desktopFramePresented(_:)),
+                name: .MadeiraDesktopFramePresented, object: nil)
             addInteraction(UIPointerInteraction(delegate: self))
             softwareKeyboardView.isAccessibilityElement = false
             softwareKeyboardView.accessibilityElementsHidden = true
@@ -721,7 +758,11 @@ private final class RuntimePlayerHostView: UIView {
         if MadeiraRuntimeAdapter.enabled {
             // Presentation-only size; never change drawableSize here.
             madeiraLayer.frame = renderViewportFrame()
-            winios_cursor_attach(madeiraLayer)
+            winios_compositor_attach(self)
+            winios_set_compositor_frame(0, 0, Double(bounds.width), Double(bounds.height))
+            let viewport = renderViewportFrame()
+            winios_set_desktop_rect(Double(viewport.minX), Double(viewport.minY), Double(viewport.width), Double(viewport.height), 1)
+            winios_cursor_attach(MadeiraRuntimeAdapter.desktopSession ? nil : madeiraLayer)
         }
         #endif
     }
@@ -730,7 +771,7 @@ private final class RuntimePlayerHostView: UIView {
         super.didMoveToWindow()
         if window == nil {
             #if MADEIRA_RUNTIME
-            if MadeiraRuntimeAdapter.enabled { MadeiraHardwareInput.stop(); winios_cursor_attach(nil) }
+            if MadeiraRuntimeAdapter.enabled { MadeiraHardwareInput.stop(); winios_cursor_attach(nil); winios_compositor_attach(nil) }
             #endif
             stopDisplayLink()
         } else {
@@ -742,9 +783,18 @@ private final class RuntimePlayerHostView: UIView {
         }
     }
 
+    #if MADEIRA_RUNTIME
+    @objc private func desktopFramePresented(_ notification: Notification) {
+        guard MadeiraRuntimeAdapter.desktopSession, acceptsPresentedFrames, window != nil,
+              let time = notification.userInfo?["time"] as? Double, time.isFinite, time > 0 else { return }
+        recordPresentedFrame(at: time)
+    }
+    #endif
+
     func setInputState(enabled: Bool, keyboard: Bool) {
         guestInputEnabled = enabled
         wantsDeviceKeyboard = keyboard
+        setNeedsLayout()
         if !keyboard { keyboardFrame = nil; setNeedsLayout() }
         applyInputFocus()
     }
@@ -813,7 +863,14 @@ private final class RuntimePlayerHostView: UIView {
         }
         var size = CGSize(width: configuration.surfaceWidth, height: configuration.surfaceHeight)
         #if MADEIRA_RUNTIME
-        if MadeiraRuntimeAdapter.enabled { size = madeiraLayer.drawableSize }
+        if MadeiraRuntimeAdapter.enabled {
+            size = madeiraLayer.drawableSize
+            if MadeiraRuntimeAdapter.desktopSession {
+                var width: Int32 = 0, height: Int32 = 0
+                winios_screen_size(&width, &height)
+                if width > 0 && height > 0 { size = CGSize(width: Int(width), height: Int(height)) }
+            }
+        }
         #endif
         return RuntimeViewportGeometry.aspectFitFrame(in: bounds, bottomOcclusion: occlusion, surfaceSize: size)
     }
@@ -1158,14 +1215,22 @@ private final class RuntimePlayerHostView: UIView {
     }
 
     private var loggedSystemPointer = false
+    private func winePoint(_ point: CGPoint) -> (Int32, Int32)? {
+        if MadeiraRuntimeAdapter.desktopSession {
+            var x: Int32 = 0, y: Int32 = 0
+            // The compositor is attached to this host, so its mapping uses host points.
+            if winios_desktop_point_from_window(Double(point.x), Double(point.y), &x, &y) != 0 { return (x, y) }
+        }
+        let size = madeiraLayer.drawableSize
+        return MadeiraPointerContact.position(
+            x: Double(normalizedPoint(point).x), y: Double(normalizedPoint(point).y),
+            width: Double(size.width), height: Double(size.height)
+        )
+    }
     fileprivate func moveSystemPointer(to point: CGPoint) {
         guard MadeiraRuntimeAdapter.enabled, isRunning, MadeiraHardwareInput.acceptingInput,
               !MadeiraHardwareInput.usesRawMouse else { return }
-        let size = madeiraLayer.drawableSize
-        if let (x, y) = MadeiraPointerContact.position(
-            x: Double(normalizedPoint(point).x), y: Double(normalizedPoint(point).y),
-            width: Double(size.width), height: Double(size.height)
-        ) {
+        if let (x, y) = winePoint(point) {
             winios_pointer(x, y, 0x8001, 0)
             if !loggedSystemPointer {
                 loggedSystemPointer = true
@@ -1202,11 +1267,7 @@ private final class RuntimePlayerHostView: UIView {
                     continue
                 }
                 let point = touch.location(in: self)
-                let size = madeiraLayer.drawableSize
-                guard let (x, y) = MadeiraPointerContact.position(
-                    x: Double(normalizedPoint(point).x), y: Double(normalizedPoint(point).y),
-                    width: Double(size.width), height: Double(size.height)
-                ) else { continue }
+                guard let (x, y) = winePoint(point) else { continue }
                 let id = UInt64(UInt(bitPattern: Unmanaged.passUnretained(touch).toOpaque()))
                 if let flags = pointerContact.flags(id: id, phase: phase) {
                     winios_pointer(x, y, flags, 0)

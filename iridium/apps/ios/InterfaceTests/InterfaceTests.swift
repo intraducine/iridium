@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class InterfaceTests: XCTestCase {
     func testTouchControllerQuickTap() {
@@ -83,6 +84,8 @@ final class InterfaceTests: XCTestCase {
         app.launchArguments = ["--player"]
         XCUIDevice.shared.orientation = .portrait
         app.launch()
+        XCTAssertTrue(app.buttons["Player Menu"].waitForExistence(timeout: 10))
+        app.buttons["Player Menu"].tap()
         XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 10))
         XCTAssertGreaterThan(app.buttons["Player Menu"].frame.minY, 60)
         app.buttons["Resume"].tap()
@@ -91,6 +94,9 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(launch.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(launch.frame.minY, 60)
         XCTAssertLessThan(launch.frame.maxX, app.frame.maxX - 8)
+        let memory = app.descendants(matching: .any)["playerMemoryStatus"]
+        XCTAssertTrue(memory.waitForExistence(timeout: 5))
+        XCTAssertLessThan(memory.frame.maxX, app.frame.maxX - 8)
         capture("player-safe-portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -99,7 +105,45 @@ final class InterfaceTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
         XCTAssertGreaterThan(launch.frame.minX, 55)
         XCTAssertGreaterThanOrEqual(launch.frame.minY, 10)
+        XCTAssertLessThan(memory.frame.maxY, app.frame.maxY)
         capture("player-safe-landscape")
+    }
+
+    func testPerformancePanelFitsWithMemoryBudget() {
+        checkPerformancePanel(contentSize: nil)
+    }
+
+    func testPerformancePanelFitsWithLargeText() {
+        checkPerformancePanel(contentSize: UIContentSizeCategory.accessibilityExtraLarge.rawValue)
+    }
+
+    private func checkPerformancePanel(contentSize: String?) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--launch-presentation", "--launch-frame-immediate", "--covers", "--memory-budget"]
+        if let contentSize { app.launchArguments += ["-UIPreferredContentSizeCategoryName", contentSize] }
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 10))
+        app.buttons["Play"].tap()
+        XCTAssertTrue(app.buttons["Player Menu"].waitForExistence(timeout: 10))
+        app.buttons["Player Menu"].tap()
+        app.switches["Pin Performance HUD"].tap()
+        app.buttons["Resume"].tap()
+        let panel = app.descendants(matching: .any)["playerPerformancePanel"]
+        XCTAssertTrue(panel.waitForExistence(timeout: 10))
+        if contentSize != nil { XCTAssertGreaterThan(panel.frame.height, 150, "Large text must actually be active") }
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = orientation
+            let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let landscape = app.frame.width > app.frame.height
+                return landscape == (orientation != .portrait) && panel.frame.width <= 281
+                    && panel.frame.minX >= 15 && panel.frame.minY >= 10 && panel.frame.maxY <= app.frame.maxY - 8
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
+            XCTAssertTrue(panel.label.contains("App RAM"))
+            XCTAssertTrue(panel.label.contains("Available to app"))
+            capture("performance-panel-\(orientation.rawValue)")
+        }
     }
 
     func testPresentedPlayerClose() {

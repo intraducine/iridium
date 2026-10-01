@@ -7,10 +7,13 @@ root = Path(__file__).resolve().parents[4]
 source = (root / "testrepos/Madeira/build/win32u-unix/driver_ios.c").read_text()
 start = source.index("void winios_drv_post_key(")
 end = source.index("/* [winios-tree]", start)
+helper_start = source.index("static UINT winios_key_extended_flag(")
+helper_end = source.index("/* end winios_key_extended_flag */", helper_start)
 prefix = r"""
 #include <assert.h>
 #include <stdio.h>
 #include <stddef.h>
+#include <stdlib.h>
 typedef unsigned UINT;
 typedef unsigned NTSTATUS;
 static void winios_log_input(const char *kind, unsigned code, NTSTATUS status) {}
@@ -19,6 +22,12 @@ typedef struct { int type; struct { unsigned wVk, wScan, dwFlags, time, dwExtraI
 #define KEYEVENTF_EXTENDEDKEY 1
 #define MAPVK_VK_TO_VSC_EX 4
 #define VK_PRIOR 0x21
+#define VK_NEXT 0x22
+#define VK_END 0x23
+#define VK_HOME 0x24
+#define VK_LEFT 0x25
+#define VK_UP 0x26
+#define VK_RIGHT 0x27
 #define VK_DOWN 0x28
 #define VK_INSERT 0x2d
 #define VK_DELETE 0x2e
@@ -61,7 +70,7 @@ int main(void) {
 """
 with tempfile.TemporaryDirectory() as d:
     c=Path(d)/"keys.c"
-    c.write_text(prefix+source[start:end]+test)
+    c.write_text(prefix+source[helper_start:helper_end]+source[start:end]+test)
     exe=Path(d)/"keys"
     subprocess.run(["xcrun","clang",str(c),"-o",str(exe)],check=True)
     subprocess.run([str(exe)],check=True)
