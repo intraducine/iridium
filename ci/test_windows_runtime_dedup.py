@@ -58,6 +58,7 @@ class WindowsRuntimeDedupTests(unittest.TestCase):
         return canonical, alias
 
     def minimal_app(self):
+        self.write("fonts/tahoma.ttf", b"font fixture")
         self.write("Info.plist", plistlib.dumps({
             "CFBundleIdentifier": "software.iridium", "CFBundleExecutable": "Iridium"}))
         self.write("Iridium", bytes.fromhex("cffaedfe") + b"host")
