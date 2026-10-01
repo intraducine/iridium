@@ -14,7 +14,7 @@ final class NativeState: @unchecked Sendable {
     var cancelCount: Int { lock.lock(); defer { lock.unlock() }; return cancels }
     func event(_ key: Int32, _ down: Int32) {
         lock.lock(); recorded.append((key,down))
-        if key == 0x73 && down == 0 && scenario != "close-timeout" { wine=0; server=0 }
+        if key == 0x73 && down == 0 && !scenario.hasSuffix("close-timeout") { wine=0; server=0 }
         lock.unlock()
     }
 }
@@ -35,12 +35,12 @@ enum MadeiraSteamEnvironment { static func publish(sourceExecutable: URL, source
 enum TouchControllerLayoutStore { static func isEnabled(for id: UUID) -> Bool { false } }
 enum IridiumGamePrerequisites {
     static func installFonts(prefix: URL) throws {}
-    static func status(prefix: URL) -> String? { nil }
+    static func status(prefix: URL) -> String? { "Installing fixture prerequisites" }
     struct Launch { let executable: String; let arguments: [String]; let installerCount: Int }
     static func sharedRoots(gameRoot: URL, nativeSteamInstall: Bool) -> [URL] { [] }
     static func prepare(prefix: URL, executable: String, arguments: [String], appID: Int?, sharedRoots: [URL]) throws -> Launch? {
         if scenario == "prerequisite-failure" { throw CocoaError(.fileReadCorruptFile) }
-        return ["prerequisite-success", "prerequisite-cancel"].contains(scenario) ? Launch(executable: "C:\\helper.exe", arguments: ["C:\\plan.ini"], installerCount: 1) : nil
+        return ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout"].contains(scenario) ? Launch(executable: "C:\\helper.exe", arguments: ["C:\\plan.ini"], installerCount: 1) : nil
     }
     static func cancel(prefix: URL) throws { NativeState.shared.cancelPrerequisites() }
 }
@@ -98,4 +98,4 @@ func winios_post_touch_up(_ x:Int32,_ y:Int32) {}
 func winios_post_touch_move(_ x:Int32,_ y:Int32) {}
 func winios_display_mode_changed(_ w:Int32,_ h:Int32) {}
 func winios_screen_size(_ w:inout Int32,_ h:inout Int32) { w=960; h=540 }
-func madeira_request_guest_close()->Int32 { if scenario != "close-timeout" { NativeState.shared.write(0,0); NativeState.shared.write(1,0) }; return 1 }
+func madeira_request_guest_close()->Int32 { if !scenario.hasSuffix("close-timeout") { NativeState.shared.write(0,0); NativeState.shared.write(1,0) }; return 1 }

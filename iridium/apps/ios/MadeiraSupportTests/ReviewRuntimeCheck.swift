@@ -33,7 +33,7 @@ import Foundation
         }
         precondition(!reports.isEmpty && failures.isEmpty, "startup did not report readiness: \(failures)")
         precondition(NativeState.shared.startCount == 1)
-        if ["prerequisite-success", "prerequisite-cancel"].contains(scenario) {
+        if ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout"].contains(scenario) {
             precondition(String(cString: getenv("MADEIRA_EXE")) == "C:\\helper.exe")
             precondition(String(cString: getenv("IRIDIUM_MADEIRA_ARGS_JSON")) == "[\"C:\\\\plan.ini\"]")
             precondition(String(cString: getenv("MADEIRA_GDI_SHARED_SECTION")) == "1")
@@ -48,12 +48,18 @@ import Foundation
             precondition(exits == 1 && !MadeiraController.active)
         } else {
             var closed:Bool?
+            let reportCountBeforeClose = reports.count
             MadeiraRuntimeAdapter.requestClose { closed=$0 }
             let deadline=ProcessInfo.processInfo.systemUptime+10
             while closed == nil && ProcessInfo.processInfo.systemUptime < deadline { try await Task.sleep(nanoseconds:10_000_000) }
-            if scenario == "close-timeout" {
+            if scenario.hasSuffix("close-timeout") {
                 precondition(closed == false, "timeout incorrectly confirmed a running guest")
                 precondition(wine_process_is_running() != 0)
+                precondition(exits == 0, "running guest reported as exited")
+                precondition(reports.count == reportCountBeforeClose, "cancelled installer still reports status")
+                if scenario == "prerequisite-close-timeout" {
+                    precondition(NativeState.shared.cancelCount >= 1)
+                }
                 NativeState.shared.write(0,0); NativeState.shared.write(1,0)
                 try await Task.sleep(nanoseconds:400_000_000)
                 precondition(exits == 1, "monitor lost after close timeout")

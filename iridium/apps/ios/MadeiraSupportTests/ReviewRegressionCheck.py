@@ -56,7 +56,7 @@ def main():
                 under_test, HERE/'ReviewRuntimeCheck.swift'], ['-D','BUILTIN_STIKJIT'])
             cases=['prepare-failure','prerequisite-failure','prerequisite-success','prerequisite-cancel','jit-failure','pool-failure','arena-failure','server-failure',
                    'server-died','wine-failure','builtin-start-failure','builtin-detach-failure',
-                   'cancel-startup','success','duplicate-jit','process-exit','close-timeout']
+                   'cancel-startup','success','duplicate-jit','process-exit','close-timeout','prerequisite-close-timeout']
             for case in cases:
                 run([binary, case])
     print('PASS focused review regression checks. UIKit and real native-runtime behavior remain untested.', flush=True)

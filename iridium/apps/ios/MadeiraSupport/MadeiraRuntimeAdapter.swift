@@ -237,8 +237,10 @@ enum MadeiraRuntimeAdapter {
                                 let status = await Task.detached(priority: .utility) {
                                     IridiumGamePrerequisites.status(prefix: prefix)
                                 }.value
-                                guard launchID == token, !launchCancelled else { return }
-                                if let status, status != lastInstallerStatus {
+                                guard launchID == token else { return }
+                                // Close cancels status reporting, not terminal observation:
+                                // the guest may exit after the bounded close wait times out.
+                                if !launchCancelled, let status, status != lastInstallerStatus {
                                     lastInstallerStatus = status
                                     report(status)
                                 }
