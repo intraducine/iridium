@@ -58,7 +58,31 @@ import Foundation
                   "Repair source follows an iOS container change")
         let receipt = try JSONEncoder().encode(recovered.jobs.first(where: { $0.id == first.id })!.installed!)
         try receipt.write(to: movedContent.deletingLastPathComponent().appendingPathComponent("installed.json"))
+        // Old repairs/variants remain nested; new repairs are siblings of builds.
+        let retainedPaths = ["42/99/checks/legacy/content", "42/99/variants/german/content",
+                             "42/installs/new-repair/content"]
+        for path in retainedPaths {
+            let directory = movedRoot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("repaired game and saves".utf8).write(to: directory.appendingPathComponent("game.exe"))
+        }
+        let registeredRepairPath = movedRoot.appendingPathComponent(retainedPaths[0]).path
+        try check(!SteamManagedFiles.overlaps(movedContent.path, registeredRepairPath),
+                  "Original payload deletion does not overlap a legacy repair library entry")
+        try check(SteamManagedFiles.overlaps(movedContent.path, movedContent.appendingPathComponent("nested/content").path),
+                  "Nested active or reuse paths are protected")
+        try check(!SteamManagedFiles.overlaps(movedContent.path, movedContent.path + "-other"),
+                  "Path overlap uses component boundaries")
+        let alias = movedRoot.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: movedContent)
+        try check(SteamManagedFiles.overlaps(movedContent.path, alias.path), "Aliased active paths are protected")
         try SteamManagedFiles.delete(recovered.jobs.first(where: { $0.id == first.id })!, from: movedRoot)
+        for path in retainedPaths {
+            try check(try Data(contentsOf: movedRoot.appendingPathComponent(path + "/game.exe")) == Data("repaired game and saves".utf8),
+                      "Delete original preserves repair/variant payload and library target")
+        }
+        try check(!FileManager.default.fileExists(atPath: movedContent.deletingLastPathComponent().appendingPathComponent("installed.json").path),
+                  "Original receipt is removed")
         try check(!FileManager.default.fileExists(atPath: movedContent.path), "Explicit deletion frees the managed install")
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent("steam-outside-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: outside) }

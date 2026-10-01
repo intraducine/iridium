@@ -292,7 +292,8 @@ final class SteamLibraryModel: ObservableObject {
         guard !busy, job.status == .completed, let installed = job.installed,
               queue.jobs.contains(where: { $0.id == job.id && $0.installed?.directory == installed.directory }),
               !queue.jobs.contains(where: { $0.id != job.id &&
-                  ($0.installed?.directory == installed.directory || ($0.isPending && $0.reuseDirectory == installed.directory)) })
+                  ($0.installed.map { SteamManagedFiles.overlaps($0.directory, installed.directory) } == true ||
+                   ($0.isPending && $0.reuseDirectory.map { SteamManagedFiles.overlaps($0, installed.directory) } == true)) })
         else { throw CocoaError(.fileWriteNoPermission) }
         starting = true
         defer { starting = false; startNext() }

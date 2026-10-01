@@ -107,7 +107,11 @@ public sealed record SteamInstallLayout(string RelativeRoot, string Content, str
             if (!Guid.TryParse(operationId, out var operation))
                 throw new SteamFailure("Start a new queued repair to preserve the existing installation.");
             reuseDirectory ??= original;
-            relative += "/checks/" + operation.ToString("N");
+            // New repairs are siblings of build folders, never children of an
+            // installation. Keep an existing legacy partial repair resumable.
+            var legacy = relative + "/checks/" + operation.ToString("N");
+            relative = Directory.Exists(VerifiedFiles.SafePath(root, legacy))
+                ? legacy : $"{appId}/installs/{operation:N}";
         }
         var content = VerifiedFiles.SafePath(root, relative + "/content");
         if (content == reuseDirectory)

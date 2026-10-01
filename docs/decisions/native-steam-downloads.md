@@ -72,7 +72,11 @@ Resume checks saved chunks rather than trusting UI progress or sparse file lengt
 The storage check credits only verified partial chunks. Updates and repairs can
 reuse matching chunks from a previous installation without downloading them again.
 They produce an isolated operation directory, never edit a committed installation,
-never hard-link writable game files, and never delete the older version. A cancelled
+never hard-link writable game files, and never delete the older version. New repairs use `app-id/installs/operation-uuid` outside the original build folder.
+Existing nested `checks` partials remain resumable. Explicit deletion removes only
+an installation's `content`, `partial`, and receipt, preserving nested repairs and
+variants from older versions. No automatic move or save migration is performed.
+A cancelled
 or failed operation does not produce a successful receipt.
 
 Registering a repaired/updated app preserves its game identity, prefix, save mapping,

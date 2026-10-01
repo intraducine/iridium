@@ -199,6 +199,12 @@ enum SteamQueueError: LocalizedError {
 }
 
 enum SteamManagedFiles {
+    static func overlaps(_ first: String, _ second: String) -> Bool {
+        let a = URL(fileURLWithPath: first).resolvingSymlinksInPath().standardizedFileURL.path
+        let b = URL(fileURLWithPath: second).resolvingSymlinksInPath().standardizedFileURL.path
+        return a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+    }
+
     static func delete(_ job: SteamDownloadJob, from root: URL) throws {
         guard job.status == .completed, let installed = job.installed,
               installed.appId == job.appId else { throw CocoaError(.fileReadInvalidFileName) }
@@ -212,7 +218,16 @@ enum SteamManagedFiles {
               let receipt = try? Data(contentsOf: folder.appendingPathComponent("installed.json")),
               let recorded = try? JSONDecoder().decode(SteamDownloadedGame.self, from: receipt),
               recorded.appId == job.appId else { throw CocoaError(.fileReadInvalidFileName) }
-        try FileManager.default.removeItem(at: folder)
+        // The legacy build folder may also own variants and completed repairs.
+        // Only this receipt's payload and staging files belong to this install.
+        let manager = FileManager.default
+        for name in ["content", "partial", "installed.json"] {
+            let item = folder.appendingPathComponent(name)
+            if manager.fileExists(atPath: item.path) { try manager.removeItem(at: item) }
+        }
+        if try manager.contentsOfDirectory(atPath: folder.path).isEmpty {
+            try manager.removeItem(at: folder)
+        }
     }
 }
 

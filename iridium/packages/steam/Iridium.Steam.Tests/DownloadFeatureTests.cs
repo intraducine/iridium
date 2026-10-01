@@ -49,6 +49,11 @@ internal static class DownloadFeatureTests
             Directory.CreateDirectory(original.Content);
             File.WriteAllText(Path.Combine(root, "42/99/installed.json"), "{}");
             var repair = SteamInstallLayout.Resolve(root, 42, "99", options, operation, original.Content);
+            Check(!repair.Content.StartsWith(Path.GetDirectoryName(original.Content)! + Path.DirectorySeparatorChar, StringComparison.Ordinal), "repair is outside original deletion boundary");
+            var legacyOperation = Guid.NewGuid();
+            var legacyRoot = Path.Combine(root, "42/99/checks", legacyOperation.ToString("N"));
+            Directory.CreateDirectory(Path.Combine(legacyRoot, "partial"));
+            Check(SteamInstallLayout.Resolve(root, 42, "99", options, legacyOperation.ToString(), original.Content).Partial == Path.Combine(legacyRoot, "partial"), "existing legacy repair partial remains resumable");
             Check(repair.Content != original.Content && repair.ReuseDirectory == original.Content, "repair preserves the committed source folder");
             Check(repair == SteamInstallLayout.Resolve(root, 42, "99", options, operation, original.Content), "same queued repair resumes same partial folder");
             Check(repair.Content != SteamInstallLayout.Resolve(root, 42, "99", options, Guid.NewGuid().ToString(), original.Content).Content, "different repair does not overwrite another installation");
@@ -84,6 +89,9 @@ internal static class DownloadFeatureTests
             Check(File.ReadAllBytes(sourceFile).SequenceEqual(bytes), "repair source remains unchanged");
             File.WriteAllText(Path.Combine(repair.Content, file.FileName), "modified copy");
             Check(File.ReadAllBytes(sourceFile).SequenceEqual(bytes), "repair output is not hard-linked to source");
+
+            Directory.Delete(Path.GetDirectoryName(original.Content)!, recursive: true);
+            Check(File.ReadAllText(Path.Combine(repair.Content, file.FileName)) == "modified copy", "original removal preserves completed repair");
 
             var partialRoot = Path.Combine(root, "partial-test");
             var newRoot = Path.Combine(root, "new-test");
