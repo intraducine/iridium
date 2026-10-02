@@ -46,6 +46,7 @@ struct ArtworkImage: View {
             '-sdk', sdk, '-target', 'arm64-apple-ios18.0', '-swift-version', '5',
             str(app / 'SteamDownloadQueue.swift'),
             str(app / 'SteamLibraryModel.swift'),
+            str(app / 'RuntimeLogCapture.swift'),
             str(app / 'LibraryController.swift'),
             str(app / 'Views/LibraryChrome.swift'),
             str(app / 'Views/SteamLibraryView.swift'), str(host),

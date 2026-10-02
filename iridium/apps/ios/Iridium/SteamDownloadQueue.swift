@@ -40,6 +40,67 @@ struct SteamGameDetails: Decodable, Sendable {
     let dlcAppIds: [UInt32]
 }
 
+// Matches the native capacity callback's fixed source values. This deliberately
+// prefers user-initiated-download capacity over immediately unused blocks.
+enum SteamStorageCapacity {
+    static func select(important: () -> Int64?, available: () -> Int64?) -> (bytes: Int64, source: Int32) {
+        if let bytes = important(), bytes >= 0 { return (bytes, 1) }
+        if let bytes = available(), bytes >= 0 { return (bytes, 2) }
+        return (-1, 0)
+    }
+
+    static func measure(at destination: URL) -> (bytes: Int64, source: Int32) {
+        select(important: {
+            #if canImport(Darwin)
+            return try? destination.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                .volumeAvailableCapacityForImportantUsage
+            #else
+            return nil
+            #endif
+        }, available: {
+            guard let bytes = try? destination.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity else { return nil }
+            return Int64(bytes)
+        })
+    }
+}
+
+struct SteamStorageDiagnostic: Codable, Equatable, Sendable {
+    let requiredBytes: Int64
+    let availableBytes: Int64?
+    let safetyMarginBytes: Int64
+    let capacitySource: String
+    let overridden: Bool
+
+    var safeLogLine: String {
+        let source = ["important-usage", "volume-available", "drive-available"].contains(capacitySource) ? capacitySource : "unknown"
+        let available = availableBytes.flatMap { $0 >= 0 ? String($0) : nil } ?? "unknown"
+        return "storage-preflight required=\(max(0, requiredBytes)) available=\(available) margin=\(max(0, safetyMarginBytes)) source=\(source) override=\(overridden)"
+    }
+
+    static func safeFailureLog(code: String?) -> String {
+        let known = ["storage-insufficient", "storage-unavailable", "disk-full", "io"]
+        return "download-failed code=\(code.flatMap { known.contains($0) ? $0 : nil } ?? "request-failed")"
+    }
+}
+
+// Ephemeral consent for one immediate submission. Never Codable, an install option,
+// or stored on the model/queue. A failed save/send, pause, or relaunch discards it.
+struct SteamStorageRetryAuthorization {
+    private var jobID: UUID?
+    private let account: String
+
+    init?(job: SteamDownloadJob, account: String) {
+        guard job.canDownloadAnyway, job.account == SteamDownloadJob.accountKey(account) else { return nil }
+        jobID = job.id
+        self.account = job.account
+    }
+
+    mutating func consume(jobID: UUID, account: String) -> Bool {
+        defer { self.jobID = nil }
+        return self.jobID == jobID && self.account == SteamDownloadJob.accountKey(account)
+    }
+}
+
 struct SteamDownloadJob: Codable, Identifiable, Equatable, Sendable {
     enum Status: String, Codable, Sendable {
         case queued, running, paused, failed, completed, cancelled
@@ -58,6 +119,8 @@ struct SteamDownloadJob: Codable, Identifiable, Equatable, Sendable {
     var installed: SteamDownloadedGame?
     var addedToLibrary: Bool
     var reuseDirectory: String?
+    var failureCode: String?
+    var storage: SteamStorageDiagnostic?
 
     init(game: SteamOwnedGame, account: String, options: SteamInstallOptions,
          reuseDirectory: String? = nil, id: UUID = UUID()) {
@@ -81,6 +144,9 @@ struct SteamDownloadJob: Codable, Identifiable, Equatable, Sendable {
         account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    var canDownloadAnyway: Bool {
+        status == .failed && ["storage-insufficient", "storage-unavailable"].contains(failureCode ?? "")
+    }
     var canResume: Bool { [.paused, .failed, .cancelled].contains(status) }
     var isPending: Bool { [.queued, .running, .paused, .failed].contains(status) }
     var fractionCompleted: Double {
@@ -145,6 +211,8 @@ struct SteamDownloadQueue: Codable, Equatable, Sendable {
               let index = jobs.firstIndex(where: { $0.id == id && $0.status == .queued }) else { return false }
         jobs[index].status = .running
         jobs[index].phase = "resolving"
+        jobs[index].failureCode = nil
+        jobs[index].storage = nil
         jobs[index].message = nil
         return true
     }
@@ -163,6 +231,7 @@ struct SteamDownloadQueue: Codable, Equatable, Sendable {
         }) else { return false }
         jobs[index].status = .queued
         jobs[index].phase = "queued"
+        jobs[index].failureCode = nil
         jobs[index].message = nil
         isPaused = false
         return true

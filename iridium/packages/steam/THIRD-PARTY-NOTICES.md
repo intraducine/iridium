@@ -33,4 +33,4 @@ The existing binary audit must cover the new IridiumSteam framework before relea
 the pre-existing Madeira binary inventory does not cover this added framework.
 Replacing SteamKit is supported by rebuilding this framework from source with the
 desired compatible package or project reference and rerunning the tests. The
-application loads the replacement through the same five C ABI entry points.
+application loads the replacement through the documented C ABI entry points, including the host storage-capacity callback.

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Iridium.Steam;
@@ -14,6 +16,35 @@ internal static class DownloadFeatureTests
             try { action(); } catch (SteamFailure) { count++; return; }
             throw new Exception("Accepted " + name);
         }
+        count += StorageCapacityCallbackChecks.Run();
+        var margin = SteamStorage.SafetyMarginBytes;
+        var exact = SteamStorage.Evaluate(margin + 16, new(margin + 16, SteamCapacitySource.ImportantUsage), false);
+        SteamStorage.RequireCapacity(exact);
+        Check(exact.RequiredBytes == margin + 16 && exact.SafetyMarginBytes == margin && !exact.Overridden,
+            "exact capacity threshold passes with the full safety margin");
+        foreach (var capacity in new[] { new SteamCapacity(margin + 15, SteamCapacitySource.ImportantUsage),
+            new SteamCapacity(0, SteamCapacitySource.VolumeAvailable), new SteamCapacity(null, SteamCapacitySource.Unknown),
+            new SteamCapacity(-1, SteamCapacitySource.ImportantUsage) })
+        {
+            var diagnostic = SteamStorage.Evaluate(margin + 16, capacity, false);
+            try { SteamStorage.RequireCapacity(diagnostic); throw new Exception("Storage warning was skipped"); }
+            catch (SteamStorageFailure failure)
+            {
+                Check(failure.Code == (capacity.AvailableBytes is >= 0 ? "storage-insufficient" : "storage-unavailable"),
+                    "unknown capacity is distinct from zero or insufficient capacity");
+                Check(SteamErrors.Code(failure) == failure.Code && SteamErrors.Describe(failure, "verifying").Contains(failure.Code),
+                    "preflight failure has a stable typed code");
+            }
+            SteamStorage.RequireCapacity(diagnostic with { Overridden = true });
+            count++;
+        }
+        Check(SteamStorage.Evaluate(margin, new(123, (SteamCapacitySource)99), false).AvailableBytes == null,
+            "unrecognized host source cannot manufacture a capacity");
+        var diskFull = new IOException("/private/account secret", OperatingSystem.IsWindows() ? unchecked((int)0x80070070) : 28);
+        Check(SteamErrors.Code(diskFull) == "disk-full" && SteamErrors.Describe(diskFull, "downloading").Contains("ran out of storage"),
+            "actual ENOSPC has a distinct actionable failure");
+        Check(SteamErrors.Code(new IOException("/private/account secret")) == "io"
+            && !SteamErrors.Describe(diskFull, "downloading").Contains("/private"), "generic IO is not disk-full and paths never enter errors");
         var options = new InstallOptions();
         Check(options.StorageSuffix() == "", "legacy default installation path preserved");
         Check((options with { MaxDownloads = 8 }).StorageSuffix() == "", "connection count does not split resume identity");
@@ -81,6 +112,37 @@ internal static class DownloadFeatureTests
             var sourceFile = Path.Combine(original.Content, file.FileName);
             File.WriteAllBytes(sourceFile, bytes);
             File.WriteAllText(Path.Combine(original.Content, "save.dat"), "user progress");
+            SteamStorageDiagnostic? preflight = null;
+            var measured = 0;
+            await SteamStorage.Check(repair.Content, repair.Partial, [file], destination =>
+            {
+                Check(destination == repair.Content, "capacity is measured at the new repair destination");
+                measured++;
+                return new(margin + bytes.Length, SteamCapacitySource.ImportantUsage);
+            }, false, value => preflight = value, default);
+            Check(measured == 1 && preflight!.RequiredBytes == margin + bytes.Length,
+                "verified source in old installation still requires a full separate repair copy");
+            var safeFileName = file.FileName;
+            file.FileName = "../escape.exe";
+            try
+            {
+                await SteamStorage.Check(repair.Content, repair.Partial, [file], _ => throw new Exception("Invalid path reached capacity query"),
+                    true, null, default);
+                throw new Exception("Storage override bypassed path validation");
+            }
+            catch (SteamFailure) { count++; }
+            file.FileName = safeFileName;
+            using (var cancelledPreflight = new CancellationTokenSource())
+            {
+                cancelledPreflight.Cancel();
+                try
+                {
+                    await SteamStorage.Check(repair.Content, repair.Partial, [], _ => throw new Exception("Cancelled query"),
+                        true, null, cancelledPreflight.Token);
+                    throw new Exception("Storage override bypassed cancellation");
+                }
+                catch (OperationCanceledException) { count++; }
+            }
             long network = 0, verified = 0;
             await VerifiedFiles.Download(repair.Content, repair.Partial, file, Fetch, n => Interlocked.Add(ref verified, n), default,
                 sourceFile, 2, n => Interlocked.Add(ref network, n));
@@ -99,6 +161,28 @@ internal static class DownloadFeatureTests
             var partial = VerifiedFiles.PartialPath(partialRoot, file);
             File.WriteAllBytes(partial, new byte[bytes.Length]);
             Check(await VerifiedFiles.RequiredStorage(newRoot, partialRoot, file, default) == bytes.Length, "preallocated zero partial cannot bypass storage check");
+            // Actual sparse/preallocated length must not count as downloaded bytes.
+            await using (var sparse = new FileStream(partial, FileMode.Create)) { sparse.SetLength(bytes.Length); }
+            Check(await VerifiedFiles.RequiredStorage(newRoot, partialRoot, file, default) == bytes.Length,
+                "sparse file length cannot bypass the storage preflight");
+            File.WriteAllBytes(partial, bytes);
+            Check(await VerifiedFiles.RequiredStorage(newRoot, partialRoot, file, default) == 0,
+                "complete hash-verified partial requires only the safety margin");
+            await SteamStorage.Check(newRoot, partialRoot, [file], _ => new(margin, SteamCapacitySource.ImportantUsage),
+                false, value => preflight = value, default);
+            Check(preflight!.RequiredBytes == margin, "complete partial threshold retains margin");
+            File.WriteAllBytes(partial, new byte[bytes.Length]);
+            await using (var stream = new FileStream(partial, FileMode.Open)) { await stream.WriteAsync(bytes.AsMemory(0, 8)); }
+            measured = 0;
+            await SteamStorage.Check(newRoot, partialRoot, [file], destination =>
+            {
+                measured++;
+                // Changing a partial here proves counting/hash verification happened first.
+                File.WriteAllBytes(partial, new byte[bytes.Length]);
+                return new(margin + 8, SteamCapacitySource.ImportantUsage);
+            }, false, value => preflight = value, default);
+            Check(measured == 1 && preflight!.RequiredBytes == margin + 8,
+                "fresh destination measurement happens after partial verification");
             await using (var stream = new FileStream(partial, FileMode.Open)) { await stream.WriteAsync(bytes.AsMemory(0, 8)); }
             Check(await VerifiedFiles.RequiredStorage(newRoot, partialRoot, file, default) == 8, "only hash-verified partial chunks reduce storage reservation");
             calls = 0; network = 0;
@@ -124,16 +208,61 @@ internal static class DownloadFeatureTests
 
             var receipt = new InstalledGame(42, "Fixture", repair.Content, ["game.exe"])
             { BuildId = "99", OperationId = operation, Options = options, Depots = [new(10, ulong.MaxValue.ToString(), 3)] };
-            var snapshot = new Snapshot { OperationId = operation, NetworkBytes = 13, Installed = receipt, Details = SteamDepotSelection.Details(42, info) };
+            var snapshot = new Snapshot { FailureCode = "storage-insufficient", Storage = preflight, OperationId = operation, NetworkBytes = 13, Installed = receipt, Details = SteamDepotSelection.Details(42, info) };
             var serialized = JsonSerializer.Serialize(snapshot, SteamJson.Default.Snapshot);
             var decoded = JsonSerializer.Deserialize(serialized, SteamJson.Default.Snapshot)!;
+            Check(decoded.Storage == preflight && decoded.FailureCode == "storage-insufficient", "typed storage diagnostics survive AOT snapshot JSON");
             Check(decoded.Installed!.Depots[0].ManifestId == "18446744073709551615", "AOT receipt preserves unsigned Steam IDs as strings");
             Check(decoded.OperationId == operation && decoded.Installed.OperationId == operation, "request correlation survives native JSON");
             Check(decoded.Details!.Branches.Length == 3 && decoded.NetworkBytes == 13, "metadata and transfer counters survive native JSON");
             var command = JsonSerializer.Deserialize("{\"action\":\"install\",\"appId\":42,\"operationId\":\"" + operation + "\",\"options\":{\"branch\":\"beta\",\"language\":\"german\",\"architecture\":\"32\",\"includeDlc\":true,\"dlcAppIds\":[2],\"maxDownloads\":8}}", SteamJson.Default.Command)!;
+            Check(!command.OverrideStoragePreflight, "legacy command defaults to checking storage");
+            var overrideCommand = JsonSerializer.Deserialize("{\"action\":\"install\",\"overrideStoragePreflight\":true}", SteamJson.Default.Command)!;
+            Check(overrideCommand.OverrideStoragePreflight, "override exists only on the current native command");
+            Check(!JsonSerializer.Serialize(receipt, SteamJson.Default.InstalledGame).Contains("overrideStorage"),
+                "override never enters reusable install options or receipts");
             Check(command.Options.Validate().DlcAppIds.SequenceEqual(new uint[] { 2 }) && command.Options.MaxDownloads == 8, "AOT install options deserialize through actual command contract");
         }
         finally { Directory.Delete(root, recursive: true); }
         return count;
+    }
+}
+
+
+internal static unsafe class StorageCapacityCallbackChecks
+{
+    static long bytes;
+    static int source;
+    static string? destination;
+    static int calls;
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static long Capacity(nint directory, int* measuredSource)
+    {
+        destination = Marshal.PtrToStringUTF8(directory);
+        *measuredSource = source;
+        calls++;
+        return bytes;
+    }
+
+    public static int Run()
+    {
+        var count = 0;
+        var callback = (nint)(delegate* unmanaged[Cdecl]<nint, int*, long>)&Capacity;
+        foreach (var fixture in new[] { (500L, 1, SteamCapacitySource.ImportantUsage),
+            (10L, 2, SteamCapacitySource.VolumeAvailable), (-1L, 1, SteamCapacitySource.Unknown),
+            (500L, 99, SteamCapacitySource.Unknown), (0L, 1, SteamCapacitySource.ImportantUsage) })
+        {
+            (bytes, source, _) = fixture;
+            var before = calls;
+            var capacity = SteamCapacity.FromHost(callback, "/fixture/destination");
+            if (calls != before + 1 || destination != "/fixture/destination" || capacity.Source != fixture.Item3
+                || capacity.AvailableBytes != (fixture.Item3 == SteamCapacitySource.Unknown ? (long?)null : bytes))
+                throw new Exception("Native Cdecl capacity callback did not round-trip through the production adapter");
+            count++;
+        }
+        if (SteamCapacity.FromHost(0, "/fixture/destination").AvailableBytes != null)
+            throw new Exception("Missing native callback must report unknown capacity");
+        return count + 1;
     }
 }

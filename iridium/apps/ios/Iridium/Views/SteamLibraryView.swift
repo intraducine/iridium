@@ -17,6 +17,7 @@ struct SteamLibraryView: View {
     @State private var reviewing: SteamDownloadJob?
     @State private var removing: SteamDownloadJob?
     @State private var deleting: SteamDownloadJob?
+    @State private var overridingStorage: SteamDownloadJob?
 
     private enum Page: String, CaseIterable, Identifiable {
         case queue = "Queue", library = "Steam", installed = "Installed"
@@ -25,6 +26,18 @@ struct SteamLibraryView: View {
 
     var body: some View {
         presentedView
+        .confirmationDialog("Download despite the storage warning?", isPresented: Binding(get: { overridingStorage != nil }, set: { if !$0 { overridingStorage = nil } }), titleVisibility: .visible) {
+            Button("Download Anyway", role: .destructive) {
+                if let job = overridingStorage { steam.downloadAnyway(job.id) }
+                overridingStorage = nil
+            }
+            Button("Keep Paused", role: .cancel) { overridingStorage = nil }
+        } message: {
+            if let storage = overridingStorage?.storage {
+                Text("Last check: \(bytes(storage.requiredBytes)) needed, including \(bytes(storage.safetyMarginBytes)) safety margin. Available: \(storage.availableBytes.map(bytes) ?? "unknown").")
+            }
+            Text("Only this attempt will skip the storage estimate. If the device runs out of space, this download and other apps may fail to save. Verified partial files are kept, and file verification stays on. Pausing or retrying will check storage again.")
+        }
         .confirmationDialog("Delete game files?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
             Button("Delete Game Files", role: .destructive) {
                 guard let job = deleting else { return }
@@ -275,6 +288,11 @@ struct SteamLibraryView: View {
             if job.canResume {
                 MenuButton(job.status == .failed ? "Retry" : "Resume") { steam.resume(job.id) }.frame(minHeight: 44)
                     .disabled(job.account != SteamDownloadJob.accountKey(steam.account ?? ""))
+            }
+            if job.canDownloadAnyway {
+                MenuButton("Download Anyway…") { overridingStorage = job }.frame(minHeight: 44)
+                    .disabled(steam.busy || job.account != SteamDownloadJob.accountKey(steam.account ?? ""))
+                    .accessibilityHint("Review the low-storage risks before retrying this download")
             }
             MenuButton("Remove from Downloads") { removing = job }.frame(minHeight: 44)
         }

@@ -10,6 +10,8 @@ struct SteamDownloadSnapshot: Decodable {
     var signedIn = false
     var accountName: String?
     var error: String?
+    var failureCode: String?
+    var storage: SteamStorageDiagnostic?
     var challengeUrl: String?
     var games: [SteamOwnedGame] = []
     var appId: UInt32?
@@ -35,6 +37,8 @@ private enum SteamModuleError: LocalizedError {
 
 // Serializes C ABI access away from the main actor. The framework owns the network tasks.
 private actor SteamNativeWorker {
+    typealias Capacity = @convention(c) (UnsafePointer<CChar>?, UnsafeMutablePointer<Int32>?) -> Int64
+    typealias SetCapacity = @convention(c) (Capacity?) -> Int32
     typealias Input = @convention(c) (UnsafePointer<CChar>?) -> Int32
     typealias Output = @convention(c) () -> UnsafeMutablePointer<CChar>?
     typealias Release = @convention(c) (UnsafeMutablePointer<CChar>?) -> Void
@@ -49,6 +53,7 @@ private actor SteamNativeWorker {
         guard let frameworks = Bundle.main.privateFrameworksURL,
               let handle = dlopen(frameworks.appendingPathComponent("IridiumSteam.framework/IridiumSteam").path, RTLD_NOW | RTLD_LOCAL),
               let initSymbol = dlsym(handle, "iridium_steam_initialize"),
+              let capacitySymbol = dlsym(handle, "iridium_steam_set_capacity_provider"),
               let submitSymbol = dlsym(handle, "iridium_steam_submit"),
               let snapshotSymbol = dlsym(handle, "iridium_steam_snapshot"),
               let sessionSymbol = dlsym(handle, "iridium_steam_take_session"),
@@ -60,6 +65,17 @@ private actor SteamNativeWorker {
         var storageValues = URLResourceValues()
         storageValues.isExcludedFromBackup = true
         try root.setResourceValues(storageValues)
+        let setCapacity = unsafeBitCast(capacitySymbol, to: SetCapacity.self)
+        guard setCapacity({ path, source in
+            autoreleasepool {
+                source?.pointee = 0
+                guard let path else { return -1 }
+                // Runs on the native download worker at preflight, not at enqueue time.
+                let result = SteamStorageCapacity.measure(at: URL(fileURLWithPath: String(cString: path)))
+                source?.pointee = result.source
+                return result.bytes
+            }
+        }) == 1 else { throw SteamModuleError.unavailable }
         let start = unsafeBitCast(initSymbol, to: Input.self)
         guard root.path.withCString({ start($0) }) == 1 else { throw SteamModuleError.storage }
         // NativeAOT libraries cannot be unloaded while their runtime is alive.
@@ -141,6 +157,7 @@ final class SteamLibraryModel: ObservableObject {
     private var stopRequested: SteamDownloadJob.Status?
     private var rate = SteamTransferRate()
     private var lastCheckpoint = Date.distantPast
+    private var logAttempt: UInt64 = 0
 
     var busy: Bool { restoring || starting || state.busy || operationTask != nil || nativeStateUncertain }
     var pendingCount: Int { queue.jobs.filter(\.isPending).count }
@@ -244,6 +261,19 @@ final class SteamLibraryModel: ObservableObject {
         }
         checkpoint()
         startNext()
+    }
+
+    func downloadAnyway(_ id: UUID) {
+        guard foreground, !busy, queueWritable, let account,
+              let job = queue.jobs.first(where: { $0.id == id }),
+              let authorization = SteamStorageRetryAuthorization(job: job, account: account),
+              queue.resume(id, account: account) else {
+            error = "Wait for the current download to finish or pause, then retry from this download's storage warning."
+            return
+        }
+        // Consent cannot wait behind another job or be transferred to the next one.
+        queue.prioritize(id)
+        startNext(storageAuthorization: authorization)
     }
 
     func resumeQueue() {
@@ -353,9 +383,13 @@ final class SteamLibraryModel: ObservableObject {
         }
     }
 
-    private func startNext() {
+    private func startNext(storageAuthorization: SteamStorageRetryAuthorization? = nil) {
         guard foreground, !busy, queueWritable, let account,
               let job = queue.next(account: account), queue.begin(job.id) else { return }
+        var authorization = storageAuthorization
+        let overrideStoragePreflight = authorization?.consume(jobID: job.id, account: account) ?? false
+        logAttempt &+= 1
+        let attempt = logAttempt
         activeJobID = job.id
         stopRequested = nil
         starting = true
@@ -371,14 +405,16 @@ final class SteamLibraryModel: ObservableObject {
                 } else {
                     let options = try JSONSerialization.jsonObject(with: JSONEncoder().encode(job.options))
                     var command: [String: Any] = ["action": "install", "appId": job.appId,
-                        "operationId": job.id.uuidString, "options": options]
+                        "operationId": job.id.uuidString, "options": options,
+                        "overrideStoragePreflight": overrideStoragePreflight]
                     if let reuse = job.reuseDirectory { command["reuseDirectory"] = reuse }
                     try await send(command)
                     starting = false
                     if !foreground || queue.isPaused || stopRequested != nil { try await send(["action": "cancel"]) }
-                    try await poll(expectedJob: job.id)
+                    try await poll(expectedJob: job.id, attempt: attempt)
                 }
             } catch {
+                RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) download-failed code=submission-or-state")
                 settle(job.id, as: .failed, message: error.localizedDescription)
                 self.error = error.localizedDescription
             }
@@ -397,7 +433,8 @@ final class SteamLibraryModel: ObservableObject {
         queue.update(id) { $0.status = status; $0.phase = status.rawValue; $0.message = message }
     }
 
-    private func poll(expectedJob: UUID?) async throws {
+    private func poll(expectedJob: UUID?, attempt: UInt64 = 0) async throws {
+        var loggedStorage = false
         repeat {
             let next: SteamDownloadSnapshot
             do { next = try JSONDecoder().decode(SteamDownloadSnapshot.self, from: await worker.read()) }
@@ -410,6 +447,18 @@ final class SteamLibraryModel: ObservableObject {
             if let expectedJob, next.operationId != expectedJob.uuidString {
                 nativeStateUncertain = true
                 throw SteamModuleError.response
+            }
+            if !loggedStorage, let storage = next.storage {
+                RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) " + storage.safeLogLine)
+                loggedStorage = true
+            }
+            if expectedJob != nil, !next.busy {
+                if next.phase == "failed" {
+                    RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) " + SteamStorageDiagnostic.safeFailureLog(code: next.failureCode))
+                } else {
+                    let outcome = ["installed", "paused"].contains(next.phase) ? next.phase : "unexpected"
+                    RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) download-ended outcome=\(outcome)")
+                }
             }
             state = next
             if let details = next.details { detailsByApp[details.appId] = details }
@@ -426,6 +475,8 @@ final class SteamLibraryModel: ObservableObject {
                     $0.completedBytes = max(0, next.completedBytes)
                     $0.totalBytes = max(0, next.totalBytes)
                     $0.message = next.message
+                    $0.failureCode = next.failureCode
+                    $0.storage = next.storage
                 }
                 if !next.busy {
                     if next.phase == "installed", let installed = next.installed {

@@ -69,7 +69,20 @@ the manifest, not a separate publisher signature. A complete receipt is committe
 only after every selected file passes verification.
 
 Resume checks saved chunks rather than trusting UI progress or sparse file lengths.
-The storage check credits only verified partial chunks. Updates and repairs can
+The storage check credits only verified partial chunks and retains a 256 MiB safety
+margin. After these hashes finish, the host capacity callback measures the actual
+destination using iOS important-usage capacity, with labeled raw-volume fallback
+when unavailable. Missing/invalid capacity is a typed unknown warning rather than
+zero or unlimited storage. The same snapshot exports required/available/margin
+bytes and a fixed capacity-source category, without paths or account information.
+
+Only a typed preflight failure offers a warned Download Anyway action. Consent is
+memory-only, scoped to the job/account, and consumed before saving/submitting one
+immediate attempt. Failed persistence/submission, cancellation, pause, backgrounding,
+relaunch and ordinary retries cannot carry consent forward. This bypasses only the
+estimate comparison; manifest/path checks, sparse-partial hashing, final hashes,
+and real ENOSPC/write errors still fail normally. ENOSPC has its own fixed failure
+code; it is never inferred from generic IOException messages. Updates and repairs can
 reuse matching chunks from a previous installation without downloading them again.
 They produce an isolated operation directory, never edit a committed installation,
 never hard-link writable game files, and never delete the older version. New repairs use `app-id/installs/operation-uuid` outside the original build folder.

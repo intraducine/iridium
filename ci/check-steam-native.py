@@ -24,6 +24,16 @@ def main():
         function.restype = ctypes.c_void_p
     library.iridium_steam_free.argtypes = [ctypes.c_void_p]
     library.iridium_steam_free.restype = None
+    capacity_type = ctypes.CFUNCTYPE(ctypes.c_int64, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int32))
+    library.iridium_steam_set_capacity_provider.argtypes = [ctypes.c_void_p]
+    library.iridium_steam_set_capacity_provider.restype = ctypes.c_int
+
+    # Retain the host callback for the entire native runtime lifetime.
+    @capacity_type
+    def capacity(directory, source):
+        source[0] = 1
+        return 1024 * 1024 * 1024
+
 
     def read(name='snapshot'):
         pointer = getattr(library, 'iridium_steam_' + name)()
@@ -38,6 +48,10 @@ def main():
         return library.iridium_steam_submit(json.dumps({'action': action}).encode())
 
     with tempfile.TemporaryDirectory(prefix='iridium-steam-abi-') as directory:
+        assert library.iridium_steam_set_capacity_provider(None) == 0
+        assert library.iridium_steam_set_capacity_provider(capacity) == 1
+        assert library.iridium_steam_initialize(directory.encode()) == 1
+        assert library.iridium_steam_set_capacity_provider(capacity) == 0
         assert library.iridium_steam_initialize(directory.encode()) == 1
         assert read()['phase'] == 'signedOut'
         assert read('take_session') is None

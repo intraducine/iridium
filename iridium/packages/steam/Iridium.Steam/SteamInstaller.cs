@@ -43,7 +43,9 @@ public sealed class SteamInstaller(SteamConnection connection)
 
     public async Task<InstalledGame> Install(Game game, string root, Action<long, long> progress,
         Action<string> phase, CancellationToken ct, InstallOptions? requestedOptions = null,
-        string? reuseDirectory = null, Action<long>? networkProgress = null, string? operationId = null)
+        string? reuseDirectory = null, Action<long>? networkProgress = null, string? operationId = null,
+        Func<string, SteamCapacity>? measureCapacity = null, bool overrideStoragePreflight = false,
+        Action<SteamStorageDiagnostic>? storageReport = null)
     {
         var options = (requestedOptions ?? new()).Validate();
         reuseDirectory = ValidateReuseDirectory(root, game.AppId, reuseDirectory);
@@ -217,11 +219,8 @@ public sealed class SteamInstaller(SteamConnection connection)
         var total = files.Values.Sum(f => checked((long)f.File.TotalSize));
         phase("verifying");
         progress(0, total);
-        long required = 256 * 1024 * 1024;
-        foreach (var (_, file) in files.Values)
-            required = checked(required + await VerifiedFiles.RequiredStorage(install, staging, file, ct));
-        if (new DriveInfo(install).AvailableFreeSpace < required)
-            throw new SteamFailure($"Not enough free storage. This install needs at least {required / 1_000_000_000.0:F1} GB free. Partial downloads are kept.");
+        await SteamStorage.Check(install, staging, files.Values.Select(value => value.File),
+            measureCapacity ?? SteamCapacity.FromDrive, overrideStoragePreflight, storageReport, ct);
         long complete = 0;
         foreach (var (depot, file) in files.Values)
         {

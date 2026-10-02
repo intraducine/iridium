@@ -2,7 +2,7 @@ using SteamKit2.Authentication;
 
 namespace Iridium.Steam;
 
-public sealed class SteamEngine(string root) : IAuthenticator
+public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measureCapacity = null) : IAuthenticator
 {
     readonly object sync = new();
     Snapshot state = new();
@@ -55,7 +55,7 @@ public sealed class SteamEngine(string root) : IAuthenticator
             operation?.Dispose();
             operation = new();
             if (command.Action is "signIn" or "qr" or "restore") operation.CancelAfter(TimeSpan.FromMinutes(5));
-            state = state with { Busy = true, Error = null, ChallengeUrl = null, Installed = null,
+            state = state with { Busy = true, Error = null, FailureCode = null, Storage = null, ChallengeUrl = null, Installed = null,
                 Phase = command.Action == "install" ? "resolving" : "connecting",
                 Message = command.Action == "install" ? "Checking Windows game files…" : "Connecting to Steam…",
                 AppId = command.Action is "install" or "details" ? command.AppId : null, CompletedBytes = 0, TotalBytes = 0,
@@ -107,7 +107,8 @@ public sealed class SteamEngine(string root) : IAuthenticator
                             "verifying" => "Checking saved game files…",
                             _ => "Downloading and verifying on this device…" } }), ct,
                     command.Options, command.ReuseDirectory,
-                    bytes => Update(s => s with { NetworkBytes = checked(s.NetworkBytes + bytes) }), command.OperationId);
+                    bytes => Update(s => s with { NetworkBytes = checked(s.NetworkBytes + bytes) }), command.OperationId,
+                    measureCapacity, command.OverrideStoragePreflight, diagnostic => Update(s => s with { Storage = diagnostic }));
                 Update(s => s with { Phase = "installed", Installed = installed, Message = "Verified. Choose the game's executable to add it to your library." });
             }
         }
@@ -119,7 +120,7 @@ public sealed class SteamEngine(string root) : IAuthenticator
         catch (Exception e)
         {
             var message = SteamErrors.Describe(e, Read().Phase);
-            Update(s => s with { Phase = "failed", Error = message, Message = message });
+            Update(s => s with { Phase = "failed", Error = message, Message = message, FailureCode = SteamErrors.Code(e) });
         }
         finally
         {

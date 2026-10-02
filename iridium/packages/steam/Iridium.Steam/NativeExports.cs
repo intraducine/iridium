@@ -7,6 +7,29 @@ public static class NativeExports
 {
     static SteamEngine? engine;
     static readonly object Sync = new();
+    static nint capacityProvider;
+
+    // The host retains this non-capturing function for the lifetime of the native runtime.
+    // source: 0 unknown, 1 important usage, 2 volume available. Negative bytes mean unknown.
+    [UnmanagedCallersOnly(EntryPoint = "iridium_steam_set_capacity_provider")]
+    public static int SetCapacityProvider(nint callback)
+    {
+        try
+        {
+            lock (Sync)
+            {
+                if (engine != null || callback == 0) return 0;
+                capacityProvider = callback;
+                return 1;
+            }
+        }
+        catch { return 0; }
+    }
+
+    static SteamCapacity MeasureCapacity(string directory) => capacityProvider != 0
+        ? SteamCapacity.FromHost(capacityProvider, directory)
+        : OperatingSystem.IsIOS() || OperatingSystem.IsTvOS()
+            ? new(null, SteamCapacitySource.Unknown) : SteamCapacity.FromDrive(directory);
 
     [UnmanagedCallersOnly(EntryPoint = "iridium_steam_initialize")]
     public static int Initialize(nint path)
@@ -20,7 +43,7 @@ public static class NativeExports
                 if (string.IsNullOrEmpty(root) || !Path.IsPathFullyQualified(root)) return 0;
                 VerifiedFiles.RejectLink(root);
                 Directory.CreateDirectory(root);
-                engine = new(root);
+                engine = new(root, MeasureCapacity);
                 return 1;
             }
         }

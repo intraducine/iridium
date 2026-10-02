@@ -40,7 +40,7 @@ enum IridiumGamePrerequisites {
     static func sharedRoots(gameRoot: URL, nativeSteamInstall: Bool) -> [URL] { [] }
     static func prepare(prefix: URL, executable: String, arguments: [String], appID: Int?, sharedRoots: [URL]) throws -> Launch? {
         if scenario == "prerequisite-failure" { throw CocoaError(.fileReadCorruptFile) }
-        return ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout"].contains(scenario) ? Launch(executable: "C:\\helper.exe", arguments: ["C:\\plan.ini"], installerCount: 1) : nil
+        return ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout", "prerequisite-nonzero-exit", "prerequisite-nonzero-close-timeout"].contains(scenario) ? Launch(executable: "C:\\helper.exe", arguments: ["C:\\plan.ini"], installerCount: 1) : nil
     }
     static func cancel(prefix: URL) throws { NativeState.shared.cancelPrerequisites() }
 }

@@ -67,6 +67,17 @@ including exception messages, passwords, tokens, or local paths.
   Steam cache and CDN hosts are used over TLS only, including hosts that report
   HTTPS as optional; there is no plain-HTTP, proxy, simulated account, or download
   fallback.
+- Storage is measured on the destination volume after manifest and partial-file
+  verification. iOS uses important-usage capacity (including space the OS can reclaim)
+  and falls back to raw volume availability only when that API cannot supply a value.
+  Unknown capacity is a separate warning, never treated as zero or unlimited space.
+  The estimate retains a 256 MiB margin and the full separate copy needed by repairs.
+- A typed storage-preflight failure offers **Download Anyway** with a risk warning.
+  It applies to one immediate attempt for that queue job/account; ordinary retry,
+  pause/resume, backgrounding and relaunch check storage again. Consent is not saved.
+  Hash, path, sparse-partial and actual disk-full/write failures cannot be bypassed.
+  Exported runtime logs include only storage counts, source category, override choice,
+  and fixed failure codes, without game names, account identifiers or local paths.
 - Downloads pause when backgrounded. Explicitly resume the saved queue job after reopening;
   valid chunks are reused, including after a process restart.
 - Installs live in Application Support, excluded from device backups. Each build
@@ -110,3 +121,19 @@ queue tests. The managed and NativeAOT test programs also run `DownloadFeatureTe
 Core `SteamDownloadRegistrationTests` check identity and custom-setting preservation.
 See `docs/decisions/native-steam-downloads.md` for storage rules, device validation,
 rollback, and explicit WinNative parity boundaries. No full-parity claim is made.
+
+
+### Host capacity callback ABI
+
+Before initialization the iOS host must register a process-lifetime, non-capturing
+C callback with `int iridium_steam_set_capacity_provider(void *callback)`.
+The callback is `int64_t capacity(const char *destination_utf8, int32_t *source)`:
+source 1 is important-usage capacity, 2 is raw volume availability, and 0 with -1
+bytes means unknown. A negative count or unknown source is rejected as unknown.
+The pointer is called synchronously on the native download worker and must not
+throw or access main-actor state. It must query the supplied destination afresh.
+Registration returns 0 after initialization, preventing a provider from changing
+under an active operation. An iOS framework without this symbol is rejected by
+the updated host; the original five entry points and existing JSON queues remain
+compatible. A host that omits registration on iOS gets an unknown-capacity warning,
+not a silently substituted raw-block estimate. Desktop test hosts may use DriveInfo.

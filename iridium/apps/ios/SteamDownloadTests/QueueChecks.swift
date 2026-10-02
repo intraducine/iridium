@@ -7,6 +7,57 @@ import Foundation
             guard condition else { throw NSError(domain: "QueueChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
             checks += 1
         }
+        var rawQueries = 0
+        let importantCapacity = SteamStorageCapacity.select(important: { 500 }, available: { rawQueries += 1; return 10 })
+        try check(importantCapacity.bytes == 500 && importantCapacity.source == 1 && rawQueries == 0,
+                  "Important-usage capacity wins over smaller raw free space without querying the fallback")
+        let fallbackCapacity = SteamStorageCapacity.select(important: { nil }, available: { 10 })
+        try check(fallbackCapacity.bytes == 10 && fallbackCapacity.source == 2, "Raw volume fallback is labeled")
+        let zeroCapacity = SteamStorageCapacity.select(important: { 0 }, available: { 500 })
+        try check(zeroCapacity.bytes == 0 && zeroCapacity.source == 1, "Valid zero capacity never falls back to a larger number")
+        let unknownCapacity = SteamStorageCapacity.select(important: { -1 }, available: { nil })
+        try check(unknownCapacity.bytes == -1 && unknownCapacity.source == 0, "Unknown capacity is not zero")
+        let diagnostic = SteamStorageDiagnostic(requiredBytes: 300, availableBytes: 10, safetyMarginBytes: 256,
+            capacitySource: "important-usage", overridden: false)
+        let unsafeDiagnostic = SteamStorageDiagnostic(requiredBytes: -5, availableBytes: -1, safetyMarginBytes: -1,
+            capacitySource: "/private/account", overridden: false)
+        try check(unsafeDiagnostic.safeLogLine.contains("source=unknown") && !unsafeDiagnostic.safeLogLine.contains("/private")
+                  && unsafeDiagnostic.safeLogLine.contains("available=unknown"), "Diagnostic export sanitizes categories and byte counts")
+        try check(SteamStorageDiagnostic.safeFailureLog(code: "/private/account").hasSuffix("request-failed"),
+                  "Unknown failures cannot put private data into exported logs")
+        var warning = SteamDownloadJob(game: SteamOwnedGame(appId: 100, name: "Storage fixture"), account: "account_a", options: SteamInstallOptions())
+        warning.status = .failed
+        warning.failureCode = "storage-insufficient"
+        warning.storage = diagnostic
+        try check(warning.canDownloadAnyway, "Typed preflight warning offers an explicit override")
+        try check(SteamStorageRetryAuthorization(job: warning, account: "account_b") == nil, "Other account cannot authorize an override")
+        var authorization = SteamStorageRetryAuthorization(job: warning, account: "account_a")!
+        try check(authorization.consume(jobID: warning.id, account: " ACCOUNT_A "), "Consent matches exact job and normalized account")
+        try check(!authorization.consume(jobID: warning.id, account: "account_a"), "Consent consumed before save/send cannot survive failure or retry")
+        var mismatched = SteamStorageRetryAuthorization(job: warning, account: "account_a")!
+        try check(!mismatched.consume(jobID: UUID(), account: "account_a")
+                  && !mismatched.consume(jobID: warning.id, account: "account_a"), "Consent cannot transfer to another job or wait for later")
+        var switchedAccount = SteamStorageRetryAuthorization(job: warning, account: "account_a")!
+        try check(!switchedAccount.consume(jobID: warning.id, account: "account_b"), "Account switch discards the attempt's consent")
+        var retryQueue = SteamDownloadQueue()
+        _ = retryQueue.enqueue(warning)
+        let warningJSON = try JSONEncoder().encode(retryQueue)
+        try check(!String(decoding: warningJSON, as: UTF8.self).contains("Authorization")
+                  && !String(decoding: warningJSON, as: UTF8.self).contains("overrideStoragePreflight"), "Durable queue carries no override consent")
+        try check(retryQueue.resume(warning.id, account: "account_a") && retryQueue.begin(warning.id), "Ordinary retry starts independently")
+        try check(retryQueue.jobs[0].failureCode == nil && retryQueue.jobs[0].storage == nil
+                  && SteamStorageRetryAuthorization(job: retryQueue.jobs[0], account: "account_a") == nil,
+                  "Running attempt clears old warning and cannot grant new consent")
+        retryQueue.recoverAfterRelaunch()
+        try check(retryQueue.jobs[0].status == .paused && !retryQueue.jobs[0].canDownloadAnyway,
+                  "Background/relaunch pause must use normal storage-checked resume")
+        for code in ["io", "disk-full", "request-failed"] {
+            warning.failureCode = code
+            try check(!warning.canDownloadAnyway && SteamStorageRetryAuthorization(job: warning, account: "account_a") == nil,
+                      "Actual write errors cannot be bypassed")
+        }
+        warning.failureCode = "storage-unavailable"
+        try check(warning.canDownloadAnyway, "Unknown capacity requires its own explicit warning")
         let game = SteamOwnedGame(appId: 42, name: "Fixture")
         let first = SteamDownloadJob(game: game, account: "  ACCOUNT_A ", options: SteamInstallOptions())
         let second = SteamDownloadJob(game: SteamOwnedGame(appId: 43, name: "Other"), account: "account_a", options: SteamInstallOptions())
@@ -42,6 +93,15 @@ import Foundation
         try check(queue.jobs.first(where: { $0.id == first.id })?.fractionCompleted == 1, "Progress is clamped")
         try check(!queue.resume(first.id, account: "account_a"), "Completed receipt is not requeued in place")
         let encoded = try JSONEncoder().encode(queue)
+        var legacy = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        legacy["jobs"] = (legacy["jobs"] as! [[String: Any]]).map { item in
+            var item = item
+            item.removeValue(forKey: "failureCode")
+            item.removeValue(forKey: "storage")
+            return item
+        }
+        let legacyQueue = try JSONDecoder().decode(SteamDownloadQueue.self, from: JSONSerialization.data(withJSONObject: legacy))
+        try check(legacyQueue.jobs.allSatisfy { $0.failureCode == nil && $0.storage == nil }, "Existing queues without storage fields remain readable")
         var recovered = try JSONDecoder().decode(SteamDownloadQueue.self, from: encoded).validated()
         try check(recovered == queue, "Queue and install options round-trip")
         try check(recovered.jobs.first(where: { $0.id == first.id })?.installed?.buildId == "18446744073709551615", "64-bit Steam IDs remain strings")

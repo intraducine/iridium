@@ -111,7 +111,7 @@ static void status(const char *phase, UINT run, UINT runs, UINT process, UINT pr
     assert(!strcmp(phase,"services") || !strcmp(phase,"installer") || !strcmp(phase,"game"));
 }
 static DWORD codes[4], service_error, registry_error;
-static int calls, marked, game, cancelled_flag, bad_field, unconfirmed;
+static int calls, marked, game, cancelled_flag, bad_field, unconfirmed, cancel_after_process;
 static BOOL cancelled(void) { return cancelled_flag; }
 static DWORD services_start(void) { return service_error; }
 static UINT GetPrivateProfileIntW(const wchar_t *s, const wchar_t *k, UINT d, const wchar_t *p) {
@@ -125,11 +125,15 @@ static DWORD record_run(const wchar_t *s) { (void)s; if (!registry_error) marked
 static DWORD run_process(DWORD timeout, BOOL *exited) {
     if (timeout == INFINITE) { game++; return 0; }
     *exited = !unconfirmed;
-    assert(timeout == 600000); assert(calls < 4); return codes[calls++];
+    assert(timeout == 600000); assert(calls < 4);
+    DWORD code = codes[calls++];
+    if (calls == cancel_after_process) cancelled_flag = 1;
+    return code;
 }
 ''' + installed + entry + r'''
 static void reset(void) {
     memset(codes,0,sizeof(codes)); calls=marked=game=cancelled_flag=bad_field=unconfirmed=0;
+    cancel_after_process=0;
     service_error=registry_error=0;
 }
 int main(void) {
@@ -150,8 +154,80 @@ int main(void) {
     assert(wmain(2,argv)==ERROR_CANCELLED && !calls && !marked && !game);
     reset(); unconfirmed=1;
     assert(wmain(2,argv)==ERROR_PROCESS_ABORTED && calls==1 && !marked && !game);
+    for (int step=1; step<=4; step++) {
+        reset(); cancel_after_process=step;
+        assert(wmain(2,argv)==ERROR_CANCELLED && calls==step && marked==step/2 && !game);
+    }
     for (DWORD code=0; code<65536; code++)
         assert(installed(code)==(code==0 || code==3010 || code==1641));
+}
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            binary = str(Path(temp) / "check")
+            subprocess.run(["cc", "-x", "c", "-", "-o", binary],
+                           input=harness, text=True, check=True, capture_output=True, timeout=30)
+            subprocess.run([binary], check=True, capture_output=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which("cc"), "requires C compiler")
+    def test_helper_checks_cancellation_before_creating_each_process(self):
+        source = (IOS / "MadeiraSupport/prerequisites.c").read_text()
+        runner = source[source.index("static DWORD run_process("):
+                        source.index("static DWORD record_run(")]
+        harness = r'''
+#include <assert.h>
+#include <stddef.h>
+#include <wchar.h>
+typedef unsigned long DWORD;
+typedef unsigned long long ULONGLONG;
+typedef int BOOL;
+typedef int HANDLE;
+typedef struct { DWORD cb; } STARTUPINFOW;
+typedef struct { HANDLE hThread, hProcess; } PROCESS_INFORMATION;
+#define FALSE 0
+#define TRUE 1
+#define INFINITE 0xffffffff
+#define WAIT_TIMEOUT 258
+#define WAIT_OBJECT_0 0
+#define WAIT_FAILED 0xffffffff
+#define ERROR_CANCELLED 1223
+#define ERROR_PROCESS_ABORTED 1067
+#define ERROR_TIMEOUT 1460
+#define ERROR_ACCESS_DENIED 5
+static wchar_t executable[128], command[128], directory[128];
+static int cancelled_flag, created, terminated, mode;
+static ULONGLONG tick;
+static BOOL cancelled(void) { return cancelled_flag; }
+static BOOL CreateProcessW(const wchar_t *a, wchar_t *b, void *c, void *d, BOOL e,
+                          DWORD f, void *g, wchar_t *h, STARTUPINFOW *i, PROCESS_INFORMATION *p) {
+    (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; (void)h; (void)i;
+    created++; p->hThread=1; p->hProcess=2; return TRUE;
+}
+static void CloseHandle(HANDLE h) { (void)h; }
+static DWORD GetLastError(void) { return ERROR_ACCESS_DENIED; }
+static ULONGLONG GetTickCount64(void) { return tick; }
+static DWORD WaitForSingleObject(HANDLE h, DWORD timeout) {
+    (void)h; tick += timeout;
+    if (mode == 1) { cancelled_flag=1; return WAIT_TIMEOUT; }
+    if (mode == 2) return WAIT_TIMEOUT;
+    if (mode == 3) return WAIT_FAILED;
+    return WAIT_OBJECT_0;
+}
+static BOOL GetExitCodeProcess(HANDLE h, DWORD *code) { (void)h; *code=0; return mode != 4; }
+static BOOL TerminateProcess(HANDLE h, DWORD code) { (void)h; (void)code; terminated++; return TRUE; }
+''' + runner + r'''
+int main(void) {
+    BOOL exited=TRUE;
+    cancelled_flag=1;
+    assert(run_process(600000,&exited)==ERROR_CANCELLED && !exited && !created);
+    assert(run_process(INFINITE,NULL)==ERROR_CANCELLED && !created);
+    cancelled_flag=0;
+    assert(run_process(600000,&exited)==0 && exited && created==1);
+    for (mode=1; mode<=4; mode++) {
+        cancelled_flag=terminated=0; tick=0;
+        DWORD expected = mode == 1 ? ERROR_CANCELLED : mode == 2 ? ERROR_TIMEOUT : ERROR_ACCESS_DENIED;
+        assert(run_process(200,&exited)==expected && !exited);
+        assert(terminated==(mode!=4));
+    }
 }
 '''
         with tempfile.TemporaryDirectory() as temp:

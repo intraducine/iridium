@@ -90,6 +90,7 @@ static DWORD run_process(DWORD timeout, BOOL *exited)
     PROCESS_INFORMATION process = {0};
     startup.cb = sizeof(startup);
     if (exited) *exited = FALSE;
+    if (cancelled()) return ERROR_CANCELLED;
     if (!CreateProcessW(executable, command, NULL, NULL, FALSE, 0, NULL,
                         directory, &startup, &process)) return GetLastError();
     CloseHandle(process.hThread);
@@ -161,6 +162,7 @@ int wmain(int argc, wchar_t **argv)
         UINT count = GetPrivateProfileIntW(section, L"processes", 0, config);
         if (!count || count > 64) return ERROR_INVALID_DATA;
         for (UINT j = 0; j < count; j++) {
+            if (cancelled()) return ERROR_CANCELLED;
             wchar_t step[32];
             swprintf(step, 32, L"process%u_%u", i, j);
             if (!field(step, L"executable", executable) || !field(step, L"command", command)

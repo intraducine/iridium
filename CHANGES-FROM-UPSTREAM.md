@@ -224,6 +224,8 @@ commands fail before any installer group is recorded as complete.
 `src/scm.c` at `3cadfbea700e4da4b04e331dd7ef1ba633dfacef`. It runs included EXE
 and MSI installers, records successful groups through Wine's registry API, then
 starts the requested game in the same session. It does not use the Dock client.
+Cancellation prevents later installer steps from starting and leaves incomplete
+groups unrecorded, while preserving receipts for groups that fully succeeded.
 The sources retain 125hz's copyright, GPL-3.0-or-later, and Madeira's converter
 exception. Shared redistributables are copied only when available. GDI shared
 sections, the session sync setting, and missing-only `fusion.dll` placement

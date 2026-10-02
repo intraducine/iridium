@@ -23,6 +23,8 @@ public sealed record Snapshot
     public bool SignedIn { get; init; }
     public string? AccountName { get; init; }
     public string? Error { get; init; }
+    public string? FailureCode { get; init; }
+    public SteamStorageDiagnostic? Storage { get; init; }
     public string? ChallengeUrl { get; init; }
     public Game[] Games { get; init; } = [];
     public uint? AppId { get; init; }
@@ -44,6 +46,8 @@ public sealed record Command
     public string? OperationId { get; init; }
     public InstallOptions Options { get; init; } = new();
     public string? ReuseDirectory { get; init; }
+    // This command only. Never part of InstallOptions or an installation receipt.
+    public bool OverrideStoragePreflight { get; init; }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
