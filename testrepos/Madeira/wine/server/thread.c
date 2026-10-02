@@ -133,6 +133,10 @@ struct context
     struct object          *sync;       /* sync object for wait/signal */
     unsigned int            status;     /* status of the context */
     struct context_data     regs[2];    /* context data */
+#ifdef WINE_IOS
+    int                     ios_snapshot; /* WoW64: filled by a Mach capture, not by the thread */
+    int                     ios_dirty;    /* WoW64: a SetThreadContext waits for resume_thread() */
+#endif
 };
 #define CTX_NATIVE  0  /* context for native machine */
 #define CTX_WOW     1  /* context if thread is inside WoW */
@@ -429,6 +433,9 @@ static inline void init_thread_structure( struct thread *thread )
      * thread_resume() on threads that were never suspended (KERN_FAILURE 5).
      * The ml730 run silently measured nothing because of this line's absence. */
     thread->ios_mach_suspended = 0;
+    thread->ios_start_pending  = 0;   /* same 0x55 poisoning as above */
+    thread->ios_ctx_frame      = 0;
+    thread->ios_ctx_seq        = 0;
 #endif
     thread->dbg_hidden      = 0;
     thread->bypass_proc_suspend = 0;
@@ -495,6 +502,10 @@ static struct context *create_thread_context( struct thread *thread )
     if (!(context = alloc_object( &context_ops ))) return NULL;
     context->sync   = NULL;
     context->status = STATUS_PENDING;
+#ifdef WINE_IOS
+    context->ios_snapshot = 0;   /* alloc_object() poisons with 0x55 */
+    context->ios_dirty    = 0;
+#endif
     memset( &context->regs, 0, sizeof(context->regs) );
     context->regs[CTX_NATIVE].machine = native_machine;
 
@@ -968,11 +979,132 @@ static void set_thread_info( struct thread *thread,
     }
 }
 
+#ifdef WINE_IOS
+/* Thread contexts of WoW64 processes (iOS)
+ *
+ * This host has no signal-based suspend: stop_thread() takes a Mach snapshot
+ * (ios_fill_thread_context) and, unless MADEIRA_REAL_SUSPEND is set, the
+ * target keeps running while the server's suspend count goes up.  Upstream's
+ * release sites for a cached context (the select suspend-context handback)
+ * never fire either, so for 64-bit processes the first snapshot answers every
+ * later GetThreadContext and a SetThreadContext only updates that cache.
+ * That upstream behaviour is kept unchanged for 64-bit processes.
+ *
+ * For WoW64 (i386) processes -- managed runtimes' stop-the-world collectors
+ * suspend, read, sometimes redirect and resume their threads -- the context
+ * follows the thread instead:
+ *
+ *  - every stop_thread() on a suspended thread re-captures a snapshot context
+ *    (never one the thread filled in for itself, and never one that holds a
+ *    pending SetThreadContext);                       MADEIRA_CTX_REFRESH=0
+ *  - a thread created suspended reports its own start context instead of a
+ *    snapshot of a half-initialised thread;           MADEIRA_CTX_START_WAIT=0
+ *  - SetThreadContext is refused on a running thread; on a suspended one it
+ *    only updates the cached context and marks it dirty, and resume_thread()
+ *    applies it when the suspend count reaches zero, before a persistent Mach
+ *    hold is released (apply-on-resume).  ios_apply_resume_context() in the
+ *    Madeira iOS layer writes it into the syscall frame the capture came from,
+ *    or into the halted thread's state, and only while the frame and syscall
+ *    sequence recorded at capture are unchanged; otherwise it drops the write
+ *    and reports it once.  Writing into whatever frame the thread happens to
+ *    be in at Set time (a different syscall than the one GetThreadContext
+ *    saw) is exactly the race this avoids.            MADEIRA_CTX_SET=0
+ *
+ * ios_apply_resume_context is a weak reference: without it, a dirty context
+ * is simply not applied (upstream's cache-only behaviour). */
+extern int ios_fill_thread_context( struct thread *, struct context_data *, struct context_data * );
+extern int ios_apply_resume_context( struct thread *thread, const struct context_data *native,
+                                     const struct context_data *wow ) __attribute__((weak));
+
+static int ctx_refresh = -1, ctx_start_wait = -1, ctx_set = -1;
+
+/* default-on switches for WoW64 processes; "0" disables */
+static int ios_ctx_switch( int *cache, const char *name )
+{
+    if (*cache < 0)
+    {
+        const char *e = getenv( name );
+        *cache = !(e && e[0] == '0');
+    }
+    return *cache;
+}
+
+static int ios_wow_ctx_set_on( struct thread *thread )
+{
+    return ios_process_is_wow64( thread->process ) && ios_ctx_switch( &ctx_set, "MADEIRA_CTX_SET" );
+}
+
+/* re-capture a WoW64 thread's snapshot context (stop_thread on an existing context) */
+static void ios_wow_ctx_refresh( struct thread *thread )
+{
+    struct context_data fresh[2];
+
+    if (!thread->context->ios_snapshot || thread->context->ios_dirty) return;
+    if (thread == current || !is_process_init_done( thread->process )) return;
+    if (!ios_ctx_switch( &ctx_refresh, "MADEIRA_CTX_REFRESH" )) return;
+
+    memset( fresh, 0, sizeof(fresh) );
+    fresh[CTX_NATIVE].machine = native_machine;
+    if (!ios_fill_thread_context( thread, &fresh[CTX_NATIVE], &fresh[CTX_WOW] )) return;
+    thread->context->regs[CTX_NATIVE] = fresh[CTX_NATIVE];
+    thread->context->regs[CTX_WOW]    = fresh[CTX_WOW];
+    /* A capture that failed the first time (process init not finished, no
+     * Mach port yet) left the context PENDING; a later one completes it. */
+    if (thread->context->status == STATUS_PENDING)
+    {
+        thread->context->status = STATUS_SUCCESS;
+        signal_sync( thread->context->sync );
+    }
+}
+
+/* resume_thread(): apply a SetThreadContext made while the thread was suspended */
+static void ios_wow_ctx_apply( struct thread *thread )
+{
+    static unsigned int failures;
+
+    thread->context->ios_dirty = 0;
+    if (!ios_apply_resume_context) return;
+    if (!ios_apply_resume_context( thread, &thread->context->regs[CTX_NATIVE],
+                                   &thread->context->regs[CTX_WOW] ) && failures++ < 8)
+        fprintf( stderr, "[ctx-set] tid=%04x: SetThreadContext not applied (thread left the "
+                 "captured syscall frame)\n", thread->id );
+}
+#endif
+
 /* stop a thread (at the Unix level) */
 void stop_thread( struct thread *thread )
 {
+#ifdef WINE_IOS
+    if (thread->context)
+    {
+        /* WoW64 processes: a cached Mach snapshot is not a context (see below) */
+        if (ios_process_is_wow64( thread->process )) ios_wow_ctx_refresh( thread );
+        return;
+    }
+#endif
     if (thread->context) return;  /* already suspended, no need for a signal */
     if (!(thread->context = create_thread_context( thread ))) return;
+#ifdef WINE_IOS
+    if (ios_process_is_wow64( thread->process ))
+    {
+        /* Mark it refreshable BEFORE the first capture, so a capture that fails
+         * (no port yet, init not finished) does not wedge the context in
+         * STATUS_PENDING for the rest of the thread's life. */
+        thread->context->ios_snapshot = 1;
+        /* A thread still starting up reports its own context: leave it PENDING,
+         * exactly as upstream does before the target stops.  The reader waits on
+         * the context sync and receives what the thread posts from
+         * wait_suspend(), and a SetThreadContext made meanwhile is applied by the
+         * thread itself on resume. */
+        if (thread->ios_start_pending && thread != current)
+        {
+            thread->context->ios_snapshot = 0;
+            if (debug_level) fprintf( stderr, "%04x: context read before its start: waiting for the thread\n",
+                                      thread->id );
+            return;
+        }
+    }
+#endif
     /* can't stop a thread while initialisation is in progress */
     if (!is_process_init_done(thread->process)) return;
 #ifdef WINE_IOS
@@ -996,6 +1128,18 @@ void stop_thread( struct thread *thread )
     send_thread_signal( thread, SIGUSR1 );
 #endif
 }
+
+#ifdef WINE_IOS
+/* The first thread's start wait was cleared (process.c, init_process_done).  A
+ * context left PENDING by an earlier reader becomes refreshable, so the next
+ * stop_thread() captures it instead of waiting for a start post that never
+ * comes.  (Not captured here: this runs in the thread's own request.) */
+void ios_start_wait_cleared( struct thread *thread )
+{
+    if (thread->context && thread->context->status == STATUS_PENDING)
+        thread->context->ios_snapshot = 1;
+}
+#endif
 
 /* suspend a thread */
 int suspend_thread( struct thread *thread )
@@ -1075,6 +1219,9 @@ int resume_thread( struct thread *thread )
         {
             resume_delayed_debug_events( thread );
 #ifdef WINE_IOS
+            /* WoW64: apply a SetThreadContext made while suspended, while a
+             * persistent Mach hold (if any) still stops the thread. */
+            if (thread->context && thread->context->ios_dirty) ios_wow_ctx_apply( thread );
             {   /* ml730: final logical resume releases exactly one physical hold */
                 extern int ios_thread_mach_release( struct thread * );
                 ios_thread_mach_release( thread );
@@ -1171,6 +1318,19 @@ static int object_sync_signaled( struct object *obj, struct wait_queue_entry *en
     release_object( sync );
     return ret;
 }
+
+#ifdef WINE_IOS
+/* Madeira fastsync: give back a token that object_sync_signaled() claimed on
+ * behalf of a wait-all that then turned out not to be satisfiable.  A no-op
+ * for every object except a cell-backed auto-reset event or semaphore. */
+static void object_sync_unclaim( struct object *obj )
+{
+    struct object *sync = get_obj_sync( obj );
+    madeira_event_sync_unclaim( sync );
+    madeira_semaphore_sync_unclaim( sync );   /* both are ops-checked */
+    release_object( sync );
+}
+#endif
 
 void signal_sync( struct object *obj )
 {
@@ -1308,6 +1468,13 @@ static int check_wait( struct thread *thread )
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
             not_ok |= !object_sync_signaled( entry->obj, entry );
         if (!not_ok) return STATUS_WAIT_0;
+#ifdef WINE_IOS
+        /* Madeira fastsync: on the WaitAny path a signaled object is satisfied
+         * at once, so a claim taken in `signaled' is always consumed.  Here
+         * nothing calls satisfied, so hand every claim back. */
+        for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
+            object_sync_unclaim( entry->obj );
+#endif
     }
     else
     {
@@ -1409,6 +1576,16 @@ static void thread_timeout( void *ptr )
     wait->user = NULL;
     if (thread->wait != wait) return; /* not the top-level wait, ignore it */
     if (is_thread_suspended( thread )) return;  /* suspended, ignore it */
+
+#ifdef WINE_IOS
+    /* Madeira fastsync: ask the objects before declaring a timeout.  With
+     * cells, a client can raise an object without a request, and the
+     * wake-only request that follows can still be in the socket when this
+     * timer fires; wake_thread() runs check_wait(), which tests the objects
+     * first and otherwise returns the same STATUS_TIMEOUT by the same path.
+     * Only while fastsync cells exist; otherwise upstream's order. */
+    if (madeira_fastsync_cells_on() && wake_thread( thread ) != 0) return;
+#endif
 
     if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=TIMEOUT\n", thread->id );
     end_wait( thread, STATUS_TIMEOUT );
@@ -1549,6 +1726,110 @@ static inline int is_in_apc_wait( struct thread *thread )
     return (is_thread_suspended( thread ) || (thread->wait && (thread->wait->flags & SELECT_INTERRUPTIBLE)));
 }
 
+#ifdef WINE_IOS
+/* An async I/O APC for a busy thread was dropped, and the I/O completed with nothing done.
+ *
+ * When an overlapped operation becomes ready, async_terminate queues APC_ASYNC_IO to the thread
+ * that started it; that thread's ntdll then does the client half (the actual recv, or fetching an
+ * accept's addresses) and reports the result. If the thread is not waiting in the server, queue_apc
+ * interrupts it with SIGUSR1. On iOS that can never work: there is no per-process task port, so
+ * send_thread_signal always fails, queue_apc returned 0, and thread_apc_destroy then completed
+ * the async with the APC's own status and 0 bytes: STATUS_ALERTED (0x101) for a ready receive,
+ * STATUS_SUCCESS for one the server finished. The program saw a successful receive of 0 bytes,
+ * which any TCP user reads as the peer closing the connection, or an accept with no addresses.
+ *
+ * The client half of APC_ASYNC_IO is not tied to the issuing thread (queue_apc already hands it
+ * to another thread of the process when the issuer has exited), and the server wakes one alerted
+ * async per queue at a time, so ordering on a socket is unchanged. So instead of dropping it: give
+ * it to a thread of the same process that is waiting in the server. If none is, it is dropped as
+ * before. It is never left queued on the busy thread: that thread's next wait may be an in-process
+ * one (on the very event this I/O will set), which a system APC does not interrupt, since only
+ * user APCs signal alert_sync. Explorer's first RPC call to services.exe hung that way on every
+ * virtual desktop start, and the taskbar never painted. Only this failure path changes, and only
+ * for APC_ASYNC_IO; other system APCs are unchanged. [apc-requeue] logs the first 16 handovers
+ * (then every 1024th) with the APC's status and thread ids only.
+ * MADEIRA_APC_REQUEUE=0 restores the drop. */
+static int ios_apc_requeue_enabled( void )
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+    {
+        /* On by default: an async I/O completion for a busy thread goes to a waiting thread of
+         * its process, if there is one, instead of failing the I/O. 0 always drops it again. */
+        const char *e = getenv( "MADEIRA_APC_REQUEUE" );
+        enabled = !(e && e[0] == '0');
+        fprintf( stderr, "[apc-requeue] %s (MADEIRA_APC_REQUEUE=0 restores dropping async I/O APCs "
+                 "for busy threads)\n", enabled ? "on" : "off" );
+    }
+    return enabled;
+}
+
+/* the thread to queue an undeliverable async I/O APC on, or NULL to drop it as before */
+static struct thread *ios_apc_requeue_target( struct thread *thread, const struct thread_apc *apc )
+{
+    static unsigned int count;
+    struct thread *candidate, *target = NULL;
+
+    if (apc->call.type != APC_ASYNC_IO || !ios_apc_requeue_enabled()) return NULL;
+    LIST_FOR_EACH_ENTRY( candidate, &thread->process->thread_list, struct thread, proc_entry )
+    {
+        if (candidate == thread || candidate->state == TERMINATED || is_thread_suspended( candidate )) continue;
+        if (candidate->wait && (candidate->wait->flags & SELECT_INTERRUPTIBLE))
+        {
+            target = candidate;
+            break;
+        }
+    }
+    count++;
+    if (count <= 16 || !(count & 1023))
+        fprintf( stderr, "[apc-requeue] #%u async I/O APC status=%08x for busy thread %04x -> %s %04x\n",
+                 count, apc->call.async_io.status, thread->id,
+                 target ? "waiting thread" : "dropped, no waiting thread", target ? target->id : 0 );
+    return target;
+}
+
+/* ml2015: a process-wide system APC failed whenever every thread of the target was busy.
+ *
+ * Another process's handle work (DuplicateHandle with DUPLICATE_CLOSE_SOURCE, remote virtual
+ * memory calls, CreateRemoteThread) runs as a system APC in the target process. queue_apc first
+ * looks for a thread waiting in the server, else interrupts one with SIGUSR1. On iOS the signal
+ * can never be sent (there is no per-process task port, so send_thread_signal always fails), so a
+ * target whose threads were all running failed at once with STATUS_PROCESS_IS_TERMINATING, which
+ * the caller sees as ERROR_ACCESS_DENIED. Seen on device: an MSI package's custom-action server
+ * had just written its thread handle and was on its way back to its pipe read when the client
+ * duplicated that handle, so the action returned 5 and the install ended with 1603.
+ *
+ * Instead queue it on the process's first live thread; that thread runs system APCs at its next
+ * interruptible server wait (check_wait returns STATUS_KERNEL_APC), which is where the signal
+ * would have sent it too, only later. The caller already waits for the APC's completion.
+ * MADEIRA_PROCESS_APC_QUEUE=0 restores the failure. */
+static struct thread *ios_process_apc_fallback( struct process *process, const struct thread_apc *apc )
+{
+    static int enabled = -1;
+    static unsigned int count;
+    struct thread *candidate;
+
+    if (enabled < 0)
+    {
+        const char *e = getenv( "MADEIRA_PROCESS_APC_QUEUE" );
+        enabled = !(e && e[0] == '0');
+    }
+    if (!enabled) return NULL;
+    LIST_FOR_EACH_ENTRY( candidate, &process->thread_list, struct thread, proc_entry )
+    {
+        if (candidate->state == TERMINATED) continue;
+        count++;
+        if (count <= 16 || !(count & 1023))
+            fprintf( stderr, "[process-apc] ml2015 #%u type=%u pid %04x has no waiting thread -> queued on %04x "
+                     "(MADEIRA_PROCESS_APC_QUEUE=0 fails it)\n",
+                     count, apc->call.type, process->id, candidate->id );
+        return candidate;
+    }
+    return NULL;
+}
+#endif
+
 /* queue an existing APC to a given thread */
 static int queue_apc( struct process *process, struct thread *thread, struct thread_apc *apc )
 {
@@ -1583,6 +1864,9 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
                 }
             }
         }
+#ifdef WINE_IOS
+        if (!thread) thread = ios_process_apc_fallback( process, apc );
+#endif
         if (!thread) return 0;  /* nothing found */
         if (!(queue = get_apc_queue( thread, apc->call.type ))) return 1;
     }
@@ -1593,7 +1877,17 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
         /* send signal for system APCs if needed */
         if (queue == &thread->system_apc && list_empty( queue ) && !is_in_apc_wait( thread ))
         {
-            if (!send_thread_signal( thread, SIGUSR1 )) return 0;
+            if (!send_thread_signal( thread, SIGUSR1 ))
+            {
+#ifdef WINE_IOS
+                struct thread *target = ios_apc_requeue_target( thread, apc );
+                if (!target) return 0;
+                thread = target;
+                if (!(queue = get_apc_queue( thread, apc->call.type ))) return 1;
+#else
+                return 0;
+#endif
+            }
         }
         /* cancel a possible previous APC with the same owner */
         if (apc->owner) thread_cancel_apc( thread, apc->owner, apc->call.type );
@@ -1846,7 +2140,15 @@ DECL_HANDLER(new_thread)
                  thread->id, process->id, current->id, request_fd );
 #endif
         thread->system_regs = current->system_regs;
-        if (req->flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED) thread->suspend++;
+        if (req->flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED)
+        {
+            thread->suspend++;
+#ifdef WINE_IOS
+            /* see the start-context note in stop_thread() */
+            if (ios_process_is_wow64( process ) && ios_ctx_switch( &ctx_start_wait, "MADEIRA_CTX_START_WAIT" ))
+                thread->ios_start_pending = 1;
+#endif
+        }
         thread->dbg_hidden = !!(req->flags & THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER);
         thread->bypass_proc_suspend = !!(req->flags & THREAD_CREATE_FLAGS_BYPASS_PROCESS_FREEZE);
         reply->tid = get_thread_id( thread );
@@ -1960,6 +2262,11 @@ DECL_HANDLER(init_thread)
     set_thread_affinity( current, current->affinity );
 
     reply->suspend = (is_thread_suspended( current ) || current->context != NULL);
+#ifdef WINE_IOS
+    /* a thread told not to park will never post a start context, so later
+     * reads fall back to the ordinary capture */
+    if (!reply->suspend) current->ios_start_pending = 0;
+#endif
 }
 
 /* terminate a thread */
@@ -2145,6 +2452,9 @@ DECL_HANDLER(select)
         ctx->status = STATUS_SUCCESS;
         current->suspend_cookie = req->cookie;
         signal_sync( ctx->sync );
+#ifdef WINE_IOS
+        current->ios_start_pending = 0;   /* it posted its start context */
+#endif
     }
 
     if (!req->cookie) goto invalid_param;
@@ -2459,11 +2769,28 @@ DECL_HANDLER(set_thread_context)
     if (contexts[CTX_NATIVE].machine != native_machine ||
         (ctx_count == 2 && contexts[CTX_WOW].machine != thread->process->machine))
         set_error( STATUS_INVALID_PARAMETER );
+#ifdef WINE_IOS
+    /* WoW64: a SetThreadContext is only reliable on a suspended thread (the same
+     * rule Windows documents).  This host cannot stop a running thread to apply
+     * one, so refuse instead of pretending (see ios_wow_ctx_apply). */
+    else if (thread != current && ios_wow_ctx_set_on( thread ) &&
+             thread->state != TERMINATED && !is_thread_suspended( thread ))
+        set_error( STATUS_UNSUCCESSFUL );
+#endif
     else if (thread->state != TERMINATED)
     {
         unsigned int flags = system_flags & contexts[CTX_NATIVE].flags;
 
-        if (thread != current) stop_thread( thread );
+        if (thread != current)
+        {
+#ifdef WINE_IOS
+            /* WoW64: do not re-capture here.  The context the caller modified
+             * is the one its GetThreadContext returned, and ios_ctx_frame /
+             * ios_ctx_seq must keep describing that capture. */
+            if (!(ios_wow_ctx_set_on( thread ) && thread->context))
+#endif
+            stop_thread( thread );
+        }
         else if (flags) set_thread_context( thread, &contexts[CTX_NATIVE], flags );
 
         if (thread->context && !get_error())
@@ -2492,6 +2819,13 @@ DECL_HANDLER(set_thread_context)
                 copy_context( ctx, &contexts[CTX_NATIVE], native_flags );
                 ctx->flags |= native_flags;
             }
+#ifdef WINE_IOS
+            /* A context the thread filled in for itself (it is parked in
+             * wait_suspend()) is applied by the thread on resume, as upstream.
+             * A Mach snapshot is applied by resume_thread(). */
+            if (thread != current && ios_wow_ctx_set_on( thread ) && thread->context->ios_snapshot)
+                thread->context->ios_dirty = 1;
+#endif
         }
     }
     else set_error( STATUS_UNSUCCESSFUL );

@@ -37,6 +37,67 @@ extern USHORT current_machine;
 extern ULONG_PTR args_alignment;
 extern ULONG_PTR highest_user_address;
 extern ULONG_PTR default_zero_bits;
+
+/* WoW64 guest window.
+ *
+ * Classic WoW64 assumes guest address == host address for everything the
+ * 32-bit side can see.  On the iOS port that identity is impossible (XNU's
+ * mandatory 4 GB __PAGEZERO), so each 32-bit process owns a reserved host
+ * range [B, B+4G) and guest address `a` lives at host `B + a`.
+ *
+ * B is read ONCE at process init from
+ * NtQueryInformationProcess( ProcessWineIosWowGuestBase ).  It is 0 on every
+ * platform that keeps the classic identity, and with B == 0 both helpers
+ * below are byte-for-byte the ULongToPtr/PtrToUlong they replace — so the
+ * native WoW64 paths are unchanged.
+ *
+ * Rules:
+ *  - only ADDRESSES convert.  Handles, sizes, flags, packed APC parameters,
+ *    the IOSB Pointer cookie and self-relative security-descriptor offsets
+ *    are never offset.
+ *  - NULL/0 converts to NULL/0 in both directions.
+ *  - a ceiling the guest sends down (zero_bits, MEM_ADDRESS_REQUIREMENTS) is
+ *    a GUEST-namespace number and is passed through untouched; the unix side
+ *    translates it into the window.
+ *  - cross-process operations use the TARGET process's B, never ours; see
+ *    wow_guest_base_for_process().
+ */
+extern ULONG_PTR wow_guest_base;
+
+/* guest 32-bit address -> host pointer.  NULL stays NULL. */
+static inline void *guest_ptr32( ULONG addr )
+{
+    return addr ? (void *)(wow_guest_base + addr) : NULL;
+}
+
+/* host pointer -> guest 32-bit address.  NULL stays 0. */
+static inline ULONG host_ptr32( const void *addr )
+{
+    return addr ? (ULONG)((ULONG_PTR)addr - wow_guest_base) : 0;
+}
+
+/* the same pair for another process's window (cross-process VM ops) */
+extern ULONG_PTR wow_guest_base_for_process( HANDLE process );
+
+static inline void *guest_ptr32_in( ULONG_PTR base, ULONG addr )
+{
+    return addr ? (void *)(base + addr) : NULL;
+}
+
+static inline ULONG host_ptr32_in( ULONG_PTR base, const void *addr )
+{
+    return addr ? (ULONG)((ULONG_PTR)addr - base) : 0;
+}
+
+/* Re-target a pointer that get_ptr() already converted with OUR window but
+ * which actually lives in `base`'s address space.  Used where one syscall
+ * mixes both (NtReadVirtualMemory: addr is the target's, buffer is ours). */
+static inline void *retarget_ptr( ULONG_PTR base, void *addr )
+{
+    if (!addr || base == wow_guest_base) return addr;
+    return (void *)(base + ((ULONG_PTR)addr - wow_guest_base));
+}
+
 extern SYSTEM_DLL_INIT_BLOCK *pLdrSystemDllInitBlock;
 
 extern void     (WINAPI *pBTCpuFlushInstructionCache2)( const void *, SIZE_T );
@@ -46,6 +107,7 @@ extern void     (WINAPI *pBTCpuNotifyMemoryAlloc)( void *, SIZE_T, ULONG, ULONG,
 extern void     (WINAPI *pBTCpuNotifyMemoryDirty)( void *, SIZE_T );
 extern void     (WINAPI *pBTCpuNotifyMemoryFree)( void *, SIZE_T, ULONG, BOOL, NTSTATUS );
 extern void     (WINAPI *pBTCpuNotifyMemoryProtect)( void *, SIZE_T, ULONG, BOOL, NTSTATUS );
+extern void     (WINAPI *pBTCpuNotifyProcessExecuteFlagsChange)( ULONG );
 extern void     (WINAPI *pBTCpuNotifyReadFile)( HANDLE, void *, SIZE_T, BOOL, NTSTATUS );
 extern void     (WINAPI *pBTCpuNotifyUnmapViewOfSection)( void *, BOOL, NTSTATUS );
 extern void     (WINAPI *pBTCpuUpdateProcessorInformation)( SYSTEM_CPU_INFORMATION * );
@@ -78,7 +140,7 @@ static inline TEB32 *NtCurrentTeb32(void)
 
 static inline ULONG get_ulong( UINT **args ) { return *(*args)++; }
 static inline HANDLE get_handle( UINT **args ) { return LongToHandle( *(*args)++ ); }
-static inline void *get_ptr( UINT **args ) { return ULongToPtr( *(*args)++ ); }
+static inline void *get_ptr( UINT **args ) { return guest_ptr32( *(*args)++ ); }
 
 static inline ULONG64 get_ulong64( UINT **args )
 {
@@ -90,6 +152,10 @@ static inline ULONG64 get_ulong64( UINT **args )
     return ret;
 }
 
+/* NOT window-converted: zero_bits is a GUEST-namespace ceiling all the way
+ * down.  The unix side turns [0, L] into the host range [B, B+L] itself, and
+ * default_zero_bits comes from the guest HighestUserAddress that
+ * virtual_get_system_info still reports. */
 static inline ULONG_PTR get_zero_bits( ULONG_PTR zero_bits )
 {
     return zero_bits ? zero_bits : default_zero_bits;
@@ -98,7 +164,15 @@ static inline ULONG_PTR get_zero_bits( ULONG_PTR zero_bits )
 static inline void **addr_32to64( void **addr, ULONG *addr32 )
 {
     if (!addr32) return NULL;
-    *addr = ULongToPtr( *addr32 );
+    *addr = guest_ptr32( *addr32 );
+    return addr;
+}
+
+/* addr_32to64 for an address in another process's window */
+static inline void **addr_32to64_in( ULONG_PTR base, void **addr, ULONG *addr32 )
+{
+    if (!addr32) return NULL;
+    *addr = guest_ptr32_in( base, *addr32 );
     return addr;
 }
 
@@ -114,12 +188,18 @@ static inline void *apc_32to64( ULONG func )
     return func ? Wow64ApcRoutine : NULL;
 }
 
+/* NOT window-converted: this is a PACKED value (the 32-bit APC routine in the
+ * high half, its opaque context in the low half), not an address — see
+ * Wow64ApcRoutine, which unpacks it again. */
 static inline void *apc_param_32to64( ULONG func, ULONG context )
 {
     if (!func) return ULongToPtr( context );
     return (void *)(ULONG_PTR)(((ULONG64)func << 32) | context);
 }
 
+/* NOT window-converted: io->Pointer is a HOST-only cookie that put_iosb and
+ * set_async_iosb compare against and dereference; it never reaches guest
+ * code. */
 static inline IO_STATUS_BLOCK *iosb_32to64( IO_STATUS_BLOCK *io, IO_STATUS_BLOCK32 *io32 )
 {
     if (!io32) return NULL;
@@ -132,7 +212,7 @@ static inline UNICODE_STRING *unicode_str_32to64( UNICODE_STRING *str, const UNI
     if (!str32) return NULL;
     str->Length = str32->Length;
     str->MaximumLength = str32->MaximumLength;
-    str->Buffer = ULongToPtr( str32->Buffer );
+    str->Buffer = guest_ptr32( str32->Buffer );
     return str;
 }
 
@@ -162,10 +242,12 @@ static inline SECURITY_DESCRIPTOR *secdesc_32to64( SECURITY_DESCRIPTOR *out, con
     }
     else
     {
-        out->Owner = ULongToPtr( sd->Owner );
-        out->Group = ULongToPtr( sd->Group );
-        out->Sacl = (sd->Control & SE_SACL_PRESENT) ? ULongToPtr( sd->Sacl ) : NULL;
-        out->Dacl = (sd->Control & SE_DACL_PRESENT) ? ULongToPtr( sd->Dacl ) : NULL;
+        /* absolute descriptor: these are real guest pointers (the self-
+         * relative branch above uses offsets and must stay untouched) */
+        out->Owner = guest_ptr32( sd->Owner );
+        out->Group = guest_ptr32( sd->Group );
+        out->Sacl = (sd->Control & SE_SACL_PRESENT) ? guest_ptr32( sd->Sacl ) : NULL;
+        out->Dacl = (sd->Control & SE_DACL_PRESENT) ? guest_ptr32( sd->Dacl ) : NULL;
     }
     return out;
 }
@@ -179,9 +261,9 @@ static inline OBJECT_ATTRIBUTES *objattr_32to64( struct object_attr64 *out, cons
     out->attr.Length = sizeof(out->attr);
     out->attr.RootDirectory = LongToHandle( in->RootDirectory );
     out->attr.Attributes = in->Attributes;
-    out->attr.ObjectName = unicode_str_32to64( &out->str, ULongToPtr( in->ObjectName ));
-    out->attr.SecurityQualityOfService = ULongToPtr( in->SecurityQualityOfService );
-    out->attr.SecurityDescriptor = secdesc_32to64( &out->sd, ULongToPtr( in->SecurityDescriptor ));
+    out->attr.ObjectName = unicode_str_32to64( &out->str, guest_ptr32( in->ObjectName ));
+    out->attr.SecurityQualityOfService = guest_ptr32( in->SecurityQualityOfService );
+    out->attr.SecurityDescriptor = secdesc_32to64( &out->sd, guest_ptr32( in->SecurityDescriptor ));
     return &out->attr;
 }
 
@@ -196,26 +278,26 @@ static inline OBJECT_ATTRIBUTES *objattr_32to64_redirect( struct object_attr64 *
 
 static inline TOKEN_USER *token_user_32to64( TOKEN_USER *out, const TOKEN_USER32 *in )
 {
-    out->User.Sid = ULongToPtr( in->User.Sid );
+    out->User.Sid = guest_ptr32( in->User.Sid );
     out->User.Attributes = in->User.Attributes;
     return out;
 }
 
 static inline TOKEN_OWNER *token_owner_32to64( TOKEN_OWNER *out, const TOKEN_OWNER32 *in )
 {
-    out->Owner = ULongToPtr( in->Owner );
+    out->Owner = guest_ptr32( in->Owner );
     return out;
 }
 
 static inline TOKEN_PRIMARY_GROUP *token_primary_group_32to64( TOKEN_PRIMARY_GROUP *out, const TOKEN_PRIMARY_GROUP32 *in )
 {
-    out->PrimaryGroup = ULongToPtr( in->PrimaryGroup );
+    out->PrimaryGroup = guest_ptr32( in->PrimaryGroup );
     return out;
 }
 
 static inline TOKEN_DEFAULT_DACL *token_default_dacl_32to64( TOKEN_DEFAULT_DACL *out, const TOKEN_DEFAULT_DACL32 *in )
 {
-    out->DefaultDacl = ULongToPtr( in->DefaultDacl );
+    out->DefaultDacl = guest_ptr32( in->DefaultDacl );
     return out;
 }
 
@@ -226,7 +308,13 @@ static inline void put_handle( ULONG *handle32, HANDLE handle )
 
 static inline void put_addr( ULONG *addr32, void *addr )
 {
-    if (addr32) *addr32 = PtrToUlong( addr );
+    if (addr32) *addr32 = host_ptr32( addr );
+}
+
+/* put_addr for an address in another process's window */
+static inline void put_addr_in( ULONG_PTR base, ULONG *addr32, void *addr )
+{
+    if (addr32) *addr32 = host_ptr32_in( base, addr );
 }
 
 static inline void put_size( ULONG *size32, SIZE_T size )

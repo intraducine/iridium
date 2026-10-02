@@ -6,6 +6,7 @@ MADEIRA="$ROOT/testrepos/Madeira"
 APP="$MADEIRA/app/Madeira"
 JOBS="${IRIDIUM_BUILD_JOBS:-2}"
 export JOBS
+export IRIDIUM_FFMPEG_HEADERS="$ROOT/iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/Headers"
 case "$JOBS" in ''|*[!0-9]*|0) echo "IRIDIUM_BUILD_JOBS must be a positive integer" >&2; exit 2;; esac
 if [ "${1:-}" = --plan ]; then
     printf '%s\n' 'Pinned source inputs and required Git submodules' \
@@ -107,7 +108,7 @@ cmake --build "$MADEIRA/FEX/build-ios" --parallel "$JOBS" \
 mkdir -p "$MADEIRA/wine/build-macos"
 (
     cd "$MADEIRA/wine/build-macos"
-    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --without-x --without-freetype --disable-tests
+    ../configure --enable-win64 --enable-archs=aarch64,arm64ec --without-x --without-freetype --disable-tests --enable-winegstreamer
     make -j"$JOBS" include/all tools/winebuild/winebuild
 )
 for component in wineserver ntdll-unix win32u-unix; do

@@ -140,8 +140,8 @@ struct TouchControllerLayout: Codable, Hashable, Sendable {
     static let xboxDefault = TouchControllerLayout(controls: [
         .init(mapping: .leftTrigger, centerX: 0.10, centerY: 0.12, size: 0.105, opacity: 0.62),
         .init(mapping: .leftBumper, centerX: 0.21, centerY: 0.12, size: 0.095, opacity: 0.66),
-        .init(mapping: .view, centerX: 0.43, centerY: 0.14, size: 0.070, opacity: 0.62),
-        .init(mapping: .menu, centerX: 0.57, centerY: 0.14, size: 0.070, opacity: 0.62),
+        .init(mapping: .view, centerX: 0.42, centerY: 0.14, size: 0.070, opacity: 0.62),
+        .init(mapping: .menu, centerX: 0.58, centerY: 0.14, size: 0.070, opacity: 0.62),
         .init(mapping: .rightBumper, centerX: 0.79, centerY: 0.12, size: 0.095, opacity: 0.66),
         .init(mapping: .rightTrigger, centerX: 0.90, centerY: 0.12, size: 0.105, opacity: 0.62),
 

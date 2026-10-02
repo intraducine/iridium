@@ -38,6 +38,10 @@
 # include <linux/ntsync.h>
 #endif
 
+#ifdef WINE_IOS
+# include "wine/madeira_fastsync.h"
+#endif
+
 #ifdef NTSYNC_IOC_EVENT_READ
 
 #include <fcntl.h>
@@ -303,6 +307,37 @@ DECL_HANDLER(get_inproc_sync_fd)
     if (!(obj = get_handle_obj( current->process, req->handle, 0, NULL ))) return;
 
     reply->access = get_handle_access( current->process, req->handle );
+
+#ifdef WINE_IOS
+    /* iOS-Madeira ml952 fastsync: there is no /dev/ntsync here, so this
+     * request never has an fd to send and upstream always answered
+     * STATUS_NOT_IMPLEMENTED.  It is reused verbatim as the handle -> cell
+     * learn request: bit 30 of `type' (free -- the field otherwise carries a
+     * small enum inproc_sync_type) says "a cell index follows, no fd is in
+     * flight".  No protocol.def change, so no regenerated headers.  The
+     * client asks once per handle and caches the answer. */
+    {
+        int manual = 0, idx = madeira_event_cell_index( obj, &manual );
+
+        if (idx >= 0)
+        {
+            reply->type = MADEIRA_FAST_REPLY_FLAG |
+                          (manual ? MADEIRA_FAST_REPLY_MANUAL : 0) | idx;
+            release_object( obj );
+            return;
+        }
+        /* ml1010: ... and the same answer for a cell-backed SEMAPHORE.  The
+         * reply needs no new bit: the client reads `kind' (and `max') out of
+         * the cell itself, both of which are immutable for the generation it
+         * validates before touching anything. */
+        if ((idx = madeira_semaphore_cell_index( obj )) >= 0)
+        {
+            reply->type = MADEIRA_FAST_REPLY_FLAG | idx;
+            release_object( obj );
+            return;
+        }
+    }
+#endif
 
     if ((fd = get_obj_inproc_sync( obj, &reply->type )) < 0) set_error( STATUS_NOT_IMPLEMENTED );
 #ifdef WINE_IOS

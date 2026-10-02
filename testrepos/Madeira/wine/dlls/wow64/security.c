@@ -41,7 +41,7 @@ static TOKEN_GROUPS *token_groups_32to64( const TOKEN_GROUPS32 *groups32 )
     groups->GroupCount = groups32->GroupCount;
     for (i = 0; i < groups->GroupCount; i++)
     {
-        groups->Groups[i].Sid = ULongToPtr( groups32->Groups[i].Sid );
+        groups->Groups[i].Sid = guest_ptr32( groups32->Groups[i].Sid );
         groups->Groups[i].Attributes = groups32->Groups[i].Attributes;
     }
     return groups;
@@ -52,7 +52,7 @@ static inline OBJECT_TYPE_LIST *objtypelist_32to64( OBJECT_TYPE_LIST *list, cons
     if (!list32) return NULL;
     list->Level      = list32->Level;
     list->Sbz        = list32->Sbz;
-    list->ObjectType = ULongToPtr( list32->ObjectType );
+    list->ObjectType = guest_ptr32( list32->ObjectType );
     return list;
 }
 
@@ -453,7 +453,7 @@ NTSTATUS WINAPI wow64_NtQueryInformationToken( UINT *args )
         sid_len = offsetof( SID, SubAuthority[sid->SubAuthorityCount] );
         if (len >= sizeof(*user32) + sid_len)
         {
-            user32->User.Sid = PtrToUlong( user32 + 1 );
+            user32->User.Sid = host_ptr32( user32 + 1 );
             user32->User.Attributes = user->User.Attributes;
             memcpy( user32 + 1, sid, sid_len );
         }
@@ -477,7 +477,7 @@ NTSTATUS WINAPI wow64_NtQueryInformationToken( UINT *args )
         sid_len = offsetof( SID, SubAuthority[sid->SubAuthorityCount] );
         if (len >= sizeof(*owner32) + sid_len)
         {
-            owner32->Owner = PtrToUlong( owner32 + 1 );
+            owner32->Owner = host_ptr32( owner32 + 1 );
             memcpy( owner32 + 1, sid, sid_len );
         }
         else status = STATUS_BUFFER_TOO_SMALL;
@@ -510,7 +510,7 @@ NTSTATUS WINAPI wow64_NtQueryInformationToken( UINT *args )
             groups32->GroupCount = groups->GroupCount;
             for (i = 0; i < groups->GroupCount; i++)
             {
-                groups32->Groups[i].Sid = PtrToUlong(sid32) + ((char *)groups->Groups[i].Sid - (char *)sid);
+                groups32->Groups[i].Sid = host_ptr32(sid32) + ((char *)groups->Groups[i].Sid - (char *)sid);
                 groups32->Groups[i].Attributes = groups->Groups[i].Attributes;
             }
         }
@@ -528,7 +528,7 @@ NTSTATUS WINAPI wow64_NtQueryInformationToken( UINT *args )
         status = NtQueryInformationToken( handle, class, dacl, size, &ret_size );
         if (!status)
         {
-            dacl32->DefaultDacl = dacl->DefaultDacl ? PtrToUlong( dacl32 + 1 ) : 0;
+            dacl32->DefaultDacl = dacl->DefaultDacl ? host_ptr32( dacl32 + 1 ) : 0;
             if (dacl->DefaultDacl) memcpy( dacl32 + 1, dacl->DefaultDacl, ret_size - sizeof(*dacl) );
         }
         if (retlen) *retlen = ret_size + sizeof(*dacl32) - sizeof(*dacl);
@@ -586,7 +586,7 @@ NTSTATUS WINAPI wow64_NtSetInformationToken( UINT *args )
             TOKEN_MANDATORY_LABEL32 *label32 = ptr;
             TOKEN_MANDATORY_LABEL label;
 
-            label.Label.Sid = ULongToPtr( label32->Label.Sid );
+            label.Label.Sid = guest_ptr32( label32->Label.Sid );
             label.Label.Attributes = label32->Label.Attributes;
             return NtSetInformationToken( handle, class, &label, sizeof(label) );
         }
@@ -599,7 +599,7 @@ NTSTATUS WINAPI wow64_NtSetInformationToken( UINT *args )
         if (len >= sizeof(TOKEN_DEFAULT_DACL32))
         {
             TOKEN_DEFAULT_DACL32 *dacl32 = ptr;
-            TOKEN_DEFAULT_DACL dacl = { ULongToPtr( dacl32->DefaultDacl ) };
+            TOKEN_DEFAULT_DACL dacl = { guest_ptr32( dacl32->DefaultDacl ) };
 
             return NtSetInformationToken( handle, class, &dacl, sizeof(dacl) );
         }

@@ -1091,6 +1091,12 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == ws_unix_funcs_count );
 
 #ifdef _WIN64
+/* iOS-Madeira, WoW64 guest window: in every thunk below
+ * `args` is already a HOST pointer - the WoW64 module converts that one outer
+ * pointer - but every pointer EMBEDDED in the 32-bit block, and every pointer
+ * nested inside those, is still a GUEST address.  ios_wow_host_ptr() is the
+ * +B conversion (NULL-preserving) and ios_wow_guest_ptr32() writes one back;
+ * both are plain ULongToPtr/PtrToUlong off the iOS port. */
 
 typedef ULONG PTR32;
 
@@ -1147,15 +1153,15 @@ static NTSTATUS put_addrinfo32( const struct WS_addrinfo *info, struct WS_addrin
         dst->ai_protocol = src->ai_protocol;
         if (src->ai_canonname)
         {
-            dst->ai_canonname = PtrToUlong( next );
+            dst->ai_canonname = ios_wow_guest_ptr32( next );
             strcpy( next, src->ai_canonname );
             next += strlen(next) + 1;
         }
         dst->ai_addrlen = src->ai_addrlen;
-        dst->ai_addr = PtrToUlong(next);
+        dst->ai_addr = ios_wow_guest_ptr32(next);
         memcpy( next, src->ai_addr, dst->ai_addrlen );
         next += dst->ai_addrlen;
-        if (prev) prev->ai_next = PtrToUlong(dst);
+        if (prev) prev->ai_next = ios_wow_guest_ptr32(dst);
         prev = dst;
         dst = (struct WS_addrinfo32 *)next;
     }
@@ -1196,12 +1202,12 @@ static NTSTATUS put_hostent32( const struct WS_hostent *host, struct WS_hostent3
     addr_list = aliases + alias_count + 1;
     p = (char *)(addr_list + addr_count + 1);
 
-    host32->h_aliases = PtrToUlong( aliases );
-    host32->h_addr_list = PtrToUlong( addr_list );
+    host32->h_aliases = ios_wow_guest_ptr32( aliases );
+    host32->h_addr_list = ios_wow_guest_ptr32( addr_list );
 
     for (i = 0; i < addr_count; ++i)
     {
-        addr_list[i] = PtrToUlong( p );
+        addr_list[i] = ios_wow_guest_ptr32( p );
         memcpy( p, host->h_addr_list[i], host->h_length );
         p += host->h_length;
     }
@@ -1210,12 +1216,12 @@ static NTSTATUS put_hostent32( const struct WS_hostent *host, struct WS_hostent3
     {
         size_t len = strlen( host->h_aliases[i] ) + 1;
 
-        aliases[i] = PtrToUlong( p );
+        aliases[i] = ios_wow_guest_ptr32( p );
         memcpy( p, host->h_aliases[i], len );
         p += len;
     }
 
-    host32->h_name = PtrToUlong( p );
+    host32->h_name = ios_wow_guest_ptr32( p );
     strcpy( p, host->h_name );
     return STATUS_SUCCESS;
 }
@@ -1236,16 +1242,16 @@ static NTSTATUS wow64_unix_getaddrinfo( void *args )
     struct WS_addrinfo hints;
     struct getaddrinfo_params params =
     {
-        ULongToPtr( params32->node ),
-        ULongToPtr( params32->service ),
+        ios_wow_host_ptr( params32->node ),
+        ios_wow_host_ptr( params32->service ),
         NULL,
         NULL,
-        ULongToPtr(params32->size)
+        ios_wow_host_ptr(params32->size)
     };
 
     if (params32->hints)
     {
-        const struct WS_addrinfo32 *hints32 = ULongToPtr(params32->hints);
+        const struct WS_addrinfo32 *hints32 = ios_wow_host_ptr(params32->hints);
         hints.ai_flags    = hints32->ai_flags;
         hints.ai_family   = hints32->ai_family;
         hints.ai_socktype = hints32->ai_socktype;
@@ -1255,7 +1261,7 @@ static NTSTATUS wow64_unix_getaddrinfo( void *args )
 
     if (!(params.info = malloc( *params.size ))) return WSAENOBUFS;
     status = unix_getaddrinfo( &params );
-    if (!status) put_addrinfo32( params.info, ULongToPtr(params32->info), ULongToPtr(params32->size) );
+    if (!status) put_addrinfo32( params.info, ios_wow_host_ptr(params32->info), ios_wow_host_ptr(params32->size) );
     free( params.info );
     return status;
 }
@@ -1275,17 +1281,17 @@ static NTSTATUS wow64_unix_gethostbyaddr( void *args )
     NTSTATUS status;
     struct gethostbyaddr_params params =
     {
-        ULongToPtr( params32->addr ),
+        ios_wow_host_ptr( params32->addr ),
         params32->len,
         params32->family,
         NULL,
-        ULongToPtr(params32->size)
+        ios_wow_host_ptr(params32->size)
     };
 
     if (!(params.host = malloc( *params.size ))) return WSAENOBUFS;
     status = unix_gethostbyaddr( &params );
     if (!status)
-        status = put_hostent32( params.host, ULongToPtr(params32->host), ULongToPtr(params32->size) );
+        status = put_hostent32( params.host, ios_wow_host_ptr(params32->host), ios_wow_host_ptr(params32->size) );
     free( params.host );
     return status;
 }
@@ -1303,15 +1309,15 @@ static NTSTATUS wow64_unix_gethostbyname( void *args )
     NTSTATUS status;
     struct gethostbyname_params params =
     {
-        ULongToPtr( params32->name ),
+        ios_wow_host_ptr( params32->name ),
         NULL,
-        ULongToPtr(params32->size)
+        ios_wow_host_ptr(params32->size)
     };
 
     if (!(params.host = malloc( *params.size ))) return WSAENOBUFS;
     status = unix_gethostbyname( &params );
     if (!status)
-        status = put_hostent32( params.host, ULongToPtr(params32->host), ULongToPtr(params32->size) );
+        status = put_hostent32( params.host, ios_wow_host_ptr(params32->host), ios_wow_host_ptr(params32->size) );
     free( params.host );
     return status;
 }
@@ -1325,7 +1331,7 @@ static NTSTATUS wow64_unix_gethostname( void *args )
         unsigned int size;
     } const *params32 = args;
 
-    struct gethostname_params params = { ULongToPtr(params32->name), params32->size };
+    struct gethostname_params params = { ios_wow_host_ptr(params32->name), params32->size };
 
     if (!unix_gethostname( &params )) return 0;
     return errno_from_unix( errno );
@@ -1347,11 +1353,11 @@ static NTSTATUS wow64_unix_getnameinfo( void *args )
 
     struct getnameinfo_params params =
     {
-        ULongToPtr( params32->addr ),
+        ios_wow_host_ptr( params32->addr ),
         params32->addr_len,
-        ULongToPtr( params32->host ),
+        ios_wow_host_ptr( params32->host ),
         params32->host_len,
-        ULongToPtr( params32->serv ),
+        ios_wow_host_ptr( params32->serv ),
         params32->serv_len,
         params32->flags
     };

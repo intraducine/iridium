@@ -108,9 +108,11 @@ func touchControllerRenderedSize(_ control: TouchControllerControl, minimumDimen
     case .button:
         switch control.mapping {
         case .menu, .view:
-            return CGSize(width: base * 1.45, height: base * 0.65)
-        default:
+            return CGSize(width: base * 1.45, height: max(44, base * 0.65))
+        case .leftBumper, .rightBumper:
             return CGSize(width: base, height: base)
+        default:
+            return CGSize(width: max(44, base), height: max(44, base))
         }
     }
 }

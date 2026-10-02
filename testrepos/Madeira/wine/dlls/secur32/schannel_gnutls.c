@@ -1649,6 +1649,12 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count);
 
 #ifdef _WIN64
+/* iOS-Madeira, WoW64 guest window: in every thunk below
+ * `args` is already a HOST pointer - the WoW64 module converts that one outer
+ * pointer - but every pointer EMBEDDED in the 32-bit block, and every pointer
+ * nested inside those, is still a GUEST address.  ios_wow_host_ptr() is the
+ * +B conversion (NULL-preserving) and ios_wow_guest_ptr32() writes one back;
+ * both are plain ULongToPtr/PtrToUlong off the iOS port. */
 
 typedef ULONG PTR32;
 
@@ -1679,12 +1685,12 @@ static NTSTATUS wow64_schan_allocate_certificate_credentials( void *args )
     } const *params32 = args;
     struct allocate_certificate_credentials_params params =
     {
-        ULongToPtr(params32->c),
+        ios_wow_host_ptr(params32->c),
         params32->cert_encoding,
         params32->cert_size,
-        ULongToPtr(params32->cert_blob),
+        ios_wow_host_ptr(params32->cert_blob),
         params32->key_size,
-        ULongToPtr(params32->key_blob),
+        ios_wow_host_ptr(params32->key_blob),
     };
     return schan_allocate_certificate_credentials(&params);
 }
@@ -1698,8 +1704,8 @@ static NTSTATUS wow64_schan_create_session( void *args )
     } const *params32 = args;
     struct create_session_params params =
     {
-        ULongToPtr(params32->cred),
-        ULongToPtr(params32->session),
+        ios_wow_host_ptr(params32->cred),
+        ios_wow_host_ptr(params32->session),
     };
     return schan_create_session(&params);
 }
@@ -1712,7 +1718,7 @@ static NTSTATUS wow64_schan_free_certificate_credentials( void *args )
     } const *params32 = args;
     struct free_certificate_credentials_params params =
     {
-        ULongToPtr(params32->c),
+        ios_wow_host_ptr(params32->c),
     };
     return schan_free_certificate_credentials(&params);
 }
@@ -1727,7 +1733,7 @@ static NTSTATUS wow64_schan_get_application_protocol( void *args )
     struct get_application_protocol_params params =
     {
         params32->session,
-        ULongToPtr(params32->protocol),
+        ios_wow_host_ptr(params32->protocol),
     };
     return schan_get_application_protocol(&params);
 }
@@ -1742,7 +1748,7 @@ static NTSTATUS wow64_schan_get_connection_info( void *args )
     struct get_connection_info_params params =
     {
         params32->session,
-        ULongToPtr(params32->info),
+        ios_wow_host_ptr(params32->info),
     };
     return schan_get_connection_info(&params);
 }
@@ -1757,7 +1763,7 @@ static NTSTATUS wow64_schan_get_cipher_info( void *args )
     struct get_cipher_info_params params =
     {
         params32->session,
-        ULongToPtr(params32->info),
+        ios_wow_host_ptr(params32->info),
     };
     return schan_get_cipher_info(&params);
 }
@@ -1774,9 +1780,9 @@ static NTSTATUS wow64_schan_get_session_peer_certificate( void *args )
     struct get_session_peer_certificate_params params =
     {
         params32->session,
-        ULongToPtr(params32->buffer),
-        ULongToPtr(params32->bufsize),
-        ULongToPtr(params32->retcount),
+        ios_wow_host_ptr(params32->buffer),
+        ios_wow_host_ptr(params32->bufsize),
+        ios_wow_host_ptr(params32->retcount),
     };
     return schan_get_session_peer_certificate(&params);
 }
@@ -1792,8 +1798,8 @@ static NTSTATUS wow64_schan_get_unique_channel_binding( void *args )
     struct get_unique_channel_binding_params params =
     {
         params32->session,
-        ULongToPtr(params32->buffer),
-        ULongToPtr(params32->bufsize),
+        ios_wow_host_ptr(params32->buffer),
+        ios_wow_host_ptr(params32->bufsize),
     };
     return schan_get_unique_channel_binding(&params);
 }
@@ -1806,10 +1812,10 @@ static void secbufferdesc_32to64(const SecBufferDesc32 *desc32, SecBufferDesc *d
     desc->cBuffers = desc32->cBuffers;
     for (i = 0; i < desc->cBuffers; ++i)
     {
-        SecBuffer32 *buffer32 = ULongToPtr(desc32->pBuffers + i * sizeof(*buffer32));
+        SecBuffer32 *buffer32 = ios_wow_host_ptr(desc32->pBuffers + i * sizeof(*buffer32));
         desc->pBuffers[i].cbBuffer = buffer32->cbBuffer;
         desc->pBuffers[i].BufferType = buffer32->BufferType;
-        desc->pBuffers[i].pvBuffer = ULongToPtr(buffer32->pvBuffer);
+        desc->pBuffers[i].pvBuffer = ios_wow_host_ptr(buffer32->pvBuffer);
     }
 }
 
@@ -1839,22 +1845,22 @@ static NTSTATUS wow64_schan_handshake( void *args )
         params32->input ? &input : NULL,
         params32->input_size,
         params32->output ? &output : NULL,
-        ULongToPtr(params32->input_offset),
-        ULongToPtr(params32->output_buffer_idx),
-        ULongToPtr(params32->output_offset),
+        ios_wow_host_ptr(params32->input_offset),
+        ios_wow_host_ptr(params32->output_buffer_idx),
+        ios_wow_host_ptr(params32->output_offset),
         params32->control_token,
         params32->alert_type,
         params32->alert_number,
     };
     if (params32->input)
     {
-        SecBufferDesc32 *desc32 = ULongToPtr(params32->input);
+        SecBufferDesc32 *desc32 = ios_wow_host_ptr(params32->input);
         assert(desc32->cBuffers <= ARRAY_SIZE(input_buffers));
         secbufferdesc_32to64(desc32, &input);
     }
     if (params32->output)
     {
-        SecBufferDesc32 *desc32 = ULongToPtr(params32->output);
+        SecBufferDesc32 *desc32 = ios_wow_host_ptr(params32->output);
         assert(desc32->cBuffers <= ARRAY_SIZE(output_buffers));
         secbufferdesc_32to64(desc32, &output);
     }
@@ -1879,12 +1885,12 @@ static NTSTATUS wow64_schan_recv( void *args )
         params32->session,
         params32->input ? &input : NULL,
         params32->input_size,
-        ULongToPtr(params32->buffer),
-        ULongToPtr(params32->length),
+        ios_wow_host_ptr(params32->buffer),
+        ios_wow_host_ptr(params32->length),
     };
     if (params32->input)
     {
-        SecBufferDesc32 *desc32 = ULongToPtr(params32->input);
+        SecBufferDesc32 *desc32 = ios_wow_host_ptr(params32->input);
         assert(desc32->cBuffers <= ARRAY_SIZE(buffers));
         secbufferdesc_32to64(desc32, &input);
     }
@@ -1909,14 +1915,14 @@ static NTSTATUS wow64_schan_send( void *args )
     {
         params32->session,
         params32->output ? &output : NULL,
-        ULongToPtr(params32->buffer),
+        ios_wow_host_ptr(params32->buffer),
         params32->length,
-        ULongToPtr(params32->output_buffer_idx),
-        ULongToPtr(params32->output_offset),
+        ios_wow_host_ptr(params32->output_buffer_idx),
+        ios_wow_host_ptr(params32->output_offset),
     };
     if (params32->output)
     {
-        SecBufferDesc32 *desc32 = ULongToPtr(params32->output);
+        SecBufferDesc32 *desc32 = ios_wow_host_ptr(params32->output);
         assert(desc32->cBuffers <= ARRAY_SIZE(buffers));
         secbufferdesc_32to64(desc32, &output);
     }
@@ -1934,7 +1940,7 @@ static NTSTATUS wow64_schan_set_application_protocols( void *args )
     struct set_application_protocols_params params =
     {
         params32->session,
-        ULongToPtr(params32->buffer),
+        ios_wow_host_ptr(params32->buffer),
         params32->buflen,
     };
     return schan_set_application_protocols(&params);
@@ -1950,7 +1956,7 @@ static NTSTATUS wow64_schan_set_session_target( void *args )
     struct set_session_target_params params =
     {
         params32->session,
-        ULongToPtr(params32->target),
+        ios_wow_host_ptr(params32->target),
     };
     return schan_set_session_target(&params);
 }

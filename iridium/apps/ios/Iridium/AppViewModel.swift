@@ -1107,10 +1107,10 @@ final class AppViewModel: ObservableObject {
         }
 
         let allPrefixes = await store.allPrefixes()
-        let visibleGames = allGames.filter { $0.source == .manualImport }
+        let visibleGames = allGames.filter { $0.source == .manualImport || $0.launchProfile.titleFlags.contains("steam-native-download") }
         let hiddenSteamPrefixIDs = Set(
             allGames
-                .filter { $0.source == .steam }
+                .filter { $0.source == .steam && !$0.launchProfile.titleFlags.contains("steam-native-download") }
                 .map(\.launchProfile.prefixID)
         )
         let visiblePrefixes = allPrefixes.filter { !hiddenSteamPrefixIDs.contains($0.id) }
@@ -1139,7 +1139,7 @@ final class AppViewModel: ObservableObject {
         }
         installHistory = []
         compatibilityEvidence = (await store.compatibilityEvidence()).filter {
-            $0.source == .manualImport && visibleGameTitles.contains($0.title)
+            visibleGameTitles.contains($0.title)
         }
         activityFeed = visibleActivityEntries(
             from: await store.activityFeed(),
@@ -1336,12 +1336,36 @@ final class AppViewModel: ObservableObject {
     }
 
     func removeLibraryEntry(_ game: GameRecord) {
-        guard !refreshingGameCopy else { return }
+        guard !refreshingGameCopy, !preparingInstaller else { return }
         guard activeRuntimePlayerSession?.gameID != game.id, runtimePlayerReservation?.gameID != game.id else { return }
         Task {
             await store.removeLibraryEntry(gameID: game.id)
             await refresh()
         }
+    }
+
+    func deleteSteamDownload(_ job: SteamDownloadJob, from steam: SteamLibraryModel) async throws {
+        guard !preparingInstaller, activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+              let path = job.installed?.directory else { throw CocoaError(.fileWriteNoPermission) }
+        let registered = games.filter { $0.installPath == path }
+        try await steam.deleteFiles(job)
+        for game in registered { await store.removeLibraryEntry(gameID: game.id) }
+        await refresh()
+    }
+
+    func deleteImportedGameFiles(_ game: GameRecord) async throws {
+        guard !preparingInstaller, activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
+              games.contains(where: { $0.id == game.id && $0.installPath == game.installPath }),
+              !games.contains(where: { $0.id != game.id && $0.installPath == game.installPath }),
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { throw CocoaError(.fileWriteNoPermission) }
+        let gamesRoot = documents.appendingPathComponent("Games", isDirectory: true)
+        let folder = URL(fileURLWithPath: game.installPath)
+        try await Task.detached(priority: .utility) {
+            try ManagedGameFiles.deleteGameFolder(at: folder, in: gamesRoot)
+        }.value
+        await store.removeLibraryEntry(gameID: game.id)
+        await refresh()
     }
 
     func registerScannedImport(title: String? = nil) {
@@ -1458,6 +1482,46 @@ final class AppViewModel: ObservableObject {
             await refresh()
             await LibraryArtwork.shared.prepare([importedGame])
         }
+    }
+
+    func registerSteamDownload(title: String, appID: String, directory: String, executable: String) async throws {
+        guard let numericAppID = UInt32(appID), numericAppID > 0, !isImportingGame else { throw CocoaError(.fileReadInvalidFileName) }
+        guard activeRuntimePlayerSession == nil else {
+            throw NSError(domain: "IridiumSteam", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Close the running game before registering a Steam installation."])
+        }
+        let managedRoot = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+            appropriateFor: nil, create: false).appendingPathComponent("SteamGames").resolvingSymlinksInPath()
+        let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL
+        let file = root.appendingPathComponent(executable.replacingOccurrences(of: "\\", with: "/"))
+            .resolvingSymlinksInPath().standardizedFileURL
+        let expectedAppRoot = managedRoot.appendingPathComponent(String(numericAppID))
+        guard root.path.hasPrefix(expectedAppRoot.path + "/"), file.path.hasPrefix(root.path + "/"),
+              file.pathExtension.lowercased() == "exe",
+              try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        let inventory = artifactInventory
+        let artifact = try await Task.detached(priority: .utility) {
+            try inventory.makeManagedArtifact(title: title, executablePath: file.path, installPath: root.path)
+        }.value
+        guard activeRuntimePlayerSession == nil else {
+            throw NSError(domain: "IridiumSteam", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Close the running game before registering a Steam installation."])
+        }
+        let compatibility = BuiltInCompatibilityProfiles.recommendedCompatibilityProfile(forTitle: title)
+        var game = await store.registerSteamGame(title: title, appID: appID, installPath: root.path,
+            executablePath: file.path, compatibilityProfileName: compatibility.slug,
+            inputProfileName: defaultInputProfileName(for: compatibility), deviceTier: compatibility.minimumDeviceTier,
+            rendererPreset: compatibility.recommendedRenderer, launchArguments: [], titleFlags: ["steam-native-download"],
+            managedArtifactIdentifier: artifact.identifier, executableFingerprint: artifact.checksum,
+            runtimeBundleIdentifier: hostCapabilities.selectedRuntimeBundle?.id,
+            runtimeBundleVersion: hostCapabilities.selectedRuntimeBundle?.version)
+        // Older Steam fixtures synthesize size and readiness summaries; neither is evidence for this download.
+        game.installedSizeGB = nil
+        game.summary = "Downloaded from Steam and verified. Runtime compatibility has not been tested."
+        await store.update(game)
+        await refresh()
     }
 
     func dismissImportScan() {
@@ -1842,7 +1906,7 @@ final class AppViewModel: ObservableObject {
         MadeiraLaunchReadiness.issue(
             runtimeAvailable: madeiraRuntimeAvailable,
             executableExists: FileManager.default.fileExists(atPath: buildLaunchSession(for: game, jitStatus: jitStatus).executablePath),
-            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy,
+            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy || preparingInstaller,
             started: MadeiraRuntimeAdapter.started
         )
     }
@@ -2016,12 +2080,34 @@ final class AppViewModel: ObservableObject {
     }
 
     @Published private(set) var refreshingGameCopy = false
+    @Published private(set) var preparingInstaller = false
     @Published private(set) var closingMadeiraSession = false
     @Published private(set) var madeiraShutdownUnconfirmed = false
 
+    func prepareInstaller(_ source: URL, for game: GameRecord) async throws {
+        #if MADEIRA_RUNTIME
+        guard MadeiraRuntimeAdapter.enabled else { throw CocoaError(.featureUnsupported) }
+        if let issue = madeiraLaunchIssue(for: game) {
+            throw NSError(domain: "IridiumPrerequisites", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: issue])
+        }
+        preparingInstaller = true
+        defer { preparingInstaller = false }
+        let prefix = MadeiraGamePreparation.prefix(for: game.id)
+        try await Task.detached(priority: .userInitiated) {
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            try IridiumGamePrerequisites.queueInstaller(source, prefix: prefix)
+        }.value
+        activityStatusMessage = "Installer ready. The game will start after setup."
+        #else
+        throw CocoaError(.featureUnsupported)
+        #endif
+    }
+
     func refreshMadeiraGameCopy(_ game: GameRecord) {
         #if MADEIRA_RUNTIME
-        guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy,
+        guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy, !preparingInstaller,
               activeRuntimePlayerSession == nil, !MadeiraRuntimeAdapter.started else { return }
         refreshingGameCopy = true
         Task {
@@ -2066,7 +2152,9 @@ final class AppViewModel: ObservableObject {
                 let launch = launchSession(for: game)
                 pendingMadeiraStart = (id, { [weak self] in
                     guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
-                    MadeiraRuntimeAdapter.start(executable: launch.executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launch.arguments) { [weak self] message in
+                    MadeiraRuntimeAdapter.start(executable: launch.executablePath, gameRoot: game.installPath, gameID: game.id, arguments: launch.arguments,
+                        steamAppID: game.launchProfile.titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }).map { String($0.dropFirst("steam-app-id:".count)) },
+                        nativeSteamInstall: game.launchProfile.titleFlags.contains("steam-native-download")) { [weak self] message in
                         guard self?.activeRuntimePlayerSession?.sessionIdentifier == id else { return }
                         if message.contains("failed") || message.hasPrefix("Cannot") {
                             UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")

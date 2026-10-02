@@ -282,6 +282,10 @@ static HRESULT WINAPI dinput7_CreateDeviceEx( IDirectInput7W *iface, const GUID 
 
     if (IsEqualGUID( &GUID_SysKeyboard, guid )) hr = keyboard_create_device( impl, guid, &device );
     else if (IsEqualGUID( &GUID_SysMouse, guid )) hr = mouse_create_device( impl, guid, &device );
+    /* Madeira (ml760): the host gamepad, by its one fixed instance GUID. A
+     * game re-creates the device from the GUID it stored last run, so this has
+     * to be recognised here and not only in EnumDevices. */
+    else if (IsEqualGUID( &ios_joystick_guid, guid )) hr = ios_joystick_create_device( impl, guid, &device );
     else hr = hid_joystick_create_device( impl, guid, &device );
 
     if (FAILED(hr)) return hr;
@@ -372,6 +376,22 @@ static HRESULT WINAPI dinput8_EnumDevices( IDirectInput8W *iface, DWORD type, LP
 
     if (device_class == DI8DEVCLASS_ALL || device_class == DI8DEVCLASS_GAMECTRL)
     {
+        /* Madeira (ml760): the host gamepad first, then HID.
+         *
+         * FIRST because it is the only one that can answer on this port: there
+         * is no winebus.sys to create the HID devices the loop below looks
+         * for, so that loop finds nothing and costs a setupapi enumeration to
+         * find it. On a stock Wine ios_joystick_enum_device returns
+         * DIERR_DEVICENOTREG at once (win32u answers 0 for the gamepad call it
+         * does not implement) and the HID loop runs exactly as before.
+         *
+         * It is a separate call rather than another index of the loop below
+         * because the loop stops at the first failure, and the host pad being
+         * absent must not stop HID enumeration. */
+        hr = ios_joystick_enum_device( type, flags, &instance, impl->dwVersion, 0 );
+        if (hr == DI_OK && try_enum_device( device_type, callback, &instance, context, flags ) == DIENUM_STOP)
+            return DI_OK;
+
         do
         {
             hr = hid_joystick_enum_device( type, flags, &instance, impl->dwVersion, i++ );

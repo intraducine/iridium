@@ -81,10 +81,35 @@ static inline WOW_TEB *get_wow_teb( TEB *teb )
     return teb->WowTebOffset ? (WOW_TEB *)((char *)teb + teb->WowTebOffset) : NULL;
 }
 
+#ifdef WINE_IOS
+/* MADEIRA: wow_peb is a SESSION global on iOS (pseudo-processes share one
+ * address space) and is cleared or swapped when another 32-bit process's window
+ * is released or a 64-bit child starts.  A 32-bit program still running then
+ * got is_wow64() == FALSE, get_cpu_area() NULL and STATUS_INVALID_PARAMETER
+ * from its own ThreadWow64Context query (its first thread was built on Esp 0,
+ * its callbacks on a stack at guest 0xffffffb0).  A thread whose own TEB
+ * carries a 32-bit TEB is WoW64 whatever the global says.
+ *
+ * ios_wow64_by_teb is provided by the Madeira iOS layer (MADEIRA_WOW64_BY_TEB=0
+ * sets it to 0).  It is a weak reference: without the Madeira symbol, and for
+ * every thread without a 32-bit TEB (every 64-bit thread), the answer is the
+ * global one, exactly as upstream. */
+extern int ios_wow64_by_teb __attribute__((weak));
+static inline BOOL is_wow64(void)
+{
+    if (&ios_wow64_by_teb && ios_wow64_by_teb)
+    {
+        TEB *teb = NtCurrentTeb();
+        if (teb && teb->WowTebOffset) return TRUE;
+    }
+    return !!wow_peb;
+}
+#else
 static inline BOOL is_wow64(void)
 {
     return !!wow_peb;
 }
+#endif
 
 /* check for old-style Wow64 (using a 32-bit ntdll.so) */
 static inline BOOL is_old_wow64(void)
@@ -391,6 +416,13 @@ extern NTSTATUS wow64_wine_spawnvp( void *args );
 extern void dbg_init(void);
 
 extern void close_inproc_sync( HANDLE handle );
+#ifdef WINE_IOS
+/* Madeira fastsync (sync.c): drop a handle from the handle -> cell cache
+ * (from close_inproc_sync()), and drop a reissued process id's
+ * stale entries once at process init.  No-ops while fastsync is off. */
+extern void madeira_fast_close( HANDLE handle );
+extern void madeira_fast_flush_pid(void);
+#endif
 
 extern NTSTATUS call_user_apc_dispatcher( CONTEXT *context_ptr, unsigned int flags, ULONG_PTR arg1, ULONG_PTR arg2,
                                           ULONG_PTR arg3, PNTAPCFUNC func, NTSTATUS status );
@@ -488,8 +520,17 @@ static inline NTSTATUS wait_async( HANDLE handle, BOOL alertable )
     return server_wait_for_object( handle, alertable, NULL );
 }
 
+#ifdef WINE_IOS
+/* iOS: is the CURRENT pseudo-process a WoW64 one (the session global cannot
+ * answer that)?  Defined by the I/O status-block owner rule in file.c on the
+ * iOS build.  Weak: without it, upstream's answer. */
+extern BOOL ios_in_wow64_call(void) __attribute__((weak));
+#endif
 static inline BOOL in_wow64_call(void)
 {
+#ifdef WINE_IOS
+    if (ios_in_wow64_call) return ios_in_wow64_call();
+#endif
     return is_win64 && is_wow64();
 }
 
@@ -600,11 +641,23 @@ static inline void init_unicode_string( UNICODE_STRING *str, const WCHAR *data )
     str->Buffer = (WCHAR *)data;
 }
 
+#ifdef WINE_IOS
+/* Madeira iOS layer: the section mapping limit of the CURRENT pseudo-process
+ * (user_space_wow_limit is a session global there).  Weak: without it,
+ * upstream's limit. */
+extern ULONG_PTR ios_section_zero_bits(void) __attribute__((weak));
+#endif
+
 static inline NTSTATUS map_section( HANDLE mapping, void **ptr, SIZE_T *size, ULONG protect )
 {
+    ULONG_PTR zero_bits = user_space_wow_limit;
+
     *ptr = NULL;
     *size = 0;
-    return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, user_space_wow_limit,
+#ifdef WINE_IOS
+    if (ios_section_zero_bits) zero_bits = ios_section_zero_bits();
+#endif
+    return NtMapViewOfSection( mapping, NtCurrentProcess(), ptr, zero_bits,
                                0, NULL, size, ViewShare, 0, protect );
 }
 

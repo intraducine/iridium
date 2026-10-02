@@ -1522,6 +1522,19 @@ DECL_HANDLER(init_process_done)
         process->idle_event = create_event( NULL, NULL, 0, 1, 0, NULL );
     if (process->debug_obj) set_process_debug_flag( process, 1 );
     reply->suspend = (current->suspend || process->suspend);
+#ifdef WINE_IOS
+    /* The first thread starts through here, not init_thread, and the iOS client
+     * never parks it (server_init_process_done always runs it), so it never
+     * posts a start context whatever this reply says.  Clear its start wait
+     * (only ever set for WoW64 processes), and make a context an earlier reader
+     * left PENDING refreshable (thread.c). */
+    if (current->ios_start_pending)
+    {
+        extern void ios_start_wait_cleared( struct thread *thread );
+        current->ios_start_pending = 0;
+        ios_start_wait_cleared( current );
+    }
+#endif
 }
 
 /* open a handle to a process */

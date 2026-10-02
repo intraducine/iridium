@@ -8,6 +8,9 @@
 
 #include <windows.h>
 
+#include <cstdlib>
+#include <cstring>
+
 #include "CPUFeatures.h"
 
 namespace {
@@ -75,6 +78,37 @@ FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostF
   HostFeatures.SupportsFlagM = true;
   HostFeatures.SupportsFlagM2 = true;
   HostFeatures.SupportsAFP = true;
+
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+  /* The list above assumes the newest cores, and a wrong `true` is silent corruption rather than a
+   * crash: FEAT_AFP claimed on a core without it leaves FPCR.NEP RES0, so every scalar SSE operation
+   * zeroes the upper lanes of its destination. This module cannot call sysctl, but the app can: it
+   * publishes `FEX_MADEIRA_HOSTPROBE=AFP=0,FLAGM=1,...` ("?" when a sysctl does not exist). Only an
+   * explicit `=0` turns a feature off; no variable, or "?", keeps the assumption. WOW64 module
+   * only; the ARM64EC module keeps its current feature set. */
+  if (const char* Probe = getenv("FEX_MADEIRA_HOSTPROBE")) {
+    const auto Absent = [Probe](const char* Key) {
+      const size_t Len = strlen(Key);
+      for (const char* p = Probe; (p = strstr(p, Key)) != nullptr; p += Len) {
+        const bool AtStart = p == Probe || p[-1] == ',';
+        if (AtStart && p[Len] == '=') {
+          return p[Len + 1] == '0';
+        }
+      }
+      return false;
+    };
+    if (Absent("AFP")) HostFeatures.SupportsAFP = false;
+    if (Absent("FLAGM")) HostFeatures.SupportsFlagM = false;
+    if (Absent("FLAGM2")) HostFeatures.SupportsFlagM2 = false;
+    if (Absent("FCMA")) HostFeatures.SupportsFCMA = false;
+    if (Absent("RCPC")) HostFeatures.SupportsRCPC = false;
+    if (Absent("AES")) HostFeatures.SupportsAES = false;
+    if (Absent("PMULL")) HostFeatures.SupportsPMULL_128Bit = false;
+    if (Absent("SHA")) HostFeatures.SupportsSHA = false;
+    if (Absent("CRC")) HostFeatures.SupportsCRC = false;
+    if (Absent("ATOMICS")) HostFeatures.SupportsAtomics = false;
+  }
+#endif
   HostFeatures.CPUMIDRs.push_back(0u);
   HostFeatures.HostType = HostType;
   return HostFeatures;

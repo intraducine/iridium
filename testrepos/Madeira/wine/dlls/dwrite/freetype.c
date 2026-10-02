@@ -812,6 +812,16 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
 C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
 
 #ifdef _WIN64
+/* iOS-Madeira, WoW64 guest window: in every thunk below
+ * `args` is already a HOST pointer - the WoW64 module converts that one outer
+ * pointer - but every pointer EMBEDDED in the 32-bit block, and every pointer
+ * nested inside those (struct dwrite_outline32's two array bases), is still a
+ * GUEST address.  ios_wow_host_ptr() is the +B conversion (NULL-preserving);
+ * it is plain ULongToPtr off the iOS port, so this is a no-op everywhere else.
+ *
+ * Font file data, glyph outline arrays and every OUT slot below are allocated
+ * by the 32-bit dwrite.dll, i.e. they live in the guest window: dereferencing
+ * them without +B read/wrote unrelated host memory at low addresses. */
 
 typedef ULONG PTR32;
 
@@ -826,10 +836,10 @@ static NTSTATUS wow64_create_font_object(void *args)
     } const *params32 = args;
     struct create_font_object_params params =
     {
-        ULongToPtr(params32->data),
+        ios_wow_host_ptr(params32->data),
         params32->size,
         params32->index,
-        ULongToPtr(params32->object),
+        ios_wow_host_ptr(params32->object),
     };
 
     return create_font_object(&params);
@@ -876,13 +886,13 @@ static NTSTATUS wow64_get_glyph_outline(void *args)
         float emsize;
         PTR32 outline;
     } const *params32 = args;
-    struct dwrite_outline32 *outline32 = ULongToPtr(params32->outline);
+    struct dwrite_outline32 *outline32 = ios_wow_host_ptr(params32->outline);
     struct dwrite_outline outline =
     {
-        .tags.values = ULongToPtr(outline32->tags.values),
+        .tags.values = ios_wow_host_ptr(outline32->tags.values),
         .tags.count = outline32->tags.count,
         .tags.size = outline32->tags.size,
-        .points.values = ULongToPtr(outline32->points.values),
+        .points.values = ios_wow_host_ptr(outline32->points.values),
         .points.count = outline32->points.count,
         .points.size = outline32->points.size,
     };
@@ -913,7 +923,7 @@ static NTSTATUS wow64_get_glyph_count(void *args)
     struct get_glyph_count_params params =
     {
         params32->object,
-        ULongToPtr(params32->count),
+        ios_wow_host_ptr(params32->count),
     };
 
     return get_glyph_count(&params);
@@ -936,8 +946,8 @@ static NTSTATUS wow64_get_glyph_advance(void *args)
         params32->glyph,
         params32->mode,
         params32->emsize,
-        ULongToPtr(params32->advance),
-        ULongToPtr(params32->has_contours),
+        ios_wow_host_ptr(params32->advance),
+        ios_wow_host_ptr(params32->has_contours),
     };
 
     return get_glyph_advance(&params);
@@ -961,7 +971,7 @@ static NTSTATUS wow64_get_glyph_bbox(void *args)
         params32->glyph,
         params32->emsize,
         params32->m,
-        ULongToPtr(params32->bbox),
+        ios_wow_host_ptr(params32->bbox),
     };
 
     return get_glyph_bbox(&params);
@@ -992,8 +1002,8 @@ static NTSTATUS wow64_get_glyph_bitmap(void *args)
         params32->m,
         params32->bbox,
         params32->pitch,
-        ULongToPtr(params32->bitmap),
-        ULongToPtr(params32->is_1bpp),
+        ios_wow_host_ptr(params32->bitmap),
+        ios_wow_host_ptr(params32->is_1bpp),
     };
 
     return get_glyph_bitmap(&params);
@@ -1017,7 +1027,7 @@ static NTSTATUS wow64_get_design_glyph_metrics(void *args)
         params32->glyph,
         params32->upem,
         params32->ascent,
-        ULongToPtr(params32->metrics),
+        ios_wow_host_ptr(params32->metrics),
     };
 
     return get_design_glyph_metrics(&params);

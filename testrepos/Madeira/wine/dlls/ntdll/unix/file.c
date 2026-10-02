@@ -5055,6 +5055,80 @@ NTSTATUS WINAPI NtQueryAttributesFile( const OBJECT_ATTRIBUTES *attr, FILE_BASIC
 }
 
 
+#ifdef WINE_IOS
+/***********************************************************************
+ *           ios_wow_volume_serial
+ *
+ * iOS-Madeira: a volume serial for a WoW64 caller on a host without a mount
+ * manager, where FileFsVolumeInformation otherwise fails with
+ * STATUS_NOT_IMPLEMENTED (and GetVolumeInformation with it) and
+ * FileIdInformation reports serial 0.  32-bit installers and programs of that
+ * era commonly insist on a serial.
+ *
+ * The value is random, generated once per prefix and stored in
+ * $WINEPREFIX/.madeira-volume-serial, so it is stable across relaunches and
+ * app updates and never derived from container paths.  The drive letter is
+ * mixed in so that two drive letters get different serials.  0 and ~0 are
+ * never returned.  64-bit callers never get here: they keep upstream's
+ * answers exactly.
+ */
+static DWORD ios_wow_volume_serial( WCHAR letter )
+{
+    static DWORD prefix_serial;
+    DWORD base = __atomic_load_n( &prefix_serial, __ATOMIC_RELAXED ), h;
+    unsigned int i;
+
+    if (!base && config_dir)
+    {
+        char *path = malloc( strlen( config_dir ) + sizeof("/.madeira-volume-serial") );
+        char buf[16];
+        int fd, len;
+
+        if (!path) return 0;
+        strcpy( path, config_dir );
+        strcat( path, "/.madeira-volume-serial" );
+        if ((fd = open( path, O_RDONLY )) >= 0)
+        {
+            if ((len = read( fd, buf, sizeof(buf) - 1 )) > 0)
+            {
+                buf[len] = 0;
+                base = strtoul( buf, NULL, 16 );
+            }
+            close( fd );
+        }
+        if (!base)
+        {
+            do base = arc4random(); while (!base || base == ~0u);
+            if ((fd = open( path, O_WRONLY | O_CREAT | O_EXCL, 0600 )) >= 0)
+            {
+                len = snprintf( buf, sizeof(buf), "%08x\n", (unsigned int)base );
+                if (write( fd, buf, len ) != len) WARN( "short write to %s\n", debugstr_a(path) );
+                close( fd );
+            }
+            else if (errno == EEXIST && (fd = open( path, O_RDONLY )) >= 0)
+            {
+                /* another thread or process created it first: use its value */
+                if ((len = read( fd, buf, sizeof(buf) - 1 )) > 0)
+                {
+                    DWORD other;
+                    buf[len] = 0;
+                    if ((other = strtoul( buf, NULL, 16 ))) base = other;
+                }
+                close( fd );
+            }
+        }
+        free( path );
+        __atomic_store_n( &prefix_serial, base, __ATOMIC_RELAXED );
+    }
+    if (!base) return 0;
+    h = 2166136261u;   /* FNV-1a over the stored value and the drive letter */
+    for (i = 0; i < 4; i++) { h ^= (base >> (i * 8)) & 0xff; h *= 16777619u; }
+    h ^= (unsigned char)letter; h *= 16777619u;
+    if (!h || h == ~0u) h = base;
+    return h;
+}
+#endif
+
 /******************************************************************************
  *              NtQueryInformationFile   (NTDLL.@)
  */
@@ -5263,6 +5337,10 @@ NTSTATUS WINAPI NtQueryInformationFile( HANDLE handle, IO_STATUS_BLOCK *io,
             info->VolumeSerialNumber = 0;
             if (!get_mountmgr_fs_info( handle, fd, &drive, sizeof(drive) ))
                 info->VolumeSerialNumber = drive.serial;
+#ifdef WINE_IOS
+            else if (NtCurrentTeb()->WowTebOffset)   /* WoW64 callers only, see ios_wow_volume_serial */
+                info->VolumeSerialNumber = ios_wow_volume_serial( drive.letter );
+#endif
             memset( &info->FileId, 0, sizeof(info->FileId) );
             *(ULONGLONG *)&info->FileId = st.st_ino;
         }
@@ -5822,6 +5900,32 @@ static BOOL async_write_proc( void *user, ULONG_PTR *info, unsigned int *status 
     release_fileio( &fileio->io );
     return TRUE;
 }
+
+#ifdef WINE_IOS
+/* iOS: a session contains native and WoW64 pseudo-processes at the same time.
+ * The loader temporarily clears wow_peb while booting a child, and otherwise
+ * leaves it pointing at the last WoW64 child, so neither value identifies the
+ * CALLER's I/O ABI (an I/O status block must be written in the layout of the
+ * process that owns it).  The guest-window base of the calling pseudo-process
+ * does: nonzero exactly for WoW64 callers.  Used by in_wow64_call() through a
+ * weak reference (unix_private.h).  In a session without 32-bit processes both
+ * answers are FALSE for every caller.  MADEIRA_IO_STATUS_OWNER=0 restores the
+ * session-wide answer. */
+BOOL ios_in_wow64_call(void)
+{
+    static int enabled = -1;
+    int mode = __atomic_load_n( &enabled, __ATOMIC_RELAXED );
+
+    if (mode < 0)
+    {
+        const char *env = getenv( "MADEIRA_IO_STATUS_OWNER" );
+        mode = !(env && env[0] == '0');
+        __atomic_store_n( &enabled, mode, __ATOMIC_RELAXED );
+    }
+    if (!mode || !ios_wow_base) return is_win64 && is_wow64();
+    return is_win64 && ios_wow_host_base() != 0;
+}
+#endif
 
 static void set_sync_iosb( IO_STATUS_BLOCK *io, NTSTATUS status, ULONG_PTR info, unsigned int options )
 {
@@ -7920,6 +8024,19 @@ NTSTATUS WINAPI NtQueryVolumeInformationFile( HANDLE handle, IO_STATUS_BLOCK *io
 
         if (get_mountmgr_fs_info( handle, fd, drive, sizeof(data) ))
         {
+#ifdef WINE_IOS
+            /* WoW64 callers only (see ios_wow_volume_serial): a prefix-stored
+             * serial and an empty label instead of STATUS_NOT_IMPLEMENTED. */
+            if (NtCurrentTeb()->WowTebOffset && (info->VolumeSerialNumber = ios_wow_volume_serial( drive->letter )))
+            {
+                info->VolumeCreationTime.QuadPart = 0;
+                info->VolumeLabelLength = 0;
+                info->SupportsObjects = TRUE;
+                io->Information = offsetof( FILE_FS_VOLUME_INFORMATION, VolumeLabel );
+                status = STATUS_SUCCESS;
+                break;
+            }
+#endif
             status = STATUS_NOT_IMPLEMENTED;
             break;
         }

@@ -1352,6 +1352,18 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
   constexpr uint64_t VSyscall_Base = 0xFFFF'FFFF'FF60'0000ULL;
   constexpr uint64_t VSyscall_End = VSyscall_Base + 0x1000;
 
+#ifdef FEX_GUEST_WINDOW
+  // Guest window: DecodeStream carries two address domains, and under a window they differ.
+  //  - InstStream is the *guest* address. It is only used as an integer, by CheckRangeExecutable
+  //    and the relocation lookup in ReadData, and those ranges are registered in guest addresses.
+  //  - AdjustedInstStream is the host pointer the bytes are read from. Callers pass `_InstStream`
+  //    as the host pointer for EntryPoint (GuestBase + EntryPoint), so `_InstStream - EntryPoint +
+  //    RIP` is GuestBase + RIP.
+  // Without a window both are `_InstStream - EntryPoint + RIP`.
+  const uint8_t* const GuestStream = reinterpret_cast<const uint8_t*>(RIP);
+  const uint8_t* const HostStream = _InstStream - EntryPoint + RIP;
+#endif
+
   if (OSABI == FEXCore::HLE::SyscallOSABI::OS_LINUX64 && RIP >= VSyscall_Base && RIP < VSyscall_End) {
     // VSyscall
     // This doesn't exist on AArch64 and on x86_64 hosts this is emulated with faults to a region mapped with --xp permissions
@@ -1360,7 +1372,11 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
     // Offset 0x800: vgetcpu
     uint64_t Offset = RIP - VSyscall_Base;
     return DecodeStream {
+#ifdef FEX_GUEST_WINDOW
+      .InstStream = GuestStream,
+#else
       .InstStream = _InstStream - EntryPoint + RIP,
+#endif
       .AdjustedInstStream = VSyscallData + Offset,
     };
   }
@@ -1408,10 +1424,17 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
   }
 #endif
 
+#ifdef FEX_GUEST_WINDOW
+  return DecodeStream {
+    .InstStream = GuestStream,
+    .AdjustedInstStream = HostStream,
+  };
+#else
   return DecodeStream {
     .InstStream = _InstStream - EntryPoint + RIP,
     .AdjustedInstStream = _InstStream - EntryPoint + RIP,
   };
+#endif
 }
 
 bool Decoder::CheckIfCacheable(FEXCore::Core::InternalThreadState& Thread, const uint8_t* InstStream, uint64_t PC, uint64_t MaxInst) {

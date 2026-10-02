@@ -354,6 +354,14 @@ C_ASSERT( ARRAYSIZE(__wine_unix_call_funcs) == unix_funcs_count );
 
 typedef ULONG PTR32;
 
+/* MADEIRA: the wow64 entry's `args` block is
+ * handed over as a HOST pointer, but every pointer inside it is still a 32-bit
+ * GUEST address and has to be shifted by the guest window base before it is
+ * dereferenced.  ios_wow_host_ptr() (include/wine/unixlib.h) is that
+ * conversion and is NULL-preserving; off this port, and for a process with no
+ * guest window, it is byte-for-byte the ULongToPtr it replaces.  The same
+ * substitution was already made in ws2_32's and dwrite's unixlibs. */
+
 static NTSTATUS wow64_resolv_get_searchlist( void *args )
 {
     struct
@@ -364,8 +372,8 @@ static NTSTATUS wow64_resolv_get_searchlist( void *args )
 
     struct get_searchlist_params params =
     {
-        ULongToPtr(params32->list),
-        ULongToPtr(params32->len)
+        ios_wow_host_ptr(params32->list),
+        ios_wow_host_ptr(params32->len)
     };
 
     return resolv_get_searchlist( &params );
@@ -383,11 +391,34 @@ static NTSTATUS wow64_resolv_get_serverlist( void *args )
     struct get_serverlist_params params =
     {
         params32->family,
-        ULongToPtr(params32->addrs),
-        ULongToPtr(params32->len)
+        ios_wow_host_ptr(params32->addrs),
+        ios_wow_host_ptr(params32->len)
     };
 
     return resolv_get_serverlist( &params );
+}
+
+/* MADEIRA: set_serverlist is the one entry whose ARGUMENT BLOCK is itself the
+ * caller's optional pointer -- DnsQuery_UTF8 passes its `servers` parameter
+ * straight to RESOLV_CALL( set_serverlist, servers ), and that parameter is
+ * NULL for every DnsQuery_A call that does not name its own servers.
+ *
+ * The wow64 bridge converts the outer pointer with plain arithmetic (FEX,
+ * WOW64/Module.cpp GuestWindow::ToHostPtr: host = B + guest), because guest
+ * address 0 must map to the window's deliberately unmapped first page so that
+ * a guest null dereference still faults.  That is right for a pointer the
+ * guest dereferences and wrong for an argument block that is ALLOWED to be
+ * absent: a NULL from 32-bit code arrives here as B, which is not NULL, so the
+ * `if (!addrs ...)` below would read the unmapped page and fault the HOST.
+ *
+ * Round-tripping the block through the guest-window helpers restores the
+ * NULL-preserving rule the embedded pointers already follow: -B then +B is
+ * exact for a real block, and turns B back into NULL.  Both helpers are the
+ * identity off this port and whenever the guest base is 0, so this is upstream behaviour
+ * everywhere else. */
+static NTSTATUS wow64_resolv_set_serverlist( void *args )
+{
+    return resolv_set_serverlist( ios_wow_host_ptr( ios_wow_guest_ptr32( args ) ) );
 }
 
 static NTSTATUS wow64_resolv_query( void *args )
@@ -403,11 +434,11 @@ static NTSTATUS wow64_resolv_query( void *args )
 
     struct query_params params =
     {
-        ULongToPtr(params32->name),
+        ios_wow_host_ptr(params32->name),
         params32->type,
         params32->options,
-        ULongToPtr(params32->buf),
-        ULongToPtr(params32->len)
+        ios_wow_host_ptr(params32->buf),
+        ios_wow_host_ptr(params32->len)
     };
 
     return resolv_query( &params );
@@ -417,7 +448,10 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
 {
     wow64_resolv_get_searchlist,
     wow64_resolv_get_serverlist,
-    resolv_set_serverlist,
+    /* IP4_ARRAY itself is a DWORD count followed by DWORD addresses -- the
+     * same layout and size in both bitnesses, and it embeds no pointer -- so
+     * the only thing the 32-bit entry has to do is honour a NULL block. */
+    wow64_resolv_set_serverlist,
     wow64_resolv_query,
 };
 

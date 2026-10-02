@@ -6,6 +6,7 @@ compiler caches are not removed. Set IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0 for a
 read-only check that reports all missing packages together.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import platform
@@ -32,13 +33,13 @@ KEG_ONLY = {"bison", "flex", "llvm"}
 SYSTEM_TOOLS = ("git", "make", "patch", "tar", "curl", "unzip", "xxd", "zsh", "ditto", "shasum")
 
 
-def capture(command, env):
-    return subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE,
+def capture(command, env, cwd=None):
+    return subprocess.run(command, env=env, cwd=cwd, text=True, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, check=False)
 
 
-def require_output(command, env):
-    result = capture(command, env)
+def require_output(command, env, cwd=None):
+    result = capture(command, env, cwd)
     if result.returncode:
         raise RuntimeError(shlex.join(command) + " failed:\n" + result.stderr.strip())
     return result.stdout.strip()
@@ -52,7 +53,8 @@ def validate_host():
 
 
 def build_path(root, prefix, original):
-    directories = [root / "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"]
+    directories = [root / ".build/dotnet",
+                   root / "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"]
     directories += [prefix / "opt" / name / "bin" for name in FORMULAE]
     directories += [prefix / "bin", prefix / "sbin", Path.home() / ".cargo/bin"]
     return os.pathsep.join(dict.fromkeys([str(p) for p in directories] + original.split(os.pathsep)))
@@ -99,6 +101,16 @@ def prepare_environment(root, *, install=True, environ=None):
     # Diagnose all Apple/system prerequisites before installing packages.
     errors = ["Missing macOS tool: " + tool for tool in SYSTEM_TOOLS
               if shutil.which(tool, path=env["PATH"]) is None]
+    steam = root / "iridium/packages/steam"
+    if (steam / "global.json").is_file():
+        version = json.loads((steam / "global.json").read_text())["sdk"]["version"]
+        try:
+            actual = require_output(["dotnet", "--version"], env, cwd=steam)
+            if actual != version:
+                raise RuntimeError("Found .NET SDK " + actual)
+        except (OSError, RuntimeError) as error:
+            errors.append("Steam requires .NET SDK " + version + ": " + str(error)
+                          + "\nInstall it in .build/dotnet or add it to PATH.")
     for command in (["xcodebuild", "-version"], ["xcrun", "--sdk", "iphoneos", "--show-sdk-path"]):
         try:
             require_output(command, env)

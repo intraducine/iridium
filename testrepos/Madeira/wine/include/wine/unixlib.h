@@ -38,6 +38,44 @@ extern DECLSPEC_EXPORT NTSTATUS __wine_unix_lib_init(void);
 extern DECLSPEC_EXPORT const unixlib_entry_t __wine_unix_call_funcs[];
 extern DECLSPEC_EXPORT const unixlib_entry_t __wine_unix_call_wow64_funcs[];
 
+/* iOS-Madeira, WoW64 guest window.
+ *
+ * An entry in __wine_unix_call_wow64_funcs receives its `args` block as a
+ * HOST pointer — the WoW64 module converts that one outer pointer.  Every
+ * pointer EMBEDDED in the block is still a 32-bit GUEST address and must be
+ * turned into a host address with + B before it is dereferenced, which is
+ * exactly what the ULongToPtr in those thunks used to assume was a no-op.
+ *
+ * ios_wow_host_ptr() is that conversion, NULL-preserving.  ios_wow_base() is
+ * provided by the Madeira iOS ntdll unix layer and returns 0 for a thread
+ * that has no guest window.  It is a weak reference: when the symbol is not
+ * linked in (a Madeira build that predates the WoW64 window support) the base
+ * is 0.  With a base of 0 -- every 64-bit caller, and every platform other
+ * than the iOS port -- this is exactly the ULongToPtr it replaces.  The
+ * reverse direction (a host pointer written back into a 32-bit field) is
+ * ios_wow_guest_ptr32(). */
+#ifndef __MADEIRA_IOS_WOW_HOST_PTR
+#define __MADEIRA_IOS_WOW_HOST_PTR
+#ifdef WINE_IOS
+extern ULONG_PTR ios_wow_base(void) __attribute__((weak));
+static inline ULONG_PTR ios_wow_host_base(void)
+{
+    return ios_wow_base ? ios_wow_base() : 0;
+}
+static inline void *ios_wow_host_ptr( ULONG addr )
+{
+    return addr ? (void *)(ios_wow_host_base() + (ULONG_PTR)addr) : NULL;
+}
+static inline ULONG ios_wow_guest_ptr32( const void *host )
+{
+    return host ? (ULONG)((ULONG_PTR)host - ios_wow_host_base()) : 0;
+}
+#else
+static inline void *ios_wow_host_ptr( ULONG addr ) { return ULongToPtr( addr ); }
+static inline ULONG ios_wow_guest_ptr32( const void *host ) { return PtrToUlong( host ); }
+#endif
+#endif /* __MADEIRA_IOS_WOW_HOST_PTR */
+
 /* some useful private helpers from ntdll */
 
 #ifdef __WINESRC__

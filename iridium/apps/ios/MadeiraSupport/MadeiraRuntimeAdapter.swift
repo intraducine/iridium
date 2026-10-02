@@ -21,11 +21,15 @@ enum MadeiraRuntimeAdapter {
     private static var combatProfile: MadeiraCombatProfile?
     private static var monitorTask: Task<Void, Never>?
     private static var closeTask: Task<Void, Never>?
+    private static var prerequisitePrefix: URL?
+    private(set) static var desktopSession = false
 
     // Lifecycle entry points are called on the main queue. Native boot stays on a worker.
     @MainActor
     static func start(executable: String, gameRoot: String, gameID: UUID,
                       arguments: [String] = [],
+                      steamAppID: String? = nil,
+                      nativeSteamInstall: Bool = false,
                       report: @escaping (String) -> Void,
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
@@ -70,6 +74,7 @@ enum MadeiraRuntimeAdapter {
         setenv("MADEIRA_USE_ARM64EC", "1", 1)
         setenv("MADEIRA_SCREEN_W", String(resolution.rawValue), 1)
         setenv("MADEIRA_SCREEN_H", String(resolution.height), 1)
+        winios_display_mode_changed(Int32(resolution.rawValue), Int32(resolution.height))
         unsetenv("MADEIRA_ARGS")
         setenv("IRIDIUM_MADEIRA_ARGS_JSON", cube ? "[]" : encodedArguments, 1)
         jit_install_trap_handler()
@@ -108,6 +113,7 @@ enum MadeiraRuntimeAdapter {
                     do {
                         RuntimeLogCapture.writeLine("[Launch] Preparing the isolated game environment.")
                         madeira_seed_prefix_if_needed(prefix.path)
+                        try IridiumGamePrerequisites.installFonts(prefix: prefix)
                         try MadeiraMediaInstall.install(prefix: prefix)
                         let path = try MadeiraGamePreparation.prepare(
                             executable: URL(fileURLWithPath: executable),
@@ -116,20 +122,41 @@ enum MadeiraRuntimeAdapter {
                         MadeiraSteamEnvironment.publish(
                             sourceExecutable: URL(fileURLWithPath: executable),
                             sourceRoot: URL(fileURLWithPath: gameRoot),
-                            windowsExecutable: path)
+                            windowsExecutable: path, registeredAppID: steamAppID)
                         try MadeiraControllerInstall.install(prefix: prefix, windowsExecutable: path)
+                        let mediaProbe = UserDefaults.standard.string(forKey: "IridiumMadeiraTest") == "media"
+                        let prerequisites = try mediaProbe ? nil : IridiumGamePrerequisites.prepare(
+                            prefix: prefix, executable: path, arguments: arguments,
+                            appID: steamAppID.flatMap(Int.init),
+                            sharedRoots: IridiumGamePrerequisites.sharedRoots(
+                                gameRoot: URL(fileURLWithPath: gameRoot), nativeSteamInstall: nativeSteamInstall))
                         guard current() else { return }
                         RuntimeLogCapture.writeLine("[Launch] Game files and controller bridge are ready.")
                         DispatchQueue.main.sync {
                             guard launchID == token, !launchCancelled, !failureReported else { return }
+                            prerequisitePrefix = prerequisites == nil ? nil : prefix
+                            desktopSession = prerequisites != nil
                             MadeiraController.start(
                                 prefix: prefix,
                                 touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
                             )
                         }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
-                        setenv("MADEIRA_EXE", path, 1)
-                        if UserDefaults.standard.string(forKey: "IridiumMadeiraTest") == "media" {
+                        if let prerequisites {
+                            // Installers can create 32-bit children after a 64-bit launch.
+                            // The GDI table and sync engine are selected once per session.
+                            setenv("MADEIRA_GDI_SHARED_SECTION", "1", 1)
+                            setenv("MADEIRA_DESKTOP", "1", 1)
+                            setenv("MADEIRA_MADSYNC_SESSION", "0", 1)
+                            setenv("MADEIRA_EXE", prerequisites.executable, 1)
+                            setenv("IRIDIUM_MADEIRA_ARGS_JSON", try MadeiraLaunchArguments.encode(prerequisites.arguments), 1)
+                            RuntimeLogCapture.writeLine("[Launch] Running \(prerequisites.installerCount) prerequisite installers before the game.")
+                            DispatchQueue.main.async {
+                                guard launchID == token, !launchCancelled else { return }
+                                report("Installing game prerequisites. The game will start next.")
+                            }
+                        } else { setenv("MADEIRA_EXE", path, 1) }
+                        if mediaProbe {
                             guard let probe = Bundle.main.url(forResource: "iridium-mfprobe", withExtension: "exe", subdirectory: "MediaRuntime") else { throw CocoaError(.fileNoSuchFile) }
                             try Data(contentsOf: probe).write(to: prefix.appendingPathComponent("drive_c/iridium-mfprobe.exe"), options: .atomic)
                             setenv("MADEIRA_EXE", "C:\\iridium-mfprobe.exe", 1)
@@ -169,11 +196,10 @@ enum MadeiraRuntimeAdapter {
                 }
                 guard current() else { return }
                 ws_log_quiet = 1
-                // The embedded iOS wineserver's semaphore wake path can crash while
-                // the first Wine request fd becomes active. Prefer the existing
-                // non-semaphore poll path, but preserve an explicit environment
-                // override so the semaphore path can still be tested diagnostically.
-                setenv("MADEIRA_SRV_NOSEM", "1", 0)
+                // Use Madeira's request-triggered wake path. Fixed polling adds
+                // up to 1 ms to each serial server request. Keep an explicit
+                // MADEIRA_SRV_NOSEM=1 override available for comparisons.
+                setenv("MADEIRA_SRV_NOSEM", "0", 0)
                 guard wineserver_start(prefix.path) == 0 else {
                     failure("Madeira Wine server failed to start. Restart Iridium before retrying.")
                     return
@@ -197,12 +223,28 @@ enum MadeiraRuntimeAdapter {
                         return
                     }
                     if launchCancelled { requestGuestClose() }
-                    else if !failureReported { report("Madeira started; waiting for rendered frames.") }
+                    else if !failureReported {
+                        report(prerequisitePrefix == nil ? "Madeira started; waiting for rendered frames."
+                               : "Installing game prerequisites. The game will start next.")
+                    }
                     monitorTask?.cancel()
                     monitorTask = Task { @MainActor in
+                        var lastInstallerStatus: String?
                         while wine_process_is_running() != 0 {
                             do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
                             guard launchID == token else { return }
+                            if let prefix = prerequisitePrefix {
+                                let status = await Task.detached(priority: .utility) {
+                                    IridiumGamePrerequisites.status(prefix: prefix)
+                                }.value
+                                guard launchID == token else { return }
+                                // Close cancels status reporting, not terminal observation:
+                                // the guest may exit after the bounded close wait times out.
+                                if !launchCancelled, let status, status != lastInstallerStatus {
+                                    lastInstallerStatus = status
+                                    report(status)
+                                }
+                            }
                         }
                         guard !Task.isCancelled, launchID == token else { return }
                         MadeiraController.stop()
@@ -211,7 +253,7 @@ enum MadeiraRuntimeAdapter {
                         combatProfile = nil
                         let code = wine_process_exit_code()
                         if code != 0 {
-                            failure("The game exited with code \(code). Restart Iridium before retrying.")
+                            failure("Launch stopped with exit code \(code). Check View Log for the failed step.")
                             return
                         }
                         let deadline = ProcessInfo.processInfo.systemUptime + 8
@@ -287,6 +329,7 @@ enum MadeiraRuntimeAdapter {
         dispatchPrecondition(condition: .onQueue(.main))
         guard closeTask == nil else { return }
         launchCancelled = true
+        cancelPrerequisites()
         MadeiraHardwareInput.acceptingInput = false
         MadeiraController.acceptingInput = false
         UserDefaults.standard.removeObject(forKey: "IridiumPendingMadeiraLaunchTitle")
@@ -323,6 +366,14 @@ enum MadeiraRuntimeAdapter {
     }
 
     private static let controllerQueue = DispatchQueue(label: "iridium.madeira.keys")
+    @MainActor
+    private static func cancelPrerequisites() {
+        guard let prefix = prerequisitePrefix else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { try IridiumGamePrerequisites.cancel(prefix: prefix) }
+            catch { RuntimeLogCapture.writeLine("[Launch] Cannot cancel prerequisite installer: \(error.localizedDescription)") }
+        }
+    }
     private static var controllerKeys = MadeiraKeys()
     static func releaseKeys() {
         controllerQueue.sync {
@@ -332,6 +383,7 @@ enum MadeiraRuntimeAdapter {
 
     @MainActor
     static func stop() {
+        cancelPrerequisites()
         launchID = UUID()
         monitorTask?.cancel()
         closeTask?.cancel()
@@ -353,8 +405,10 @@ enum MadeiraRuntimeAdapter {
 
     static func input(type: String, phase: String, x: CGFloat?, y: CGFloat?, value: Double, name: String) {
         if type == "touch", let x, let y {
-            let px = Int32(min(max(x, 0), 1) * CGFloat(resolution.rawValue - 1))
-            let py = Int32(min(max(y, 0), 1) * CGFloat(resolution.height - 1))
+            var width: Int32 = 0, height: Int32 = 0
+            winios_screen_size(&width, &height)
+            let px = Int32(min(max(x, 0), 1) * CGFloat(max(0, width - 1)))
+            let py = Int32(min(max(y, 0), 1) * CGFloat(max(0, height - 1)))
             switch phase {
             case "began": winios_post_touch_down(px, py)
             case "ended", "cancelled": winios_post_touch_up(px, py)

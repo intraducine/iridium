@@ -62,3 +62,16 @@ combination, but need not include the source code of those Apple libraries.
 This permission does not extend to those libraries, which remain subject to
 Apple's own licence terms. You may remove this additional permission from
 copies you convey, as GPL-3.0 section 7 allows.
+
+## Third-party contributions
+
+Contributed under `CONTRIBUTING.md` (GPL-3.0-or-later with the Madeira
+Converter Exception) and signed off under the DCO; copyright stays with the
+author.
+
+- **125hz**, merged 2026-09-29 from pull requests #2, #3 and #4 (32-bit WOW64
+  guests on the iOS host): `479da619c`, `d8f9d483c`, `e936d2c6d`,
+  `c97be2836`, `b8cd63b23`, `4585944ba`, `da7addf5a`, and their merge
+  commits. The two files they add, `Source/Windows/WOW64/IosMonoBridge.cpp`
+  and `Source/Windows/WOW64/IosTeb.h`, carry the author's own MIT notice
+  (SPDX), which is GPL-compatible.

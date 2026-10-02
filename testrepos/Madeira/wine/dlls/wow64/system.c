@@ -40,6 +40,10 @@ static void put_system_basic_information( SYSTEM_BASIC_INFORMATION32 *info32,
     info32->MmLowestPhysicalPage         = info->MmLowestPhysicalPage;
     info32->MmHighestPhysicalPage        = info->MmHighestPhysicalPage;
     info32->AllocationGranularity        = info->AllocationGranularity;
+    /* NOT window-converted: the unix side already reports these in the GUEST
+     * namespace for a WoW process (virtual_get_system_info clamps
+     * HighestUserAddress to the guest limit), which is exactly what 32-bit
+     * callers and wow64's own default_zero_bits expect. */
     info32->LowestUserAddress            = PtrToUlong( info->LowestUserAddress );
     info32->HighestUserAddress           = PtrToUlong( info->HighestUserAddress );
     info32->ActiveProcessorsAffinityMask = info->ActiveProcessorsAffinityMask;
@@ -134,7 +138,7 @@ static NTSTATUS put_system_proc_info( SYSTEM_PROCESS_INFORMATION32 *info32,
             proc32->KernelTime                   = proc->KernelTime;
             proc32->ProcessName.Length           = proc->ProcessName.Length;
             proc32->ProcessName.MaximumLength    = proc->ProcessName.MaximumLength;
-            proc32->ProcessName.Buffer           = PtrToUlong( (char *)proc32 + proc_len );
+            proc32->ProcessName.Buffer           = host_ptr32( (char *)proc32 + proc_len );
             proc32->dwBasePriority               = proc->dwBasePriority;
             proc32->UniqueProcessId              = HandleToULong( proc->UniqueProcessId );
             proc32->ParentProcessId              = HandleToULong( proc->ParentProcessId );
@@ -151,6 +155,11 @@ static NTSTATUS put_system_proc_info( SYSTEM_PROCESS_INFORMATION32 *info32,
                 ti32->ThreadInfo.UserTime          = ti->ThreadInfo.UserTime;
                 ti32->ThreadInfo.CreateTime        = ti->ThreadInfo.CreateTime;
                 ti32->ThreadInfo.dwTickCount       = ti->ThreadInfo.dwTickCount;
+                /* NOT window-converted: system-wide enumeration, so these
+                 * addresses belong to OTHER processes and we have no handle
+                 * to ask for their B.  Classic WoW64 truncates them here for
+                 * 64-bit processes too; the same values are as (un)usable as
+                 * before.  Fix needs a pid -> B lookup. */
                 ti32->ThreadInfo.StartAddress      = PtrToUlong( ti->ThreadInfo.StartAddress );
                 ti32->ThreadInfo.dwCurrentPriority = ti->ThreadInfo.dwCurrentPriority;
                 ti32->ThreadInfo.dwBasePriority    = ti->ThreadInfo.dwBasePriority;
@@ -444,6 +453,7 @@ NTSTATUS WINAPI wow64_NtQuerySystemInformation( UINT *args )
                     info32->Handle[i].ObjectType    = info->Handle[i].ObjectType;
                     info32->Handle[i].HandleFlags   = info->Handle[i].HandleFlags;
                     info32->Handle[i].HandleValue   = info->Handle[i].HandleValue;
+                    /* NOT window-converted: an opaque kernel object pointer */
                     info32->Handle[i].ObjectPointer = PtrToUlong( info->Handle[i].ObjectPointer );
                     info32->Handle[i].AccessMask    = info->Handle[i].AccessMask;
                 }

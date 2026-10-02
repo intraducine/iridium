@@ -331,11 +331,10 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
                   game.steam_appid == nil || game.steam_appid == match.id else {
                 throw ArtworkError.message("This catalog entry is not an available game. Choose another match or keep your local entry.")
             }
-            // Steam supplies these larger library assets for many, but not all, games.
             let assetRoot = URL(string: "https://cdn.akamai.steamstatic.com/steam/apps/\(match.id)/")
-            let libraryCover = try? await download(assetRoot?.appendingPathComponent("library_600x900.jpg"))
-            let cover: String?
-            if let libraryCover { cover = libraryCover } else { cover = try await download(game.header_image) }
+            let portraitURL = await steamPortraitCoverURL(for: UInt32(match.id))
+            var cover = try? await download(portraitURL)
+            if cover == nil { cover = try? await download(assetRoot?.appendingPathComponent("library_600x900.jpg")) }
             defer { discard([cover]) }
             let libraryHero = try? await download(assetRoot?.appendingPathComponent("library_hero.jpg"))
             let background: String?
@@ -345,7 +344,7 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
             guard !Task.isCancelled, revisions[id] == revision else { return }
             try update(id) {
                 $0.matchID = match.id; $0.matchName = game.name ?? match.name; $0.matchSource = "steam"
-                if !$0.customCover { $0.cover = cover; $0.portraitCover = libraryCover != nil; $0.portraitSourceVersion = libraryCover == nil ? nil : 2 }
+                if !$0.customCover { $0.cover = cover; $0.portraitCover = true; $0.portraitSourceVersion = cover == nil ? nil : 2 }
                 if !$0.customBackground { $0.background = background }
             }
             lookupNote = nil
@@ -389,6 +388,70 @@ struct ArtworkMatch: Decodable, Identifiable, Equatable {
             throw ArtworkError.message("The game catalog is unavailable. Try again later or use a custom image.")
         }
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    func steamHeaderImageURL(for appID: UInt32) async -> URL? {
+        struct Details: Decodable {
+            struct Game: Decodable { let steam_appid: UInt32; let header_image: URL? }
+            let success: Bool
+            let data: Game?
+        }
+        guard let result: [String: Details] = try? await storeRequest("appdetails?appids=\(appID)"),
+              let details = result[String(appID)], details.success,
+              let game = details.data, game.steam_appid == appID,
+              let url = game.header_image, url.scheme == "https",
+              let host = url.host, host.hasSuffix(".steamstatic.com")
+        else { return nil }
+        return url
+    }
+
+    func steamPortraitCoverURL(for appID: UInt32) async -> URL? {
+        struct Response: Decodable {
+            struct Payload: Decodable {
+                struct Item: Decodable {
+                    struct Assets: Decodable {
+                        let asset_url_format: String
+                        let library_capsule_2x: String?
+                        let library_capsule: String?
+                    }
+                    let appid: UInt32
+                    let assets: Assets?
+                }
+                let store_items: [Item]?
+            }
+            let response: Payload
+        }
+        let input = "{\"ids\":[{\"appid\":\"\(appID)\"}],\"context\":{\"country_code\":\"US\"},\"data_request\":{\"include_assets\":true}}"
+        var components = URLComponents(string: "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/")!
+        components.queryItems = [URLQueryItem(name: "input_json", value: input)]
+        guard let url = components.url,
+              let (data, reply) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 15)),
+              (reply as? HTTPURLResponse)?.statusCode == 200, data.count < 2 * 1024 * 1024,
+              let payload = try? JSONDecoder().decode(Response.self, from: data),
+              let assets = payload.response.store_items?.first(where: { $0.appid == appID })?.assets,
+              assets.asset_url_format.hasPrefix("steam/apps/\(appID)/"),
+              let filename = assets.library_capsule_2x ?? assets.library_capsule,
+              !filename.contains(".."),
+              filename.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._-/".contains($0)) })
+        else { return nil }
+        let path = assets.asset_url_format.replacingOccurrences(of: "${FILENAME}", with: filename)
+        return URL(string: "https://shared.fastly.steamstatic.com/store_item_assets/" + path)
+    }
+
+    func steamStoreStorageEstimate(for appID: UInt32) async -> String? {
+        guard let url = URL(string: "https://store.steampowered.com/api/appdetails?appids=\(appID)"),
+              let (data, response) = try? await session.data(for: URLRequest(url: url, timeoutInterval: 15)),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count < 2 * 1024 * 1024,
+              let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let app = result[String(appID)] as? [String: Any],
+              let details = app["data"] as? [String: Any],
+              let requirements = details["pc_requirements"] as? [String: String],
+              let html = requirements["minimum"] ?? requirements["recommended"] else { return nil }
+        let text = html.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        guard let range = text.range(of: #"Storage\s*:\s*\d+(?:[.,]\d+)?\s*(?:TB|GB|MB)"#,
+                                     options: .regularExpression) else { return nil }
+        return String(text[range]).replacingOccurrences(of: "Storage", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ": "))
     }
 
     private func request<T: Decodable>(_ path: String) async throws -> [T] {

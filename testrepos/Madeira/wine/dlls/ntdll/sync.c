@@ -75,6 +75,7 @@ void ios_xp_nt_init(void)
 }
 static void ios_xp_cs_waited( RTL_CRITICAL_SECTION *crit, ULONGLONG t0 )
 {
+#if defined(__aarch64__) || defined(__arm64ec__)
     ULONGLONG d = ios_xp_ticks() - t0, us;
     LONG64 idx;
     ios_xp_nt_init();
@@ -85,6 +86,7 @@ static void ios_xp_cs_waited( RTL_CRITICAL_SECTION *crit, ULONGLONG t0 )
     InterlockedIncrement64( &ios_xp_nt.cs_wait_hist[us < 2 ? 0 : us < 10 ? 1 : us < 50 ? 2 : us < 200 ? 3 : us < 1000 ? 4 : 5] );
     idx = InterlockedIncrement64( &ios_xp_nt.cs_ring_idx );
     if (!(idx & 3)) ios_xp_nt.cs_ring[(idx >> 2) & 1023] = (ULONG_PTR)crit;
+#endif
 }
 
 WINE_DEFAULT_DEBUG_CHANNEL(sync);

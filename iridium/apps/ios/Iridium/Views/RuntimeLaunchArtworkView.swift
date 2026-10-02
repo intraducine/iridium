@@ -7,12 +7,14 @@ import SwiftUI
     let safeInsets: EdgeInsets
     let viewLogs: () -> Void
     let close: () -> Void
+    let memory: RuntimeMemorySnapshot?
     @State private var artwork: RuntimeLaunchArtworkSnapshot
     @ObservedObject var motionState: RuntimeLaunchMotionState
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(session: RuntimePlayerSession, phase: RuntimeLaunchPresentation, safeInsets: EdgeInsets,
+         memory: RuntimeMemorySnapshot? = nil,
          artwork: RuntimeLaunchArtworkSnapshot? = nil,
          motionState: RuntimeLaunchMotionState,
          viewLogs: @escaping () -> Void, close: @escaping () -> Void) {
@@ -21,6 +23,7 @@ import SwiftUI
         self.safeInsets = safeInsets
         self.viewLogs = viewLogs
         self.close = close
+        self.memory = memory
         self.motionState = motionState
         if let artwork, artwork.gameID == session.gameID {
             _artwork = State(initialValue: artwork)
@@ -120,13 +123,14 @@ import SwiftUI
     private func launchDetails() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Text(phase == .starting ? "Starting…" : phase.title)
+                Text(phase == .starting ? session.statusSummary : phase.title)
                     .font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("playerLaunchStatus")
             }
-            .opacity(motionState.detailsVisible ? 1 : 0)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("playerLaunchPanel")
+            if let memory { RuntimeMemoryReadout(memory: memory) }
             if let message = phase.message {
                 Text(message).font(.callout).foregroundStyle(.white.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
@@ -163,5 +167,30 @@ import SwiftUI
         .position(x: frame.midX, y: frame.midY)
         .clipped()
         .accessibilityHidden(true)
+    }
+}
+
+struct RuntimeMemoryReadout: View {
+    let memory: RuntimeMemorySnapshot
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            let used = ByteCountFormatter.string(fromByteCount: Int64(clamping: memory.usedBytes), countStyle: .memory)
+            Text("RAM: \(used)")
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("App RAM: \(used)")
+            if let available = memory.availableBytes {
+                ProgressView(value: Double(memory.usedBytes), total: max(1, Double(memory.usedBytes) + Double(available)))
+                    .tint(.white)
+                    .accessibilityLabel("App memory use")
+                let remaining = ByteCountFormatter.string(fromByteCount: Int64(clamping: available), countStyle: .memory)
+                Text("Available: \(remaining)")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Available to app: \(remaining)")
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("playerMemoryStatus")
     }
 }

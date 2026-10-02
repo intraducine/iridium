@@ -4179,8 +4179,12 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
  * there is no way to tell a zeroed slot from the table terminator, and
  * inventing one would manufacture false positives.  Deduped per (module,
  * slot) so one persistent zero cannot flood the cap.
+ *
+ * iOS-Madeira: guarded on __arm64ec__ like every other
+ * xlate_ios_jit user in this file.  The JIT-pool translation hook only exists
+ * in the arm64ec build; without the guard the i386 and plain-aarch64 PE ntdll
+ * builds fail to link with "undefined symbol: xlate_ios_jit".
  */
-/* The JIT alias helper is implemented only by signal_arm64ec.c. */
 #ifdef __arm64ec__
 static void iat_life_sweep( const char *when )
 {
@@ -4271,8 +4275,7 @@ static void iat_life_sweep( const char *when )
         ERR( "[iat-life] ml701 sweep#%d after=%s modules=%d slots=%d pooled=%d pe0=%d pool0=%d\n",
              sweeps, when, n_mod, n_slot, n_pool, n_pezero, n_poolzero );
 }
-
-#endif /* __arm64ec__ */
+#endif  /* __arm64ec__ */
 
 NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_flags,
                                              const UNICODE_STRING *libname, HMODULE* hModule)
@@ -4314,7 +4317,6 @@ NTSTATUS WINAPI DECLSPEC_HOTPATCH LdrLoadDll(LPCWSTR search_path, DWORD *load_fl
             LdrUnloadDll(wm->ldr.DllBase);
             wm = NULL;
         }
-
 #ifdef __arm64ec__
         else
         {
@@ -4900,6 +4902,8 @@ void WINAPI LdrShutdownThread(void)
     /* don't do any detach calls if process is exiting */
     if (process_detaching) return;
 
+#if defined(__aarch64__) || defined(__arm64ec__)
+    /* this diagnostic reads ARM64's CHPE area, absent from an i386 TEB */
     /* iOS-Madeira ml843 [detach-probe]: is the FEX emulator stack top already
      * sitting in this thread's TLS BEFORE any detach cleanup runs?
      *
@@ -4963,6 +4967,7 @@ void WINAPI LdrShutdownThread(void)
         }
     }
 
+#endif
     RtlProcessFlsData( NtCurrentTeb()->FlsSlots, 1 );
 
     RtlEnterCriticalSection( &loader_section );
@@ -5628,6 +5633,9 @@ void loader_init( CONTEXT *context, void **entry )
             InitializeListHead( &hash_table[i] );
 
         init_user_process_params();
+#ifdef __i386__
+        heap_init_madeira_policy();  /* environment ready, no guest threads yet */
+#endif
         load_global_options();
         version_init();
         open_known_dll_ntdir();
@@ -5636,7 +5644,42 @@ void loader_init( CONTEXT *context, void **entry )
         if (!default_load_path)
             get_dll_load_path( peb->ProcessParameters->ImagePathName.Buffer, NULL, dll_safe_mode, &default_load_path );
 
-        if (NtCurrentTeb()->WowTebOffset) init_wow64( context );
+        if (NtCurrentTeb()->WowTebOffset)
+        {
+            /* iOS-Madeira: init_wow64() never returns -- it tail-calls
+             * Wow64LdrpInitialize(), which runs the 32-bit process for the rest
+             * of this thread's life.  So for a WoW64 pseudo-process NOTHING
+             * below this point in loader_init() ever executes, including both
+             * locale_init() calls.  The NATIVE ntdll's `nls_info`
+             * (dlls/ntdll/locale.c:42) therefore keeps its static initialiser
+             * and UpperCaseTable/LowerCaseTable stay NULL, so any native call
+             * that reaches casemap() -- RtlUpcaseUnicodeString,
+             * RtlPrefixUnicodeString, upcase_unicode_to_utf8, ... -- reads
+             * through a NULL table.  Upstream never notices because on Windows
+             * nothing but wow64.dll/wow64win.dll runs 64-bit in a WoW64
+             * process; here the CPU backend (xtajit.dll) is a full C++ module
+             * that pulls in the native ucrtbase/kernel32/kernelbase, whose
+             * process-attach code does upcase string work.
+             *
+             * Each pseudo-process also gets a PRIVATE copy of ntdll's .data
+             * (build/ntdll-unix/virtual_ios.c, "[child-ntdll] copied ..."), so
+             * an initialised table can never be inherited from the parent
+             * either: every process must run locale_init() itself.
+             *
+             * Same reasoning (and same safety argument) as the arm64ec early
+             * call below: RtlQueryActivationContextApplicationSettings is the
+             * only actctx dependency and fails gracefully with no actctx.
+             *
+             * Only the native ARM64 ntdll hosts WoW64 on this port (the
+             * ARM64EC ntdll never runs with a WowTebOffset), and the 32-bit
+             * ntdll's init_wow64() (the #else one, ~200 lines above) returns
+             * normally, so its own locale_init() below still runs. */
+#ifdef __aarch64__
+            locale_init();
+            TRACE( "wow64: early locale_init done before Wow64LdrpInitialize\n" );
+#endif
+            init_wow64( context );  /* 64-bit: does not return */
+        }
 
         wm = build_main_module();
         build_ntdll_module();

@@ -61,12 +61,23 @@ FEX_DEFAULT_VISIBILITY void ClearHooks();
 extern "C" {
 extern uintptr_t ios_fex_band_base;
 extern uintptr_t ios_fex_band_end;
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+/* The dual-mapped JIT pool's RX range, defined beside the band in rpmalloc.c and published by the
+ * WOW64 module at process init (zero until then). See the executable-allocation check below. */
+extern uintptr_t ios_fex_jit_pool_rx;
+extern uintptr_t ios_fex_jit_pool_end;
+#endif
 }
 
 inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Commit = true) {
   // Allocate top-down to avoid polluting the lower VA space, as even on 64-bit some programs (i.e. LuaJIT) require allocations below 4GB.
   DWORD Flags = (Commit ? MEM_COMMIT : 0) | MEM_RESERVE | MEM_TOP_DOWN;
-#ifdef ARCHITECTURE_arm64ec
+  /* The iOS WOW64 module (xtajit.dll) is a plain aarch64 PE, but it runs in the same process, with
+   * the same host VA band and the same dual-mapped JIT pool as the ARM64EC module, and it applies
+   * the same FEXCore::DualMap::WriteOffset to every JIT write (gated on FEX_IOS_HOST alone). So it
+   * takes this path too: without the EC_CODE carve its code buffers came from ordinary band
+   * memory, whose `+ WriteOffset` alias does not exist. */
+#if defined(ARCHITECTURE_arm64ec) || defined(FEX_IOS_HOST)
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml321: keep FEX's host structures OUT of the guest VA band.
    *
@@ -140,8 +151,26 @@ inline void* VirtualAlloc(void* Base, size_t Size, bool Execute = false, bool Co
     Parameter.Type = MemExtendedParameterAttributeFlags;
     Parameter.ULong64 = MEM_EXTENDED_PARAMETER_EC_CODE;
   };
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+  void* Ret = ::VirtualAlloc2(nullptr, Base, Size, Flags, Execute ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE,
+                              Execute ? &Parameter : nullptr, Execute ? 1 : 0);
+  /* An executable allocation outside the JIT pool is unusable, and silently so: it is not
+   * executable on iOS and its `+ WriteOffset` alias does not exist, so the first emit would store
+   * into nothing. Refuse it here, at the one place every code buffer comes from. */
+  if (Execute && Ret && ios_fex_jit_pool_rx) {
+    const uintptr_t Addr = reinterpret_cast<uintptr_t>(Ret);
+    if (Addr < ios_fex_jit_pool_rx || Addr + Size > ios_fex_jit_pool_end) {
+      LogMan::Msg::EFmt("[jit-pool] exec allocation outside the pool: [{:#x}, {:#x}) is not in [{:#x}, {:#x}) - refusing", Addr,
+                        Addr + Size, ios_fex_jit_pool_rx, ios_fex_jit_pool_end);
+      ::VirtualFree(Ret, 0, MEM_RELEASE);
+      return nullptr;
+    }
+  }
+  return Ret;
+#else
   return ::VirtualAlloc2(nullptr, Base, Size, Flags, Execute ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE, Execute ? &Parameter : nullptr,
                          Execute ? 1 : 0);
+#endif
 #else
   return ::VirtualAlloc(Base, Size, Flags, Execute ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE);
 #endif

@@ -38,7 +38,7 @@ static void put_object_type_info( OBJECT_TYPE_INFORMATION32 *info32, const OBJEC
         memcpy( info32 + 1, info->TypeName.Buffer, info->TypeName.Length + sizeof(WCHAR) );
         info32->TypeName.Length        = info->TypeName.Length;
         info32->TypeName.MaximumLength = info->TypeName.Length + sizeof(WCHAR);
-        info32->TypeName.Buffer        = PtrToUlong( info32 + 1 );
+        info32->TypeName.Buffer        = host_ptr32( info32 + 1 );
     }
     else memset( &info32->TypeName, 0, sizeof(info32->TypeName) );
     info32->TotalNumberOfObjects       = info->TotalNumberOfObjects;
@@ -107,7 +107,7 @@ void put_section_image_info( SECTION_IMAGE_INFORMATION32 *info32, const SECTION_
     }
     else
     {
-        info32->TransferAddress    = PtrToUlong( info->TransferAddress );
+        info32->TransferAddress    = host_ptr32( info->TransferAddress );
         info32->MaximumStackSize   = info->MaximumStackSize;
         info32->CommittedStackSize = info->CommittedStackSize;
     }
@@ -838,13 +838,13 @@ NTSTATUS WINAPI wow64_NtQueryDirectoryObject( UINT *args )
         strpool_head = sizeof(*info32) * (used_count + 1);  /* after the "null terminator" entry */
         for (i = 0; i < used_count; i++)
         {
-            info32[i].ObjectName.Buffer = PtrToUlong( (char *)info32 + strpool_head );
+            info32[i].ObjectName.Buffer = host_ptr32( (char *)info32 + strpool_head );
             info32[i].ObjectName.Length = info[i].ObjectName.Length;
             info32[i].ObjectName.MaximumLength = info[i].ObjectName.MaximumLength;
             memcpy( (char *)info32 + strpool_head, info[i].ObjectName.Buffer, info[i].ObjectName.MaximumLength );
             strpool_head += info[i].ObjectName.MaximumLength;
 
-            info32[i].ObjectTypeName.Buffer = PtrToUlong( (char *)info32 + strpool_head );
+            info32[i].ObjectTypeName.Buffer = host_ptr32( (char *)info32 + strpool_head );
             info32[i].ObjectTypeName.Length = info[i].ObjectTypeName.Length;
             info32[i].ObjectTypeName.MaximumLength = info[i].ObjectTypeName.MaximumLength;
             memcpy( (char *)info32 + strpool_head, info[i].ObjectTypeName.Buffer, info[i].ObjectTypeName.MaximumLength );
@@ -1027,7 +1027,7 @@ NTSTATUS WINAPI wow64_NtQueryObject( UINT *args )
                     memcpy( info32 + 1, info->Name.Buffer, info->Name.Length + sizeof(WCHAR) );
                     info32->Name.Length = info->Name.Length;
                     info32->Name.MaximumLength = info->Name.Length + sizeof(WCHAR);
-                    info32->Name.Buffer = PtrToUlong( info32 + 1 );
+                    info32->Name.Buffer = host_ptr32( info32 + 1 );
                 }
                 else memset( &info32->Name, 0, sizeof(info32->Name) );
             }
@@ -1131,7 +1131,7 @@ NTSTATUS WINAPI wow64_NtQuerySection( UINT *args )
         if (size < sizeof(*info32)) return STATUS_INFO_LENGTH_MISMATCH;
         if (!(status = NtQuerySection( handle, class, &info, sizeof(info), &ret_size )))
         {
-            info32->BaseAddress = PtrToUlong( info.BaseAddress );
+            info32->BaseAddress = host_ptr32( info.BaseAddress );
             info32->Attributes  = info.Attributes;
             info32->Size        = info.Size;
             ret_size = sizeof(*info32);
@@ -1449,6 +1449,8 @@ NTSTATUS WINAPI wow64_NtSetInformationJobObject( UINT *args )
             JOBOBJECT_ASSOCIATE_COMPLETION_PORT32 *info32 = ptr;
             JOBOBJECT_ASSOCIATE_COMPLETION_PORT info;
 
+            /* NOT window-converted: CompletionKey is an opaque caller value
+             * that round-trips back out through the completion port. */
             info.CompletionKey  = ULongToPtr( info32->CompletionKey );
             info.CompletionPort = LongToHandle( info32->CompletionPort );
             return NtSetInformationJobObject( handle, class, &info, sizeof(info) );
@@ -1714,6 +1716,10 @@ NTSTATUS WINAPI wow64_NtWaitForDebugEvent( UINT *args )
         switch (state.NewState)
         {
 #define COPY_ULONG(field) state32->StateInfo.field = state.StateInfo.field
+/* NOT window-converted: COPY_PTR carries both handles and addresses in the
+ * DEBUGGEE's address space, and this call has no handle to that process to
+ * ask for its B.  Classic WoW64 truncates these for a 64-bit debuggee as
+ * well.  Fixing it needs the debuggee's B from the debug event. */
 #define COPY_PTR(field)   state32->StateInfo.field = PtrToUlong( state.StateInfo.field )
         case DbgCreateThreadStateChange:
             COPY_PTR( CreateThread.HandleToThread );

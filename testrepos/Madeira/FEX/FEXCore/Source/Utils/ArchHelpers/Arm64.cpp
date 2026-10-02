@@ -2327,7 +2327,17 @@ std::optional<int32_t> HandleUnalignedAccess(FEXCore::Core::InternalThreadState*
   // thread identity into the word (waiters only ever test zero/nonzero); on
   // timeout, emulate this one access with the same helpers the !IsJIT path
   // uses and leave the code unpatched.
+#if defined(FEX_IOS_HOST) && !defined(ARCHITECTURE_arm64ec)
+  /* The backpatch lock lives in the code buffer, which is execute-only on iOS: JITCodeTail is
+   * emitted after each block, so &SpinLockFutex is in the dual-mapped pool's RX view. The
+   * LDAXR/STLXR acquire below would take a permission fault on the store, inside this handler.
+   * Take the WHOLE lock through the writable alias (both views map the same physical page, so the
+   * exclusive pair is a genuine atomic, and every participant uses this one address). Scoped to
+   * the WOW64 module; the ARM64EC module is unchanged. */
+  uint32_t* BPFutex = FEXCore::DualMap::WriteAddr(&InlineTail->SpinLockFutex);
+#else
   uint32_t* BPFutex = &InlineTail->SpinLockFutex;
+#endif
   const uint32_t BPStamp = 0x80000000u | (static_cast<uint32_t>(reinterpret_cast<uintptr_t>(Thread) >> 4) & 0x7FFFFFFFu);
   bool BPLocked = false;
   for (int Attempt = 0; Attempt < 8; ++Attempt) {

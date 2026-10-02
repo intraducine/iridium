@@ -1,0 +1,9 @@
+<Directives><Application><Assembly Name="protobuf-net">
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.UInt32,System.Private.CoreLib]],System.Private.CoreLib],[System.UInt32,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.Int32,System.Private.CoreLib]],System.Private.CoreLib],[System.Int32,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.UInt64,System.Private.CoreLib]],System.Private.CoreLib],[System.UInt64,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.Int64,System.Private.CoreLib]],System.Private.CoreLib],[System.Int64,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.Single,System.Private.CoreLib]],System.Private.CoreLib],[System.Single,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.Double,System.Private.CoreLib]],System.Private.CoreLib],[System.Double,System.Private.CoreLib]]" Dynamic="Required All" />
+<Type Name="ProtoBuf.Internal.Serializers.RepeatedDecorator`2[[System.Collections.Generic.List`1[[System.Boolean,System.Private.CoreLib]],System.Private.CoreLib],[System.Boolean,System.Private.CoreLib]]" Dynamic="Required All" />
+</Assembly></Application></Directives>

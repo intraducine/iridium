@@ -376,6 +376,29 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         runtimeBundleIdentifier: String? = nil,
         runtimeBundleVersion: String? = nil
     ) async -> GameRecord {
+        // A native repair/update changes the installed payload, not the user's
+        // prefix, save mapping, artwork identity, renderer, or input choices.
+        if titleFlags.contains("steam-native-download"), let index = games.firstIndex(where: {
+            $0.source == .steam && $0.launchProfile.titleFlags.contains("steam-app-id:\(appID)")
+        }) {
+            var game = games[index]
+            game.installPath = installPath
+            game.launchProfile.executablePath = executablePath
+            if !game.launchProfile.titleFlags.contains("steam-native-download") {
+                game.launchProfile.titleFlags.append("steam-native-download")
+            }
+            game.managedArtifactIdentifier = managedArtifactIdentifier
+            game.executableFingerprint = executableFingerprint
+            game.installedSizeGB = nil
+            game.validationEvidenceSummary = "Downloaded payload verified; this installation has not been runtime-tested."
+            game.summary = "Downloaded from Steam and verified. Existing settings and prefix were preserved."
+            games[index] = game
+            if let prefixIndex = prefixes.firstIndex(where: { $0.id == game.launchProfile.prefixID }) {
+                prefixes[prefixIndex].titleFingerprint = executableFingerprint
+            }
+            persist()
+            return game
+        }
         let game = registerSteamGameInternal(
             title: title,
             appID: appID,
@@ -1883,10 +1906,14 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
     ) -> GameRecord {
         let resolvedPaths = (installPath: installPath, executablePath: executablePath)
 
-        if let existingIndex = games.firstIndex(where: {
-            $0.installPath == resolvedPaths.installPath
-                || $0.launchProfile.executablePath == resolvedPaths.executablePath
-                || ($0.title == title && $0.source == source)
+        if let existingIndex = games.firstIndex(where: { candidate in
+            if source == .steam && titleFlags.contains("steam-native-download") {
+                guard let identity = titleFlags.first(where: { $0.hasPrefix("steam-app-id:") }) else { return false }
+                return candidate.source == .steam && candidate.launchProfile.titleFlags.contains(identity)
+            }
+            return candidate.installPath == resolvedPaths.installPath
+                || candidate.launchProfile.executablePath == resolvedPaths.executablePath
+                || (candidate.title == title && candidate.source == source)
         }) {
             var existing = games[existingIndex]
             let refreshedPrefixState: PrefixState = {
@@ -2138,6 +2165,18 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
             }
         }
         let marker = "/Library/Application Support/Iridium/"
+
+        // iOS can change the data-container UUID when an app is updated.
+        // Native Steam installs live beside Iridium's state directory.
+        let steamMarker = "/Library/Application Support/SteamGames/"
+        if let container = standardizedPath.range(of: containerMarker),
+           let range = standardizedPath.range(of: steamMarker),
+           container.upperBound < range.lowerBound,
+           !standardizedPath[container.upperBound..<range.lowerBound].contains("/") {
+            let candidate = rootURL.deletingLastPathComponent().appending(path: "SteamGames")
+                .appending(path: String(standardizedPath[range.upperBound...])).path
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
 
         guard let markerRange = standardizedPath.range(of: marker) else {
             return path

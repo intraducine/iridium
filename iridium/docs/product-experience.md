@@ -27,11 +27,22 @@ Compatibility and performance vary by game, runtime, and device.
 - **Rename & Artwork:** edit the game's name and images.
 - **Controls:** view connected devices and input guidance.
 - **Files & Saves:** view the game folder and available save information.
+- **Run Installer:** choose a Windows `.exe` or `.msi` installer. It runs in this
+  game's Windows environment before the game starts. Complete any setup prompts.
+  The player shows the Windows installer and its current step. Tap its buttons
+  directly or use a keyboard and mouse. The RAM bar measures Iridium's memory
+  use and space available to the app; it is not a loading percentage.
 - **Advanced:** launch arguments and runtime settings.
 - **Remove from Library:** remove the entry while keeping game files and saves.
 
 Use Game Options to add a game to Favorites. Save locations vary by game; check
 the game's documentation before backing up or moving save files.
+
+Use Run Installer for a missing game prerequisite, such as PhysX. Choose an
+installer that contains its required files. Successful setup is recorded so it
+does not run again on each Play. Choosing an installer again requests a new run.
+The original installer and existing game saves are kept. Restart Iridium before
+another runtime session if requested.
 
 ## During play
 

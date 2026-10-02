@@ -463,7 +463,15 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
 
     /* values are limited to 2Gb unless the app has the IMAGE_FILE_LARGE_ADDRESS_AWARE flag */
     /* page file sizes are not limited (Adobe Illustrator 8 depends on this) */
-    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE))
+    /* Ask the ceiling as well as the header bit.  On Windows a process without
+     * the flag really tops out at 0x7ffeffff, so ullTotalVirtual (computed from
+     * ntdll's HighestUserAddress) is already ~2 GB and the clamp is a no-op.  It
+     * only matters where ntdll reports a larger user space than the header bit
+     * predicts (the Madeira iOS WoW64 guest window); the address space the
+     * process can actually use is then the honest answer, and nothing has to
+     * patch the program's mapped PE header.  This block is 32-bit only. */
+    if (!(nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) &&
+        memstatus.ullTotalVirtual <= (ULONGLONG)MAXLONG + 1)
     {
         if (lpBuffer->dwTotalPhys > MAXLONG) lpBuffer->dwTotalPhys = MAXLONG;
         if (lpBuffer->dwAvailPhys > MAXLONG) lpBuffer->dwAvailPhys = MAXLONG;

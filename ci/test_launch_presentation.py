@@ -1,5 +1,6 @@
 """Check launch presentation policy and its renderer/UI wiring without running a game."""
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -78,6 +79,31 @@ import Foundation
 
 
 class LaunchPresentationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("xcrun"), "requires Apple Swift importer")
+    def test_display_notification_import(self):
+        source = (VIEWS / "RuntimePlayerView.swift").read_text()
+        observer = re.search(
+            r"NotificationCenter\.default\.addObserver\(self, selector: #selector\(displayModeChanged\),.*?object: nil\)",
+            source, re.S,
+        )
+        self.assertIsNotNone(observer)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            header = APP.parent / "MadeiraSupport/MadeiraNative.h"
+            (root / "module.modulemap").write_text(
+                f'module MadeiraNative {{ header "{header}" export * }}\n'
+            )
+            harness = root / "Check.swift"
+            harness.write_text(
+                "import Foundation\nimport MadeiraNative\n"
+                "class Check: NSObject { @objc func displayModeChanged() {}\n"
+                f"func register() {{ {observer.group()} }} }}\n"
+            )
+            result = subprocess.run([
+                "xcrun", "swiftc", "-typecheck", "-I", str(root), str(harness),
+            ], capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     @unittest.skipUnless(shutil.which("swiftc"), "requires Swift compiler")
     def test_real_swift_presentation_policy(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -118,11 +144,14 @@ class LaunchPresentationTests(unittest.TestCase):
         self.assertNotIn("frameCount = 0", log_task)
         self.assertIn("RuntimeLogCapture.startupSummaries", log_task)
         self.assertIn("RuntimePlayerDiagnosticsView(", player)
-        self.assertIn("launchPresentation.showsArtwork || !touchControlsEnabled || controlsVisible", player)
-        self.assertIn("launchPresentation == .playing && !controlsVisible", player)
+        self.assertIn("showsLaunchArtwork || desktopVisible || !touchControlsEnabled || controlsVisible", player)
+        self.assertIn("(launchPresentation == .playing || (desktopVisible && session.state == .running)) && !controlsVisible", player)
+        self.assertIn("winios_surface_present_count() > 0", player)
+        self.assertIn("winios_compositor_attach(self)", player)
+        self.assertIn("name: .MadeiraDesktopFramePresented", player)
         self.assertIn(".onChange(of: launchPresentation)", player)
         self.assertIn("viewModel.dismissActiveRuntimePlayer()", player)
-        self.assertNotIn("session.statusSummary", art)
+        self.assertIn("phase == .starting ? session.statusSummary : phase.title", art)
         self.assertNotIn("launchEvents", art)
         self.assertNotIn("URLSession", art + transition)
         self.assertNotIn(".image(", art + transition) # No synchronous artwork decoding on launch.
@@ -166,7 +195,7 @@ class LaunchPresentationTests(unittest.TestCase):
         self.assertLess(art.index("movingTitle(landscape: false"), art.index("movingCover(cover, width:", art.index("movingTitle(landscape: false")))
         self.assertIn(".snappy(duration: RuntimeLaunchMotion.artworkMoveDuration, extraBounce: 0)", transition)
         self.assertLess(transition.index("chrome?.alpha = 0"), transition.index("self.motionState.settle(animated: !context.transitionWasCancelled)"))
-        self.assertIn("motionState.detailsVisible ? 1 : 0", art)
+        self.assertNotIn("motionState.detailsVisible ? 1 : 0", art) # Status stays visible if the transition is interrupted.
         self.assertNotIn("Task.yield", art)
         self.assertNotIn("scale(emphasized:", art)
         self.assertIn("@State private var artwork: RuntimeLaunchArtworkSnapshot", art)

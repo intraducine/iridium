@@ -314,7 +314,9 @@ NTSTATUS wow64_wine_dbg_write( void *args )
         unsigned int len;
     } const *params32 = args;
 
-    return write( 2, ULongToPtr(params32->str), params32->len );
+    /* `args` is a host pointer (the WoW64 module converts
+     * the outer one), but the string it points at is still a GUEST address. */
+    return write( 2, ios_wow_host_ptr(params32->str), params32->len );
 }
 #endif
 

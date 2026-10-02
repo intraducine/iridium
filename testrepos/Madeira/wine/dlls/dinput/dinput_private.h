@@ -56,6 +56,12 @@ extern HRESULT keyboard_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW 
 extern HRESULT keyboard_create_device( struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out );
 extern HRESULT hid_joystick_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance, DWORD version, int index );
 extern HRESULT hid_joystick_create_device( struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out );
+/* Madeira (ml760): the host gamepad slot as a joystick, for prefixes with no
+ * winebus.sys/HID under DirectInput. joystick_ios.c; enumerates nothing when
+ * win32u does not publish a pad, which is also the stock-Wine answer. */
+extern HRESULT ios_joystick_enum_device( DWORD type, DWORD flags, DIDEVICEINSTANCEW *instance, DWORD version, int index );
+extern HRESULT ios_joystick_create_device( struct dinput *dinput, const GUID *guid, IDirectInputDevice8W **out );
+extern const GUID ios_joystick_guid;
 
 struct DevicePlayer {
     GUID instance_guid;

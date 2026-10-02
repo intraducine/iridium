@@ -6,6 +6,9 @@ import json
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {
+    "native Steam framework": [
+        "iridium/apps/ios/Frameworks/IridiumSteam.xcframework/ios-arm64/IridiumSteam.framework/IridiumSteam",
+    ],
     "legacy runtime host and userland": [
         "iridium-runtime-sdk/build/iridium-runtime-base/manifest.json",
         "iridium-runtime-sdk/build/iridium-runtime-base/Runtime/runtime-host.bin",
@@ -36,7 +39,11 @@ REQUIRED = {
         "testrepos/Madeira/app/Madeira/d3d12/NOTICE.txt",
         "testrepos/Madeira/app/Madeira/arm64ec-windows/ntdll.dll",
         "testrepos/Madeira/app/Madeira/aarch64-windows/ntdll.dll",
+        "testrepos/Madeira/app/Madeira/aarch64-windows/xtajit.dll",
+        "testrepos/Madeira/app/Madeira/i386-windows/ntdll.dll",
+        "testrepos/Madeira/app/Madeira/i386-windows/d3d9.dll",
         "testrepos/Madeira/app/Madeira/prefix-template.tar.gz",
+        "testrepos/Madeira/app/Madeira/fonts/tahoma.ttf",
     ],
     "media and input runtime": [
         "iridium/apps/ios/.build/media/libntdll_media.a",
@@ -44,6 +51,7 @@ REQUIRED = {
         "iridium/apps/ios/MediaRuntime/mfreadwrite.dll",
         "iridium/apps/ios/MediaRuntime/winegstreamer.dll",
         "iridium/apps/ios/ControllerRuntime/arm64ec/xinput.dll",
+        "iridium/apps/ios/ControllerRuntime/aarch64/iridium-prerequisites.exe",
     ],
     "legacy graphics frameworks": [
         "Amethyst-iOS/Natives/resources/Frameworks/libEGL.framework/libEGL",

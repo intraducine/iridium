@@ -19,6 +19,7 @@ The GPL-3.0 license is retained in
 - `WineProcessBridge.m`: accept bounded JSON argv arrays from Iridium without space splitting; expose the root process exit code and use atomic liveness state. Preserve the older Madeira developer argument interface.
 - `WineProcessBridge.m`: set Wine's profile user to `madeira` before startup, repair existing `users\mobile` registry paths, and merge legacy profile files without overwriting saves or following directory links.
 - `Winios/Winios.m`: remove the direct per-keystroke trace, including software-keyboard input.
+- `Winios/Winios.m`: attach installer desktops below Iridium's player controls; report desktop Metal frames through drawable-presented callbacks and keep the cursor on the active surface.
 - `WineServerBridge.m`: publish atomic liveness and clear it on thread cleanup, including fatal startup exits. No forced thread cancellation is added.
 
 
@@ -33,7 +34,7 @@ Base revision: `8c050d03f4d89096e1e2e2c8bb44479fffd86619`
 Local modified source paths included in this snapshot:
 - `app/Madeira/ContentView.swift`
 - `app/Madeira/StikJITHelper.swift`
-- `app/Madeira/WineProcessBridge.m`
+- `app/Madeira/WineProcessBridge.m`: select native ARM64 Wine for ARM64 executables by their PE header, including installer helpers given as full Windows paths.
 - `build/madeira-d3d12/deps.sh` and `fetch-converter.sh`: use a checksum-pinned release dependency for hosted builds, retaining an official local-installer override and Apple notices.
 - `build/ntdll-unix/build.sh`
 - `build/ntdll-unix/signal_arm64_ios.c`: handle integer store-pair address updates in both exception paths.
@@ -165,3 +166,67 @@ CI imports a staging copy without its serialized Swift modules to verify the
 textual interface before attempting the app build.
 
 - Cerbero restores bundled Cargo dependencies and rebuilds their source settings from Cargo.lock for offline builds. The patch is retained in `ci/patches/cerbero-cargo-source-cache.patch`; Cargo still checks the locked dependency graph and vendored checksums.
+# Native Steam integration
+
+Added an on-device SteamKit2 3.4.0 module, SwiftUI account/library/download flow,
+device-only Keychain session persistence, verified resumable Windows depot
+downloads, and registration into Iridium's existing runtime library. SteamKit2
+3.4.0 is built from its pinned source with `ci/patches/steamkit-ios-process-start.patch`:
+iOS/tvOS use the client creation timestamp for job IDs because Process.StartTime
+is unsupported there. Other runtime dependencies are unmodified; NativeAOT reflection and generic roots are
+owned by the integration. See `iridium/packages/steam/THIRD-PARTY-NOTICES.md` and
+`docs/decisions/native-steam-downloads.md` for dependencies and architecture.
+
+## Madeira runtime update (2026-09-29)
+
+The runtime follows Madeira `d5a8e0a6`, Wine `daa17d04`, FEX `2838f3be`,
+and DXMT `a5e0cd3d`. Full revisions are in `UPSTREAM-SOURCES.json`.
+The integration adds the i386 Wine farm, FEX WoW64 translator, native D3D9
+backend, WoW64 Unix-call tables, and updated graphics and media code.
+
+Iridium keeps its Steam interface, controller and keyboard routing, JSON launch
+arguments, profile repair, shutdown handling, and device-budgeted FEX arena.
+The native parser uses the FFmpeg libraries and headers already supplied by
+Iridium’s source-built GStreamer SDK. The existing GStreamer path remains the
+64-bit media default; Madeira’s new native media tables serve WoW64 callers.
+Metal shaders target iOS 18.0. Compiler output for both FEX translators and all
+three Windows architectures is retained before staging.
+
+The D3D9/DXSO import retains LGPL-2.1-or-later and its copyright notices.
+The updated DXMT notice and LGPL text are included in the app notices.
+Madeira’s Swift frontend, Dock Steam client, and unrelated test launchers are
+not part of this integration. Iridium retains its existing verified Apple
+converter download and checksum configuration.
+
+## Madeira runtime fixes (2026-09-30)
+
+Updated the backend to Madeira `40d5e748`, Wine `4f5b1971`, and FEX `26859e18`.
+DXMT is unchanged. The update includes FastSync, bounded host CPU indices,
+thread cleanup, native network and DNS calls, multichannel audio mixing,
+read-only mapping repair, and guest display-mode changes. The selected monitor
+size now reaches Iridium's touch routing and player layout.
+
+Iridium retains its unconditional image-map callback guard, input routing,
+device memory budgets, save-path repair, and shutdown handling. The shared
+backend includes dormant Dock hooks; Dock and Madeira's frontend are not enabled.
+Upstream host checks run with Iridium's existing source checks. CI removes source
+collection copies and link intermediates only after the source and final app
+audit uploads succeed, preserving the archives used to link the app.
+
+## Game prerequisite installers
+
+`IridiumSteamInstallScript.swift` adapts Madeira's `DockInstallers.swift` at
+`40d5e74848e4ee7060e879c07ef74487d9dc8cec`. It preserves repeated installer
+sections and adds a prefix-local default key for manual imports. Invalid pending
+commands fail before any installer group is recorded as complete.
+
+`prerequisites.c` adapts Wine service-manager startup from `willfaust/madeira-dock`
+`src/scm.c` at `3cadfbea700e4da4b04e331dd7ef1ba633dfacef`. It runs included EXE
+and MSI installers, records successful groups through Wine's registry API, then
+starts the requested game in the same session. It does not use the Dock client.
+Cancellation prevents later installer steps from starting and leaves incomplete
+groups unrecorded, while preserving receipts for groups that fully succeeded.
+The sources retain 125hz's copyright, GPL-3.0-or-later, and Madeira's converter
+exception. Shared redistributables are copied only when available. GDI shared
+sections, the session sync setting, and missing-only `fusion.dll` placement
+follow Madeira's installer path. Existing game files and saves are preserved.

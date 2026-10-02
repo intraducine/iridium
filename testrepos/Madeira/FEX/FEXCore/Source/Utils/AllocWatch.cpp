@@ -55,8 +55,18 @@ namespace {
   uint64_t CurrentThreadId() {
     // Cheap, allocation-free thread identity: the address of a TLS byte. Only used
     // to tell "same thread" from "different thread", never to name a thread.
+#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)
+    // The WOW64 module must not use implicit TLS: Wine enters it from init_wow64() on a path that
+    // never sets up TEB->ThreadLocalStoragePointer, and the compiler's TLS sequence reads the TEB
+    // through x18, which is not the TEB on the iOS host. TPIDRRO_EL0 (the host thread pointer) is
+    // unique per thread and needs no memory access.
+    uint64_t Tpidrro;
+    __asm__ volatile("mrs %0, TPIDRRO_EL0" : "=r"(Tpidrro));
+    return Tpidrro & ~uint64_t(7);
+#else
     static thread_local char Anchor {};
     return reinterpret_cast<uint64_t>(&Anchor);
+#endif
   }
 
   const char* EventName(uint32_t Event) {

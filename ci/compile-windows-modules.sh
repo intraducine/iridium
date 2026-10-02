@@ -45,9 +45,25 @@ cp "$M/FEX/build-arm64ec/Bin/libarm64ecfex.dll" \
     "$M/FEX/build-arm64ec/Source/Windows/ARM64EC/libarm64ecfex.dll"
 
 
+# WoW64 uses its own ARM64 CPU DLL, built from the same corrected FEX source.
+cmake -S "$M/FEX" -B "$M/FEX/build-wow64" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$M/FEX/Data/CMake/toolchain_mingw.cmake" \
+    -DMINGW_TRIPLE=aarch64-w64-mingw32 -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
+    -DFEX_IOS_HOST_BUILD=ON -DTUNE_CPU=generic -DENABLE_LTO=OFF \
+    -DCMAKE_C_FLAGS=-DFEX_IOS_HOST -DCMAKE_CXX_FLAGS=-DFEX_IOS_HOST \
+    -DCMAKE_ASM_FLAGS=-DFEX_IOS_HOST \
+    -DENABLE_CCACHE=OFF -DENABLE_ASSERTIONS=OFF -DENABLE_WERROR=OFF \
+    -DENABLE_STRICT_WERROR=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF \
+    -DENABLE_ZYDIS=OFF -DBUILD_TESTING=OFF -DBUILD_FEXCONFIG=OFF \
+    -DBUILD_THUNKS=OFF -DBUILD_FEX_LINUX_TESTS=OFF
+cmake --build "$M/FEX/build-wow64" --target wow64fex --parallel "$JOBS"
+
 # Build the four DXMT PE modules for each Wine architecture. Meson's
 # GLOBAL_SOURCE_ROOT is DXMT, while the pinned compiler lives at Madeira root.
-for arch in arm64ec aarch64; do
+for arch in arm64ec aarch64 i386; do
+    wine_build="$M/wine/build-macos"
+    [ "$arch" != i386 ] || wine_build="$M/wine/build-i386"
     cross="$M/research/dxmt/build-$arch-win.txt"
     configured="$M/research/dxmt/.build-$arch-ci.txt"
     python3 - "$cross" "$configured" "$M" <<'PY'
@@ -63,7 +79,7 @@ PY
     build="$M/research/dxmt/build-$arch-ci"
     meson setup "$build" "$M/research/dxmt" --cross-file "$configured" \
         --native-file "$M/research/dxmt/build-osx.txt" --buildtype release \
-        -Dwine_build_path="$M/wine/build-macos" -Dwine_builtin_dll=true \
+        -Dwine_build_path="$wine_build" -Dwine_builtin_dll=true \
         -Denable_tests=false -Denable_nvapi=false -Denable_nvngx=false
     meson compile -C "$build" -j "$JOBS"
 done
@@ -82,8 +98,11 @@ spec.loader.exec_module(stage)
 madeira = root / 'testrepos/Madeira'
 stage.check_pe(madeira / 'FEX/build-arm64ec/Source/Windows/ARM64EC/libarm64ecfex.dll', 'arm64ec')
 stage.check_pe(madeira / 'build/madeira-d3d12/out-pe/d3d12.dll', 'arm64ec')
-for arch in stage.MACHINES:
+stage.check_pe(madeira / 'FEX/build-wow64/Bin/libwow64fex.dll', 'aarch64')
+for arch in (*stage.MACHINES, 'i386'):
     for module in ('d3d11/d3d11', 'dxgi/dxgi', 'winemetal/winemetal', 'd3d10/d3d10core'):
         stage.check_pe(madeira / f'research/dxmt/build-{arch}-ci/src/{module}.dll', arch)
-print('Verified FEX, D3D12, and all eight DXMT outputs before retention')
+for module in ('d3d9/d3d9', 'd3d9shim/d3d9shim'):
+    stage.check_pe(madeira / f'research/dxmt/build-i386-ci/src/{module}.dll', 'i386')
+print('Verified both FEX translators, D3D12, and DXMT outputs before retention')
 PY_CHECK

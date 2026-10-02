@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
 #include "sqlite3.h"
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
@@ -16,11 +17,63 @@
 @interface CacheReader () {
   sqlite3 *_db;
   sqlite3_stmt *_stmt;
+  uint64_t _hits, _misses;
+  bool _stats;
 }
 @end
 
+/* MADEIRA: DXMT_IOS_CACHE_DIR. Darwin's per-user cache confstr
+ * (_CS_DARWIN_USER_CACHE_DIR) is not available inside the iOS sandbox, so a
+ * relative cache path resolves to nothing and neither the Metal nor the DXMT
+ * shader cache persists. With the switch on, a relative path resolves under
+ * the app's NSCachesDirectory instead and a directory that cannot be created
+ * fails cleanly.
+ *
+ * Decided per caller, like winemetal_unix.c's madeira_switch_for_caller: on by
+ * default for a caller in a 32-bit (WoW64) pseudo-process (ios_wow_base() is
+ * its guest-window base), off for a 64-bit caller, which keeps the upstream
+ * lookup below. "0" disables it for every caller, any other non-empty value
+ * enables it for every caller. */
+#if TARGET_OS_IPHONE
+extern unsigned long ios_wow_base(void);
+
+static bool
+use_ios_cache_dir(void) {
+  const char *e = getenv("DXMT_IOS_CACHE_DIR");
+  if (e && *e)
+    return strcmp(e, "0") != 0;
+  return ios_wow_base() != 0;
+}
+
+static NSString *
+resolve_ios_cache_dir(NSString *path, bool path_is_file) {
+  if (!path.length)
+    return nil;
+  if (![path hasPrefix:@"/"]) {
+    NSString *base = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).firstObject;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+      NSLog(@"[shader-cache] ml1160 app cache directory %@", base ? @"available" : @"unavailable");
+    });
+    if (!base)
+      return nil;
+    path = [base stringByAppendingPathComponent:path];
+  }
+  if (![[NSFileManager defaultManager] createDirectoryAtPath:path_is_file ? [path stringByDeletingLastPathComponent] : path
+                                 withIntermediateDirectories:YES
+                                                  attributes:nil
+                                                       error:nil])
+    return nil;
+  return path;
+}
+#endif
+
 static inline NSString *
 resolve_cache_dir(NSString *path, bool path_is_file) {
+#if TARGET_OS_IPHONE
+  if (use_ios_cache_dir())
+    return resolve_ios_cache_dir(path, path_is_file);
+#endif
   if (![path hasPrefix:@"/"]) {
     char buf[PATH_MAX];
     size_t len = confstr(_CS_DARWIN_USER_CACHE_DIR, buf, sizeof(buf));
@@ -43,6 +96,9 @@ resolve_cache_dir(NSString *path, bool path_is_file) {
 
 - (instancetype)initWithPath:(NSString *)path version:(uint64_t)version {
   if ((self = [super init])) {
+    /* Opt-in diagnostics: DXMT_CACHE_STATS=1 logs hit/miss counts. */
+    const char *stats = getenv("DXMT_CACHE_STATS");
+    _stats = stats && *stats && strcmp(stats, "0");
     NSString *dbPath = resolve_cache_dir(path, true);
     if (!dbPath) {
       NSLog(@"[CacheReader] Failed to resolve cache path");
@@ -78,6 +134,12 @@ resolve_cache_dir(NSString *path, bool path_is_file) {
     result = dispatch_data_create(bytes, len, nil, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
   }
   sqlite3_reset(_stmt);
+  if (_stats) {
+    if (result) ++_hits; else ++_misses;
+    uint64_t count = _hits + _misses;
+    if (count == 1 || count == 64 || count == 256 || !(count % 1024))
+      NSLog(@"[shader-cache] ml1160 hits=%llu misses=%llu", _hits, _misses);
+  }
   return result;
 }
 
@@ -231,6 +293,15 @@ _WMTSetMetalShaderCachePath(void *obj) {
   struct unixcall_setmetalcachepath *params = obj;
   NSString *path = [[NSString alloc] initWithCString:params->path.ptr encoding:NSUTF8StringEncoding];
   NSString *resolved_path = resolve_cache_dir(path, false);
+#if TARGET_OS_IPHONE
+  /* With DXMT_IOS_CACHE_DIR on, an unresolvable path leaves Metal's cache
+   * path alone instead of setting it to nil. */
+  if (!resolved_path && use_ios_cache_dir()) {
+    params->ret_success = 0;
+    [path release];
+    return 0;
+  }
+#endif
   MTLSetShaderCachePath(resolved_path);
   params->ret_success = [MTLGetShaderCachePath() isEqualToString:resolved_path];
   [path release];

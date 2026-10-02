@@ -50,6 +50,22 @@ struct dc_attr_bucket
     DC_ATTR *entries;
     DC_ATTR *next_free;
     DC_ATTR *next_unused;
+#ifdef WINE_IOS
+    /* iOS-Madeira: a DC_ATTR address is published to the owning process's
+     * gdi32 through GDI_HANDLE_ENTRY.UserPointer, and 32-bit gdi32 truncates
+     * it to 32 bits — so a bucket is only usable by pseudo-processes of the
+     * same pointer namespace.  Upstream recycles buckets freely because there
+     * is one process per win32u; here the list is task-global, so tag each
+     * bucket with its owner and never hand a host bucket to a 32-bit process
+     * (it would truncate to garbage) or a guest-window bucket to anyone else
+     * (the window is replaced with PROT_NONE when its owner exits).
+     * Keyed on (pid, peb), so a recycled PEB address cannot inherit a dead
+     * process's buckets.  Only a bucket owned by, or requested from, a WoW64
+     * process is restricted; 64-bit processes share buckets as upstream. */
+    DWORD owner_pid;
+    void *owner_peb;
+    BOOL  owner_wow;
+#endif
 };
 
 static struct list dc_attr_buckets = LIST_INIT( dc_attr_buckets );
@@ -88,11 +104,30 @@ static DC_ATTR *alloc_dc_attr(void)
 {
     struct dc_attr_bucket *bucket;
     DC_ATTR *dc_attr = NULL;
+#ifdef WINE_IOS
+    void *cur_peb = NULL;
+    DWORD cur_pid = 0;
+    BOOL cur_wow = FALSE;
+
+    if (win32u_wow_session)
+    {
+        cur_peb = NtCurrentTeb()->Peb;
+        cur_pid = HandleToULong( NtCurrentTeb()->ClientId.UniqueProcess );
+        cur_wow = !!NtCurrentTeb()->WowTebOffset;
+        /* make sure this pseudo-process can address the handle table before
+         * its gdi32 reads the UserPointer we are about to fill in */
+        win32u_gdi_check_publish();
+    }
+#endif
 
     pthread_mutex_lock( &dc_attr_lock );
 
     LIST_FOR_EACH_ENTRY( bucket, &dc_attr_buckets, struct dc_attr_bucket, entry )
     {
+#ifdef WINE_IOS
+        if ((cur_wow || bucket->owner_wow) &&
+            (bucket->owner_peb != cur_peb || bucket->owner_pid != cur_pid)) continue;
+#endif
         if (bucket->next_free)
         {
             dc_attr = bucket->next_free;
@@ -111,7 +146,13 @@ static DC_ATTR *alloc_dc_attr(void)
     {
         SIZE_T size = system_info.AllocationGranularity;
         bucket->entries = NULL;
-        if (!NtAllocateVirtualMemory( GetCurrentProcess(), (void **)&bucket->entries, zero_bits,
+#ifdef WINE_IOS
+        bucket->owner_pid = cur_pid;
+        bucket->owner_peb = cur_peb;
+        bucket->owner_wow = cur_wow;
+#endif
+        if (!NtAllocateVirtualMemory( GetCurrentProcess(), (void **)&bucket->entries,
+                                      caller_zero_bits(),
                                       &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE ))
         {
             bucket->next_free = NULL;

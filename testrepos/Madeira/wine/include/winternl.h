@@ -2033,6 +2033,13 @@ typedef enum _PROCESSINFOCLASS {
 #ifdef __WINESRC__
     ProcessWineMakeProcessSystem = 1000,
     ProcessWineGrantAdminToken = 1002,
+    /* iOS-Madeira: host address of guest 0 for a 32-bit
+     * pseudo-process, i.e. the base B of its [B, B+4G) guest window.  Returns
+     * a ULONG_PTR; 0 for a process that has no window (every 64-bit process,
+     * and every platform other than the iOS port).  This is the single source
+     * of truth for B — wow64.dll and the FEX WoW64 module each read it once
+     * at process init.  No environment variables, no cross-process globals. */
+    ProcessWineIosWowGuestBase = 1010,
 #endif
 } PROCESSINFOCLASS;
 
@@ -5335,6 +5342,7 @@ NTSYSAPI BOOLEAN   WINAPI RtlWow64PushCrossProcessWorkOntoFreeList(CROSS_PROCESS
 NTSYSAPI BOOLEAN   WINAPI RtlWow64PushCrossProcessWorkOntoWorkList(CROSS_PROCESS_WORK_HDR*,CROSS_PROCESS_WORK_ENTRY*,void**);
 NTSYSAPI BOOLEAN   WINAPI RtlWow64RequestCrossProcessHeavyFlush(CROSS_PROCESS_WORK_HDR*);
 NTSYSAPI NTSTATUS  WINAPI RtlWow64SetThreadContext(HANDLE,const WOW64_CONTEXT*);
+NTSYSAPI NTSTATUS  WINAPI RtlWow64SuspendThread(HANDLE,ULONG*);
 #else
 NTSYSAPI NTSTATUS  WINAPI NtWow64AllocateVirtualMemory64(HANDLE,ULONG64*,ULONG64,ULONG64*,ULONG,ULONG);
 NTSYSAPI NTSTATUS  WINAPI NtWow64GetNativeSystemInformation(SYSTEM_INFORMATION_CLASS,void*,ULONG,ULONG*);

@@ -1,6 +1,6 @@
 MODULE    = dinput.dll
 IMPORTLIB = dinput
-IMPORTS   = dinput dxguid uuid comctl32 ole32 user32 advapi32 hid setupapi
+IMPORTS   = dinput dxguid uuid comctl32 ole32 user32 advapi32 hid setupapi win32u
 EXTRADEFS = -DDIRECTINPUT_VERSION=0x0700
 
 VER_FILEDESCRIPTION_STR = "Wine DirectInput"
@@ -16,5 +16,6 @@ SOURCES = \
 	dinput_classes.idl \
 	dinput_main.c \
 	joystick_hid.c \
+	joystick_ios.c \
 	keyboard.c \
 	mouse.c

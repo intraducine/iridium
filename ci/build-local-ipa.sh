@@ -23,6 +23,7 @@ python3 ci/check-local-runtime-provenance.py
 python3 ci/local_runtime_staging.py
 export IRIDIUM_WINE_STAGED_ROOT="$PWD/iridium-runtime-sdk/build/wine-userland-linux-x86_64/staged-root"
 export IRIDIUM_RUNTIME_BUNDLE_ROOT="$PWD/iridium-runtime-sdk/build/iridium-runtime-base"
+python3 ci/build-steam-framework.py --device-only
 python3 ci/check-ipa-prerequisites.py
 runtime_resources=iridium/packages/runtime/Sources/IridiumRuntime/Resources/BundledRuntime
 mkdir -p "$runtime_resources"

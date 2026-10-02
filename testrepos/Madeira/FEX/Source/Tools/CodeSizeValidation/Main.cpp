@@ -12,6 +12,9 @@
 
 #include <sys/stat.h>
 
+#include <cstdlib>
+#include <cstring>
+
 namespace CodeSize {
 class CodeSizeValidation final {
 public:
@@ -25,6 +28,23 @@ public:
       FEXCore::Allocator::VirtualFree(CodeStart, MAX_CODE_SIZE);
       CodeStart = nullptr;
       return;
+    }
+
+    // Guest-window support for this harness. With FEX_GUEST32BASE set, FEXCore
+    // fetches guest code from `GuestBase + RIP` (Core.cpp), so the test page has to be readable
+    // there too. Mirror it into the window so the 32-bit guest-base codegen can be diffed against
+    // base 0 on any host. Nothing is executed, so the window needs no other property. This tool is
+    // never part of a shipped build (BUILD_TESTING is off for the iOS and PE builds).
+    if (const char* BaseEnv = getenv("FEX_GUEST32BASE"); BaseEnv && *BaseEnv) {
+      const uint64_t Base = strtoull(BaseEnv, nullptr, 0);
+      if (Base) {
+        WindowStart = FEXCore::Allocator::mmap(reinterpret_cast<void*>(Base + Code_start_page), MAX_CODE_SIZE, PROT_READ | PROT_WRITE,
+                                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (reinterpret_cast<uint64_t>(WindowStart) != (Base + Code_start_page)) {
+          LogMan::Msg::AFmt("Couldn't allocate guest window test region at 0x{:x}!", Base + Code_start_page);
+          WindowStart = nullptr;
+        }
+      }
     }
   }
 
@@ -58,6 +78,10 @@ public:
 
     ClearStats();
     memcpy(CodeStart, Data, SizeBytes);
+    // Keep the guest-window mirror in sync, see the constructor.
+    if (WindowStart) {
+      memcpy(WindowStart, Data, SizeBytes);
+    }
 
     if (MaxInst == -1) {
       // Compile the NOP.
@@ -85,6 +109,9 @@ private:
   ssize_t HeaderSize {-1};
 
   void* CodeStart {};
+  // Mirror of the test page at `FEX_GUEST32BASE + Code_start_page`, null when no
+  // guest window is configured.
+  void* WindowStart {};
   constexpr static size_t MAX_CODE_SIZE = 512 * 1024 * 1024;
 
   bool SetupInfoDisabled {};

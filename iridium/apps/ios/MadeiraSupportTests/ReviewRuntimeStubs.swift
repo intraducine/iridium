@@ -4,15 +4,17 @@ final class NativeState: @unchecked Sendable {
     static let shared = NativeState()
     private let lock = NSLock()
     private var wine = Int32(0), server = Int32(0), code = Int32(0)
-    private var begins = 0
+    private var begins = 0, cancels = 0
     var recorded: [(Int32,Int32)] = []
     func read(_ field: Int) -> Int32 { lock.lock(); defer { lock.unlock() }; return field == 0 ? wine : field == 1 ? server : code }
     func write(_ field: Int, _ value: Int32) { lock.lock(); defer { lock.unlock() }; if field == 0 { wine=value } else if field == 1 { server=value } else { code=value } }
     func start() { lock.lock(); begins += 1; wine=1; lock.unlock() }
     var startCount: Int { lock.lock(); defer { lock.unlock() }; return begins }
+    func cancelPrerequisites() { lock.lock(); cancels += 1; lock.unlock() }
+    var cancelCount: Int { lock.lock(); defer { lock.unlock() }; return cancels }
     func event(_ key: Int32, _ down: Int32) {
         lock.lock(); recorded.append((key,down))
-        if key == 0x73 && down == 0 && scenario != "close-timeout" { wine=0; server=0 }
+        if key == 0x73 && down == 0 && !scenario.hasSuffix("close-timeout") { wine=0; server=0 }
         lock.unlock()
     }
 }
@@ -29,7 +31,20 @@ enum MadeiraGamePreparation {
     }
 }
 enum MadeiraMediaInstall { static func install(prefix: URL) throws {} }
-@MainActor enum MadeiraController { static var acceptingInput = true; static var active = false; static func start(prefix: URL) { active=true }; static func stop() { active=false } }
+enum MadeiraSteamEnvironment { static func publish(sourceExecutable: URL, sourceRoot: URL, windowsExecutable: String, registeredAppID: String?) {} }
+enum TouchControllerLayoutStore { static func isEnabled(for id: UUID) -> Bool { false } }
+enum IridiumGamePrerequisites {
+    static func installFonts(prefix: URL) throws {}
+    static func status(prefix: URL) -> String? { "Installing fixture prerequisites" }
+    struct Launch { let executable: String; let arguments: [String]; let installerCount: Int }
+    static func sharedRoots(gameRoot: URL, nativeSteamInstall: Bool) -> [URL] { [] }
+    static func prepare(prefix: URL, executable: String, arguments: [String], appID: Int?, sharedRoots: [URL]) throws -> Launch? {
+        if scenario == "prerequisite-failure" { throw CocoaError(.fileReadCorruptFile) }
+        return ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout", "prerequisite-nonzero-exit", "prerequisite-nonzero-close-timeout"].contains(scenario) ? Launch(executable: "C:\\helper.exe", arguments: ["C:\\plan.ini"], installerCount: 1) : nil
+    }
+    static func cancel(prefix: URL) throws { NativeState.shared.cancelPrerequisites() }
+}
+@MainActor enum MadeiraController { static var acceptingInput = true; static var active = false; static func start(prefix: URL, touchControlsEnabled: Bool) { active=true }; static func stop() { active=false } }
 enum MadeiraControllerInstall { static func install(prefix: URL, windowsExecutable: String) throws {} }
 @MainActor enum MadeiraHardwareInput { static var acceptingInput = true; static func stop() {} }
 struct MadeiraKeys { mutating func releaseAll()->[Int32] { [] }; mutating func update(name:String,value:Double)->[(Int32,Bool)] { [] } }
@@ -49,6 +64,7 @@ enum StikJITHelper {
     static func cancel() {}
 }
 enum MadeiraLiveContainer3JIT { static let lastFailure="missing"; static func enableJIT(_ done:@escaping(Bool)->Void) { done(false) }; static func cancel() {} }
+enum MadeiraAutomaticExternalJIT { static let lastFailure="missing"; static func enableJIT(_ done:@escaping(Bool)->Void) { StikJITHelper.enableJIT(done) }; static func cancel() {} }
 final class BuiltinJIT {
     static let shared=BuiltinJIT()
     static var selected:Bool { scenario.hasPrefix("builtin") }
@@ -80,3 +96,6 @@ func winios_post_key(_ key:Int32,_ down:Int32) { NativeState.shared.event(key,do
 func winios_post_touch_down(_ x:Int32,_ y:Int32) {}
 func winios_post_touch_up(_ x:Int32,_ y:Int32) {}
 func winios_post_touch_move(_ x:Int32,_ y:Int32) {}
+func winios_display_mode_changed(_ w:Int32,_ h:Int32) {}
+func winios_screen_size(_ w:inout Int32,_ h:inout Int32) { w=960; h=540 }
+func madeira_request_guest_close()->Int32 { if !scenario.hasSuffix("close-timeout") { NativeState.shared.write(0,0); NativeState.shared.write(1,0) }; return 1 }

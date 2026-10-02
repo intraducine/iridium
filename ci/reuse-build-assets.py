@@ -9,7 +9,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = 'intraducine/iridium'
+REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
 WORKFLOW = '.github/workflows/build-unsigned-ipa.yml'
 MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/check-media-toolchain.py',
@@ -29,12 +29,24 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/Scripts', 'iridium/apps/ios/MediaSupport',
     'iridium/apps/ios/MediaRuntime', 'iridium/apps/ios/ControllerRuntime',
     'iridium/apps/ios/MadeiraSupport/xinput.c', 'iridium/apps/ios/MadeiraSupport/xinput.def',
+    'iridium/apps/ios/MadeiraSupport/prerequisites.c',
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
-    'native': tuple(p for p in NATIVE_INPUTS if p not in {'ci', 'iridium/apps/ios/madeira.yml', 'testrepos/Madeira'}) +
+    # Both XcodeGen specs configure the later app build, not these libraries.
+    # Native targets and flags live in the tracked compiler recipes below.
+    # Controller and prerequisite helpers are rebuilt after every restore;
+    # cached copies are replaced before staging, so their edits cannot stale
+    # the library checkpoint. Keep the media compiler script as a library input.
+    'native': tuple(p for p in NATIVE_INPUTS if p not in {
+                  'ci', 'iridium/apps/ios/project.yml',
+                  'iridium/apps/ios/madeira.yml', 'testrepos/Madeira',
+                  'iridium/apps/ios/Scripts', 'iridium/apps/ios/ControllerRuntime',
+                  'iridium/apps/ios/MadeiraSupport/xinput.c',
+                  'iridium/apps/ios/MadeiraSupport/xinput.def',
+                  'iridium/apps/ios/MadeiraSupport/prerequisites.c'}) +
               ('testrepos/Madeira/FEX', 'testrepos/Madeira/wine',
                'testrepos/Madeira/build', 'testrepos/Madeira/research/dxmt',
                'testrepos/Madeira/research/freetype', 'testrepos/Madeira/toolchains',
@@ -42,18 +54,19 @@ COMPONENT_INPUTS = {
                'testrepos/Madeira/research/remote-metal',
                'testrepos/Madeira/app/Madeira/Winios',
                'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
+               'iridium/apps/ios/Scripts/build_media_runtime.sh',
                'ci/apply-fex-runtime-corrections.py',
                'ci/patches/rpmalloc-compact-runtime.patch',
                'ci/patches/fex-thread-init-failure.patch'),
     'wine': ('testrepos/Madeira/wine', 'testrepos/Madeira/build/madeira_cfg.h',
-             'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh',
+             'ci/compile-wine.sh', 'testrepos/Madeira/build/wine-i386', 'ci/prepare-native-runtime.sh',
              'ci/prepare-runtime-inputs.sh', 'ci/apply-fex-runtime-corrections.py',
              'ci/patches/fex-thread-init-failure.patch',
              'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
     'windows': ('testrepos/Madeira/research/madeira-d3d12',
                 'testrepos/Madeira/build/madeira-d3d12', 'testrepos/Madeira/FEX', 'testrepos/Madeira/research/dxmt',
                 'testrepos/Madeira/wine', 'ci/compile-windows-modules.sh',
-                'ci/compile-wine.sh', 'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
+                'ci/compile-wine.sh', 'testrepos/Madeira/build/wine-i386', 'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
                 'ci/apply-fex-runtime-corrections.py',
                 'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json',
                 'ci/patches/rpmalloc-compact-runtime.patch',
@@ -154,7 +167,7 @@ def validate(run, jobs, stage, branch, allow_other_branch=False):
 
 
 def compatible(root, revision, stage):
-    subprocess.run(['git', '-C', str(root), 'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
+    linux.fetch_revision(root, revision)
     paths = {'media': MEDIA_INPUTS, 'native-runtime': NATIVE_INPUTS,
              'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:
@@ -223,39 +236,27 @@ def select(root, stage, branch, explicit=''):
     if explicit:
         verify_producer(root, explicit, stage, branch)
         return explicit
-    if stage in COMPONENT_INPUTS:
-        # Search retained artifacts, not only the last few runs. A compiler may
-        # remain unchanged through many packaging attempts during its lifetime.
-        page = 1
-        checked = set()
-        while True:
-            result = api('actions/artifacts?name=' + artifact_name(stage) + '&per_page=100&page=' + str(page))
-            for artifact in result['artifacts']:
-                run = artifact.get('workflow_run', {})
-                run_id = str(run.get('id', ''))
-                if (artifact.get('expired') or not run_id or run_id in checked
-                        or not can_reuse_run(run_id)):
-                    continue
-                checked.add(run_id)
-                try:
-                    verify_producer(root, run_id, stage, branch)
-                    return run_id
-                except ValueError as error:
-                    print(f'Skip {stage} run {run_id}: {error}')
-            if page * 100 >= result['total_count']:
-                return ''
-            page += 1
-    runs = api('actions/workflows/build-unsigned-ipa.yml/runs?event=workflow_dispatch&per_page=30')['workflow_runs']
-    for run in runs:
-        run_id = str(run['id'])
-        if not can_reuse_run(run_id):
-            continue
-        try:
-            verify_producer(root, run_id, stage, branch)
-            return run_id
-        except ValueError as error:
-            print(f"Skip {stage} run {run['id']}: {error}")
-    return ''
+    # Search retained artifacts, not only the last few runs. A compiler may
+    # remain unchanged through many packaging attempts during its lifetime.
+    page = 1
+    checked = set()
+    while True:
+        result = api('actions/artifacts?name=' + artifact_name(stage) + '&per_page=100&page=' + str(page))
+        for artifact in result['artifacts']:
+            run = artifact.get('workflow_run', {})
+            run_id = str(run.get('id', ''))
+            if (artifact.get('expired') or not run_id or run_id in checked
+                    or not can_reuse_run(run_id)):
+                continue
+            checked.add(run_id)
+            try:
+                verify_producer(root, run_id, stage, branch)
+                return run_id
+            except ValueError as error:
+                print(f'Skip {stage} run {run_id}: {error}')
+        if page * 100 >= result['total_count']:
+            return ''
+        page += 1
 
 
 if __name__ == '__main__':

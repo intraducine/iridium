@@ -3,6 +3,8 @@ import SwiftUI
 
 struct RootTabView: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var selectedTab = 0
+    @StateObject private var steam = SteamLibraryModel.shared
     private let usesExternalInput: Bool
     @StateObject private var controller: LibraryController
     init(viewModel: AppViewModel, controller: LibraryController? = nil) {
@@ -18,9 +20,20 @@ struct RootTabView: View {
     }
 
     private var tabs: some View {
-        NavigationStack {
-            LibraryView(viewModel: viewModel)
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                LibraryView(viewModel: viewModel, showDownloads: { selectedTab = 1 })
+            }
+            .tabItem { Label("Library", systemImage: "square.grid.2x2") }
+            .tag(0)
+            NavigationStack {
+                SteamLibraryView(viewModel: viewModel, onBack: { selectedTab = 0 })
+            }
+            .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+            .badge(steam.pendingCount)
+            .tag(1)
         }
+        .preferredColorScheme(.dark)
         .environmentObject(controller)
         .environment(\.menuController, controller)
         .onReceive(menuTimer) { _ in

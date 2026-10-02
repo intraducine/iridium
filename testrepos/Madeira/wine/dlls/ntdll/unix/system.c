@@ -1658,6 +1658,10 @@ void init_cpu_info(void)
     {   /* ml1122: madeira.cfg cpu-count = N reports N processors to Windows code
          * (experiment: RDR2 sizes its job system from it; iPhone = 2 P + 4 E cores). */
         long long want = madeira_cfg_int( "cpu-count", 0 );
+        /* MADEIRA_CPU_COUNT, a per-launch setting the app exports for one
+         * program, wins over the global key; unset = the key's behaviour. */
+        const char *per_game = getenv( "MADEIRA_CPU_COUNT" );
+        if (per_game && per_game[0] && atoll( per_game ) > 0) want = atoll( per_game );
         if (want > 0 && want < 64)
         {
             fprintf( stderr, "[madeira] ml1122 cpu-count override: reporting %lld processors (host %ld)\n", want, num );

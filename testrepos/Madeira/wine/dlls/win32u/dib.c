@@ -1566,8 +1566,11 @@ HBITMAP WINAPI NtGdiCreateDIBSection( HDC hdc, HANDLE section, DWORD offset, con
 
         map_offset.QuadPart = offset - (offset % system_info.AllocationGranularity);
         map_size = bmp->dib.dsBmih.biSizeImage + (offset - map_offset.QuadPart);
-        if (NtMapViewOfSection( section, GetCurrentProcess(), &mapBits, 0, 0, &map_offset,
-                                &map_size, ViewShare, 0, PAGE_READWRITE ))
+        /* iOS-Madeira: the mapped bits are handed back to the caller (`*bits`
+         * and DIBSECTION.dsBm.bmBits), so a 32-bit pseudo-process needs them
+         * inside its guest window exactly like the allocated case below. */
+        if (NtMapViewOfSection( section, GetCurrentProcess(), &mapBits, caller_zero_bits(),
+                                0, &map_offset, &map_size, ViewShare, 0, PAGE_READWRITE ))
             goto error;
         bmp->dib.dsBm.bmBits = (char *)mapBits + (offset - map_offset.QuadPart);
     }
@@ -1575,7 +1578,7 @@ HBITMAP WINAPI NtGdiCreateDIBSection( HDC hdc, HANDLE section, DWORD offset, con
     {
         SIZE_T size = bmp->dib.dsBmih.biSizeImage;
         offset = 0;
-        if (NtAllocateVirtualMemory( GetCurrentProcess(), &bmp->dib.dsBm.bmBits, zero_bits,
+        if (NtAllocateVirtualMemory( GetCurrentProcess(), &bmp->dib.dsBm.bmBits, caller_zero_bits(),
                                      &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE ))
             goto error;
     }

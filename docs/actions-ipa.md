@@ -66,7 +66,8 @@ later packaging steps. Linux and media outputs are also retained. A packaging
 failure does not discard these completed components.
 
 Artifacts expire after seven days. Reuse does not create another copy or extend
-that lifetime. Missing or expired artifacts trigger a rebuild. Reuse requires
+that lifetime. The search includes all retained artifacts, even when their build
+is older than the last 30 runs. Missing or expired artifacts trigger a rebuild. Reuse requires
 matching source inputs, build recipes, toolchain details, and archive checksums.
 Changes to shared inputs can require more than one component to rebuild.
 
@@ -214,8 +215,13 @@ bash ci/prepare-windows-runtime.sh
 The compiler step builds FEX's `arm64ecfex` target to
 `testrepos/Madeira/FEX/build-arm64ec/Bin/libarm64ecfex.dll`, copies it to the
 retained transfer location, and staging names it `arm64ec-windows/xtajit64.dll`.
-It also builds the four DXMT modules for both aarch64 and arm64ec. Do not copy
-Wine's placeholder `xtajit64.dll` over the translator. The staging check rejects
+The same step builds `wow64fex` to
+`testrepos/Madeira/FEX/build-wow64/Bin/libwow64fex.dll`; staging names it
+`aarch64-windows/xtajit.dll`. DXMT builds for aarch64, arm64ec, and i386.
+The i386 farm contains the D3D9 shim and emulated frontend; the native frontend
+is linked into the app by `ci/prepare-native-runtime.sh`. `compile-wine.sh` also
+builds Wine’s separate i386 tree. Do not copy Wine’s placeholder translator
+DLLs over either FEX translator. The staging check rejects
 that placeholder and checks the required architecture views. Prepared prefix
 and other runtime files are prerequisites; do not use a player's prefix.
 

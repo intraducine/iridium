@@ -116,6 +116,18 @@ struct thread
      * GetThreadContext/debug paths, so the counter cannot distinguish "capture and
      * let it run" from "capture and keep it stopped". */
     int                    ios_mach_suspended;
+    /* WoW64 (i386) processes only, see "Thread contexts of WoW64 processes" in
+     * thread.c.  Created suspended and has not yet posted its own start context
+     * from wait_suspend(): stop_thread() leaves the context pending for the
+     * thread to fill instead of taking a Mach snapshot of a thread that is still
+     * initialising. */
+    int                    ios_start_pending;
+    /* Filled by the Madeira capture (ios_fill_thread_context) for a WoW64
+     * thread: the syscall frame the snapshot was taken from and the thread's
+     * syscall sequence number at that moment.  ios_apply_resume_context()
+     * applies a SetThreadContext only while both are unchanged. */
+    unsigned long long     ios_ctx_frame;
+    unsigned int           ios_ctx_seq;
 #endif
 };
 

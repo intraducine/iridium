@@ -20,6 +20,7 @@ targets:
           - wine_stubs.c
           - Winios/Winios.m
           - Winios/WiniosGamepad.c
+          - Winios/WiniosCursor.c
       - path: MadeiraSupport/MadeiraNative.h
         headerVisibility: public
       - path: MadeiraSupport/NativePool.c
@@ -117,7 +118,13 @@ targets:
       - path: ../../../testrepos/Madeira/app/Madeira/d3d12
         type: folder
         buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/i386-windows
+        type: folder
+        buildPhase: resources
       - path: ../../../testrepos/Madeira/app/Madeira/nls
+        type: folder
+        buildPhase: resources
+      - path: ../../../testrepos/Madeira/app/Madeira/fonts
         type: folder
         buildPhase: resources
       - path: ../../../testrepos/Madeira/app/Madeira/licenses

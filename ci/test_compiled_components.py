@@ -85,6 +85,9 @@ class CompiledComponentsTests(unittest.TestCase):
             binary.parent.mkdir(parents=True)
             binary.write_bytes(b'compiled executable')
             binary.chmod(0o755)
+            guest = root / 'testrepos/Madeira/wine/build-i386/dlls/ntdll/i386-windows/ntdll.dll'
+            guest.parent.mkdir(parents=True)
+            guest.write_bytes(b'compiled guest module')
             binary.with_suffix('.o').write_bytes(b'unneeded object')
             env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
             with patch.dict(os.environ, env), patch.object(reuse, 'git', return_value='b' * 40):
@@ -96,6 +99,7 @@ class CompiledComponentsTests(unittest.TestCase):
             with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40):
                 components.restore(root, 'wine', '123')
                 self.assertEqual(binary.read_bytes(), b'compiled executable')
+                self.assertEqual(guest.read_bytes(), b'compiled guest module')
                 self.assertTrue(binary.stat().st_mode & 0o111)
                 archive.write_bytes(b'corrupt')
                 with self.assertRaisesRegex(ValueError, 'checksum'):
@@ -155,3 +159,51 @@ class CompiledComponentsTests(unittest.TestCase):
             self.assertIn('retention-days: 7', step)
         self.assertLess(workflow.index('Retain wine compilation'), workflow.index('Stage Windows modules'))
         self.assertLess(workflow.index('Retain windows compilation'), workflow.index('Stage Windows modules'))
+
+    def test_helper_edits_reuse_libraries_but_media_and_fex_edits_rebuild(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q'); git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            scripts = 'iridium/apps/ios/Scripts/'
+            support = 'iridium/apps/ios/MadeiraSupport/'
+            helpers = (scripts + 'build_controller_runtime.sh',
+                       support + 'xinput.c', support + 'xinput.def', support + 'prerequisites.c')
+            libraries = (scripts + 'build_media_runtime.sh', 'testrepos/Madeira/FEX/source.cc',
+                         'ci/prepare-media-sdk.sh')
+            for name in helpers + libraries:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('original input')
+            workflow = root / reuse.WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text('jobs:\n  build:\n    runs-on: xcode-27\n    steps:\n'
+                                '      - name: Compile native\n        run: bash ci/prepare-native-runtime.sh\n')
+            def commit():
+                git('add', '.'); git('commit', '-qm', 'fixture')
+            commit(); revision = git('rev-parse', 'HEAD')
+            for name in helpers:
+                (root / name).write_text('changed helper')
+                commit()
+                reuse.compatible(root, revision, 'native')
+            for name in libraries:
+                with self.subTest(library=name):
+                    (root / name).write_text('changed library')
+                    commit()
+                    with self.assertRaisesRegex(ValueError, 'Changed producer input'):
+                        reuse.compatible(root, revision, 'native')
+                    (root / name).write_text('original input')
+                    commit()
+
+    def test_helpers_are_always_rebuilt_after_library_cache_and_before_staging(self):
+        workflow = (components.ROOT / reuse.WORKFLOW).read_text()
+        label = '      - name: Build game input and prerequisite helpers\n'
+        step = workflow.split(label)[1].split('      - name:')[0]
+        self.assertNotIn('if:', step)
+        self.assertIn('llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH', step)
+        self.assertIn('sh iridium/apps/ios/Scripts/build_controller_runtime.sh', step)
+        self.assertLess(workflow.index('Retain native compilation'), workflow.index(label))
+        self.assertLess(workflow.index(label), workflow.index('Stage Windows modules'))

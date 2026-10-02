@@ -264,6 +264,21 @@ void ntdll_add_syscall_debug_info( UINT idx, const char **names, const char **us
     usercall_names = user_names;
 }
 
+/* MADEIRA: name a syscall id for fault reports of the iOS layer.  Bounded
+ * array indexing only (no allocation, no locks), so it is safe to call from a
+ * signal handler; returns NULL when the id is out of range or no table has
+ * been registered (the caller then prints the raw number).  Nothing in Wine
+ * calls it. */
+const char *ntdll_syscall_name( UINT id )
+{
+    UINT idx = (id >> 12) & 3, num = id & 0xfff;
+    const char **names = syscall_names[idx];
+
+    if (!names) return NULL;
+    if (num >= KeServiceDescriptorTable[idx].ServiceLimit) return NULL;
+    return names[num];
+}
+
 BOOLEAN KeAddSystemServiceTable( ULONG_PTR *funcs, ULONG_PTR *counters, ULONG limit,
                                  BYTE *arguments, ULONG index )
 {

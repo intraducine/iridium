@@ -439,9 +439,9 @@ static struct client_menu_name *client_menu_name_32to64( struct client_menu_name
                                                          const struct client_menu_name32 *name32 )
 {
     if (!name32) return NULL;
-    name->nameA = UlongToPtr( name32->nameA );
-    name->nameW = UlongToPtr( name32->nameW );
-    name->nameUS = UlongToPtr( name32->nameUS );
+    name->nameA = guest_ptr32( name32->nameA );
+    name->nameW = guest_ptr32( name32->nameW );
+    name->nameUS = guest_ptr32( name32->nameUS );
     return name;
 }
 
@@ -451,9 +451,9 @@ static struct client_menu_name32 *client_menu_name_64to32( const struct client_m
     if (name32)
     {
         struct client_menu_name32 name;
-        name.nameA = PtrToUlong( name64->nameA );
-        name.nameW = PtrToUlong( name64->nameW );
-        name.nameUS = PtrToUlong( name64->nameUS );
+        name.nameA = host_ptr32( name64->nameA );
+        name.nameW = host_ptr32( name64->nameW );
+        name.nameUS = host_ptr32( name64->nameUS );
         memcpy( name32, &name, sizeof(name) );
     }
     return name32;
@@ -463,25 +463,32 @@ static void win_proc_params_64to32( const struct win_proc_params *src, struct wi
 {
     struct win_proc_params32 params;
 
-    params.func = PtrToUlong( src->func );
+    params.func = host_ptr32( src->func );
     params.hwnd = HandleToUlong( src->hwnd );
     params.msg = src->msg;
+    /* wparam/lparam are polymorphic (count, flag, handle or pointer), so they
+     * are truncated, not window-converted.  When they are a pointer into the
+     * guest window that is EXACTLY host_ptr32(), because B is 4 GB-aligned
+     *: subtracting a multiple of 2^32 does not change the
+     * low 32 bits.  For every message whose lparam win32u packs, user32's
+     * unpack_message() overwrites this field from the inline buffer anyway
+     * (wine/dlls/user32/winproc.c:822). */
     params.wparam = src->wparam;
     params.lparam = src->lparam;
     params.ansi = src->ansi;
     params.ansi_dst = src->ansi_dst;
     params.mapping = src->mapping;
     params.dpi_context = src->dpi_context;
-    params.procA = PtrToUlong( src->procA );
-    params.procW = PtrToUlong( src->procW );
+    params.procA = host_ptr32( src->procA );
+    params.procW = host_ptr32( src->procW );
     memcpy( dst, &params, sizeof(params) );
 }
 
 static void createstruct_32to64( const CREATESTRUCT32 *from, CREATESTRUCTW *to )
 
 {
-    to->lpCreateParams = UlongToPtr( from->lpCreateParams );
-    to->hInstance      = UlongToPtr( from->hInstance );
+    to->lpCreateParams = guest_ptr32( from->lpCreateParams );
+    to->hInstance      = guest_ptr32( from->hInstance );
     to->hMenu          = LongToHandle( from->hMenu );
     to->hwndParent     = LongToHandle( from->hwndParent );
     to->cy             = from->cy;
@@ -490,16 +497,16 @@ static void createstruct_32to64( const CREATESTRUCT32 *from, CREATESTRUCTW *to )
     to->x              = from->x;
     to->style          = from->style;
     to->dwExStyle      = from->dwExStyle;
-    to->lpszName       = UlongToPtr( from->lpszName );
-    to->lpszClass      = UlongToPtr( from->lpszClass );
+    to->lpszName       = guest_ptr32( from->lpszName );
+    to->lpszClass      = guest_ptr32( from->lpszClass );
 }
 
 static void createstruct_64to32( const CREATESTRUCTW *from, CREATESTRUCT32 *to )
 {
     CREATESTRUCT32 cs;
 
-    cs.lpCreateParams = PtrToUlong( from->lpCreateParams );
-    cs.hInstance      = PtrToUlong( from->hInstance );
+    cs.lpCreateParams = host_ptr32( from->lpCreateParams );
+    cs.hInstance      = host_ptr32( from->hInstance );
     cs.hMenu          = HandleToUlong( from->hMenu );
     cs.hwndParent     = HandleToUlong( from->hwndParent );
     cs.cy             = from->cy;
@@ -507,8 +514,8 @@ static void createstruct_64to32( const CREATESTRUCTW *from, CREATESTRUCT32 *to )
     cs.y              = from->y;
     cs.x              = from->x;
     cs.style          = from->style;
-    cs.lpszName       = PtrToUlong( from->lpszName );
-    cs.lpszClass      = PtrToUlong( from->lpszClass );
+    cs.lpszName       = host_ptr32( from->lpszName );
+    cs.lpszClass      = host_ptr32( from->lpszClass );
     cs.dwExStyle      = from->dwExStyle;
     memcpy( to, &cs, sizeof(cs) );
 }
@@ -585,7 +592,7 @@ static NTSTATUS WINAPI wow64_NtUserCallEnumDisplayMonitor( void *arg, ULONG size
         ULONG lparam;
     } params32;
 
-    params32.proc = PtrToUlong( params->proc );
+    params32.proc = host_ptr32( params->proc );
     params32.monitor = HandleToUlong( params->monitor );
     params32.hdc = HandleToUlong( params->hdc );
     params32.rect = params->rect;
@@ -605,7 +612,7 @@ static NTSTATUS WINAPI wow64_NtUserCallSendAsyncCallback( void *arg, ULONG size 
         ULONG result;
     } params32;
 
-    params32.callback = PtrToUlong( params->callback );
+    params32.callback = host_ptr32( params->callback );
     params32.hwnd = HandleToUlong( params->hwnd );
     params32.msg = params->msg;
     params32.data = params->data;
@@ -625,7 +632,7 @@ static NTSTATUS WINAPI wow64_NtUserCallWinEventHook( void *arg, ULONG size )
     params32.handle = HandleToUlong( params->handle );
     params32.tid = params->tid;
     params32.time = params->time;
-    params32.proc = PtrToUlong( params->proc );
+    params32.proc = host_ptr32( params->proc );
 
     size -= FIELD_OFFSET( struct win_event_hook_params, module );
     if (size) memcpy( params32.module, params->module, size );
@@ -747,7 +754,7 @@ static size_t packed_message_64to32( UINT message, WPARAM wparam,
 
             cds32.dwData = cds64->dwData;
             cds32.cbData = cds64->cbData;
-            cds32.lpData = PtrToUlong( cds64->lpData );
+            cds32.lpData = host_ptr32( cds64->lpData );
             memcpy( params32, &cds32, sizeof(cds32) );
             size -= sizeof(cds32);
             if (size) memmove( (char *)params32 + sizeof(cds32), cds64 + 1, size );
@@ -788,8 +795,8 @@ static size_t packed_message_64to32( UINT message, WPARAM wparam,
             MDICREATESTRUCT32 mcs32;
             const MDICREATESTRUCTW *mcs64 = params64;
 
-            mcs32.szClass = PtrToUlong( mcs64->szClass );
-            mcs32.szTitle = PtrToUlong( mcs64->szTitle );
+            mcs32.szClass = host_ptr32( mcs64->szClass );
+            mcs32.szTitle = host_ptr32( mcs64->szTitle );
             mcs32.hOwner  = HandleToLong( mcs64->hOwner );
             mcs32.x       = mcs64->x;
             mcs32.y       = mcs64->y;
@@ -838,8 +845,8 @@ static size_t packed_result_32to64( UINT message, WPARAM wparam, const void *par
             const CREATESTRUCT32 *cs32 = params32;
             CREATESTRUCTW *cs64 = params64;
 
-            cs64->lpCreateParams = UlongToPtr( cs32->lpCreateParams );
-            cs64->hInstance      = UlongToPtr( cs32->hInstance );
+            cs64->lpCreateParams = guest_ptr32( cs32->lpCreateParams );
+            cs64->hInstance      = guest_ptr32( cs32->hInstance );
             cs64->hMenu          = LongToHandle( cs32->hMenu );
             cs64->hwndParent     = LongToHandle( cs32->hwndParent );
             cs64->cy             = cs32->cy;
@@ -1121,7 +1128,7 @@ static NTSTATUS WINAPI wow64_NtUserCallWindowsHook( void *arg, ULONG size )
     size32 = FIELD_OFFSET( struct win_hook_params32, module[module_len + 1] );
     offset = FIELD_OFFSET( struct win_hook_params, module[module_len + 1] );
 
-    params32.proc         = PtrToUlong( params->proc );
+    params32.proc         = host_ptr32( params->proc );
     params32.handle       = HandleToUlong( params->handle );
     params32.pid          = params->pid;
     params32.tid          = params->tid;
@@ -1353,8 +1360,8 @@ static NTSTATUS WINAPI wow64_NtUserLoadImage( void *arg, ULONG size )
         UINT flags;
     } params32;
 
-    params32.hinst = PtrToUlong( params->hinst );
-    params32.name = PtrToUlong( params->name );
+    params32.hinst = host_ptr32( params->hinst );
+    params32.name = host_ptr32( params->name );
     params32.type = params->type;
     params32.dx = params->dx;
     params32.dy = params->dy;
@@ -1650,6 +1657,10 @@ NTSTATUS WINAPI wow64_NtUserBuildPropList( UINT *args )
     return NtUserBuildPropList( hwnd, count, props, ret_count );
 }
 
+/* MADEIRA: audited against dlls/win32u/window.c NtUserCallHwnd -- every code
+ * takes only the hwnd, and every return value is a handle, a scalar, or an
+ * opaque 32-bit value the guest itself stored (GetDialogInfo,
+ * GetMDIClientInfo).  Nothing to convert in either direction. */
 NTSTATUS WINAPI wow64_NtUserCallHwnd( UINT *args )
 {
     HWND hwnd = get_handle( &args );
@@ -1672,11 +1683,11 @@ NTSTATUS WINAPI wow64_NtUserCallHwndParam( UINT *args )
             {
                 int bar;
                 ULONG info;
-            } *info32 = UlongToPtr( param );
+            } *info32 = guest_ptr32( param );
             struct get_scroll_info_params info;
 
             info.bar = info32->bar;
-            info.info = UlongToPtr( info32->info );
+            info.info = guest_ptr32( info32->info );
             return NtUserCallHwndParam( hwnd, (UINT_PTR)&info, code );
         }
 
@@ -1686,24 +1697,25 @@ NTSTATUS WINAPI wow64_NtUserCallHwndParam( UINT *args )
             {
                 ULONG rect;
                 UINT dpi;
-            } *params32 = UlongToPtr( param );
+            } *params32 = guest_ptr32( param );
             struct get_window_rects_params params;
 
-            params.rect = UlongToPtr( params32->rect );
+            params.rect = guest_ptr32( params32->rect );
             params.dpi = params32->dpi;
             return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, code );
         }
 
     case NtUserCallHwndParam_GetClientRect:
+    case NtUserCallHwndParam_GetPresentRect:
         {
             struct
             {
                 ULONG rect;
                 UINT dpi;
-            } *params32 = UlongToPtr( param );
+            } *params32 = guest_ptr32( param );
             struct get_window_rects_params params;
 
-            params.rect = UlongToPtr( params32->rect );
+            params.rect = guest_ptr32( params32->rect );
             params.dpi = params32->dpi;
             return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, code );
         }
@@ -1716,11 +1728,11 @@ NTSTATUS WINAPI wow64_NtUserCallHwndParam( UINT *args )
                 ULONG points;
                 UINT count;
                 UINT dpi;
-            } *params32 = UlongToPtr( param );
+            } *params32 = guest_ptr32( param );
             struct map_window_points_params params;
 
             params.hwnd_to = LongToHandle( params32->hwnd_to );
-            params.points = UlongToPtr( params32->points );
+            params.points = guest_ptr32( params32->points );
             params.count = params32->count;
             params.dpi = params32->dpi;
             return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, code );
@@ -1733,15 +1745,36 @@ NTSTATUS WINAPI wow64_NtUserCallHwndParam( UINT *args )
                 UINT flags;
                 ULONG input;
                 ULONG lparam;
-            } *params32 = UlongToPtr( param );
+            } *params32 = guest_ptr32( param );
             struct send_hardware_input_params params;
 
             params.flags = params32->flags;
-            params.input = UlongToPtr( params32->input );
+            params.input = guest_ptr32( params32->input );
             params.lparam = params32->lparam;
             return NtUserCallHwndParam( hwnd, (UINT_PTR)&params, code );
         }
 
+    /* MADEIRA: `param` is a flat pointer whose target is layout-identical on
+     * both sides, so only the pointer itself needs the guest window. */
+    case NtUserCallHwndParam_ClientToScreen:        /* POINT * (in/out) */
+    case NtUserCallHwndParam_ScreenToClient:        /* POINT * (in/out) */
+    case NtUserCallHwndParam_GetChildRect:          /* RECT * (out) */
+    case NtUserCallHwndParam_GetWindowInfo:         /* WINDOWINFO * (in/out, 60 bytes both) */
+    case NtUserCallHwndParam_GetWindowThread:       /* DWORD * (out, may be NULL) */
+    case NtUserCallHwndParam_ExposeWindowSurface:   /* struct expose_window_surface_params * */
+    case NtUserCallHwndParam_SetRawWindowPos:       /* struct set_raw_window_pos_params * */
+        return NtUserCallHwndParam( hwnd, (UINT_PTR)guest_ptr32( param ), code );
+
+    /* MADEIRA, deliberately NOT converted (handles and opaque values never convert):
+     * - GetClassLong{,Ptr}{A,W}, GetClassWord, GetWindowLong{,Ptr}{A,W},
+     *   GetWindowWord, GetWindowRelative, MonitorFromWindow, GetWinMonitorDpi:
+     *   scalars (an offset, a relation, a flag set).
+     * - IsChild, MirrorRgn: handles.
+     * - SetDialogInfo, SetMDIClientInfo: opaque 32-bit values that win32u only
+     *   stores (window.c set_dialog_info / NtUserSetWindowLongPtr) and hands
+     *   back verbatim through NtUserCallHwnd_GetDialogInfo /
+     *   NtUserCallHwnd_GetMDIClientInfo.  They never leave the guest namespace,
+     *   so offsetting them here would corrupt the round trip. */
     default:
         return NtUserCallHwndParam( hwnd, param, code );
     }
@@ -1769,6 +1802,8 @@ NTSTATUS WINAPI wow64_NtUserCallNextHookEx( UINT *args )
     return NtUserCallNextHookEx( hhook, code, wparam, lparam );
 }
 
+/* MADEIRA: audited against dlls/win32u/sysparams.c NtUserCallNoParam -- no
+ * argument at all and every result is a handle or a scalar.  Nothing to do. */
 NTSTATUS WINAPI wow64_NtUserCallNoParam( UINT *args )
 {
     ULONG code = get_ulong( &args );
@@ -1776,12 +1811,47 @@ NTSTATUS WINAPI wow64_NtUserCallNoParam( UINT *args )
     return NtUserCallNoParam( code );
 }
 
+/* MADEIRA:  The NtUserCall* family is
+ * a set of multiplexed syscalls: the same ULONG_PTR argument is a scalar for
+ * one code, a handle for another and a POINTER for a third, so there is no way
+ * to convert it without switching on the code.  Upstream forwards the raw
+ * ULONG because classic WoW64 has guest address == host address; under a
+ * shifted guest window every pointer-valued code must go through guest_ptr32()
+ * (NULL-preserving, `+B`) before native win32u dereferences it, and handles,
+ * scalars, guest callbacks and opaque round-tripped values must NOT be touched.
+ *
+ * The classification below is taken code by code from win32u's own dispatch
+ * (dlls/win32u/sysparams.c NtUserCallNoParam/OneParam/TwoParam and
+ * dlls/win32u/window.c NtUserCallHwnd/NtUserCallHwndParam).  Every structure
+ * reached this way is layout-identical on i386 and ARM64 (RECT, POINT,
+ * WINDOWINFO, the ntuser.h `*_params` blocks, D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME
+ * and struct free_icon_params are all fixed-width fields), so converting the
+ * pointer is sufficient and no marshalling copy is needed.  The two exceptions
+ * that do need a copy -- MENUINFO for GetMenuInfo and the nested pointers in
+ * the CallHwndParam blocks -- already had one. */
+
 NTSTATUS WINAPI wow64_NtUserCallOneParam( UINT *args )
 {
     ULONG_PTR arg = get_ulong( &args );
     ULONG code = get_ulong( &args );
 
-    return NtUserCallOneParam( arg, code );
+    switch (code)
+    {
+    /* pointer arguments: convert, the pointed-to layout is identical */
+    case NtUserCallOneParam_GetPrimaryMonitorRect:       /* RECT * (out) */
+    case NtUserCallOneParam_GetAsyncKeyboardState:       /* BYTE[256] (out) */
+    case NtUserCallOneParam_D3DKMTOpenAdapterFromGdiDisplayName: /* D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME * (in/out) */
+    case NtUserGetDeskPattern:                           /* WCHAR[256] (out) */
+        return NtUserCallOneParam( (ULONG_PTR)guest_ptr32( arg ), code );
+
+    /* everything else is a scalar (CreateCursorIcon, GetSysColor{,Brush,Pen},
+     * GetSystemMetrics, SetKeyboardAutoRepeat, SetThreadDpiAwarenessContext),
+     * a handle (EnableDC, GetIconParam, GetMenuItemCount) or a guest callback
+     * that win32u only ever hands back to the 32-bit side (EnableThunkLock) --
+     * never offset. */
+    default:
+        return NtUserCallOneParam( arg, code );
+    }
 }
 
 NTSTATUS WINAPI wow64_NtUserCallTwoParam( UINT *args )
@@ -1794,7 +1864,7 @@ NTSTATUS WINAPI wow64_NtUserCallTwoParam( UINT *args )
     {
     case NtUserCallTwoParam_GetMenuInfo:
         {
-            MENUINFO32 *info32 = UlongToPtr( arg2 );
+            MENUINFO32 *info32 = guest_ptr32( arg2 );
             MENUINFO info;
 
             if (!info32 || info32->cbSize != sizeof(*info32))
@@ -1814,11 +1884,39 @@ NTSTATUS WINAPI wow64_NtUserCallTwoParam( UINT *args )
             return TRUE;
         }
 
-    case NtUserCallTwoParam_GetGamepadState:
-        /* The state/capabilities payload contains no pointers and has the
-         * same layout on both architectures. Only widen the output pointer. */
-        return NtUserCallTwoParam( arg1, (UINT_PTR)UlongToPtr( arg2 ), code );
+    /* arg2 is a pointer, arg1 a handle or a scalar */
+    case NtUserCallTwoParam_GetMonitorInfo:       /* MONITORINFO(EX) * (in/out) */
+    case NtUserCallTwoParam_SetIMECompositionRect: /* const RECT * (in) */
+    case NtUserCallTwoParam_SetIconParam:         /* struct free_icon_params * (in);
+                                                   * its `callback` is a guest callback
+                                                   * that KeUserModeCallback hands back
+                                                   * to the 32-bit side -- not offset */
+        return NtUserCallTwoParam( arg1, (ULONG_PTR)guest_ptr32( arg2 ), code );
 
+    /* arg2 is the guest's XINPUT_STATE / XINPUT_CAPABILITIES output
+     * buffer; arg1 packs the user index and the NtUserGamepadOp_* selector and
+     * is a pure scalar. Both payloads are pointer-free and laid out identically
+     * in 32-bit and 64-bit (16 and 20 bytes, natural alignment), so the
+     * translation below is the WHOLE marshalling -- win32u writes into the
+     * guest buffer directly. */
+    case NtUserCallTwoParam_GetGamepadState:      /* XINPUT_STATE * / XINPUT_CAPABILITIES * (out) */
+        return NtUserCallTwoParam( arg1, (ULONG_PTR)guest_ptr32( arg2 ), code );
+
+    /* arg1 is a pointer, arg2 a scalar */
+    case NtUserCallTwoParam_MonitorFromRect:      /* const RECT * (in) */
+    case NtUserCallTwoParam_GetVirtualScreenRect: /* RECT * (out) */
+        return NtUserCallTwoParam( (ULONG_PTR)guest_ptr32( arg1 ), arg2, code );
+
+    /* both are pointers */
+    case NtUserCallTwoParam_AdjustWindowRect:     /* RECT * (in/out) +
+                                                   * struct adjust_window_rect_params * (in) */
+        return NtUserCallTwoParam( (ULONG_PTR)guest_ptr32( arg1 ),
+                                   (ULONG_PTR)guest_ptr32( arg2 ), code );
+
+    /* GetDialogProc (arg1 is a guest DLGPROC / winproc handle that win32u only
+     * stores and hands back), GetSystemMetricsForDpi (two scalars) and
+     * NtUserAllocWinProc (arg1 is a guest WNDPROC) are never
+     * offset. */
     default:
         return NtUserCallTwoParam( arg1, arg2, code );
     }
@@ -2390,15 +2488,15 @@ NTSTATUS WINAPI wow64_NtUserGetClassInfoEx( UINT *args )
         return 0;
 
     wc32->style = wc.style;
-    wc32->lpfnWndProc = PtrToUlong( wc.lpfnWndProc );
+    wc32->lpfnWndProc = host_ptr32( wc.lpfnWndProc );
     wc32->cbClsExtra = wc.cbClsExtra;
     wc32->cbWndExtra = wc.cbWndExtra;
-    wc32->hInstance = PtrToUlong( wc.hInstance );
+    wc32->hInstance = host_ptr32( wc.hInstance );
     wc32->hIcon = HandleToUlong( wc.hIcon );
     wc32->hCursor = HandleToUlong( wc.hCursor );
     wc32->hbrBackground = HandleToUlong( wc.hbrBackground );
-    wc32->lpszMenuName = PtrToUlong( wc.lpszMenuName );
-    wc32->lpszClassName = PtrToUlong( wc.lpszClassName );
+    wc32->lpszMenuName = host_ptr32( wc.lpszMenuName );
+    wc32->lpszClassName = host_ptr32( wc.lpszClassName );
     wc32->hIconSm = HandleToUlong( wc.hIconSm );
     client_menu_name_64to32( &client_name, client_name32 );
     return ret;
@@ -2437,7 +2535,7 @@ NTSTATUS WINAPI wow64_NtUserGetClipboardData( UINT *args )
     struct get_clipboard_params params;
     HANDLE ret;
 
-    params.data = UlongToPtr( params32->data );
+    params.data = guest_ptr32( params32->data );
     params.size = params32->size;
     params.data_size = params32->data_size;
     params.data_only = params32->data_only;
@@ -2488,7 +2586,8 @@ NTSTATUS WINAPI wow64_NtUserGetCursor( UINT *args )
 
 NTSTATUS WINAPI wow64_NtUserGetCursorFrameInfo( UINT *args )
 {
-    HCURSOR cursor = get_ptr( &args );
+    /* a USER handle is never offset by the guest base */
+    HCURSOR cursor = get_handle( &args );
     DWORD istep = get_ulong( &args );
     DWORD *rate_jiffies = get_ptr( &args );
     DWORD *num_steps = get_ptr( &args );
@@ -2634,12 +2733,12 @@ NTSTATUS WINAPI wow64_NtUserGetIconInfo( UINT *args )
     info32->hbmColor = HandleToUlong( info.hbmColor );
     if (module32)
     {
-        module32->Buffer = PtrToUlong( module.Buffer );
+        module32->Buffer = host_ptr32( module.Buffer );
         module32->Length = module.Length;
     }
     if (res_name32)
     {
-        res_name32->Buffer = PtrToUlong( res_name.Buffer );
+        res_name32->Buffer = host_ptr32( res_name.Buffer );
         res_name32->Length = res_name.Length;
     }
     return TRUE;
@@ -2888,7 +2987,7 @@ NTSTATUS WINAPI wow64_NtUserGetProcessWindowStation( UINT *args )
 NTSTATUS WINAPI wow64_NtUserGetProp( UINT *args )
 {
     HWND hwnd = get_handle( &args );
-    const WCHAR *str = get_ptr( &args );
+    const WCHAR *str = get_str_or_atom( &args );   /* iOS-Madeira: atom, not pointer */
 
     return HandleToUlong( NtUserGetProp( hwnd, str ));
 }
@@ -3097,15 +3196,15 @@ NTSTATUS WINAPI wow64_NtUserRegisterClassExWOW( UINT *args )
 
     wc.cbSize = sizeof(wc);
     wc.style = wc32->style;
-    wc.lpfnWndProc = UlongToPtr( wc32->lpfnWndProc );
+    wc.lpfnWndProc = guest_ptr32( wc32->lpfnWndProc );
     wc.cbClsExtra = wc32->cbClsExtra;
     wc.cbWndExtra = wc32->cbWndExtra;
-    wc.hInstance = UlongToPtr( wc32->hInstance );
+    wc.hInstance = guest_ptr32( wc32->hInstance );
     wc.hIcon = LongToHandle( wc32->hIcon );
     wc.hCursor = LongToHandle( wc32->hCursor );
     wc.hbrBackground = UlongToHandle( wc32->hbrBackground );
-    wc.lpszMenuName = UlongToPtr( wc32->lpszMenuName );
-    wc.lpszClassName = UlongToPtr( wc32->lpszClassName );
+    wc.lpszMenuName = guest_ptr32( wc32->lpszMenuName );
+    wc.lpszClassName = guest_ptr32( wc32->lpszClassName );
     wc.hIconSm = LongToHandle( wc32->hIconSm );
 
     return NtUserRegisterClassExWOW( &wc,
@@ -3398,9 +3497,122 @@ NTSTATUS WINAPI wow64_NtUserMessageBeep( UINT *args )
     return NtUserMessageBeep( type );
 }
 
-static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+/* Under the shifted guest window a
+ * 32-bit wparam/lparam that is a POINTER has to be converted to a host
+ * address exactly once, and this syscall thunk is that boundary.  Upstream
+ * relies on the classic WoW64 guest==host identity and forwards both values
+ * verbatim, which makes the native side (and the *_32to64 helpers below)
+ * dereference a guest address.
+ *
+ * The set of messages whose lparam the native side dereferences is exactly
+ * the set win32u knows how to pack: wine/dlls/win32u/message.c:993
+ * (pack_message) and build/win32u-unix/message_ios.c:1705
+ * (user_message_size) / :1871 (pack_user_message).  Everything else
+ * (WM_COMMAND, WM_CHAR, WM_TIMER's TIMERPROC, WM_SIZECLIPBOARD's HGLOBAL,
+ * the HDC/HFONT/HICON carrying messages, ...) is an opaque value or a handle
+ * and stays in the guest namespace. */
+static BOOL message_lparam_is_ptr( UINT msg )
+{
+    switch (msg)
+    {
+    case WM_NCCREATE:
+    case WM_CREATE:
+    case WM_GETTEXT:
+    case WM_ASKCBFORMATNAME:
+    case WM_WININICHANGE:
+    case WM_SETTEXT:
+    case WM_DEVMODECHANGE:
+    case CB_DIR:
+    case LB_DIR:
+    case LB_ADDFILE:
+    case EM_REPLACESEL:
+    case WM_GETMINMAXINFO:
+    case WM_DRAWITEM:
+    case WM_MEASUREITEM:
+    case WM_DELETEITEM:
+    case WM_COMPAREITEM:
+    case WM_WINE_SETWINDOWPOS:
+    case WM_WINDOWPOSCHANGING:
+    case WM_WINDOWPOSCHANGED:
+    case WM_COPYDATA:
+    case WM_NOTIFY:
+    case WM_HELP:
+    case WM_STYLECHANGING:
+    case WM_STYLECHANGED:
+    case WM_NCCALCSIZE:
+    case WM_GETDLGCODE:
+    case SBM_SETSCROLLINFO:
+    case SBM_GETSCROLLINFO:
+    case SBM_GETSCROLLBARINFO:
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+    case EM_GETRECT:
+    case LB_GETITEMRECT:
+    case CB_GETDROPPEDCONTROLRECT:
+    case EM_SETRECT:
+    case EM_SETRECTNP:
+    case EM_GETLINE:
+    case EM_SETTABSTOPS:
+    case LB_SETTABSTOPS:
+    case CB_ADDSTRING:
+    case CB_INSERTSTRING:
+    case CB_FINDSTRING:
+    case CB_FINDSTRINGEXACT:
+    case CB_SELECTSTRING:
+    case CB_GETLBTEXT:
+    case CB_GETCOMBOBOXINFO:
+    case LB_ADDSTRING:
+    case LB_INSERTSTRING:
+    case LB_FINDSTRING:
+    case LB_FINDSTRINGEXACT:
+    case LB_SELECTSTRING:
+    case LB_GETTEXT:
+    case LB_GETSELITEMS:
+    case WM_NEXTMENU:
+    case WM_SIZING:
+    case WM_MOVING:
+    case WM_MDICREATE:
+    case WM_MDIGETACTIVE:
+    case WM_DEVICECHANGE:
+    case WM_WINE_KEYBOARD_LL_HOOK:
+    case WM_WINE_MOUSE_LL_HOOK:
+    case WM_PAINTCLIPBOARD:
+    case WM_DROPOBJECT:
+    case WM_QUERYDROPOBJECT:
+    case WM_DRAGLOOP:
+    case WM_DRAGSELECT:
+    case WM_DRAGMOVE:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+/* The only messages whose WPARAM is a pointer rather than a count, a flag or
+ * a handle (cf. pack_message, wine/dlls/win32u/message.c:1182). */
+static BOOL message_wparam_is_ptr( UINT msg )
+{
+    switch (msg)
+    {
+    case EM_GETSEL:
+    case SBM_GETRANGE:
+    case CB_GETEDITSEL:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam32, LPARAM lparam32,
                                     void *result_info, DWORD type, BOOL ansi )
 {
+    /* guest -> host, exactly once, for this whole function and for the native
+     * NtUserMessageCall() it forwards to */
+    WPARAM wparam = message_wparam_is_ptr( msg ) ?
+                    (WPARAM)guest_ptr32( (ULONG)wparam32 ) : wparam32;
+    LPARAM lparam = message_lparam_is_ptr( msg ) ?
+                    (LPARAM)guest_ptr32( (ULONG)lparam32 ) : lparam32;
     LRESULT ret = 0;
 
     switch (msg)
@@ -3414,8 +3626,8 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 
             createstruct_32to64( cs32, &cs );
             ret = NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&cs, result_info, type, ansi );
-            cs32->lpCreateParams = PtrToUlong( cs.lpCreateParams );
-            cs32->hInstance      = PtrToUlong( cs.hInstance );
+            cs32->lpCreateParams = host_ptr32( cs.lpCreateParams );
+            cs32->hInstance      = host_ptr32( cs.hInstance );
             cs32->hMenu          = HandleToLong( cs.hMenu );
             cs32->hwndParent     = HandleToLong( cs.hwndParent );
             cs32->cy             = cs.cy;
@@ -3433,8 +3645,8 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             MDICREATESTRUCT32 *cs32 = (void *)lparam;
             MDICREATESTRUCTW cs;
 
-            cs.szClass = UlongToPtr( cs32->szClass );
-            cs.szTitle = UlongToPtr( cs32->szTitle );
+            cs.szClass = guest_ptr32( cs32->szClass );
+            cs.szTitle = guest_ptr32( cs32->szTitle );
             cs.hOwner = LongToHandle( cs32->hOwner );
             cs.x = cs32->x;
             cs.y = cs32->y;
@@ -3469,12 +3681,12 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             params.rgrc[1] = params32->rgrc[1];
             params.rgrc[2] = params32->rgrc[2];
             params.lppos = &winpos;
-            winpos_32to64( &winpos, UlongToPtr( params32->lppos ));
+            winpos_32to64( &winpos, guest_ptr32( params32->lppos ));
             ret = NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&params, result_info, type, ansi );
             params32->rgrc[0] = params.rgrc[0];
             params32->rgrc[1] = params.rgrc[1];
             params32->rgrc[2] = params.rgrc[2];
-            winpos_64to32( &winpos, UlongToPtr( params32->lppos ));
+            winpos_64to32( &winpos, guest_ptr32( params32->lppos ));
             return ret;
         }
         return NtUserMessageCall( hwnd, msg, wparam, lparam, result_info, type, ansi );
@@ -3556,7 +3768,7 @@ static LRESULT message_call_32to64( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 
             cds.dwData = cds32->dwData;
             cds.cbData = cds32->cbData;
-            cds.lpData = UlongToPtr( cds32->lpData );
+            cds.lpData = guest_ptr32( cds32->lpData );
             return NtUserMessageCall( hwnd, msg, wparam, (LPARAM)&cds, result_info, type, ansi );
         }
 
@@ -3654,7 +3866,7 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             struct win_proc_params32 *params32 = result_info;
             struct win_proc_params params;
 
-            if (type == NtUserCallWindowProc) params.func = UlongToPtr( params32->func );
+            if (type == NtUserCallWindowProc) params.func = guest_ptr32( params32->func );
 
             if (!NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi ))
                 return FALSE;
@@ -3708,7 +3920,7 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             } *params32 = result_info;
             struct send_message_callback_params params;
 
-            params.callback = UlongToPtr( params32->callback );
+            params.callback = guest_ptr32( params32->callback );
             params.data = params32->data;
             return message_call_32to64( hwnd, msg, wparam, lparam, &params, type, ansi );
         }
@@ -3728,10 +3940,11 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             } *params32 = result_info;
             struct ime_driver_call_params params;
             if (msg == WINE_IME_POST_UPDATE) ERR( "Unexpected WINE_IME_POST_UPDATE message\n" );
+            /* himc is an HIMC HANDLE, never window-converted */
             params.himc = UlongToPtr( params32->himc );
-            params.state = UlongToPtr( params32->state );
-            params.compstr = UlongToPtr( params32->compstr );
-            params.key_consumed = UlongToPtr( params32->key_consumed );
+            params.state = guest_ptr32( params32->state );
+            params.compstr = guest_ptr32( params32->compstr );
+            params.key_consumed = guest_ptr32( params32->key_consumed );
             return NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi );
         }
 
@@ -3810,7 +4023,7 @@ NTSTATUS WINAPI wow64_NtUserMessageCall( UINT *args )
             } *params32 = result_info;
             struct post_dde_message_call_params params;
 
-            params.ptr = UlongToPtr(params32->ptr);
+            params.ptr = guest_ptr32(params32->ptr);
             params.size = params32->size;
             params.dest_tid = params32->dest_tid;
             return NtUserMessageCall( hwnd, msg, wparam, lparam, &params, type, ansi );
@@ -4063,6 +4276,7 @@ NTSTATUS WINAPI wow64_NtUserRegisterRawInputDevices( UINT *args )
         devices64[i].usUsagePage = devices32[i].usUsagePage;
         devices64[i].usUsage = devices32[i].usUsage;
         devices64[i].dwFlags = devices32[i].dwFlags;
+        /* hwndTarget is an HWND HANDLE, never window-converted */
         devices64[i].hwndTarget = UlongToPtr( devices32[i].hwndTarget );
     }
 
@@ -4116,7 +4330,7 @@ NTSTATUS WINAPI wow64_NtUserRemoveMenu( UINT *args )
 NTSTATUS WINAPI wow64_NtUserRemoveProp( UINT *args )
 {
     HWND hwnd = get_handle( &args );
-    const WCHAR *str = get_ptr( &args );
+    const WCHAR *str = get_str_or_atom( &args );   /* iOS-Madeira: atom, not pointer */
 
     return HandleToUlong( NtUserRemoveProp( hwnd, str ));
 }
@@ -4292,7 +4506,7 @@ NTSTATUS WINAPI wow64_NtUserSetClassLongPtr( UINT *args )
     if (offset == GCLP_MENUNAME)
     {
         struct client_menu_name menu_name;
-        struct client_menu_name32 *menu_name32 = UlongToPtr( newval );
+        struct client_menu_name32 *menu_name32 = guest_ptr32( newval );
         NtUserSetClassLongPtr( hwnd, offset,
                                (UINT_PTR)client_menu_name_32to64( &menu_name, menu_name32 ), ansi );
         client_menu_name_64to32( &menu_name, menu_name32 );
@@ -4324,7 +4538,7 @@ NTSTATUS WINAPI wow64_NtUserSetClipboardData( UINT *args )
     } *params32 = get_ptr( &args );
 
     struct set_clipboard_params params;
-    params.data       = UlongToPtr( params32->data );
+    params.data       = guest_ptr32( params32->data );
     params.size       = params32->size;
     params.cache_only = params32->cache_only;
     params.seqno      = params32->seqno;
@@ -4370,7 +4584,7 @@ NTSTATUS WINAPI wow64_NtUserSetCursorIconData( UINT *args )
         ULONG alpha;
         ULONG mask;
         POINT hotspot;
-    } *frames32 = UlongToPtr( desc32->frames );
+    } *frames32 = guest_ptr32( desc32->frames );
 
     UNICODE_STRING module, res_name;
     struct cursoricon_desc desc;
@@ -4382,9 +4596,9 @@ NTSTATUS WINAPI wow64_NtUserSetCursorIconData( UINT *args )
     desc.num_steps = desc32->num_steps;
     desc.num_frames = desc32->num_frames;
     desc.delay = desc32->delay;
-    desc.frame_seq = UlongToPtr( desc32->frame_seq );
-    desc.frame_rates = UlongToPtr( desc32->frame_rates );
-    desc.rsrc = UlongToPtr( desc32->rsrc );
+    desc.frame_seq = guest_ptr32( desc32->frame_seq );
+    desc.frame_rates = guest_ptr32( desc32->frame_rates );
+    desc.rsrc = guest_ptr32( desc32->rsrc );
 
     for (i = 0; i < num_frames; i++)
     {
@@ -4525,7 +4739,7 @@ NTSTATUS WINAPI wow64_NtUserSetProgmanWindow( UINT *args )
 NTSTATUS WINAPI wow64_NtUserSetProp( UINT *args )
 {
     HWND hwnd = get_handle( &args );
-    const WCHAR *str = get_ptr( &args );
+    const WCHAR *str = get_str_or_atom( &args );   /* iOS-Madeira: atom, not pointer */
     HANDLE handle = get_handle( &args );
 
     return NtUserSetProp( hwnd, str, handle );
@@ -4791,8 +5005,8 @@ NTSTATUS WINAPI wow64_NtUserSystemParametersInfo( UINT *args )
             keys.cbSize = sizeof(keys);
             if (!NtUserSystemParametersInfo( action, val, &keys, winini )) return FALSE;
             keys32->dwFlags = keys.dwFlags;
-            keys32->lpszActivePort = PtrToUlong( keys.lpszActivePort );
-            keys32->lpszPort = PtrToUlong( keys.lpszPort );
+            keys32->lpszActivePort = host_ptr32( keys.lpszActivePort );
+            keys32->lpszPort = host_ptr32( keys.lpszPort );
             keys32->iBaudRate = keys.iBaudRate;
             keys32->iPortState = keys.iPortState;
             keys32->iActive = keys.iActive;
@@ -4832,7 +5046,7 @@ NTSTATUS WINAPI wow64_NtUserSystemParametersInfo( UINT *args )
             entry32->iFSGrafEffectColor = entry.iFSGrafEffectColor;
             entry32->iWindowsEffect = entry.iWindowsEffect;
             entry32->iWindowsEffectMSec = entry.iWindowsEffectMSec;
-            entry32->lpszWindowsEffectDLL = PtrToUlong( entry.lpszWindowsEffectDLL );
+            entry32->lpszWindowsEffectDLL = host_ptr32( entry.lpszWindowsEffectDLL );
             entry32->iWindowsEffectOrdinal = entry.iWindowsEffectOrdinal;
             return TRUE;
         }
@@ -4853,7 +5067,7 @@ NTSTATUS WINAPI wow64_NtUserSystemParametersInfo( UINT *args )
             info.cbSize = sizeof(info);
             if (!NtUserSystemParametersInfo( action, val, &info, winini )) return FALSE;
             info32->dwFlags = info.dwFlags;
-            info32->lpszDefaultScheme = PtrToUlong( info.lpszDefaultScheme );
+            info32->lpszDefaultScheme = host_ptr32( info.lpszDefaultScheme );
             return TRUE;
         }
         break;
@@ -4931,7 +5145,7 @@ NTSTATUS WINAPI wow64_NtUserThunkedMenuItemInfo( UINT *args )
             info.hbmpChecked = UlongToHandle( info32->hbmpChecked );
             info.hbmpUnchecked = UlongToHandle( info32->hbmpUnchecked );
             info.dwItemData = info32->dwItemData;
-            info.dwTypeData = UlongToPtr( info32->dwTypeData );
+            info.dwTypeData = guest_ptr32( info32->dwTypeData );
             info.cch = info32->cch;
             info.hbmpItem = UlongToHandle( info32->hbmpItem );
             break;
@@ -4940,7 +5154,7 @@ NTSTATUS WINAPI wow64_NtUserThunkedMenuItemInfo( UINT *args )
             break;
         case NtUserGetMenuItemInfoA:
         case NtUserGetMenuItemInfoW:
-            info.dwTypeData = UlongToPtr( info32->dwTypeData );
+            info.dwTypeData = guest_ptr32( info32->dwTypeData );
             info.cch = info32->cch;
             break;
         }

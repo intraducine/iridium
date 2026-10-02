@@ -149,7 +149,7 @@ class ManualBuildTests(unittest.TestCase):
         expected = "a" * 40
         for actual in (expected, "b" * 40):
             run = {"id": 123, "display_title": "build · token", "head_sha": actual,
-                   "html_url": "https://github.com/intraducine/iridium/actions/runs/123"}
+                   "html_url": f"https://github.com/{dispatch.REPO}/actions/runs/123"}
             unrelated = dict(run, id=456, display_title="build · other")
             with patch.object(dispatch.uuid, "uuid4") as token, patch.object(dispatch, "gh") as gh:
                 token.return_value.hex = "token"
@@ -160,7 +160,7 @@ class ManualBuildTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         dispatch.dispatch("main", expected)
-                    self.assertEqual(gh.call_args.args[-1], "repos/intraducine/iridium/actions/runs/123/cancel")
+                    self.assertEqual(gh.call_args.args[-1], f"repos/{dispatch.REPO}/actions/runs/123/cancel")
         for invalid in ("", "a" * 7, "z" * 40):
             with self.assertRaises(ValueError):
                 dispatch.check_commit(invalid, invalid)
@@ -214,6 +214,10 @@ class ManualBuildTests(unittest.TestCase):
             helper.mkdir(parents=True)
             (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper"}))
             (helper / "Helper").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
+            with self.assertRaisesRegex(ValueError, "Windows fonts"):
+                packager.check_payload(app)
+            (app / "fonts").mkdir()
+            (app / "fonts/tahoma.ttf").write_bytes(b"font fixture")
             packager.check_payload(app)
             with self.assertRaises(ValueError):
                 packager.executable_path(app, {"CFBundleExecutable": "../outside"})

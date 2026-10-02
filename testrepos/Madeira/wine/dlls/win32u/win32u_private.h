@@ -355,6 +355,47 @@ extern struct client_surface *nulldrv_client_surface_create( HWND hwnd );
 
 extern ULONG_PTR zero_bits;
 
+#ifdef WINE_IOS
+/* iOS-Madeira: upstream's `zero_bits` is a win32u PROCESS global, set once at
+ * unix-lib init from the WoW64 TEB.  On Madeira every Windows process is a
+ * pseudo-process thread inside ONE Mach task sharing ONE win32u instance, so
+ * that "process global" is really task-global and answers wrongly for every
+ * process but the one that set it (a 32-bit process poisons the 64-bit desktop
+ * with an unsatisfiable low-2GB ceiling; a cleared global hands a 32-bit guest
+ * host pointers it truncates into garbage).  Every zero_bits consumer therefore
+ * asks the CALLING pseudo-process through win32u_zero_bits(), which the
+ * Madeira iOS win32u layer provides (0 for a 64-bit PEB).  It is a weak
+ * reference: without it the upstream global is used. */
+extern ULONG_PTR win32u_zero_bits(void) __attribute__((weak));
+static inline ULONG_PTR caller_zero_bits(void)
+{
+    return win32u_zero_bits ? win32u_zero_bits() : zero_bits;
+}
+
+/* TRUE once init_gdi_shared() has set the session up for 32-bit processes
+ * (section-backed GDI handle table, gdiobj.c).  Every per-process rule below
+ * is skipped while it is FALSE, so a session without 32-bit code runs
+ * upstream's code paths after one load of this flag. */
+extern BOOL win32u_wow_session;
+
+/* Publish the GDI shared handle table into the calling WoW64 pseudo-process's
+ * PEB, mapping a second view of the table inside its guest window first
+ * (gdiobj.c).  64-bit threads never get here: they keep upstream's single
+ * publication by init_gdi_shared().  The __thread flag makes the steady-state
+ * check one load and one compare. */
+extern __thread void *win32u_gdi_published_peb;
+extern void win32u_gdi_publish_shared(void);
+static inline void win32u_gdi_check_publish(void)
+{
+    if (win32u_wow_session && NtCurrentTeb()->WowTebOffset &&
+        win32u_gdi_published_peb != NtCurrentTeb()->Peb)
+        win32u_gdi_publish_shared();
+}
+#else
+static inline ULONG_PTR caller_zero_bits(void) { return zero_bits; }
+static inline void win32u_gdi_check_publish(void) { }
+#endif
+
 static inline BOOL set_ntstatus( NTSTATUS status )
 {
     if (status) RtlSetLastWin32Error( RtlNtStatusToDosError( status ));

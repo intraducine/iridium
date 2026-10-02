@@ -141,6 +141,19 @@ BOOL get_file_redirect( OBJECT_ATTRIBUTES *attr )
 
     if (!len) return FALSE;
 
+    /* Tripwire: in a
+     * process that owns a guest window B, a sub-4 GB pointer here is an
+     * unconverted GUEST address, not a heuristic — XNU's mandatory 4 GB
+     * __PAGEZERO means no host mapping can exist below 4 GB.  Say so instead of
+     * taking a SEGV inside the wcsnicmp below.  wow_guest_base is 0, and this
+     * is dead, on every build that keeps the classic WoW64 identity. */
+    if (wow_guest_base && (ULONG_PTR)name < 0x100000000ull)
+    {
+        ERR( "[wow-ptr] refusing to dereference %p: a 32-bit GUEST name buffer reached "
+             "get_file_redirect unconverted\n", name );
+        return FALSE;
+    }
+
     if (!attr->RootDirectory)
     {
         prefix_len = wcslen( windirW );

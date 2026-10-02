@@ -463,6 +463,14 @@ BOOLEAN WINAPI RtlWow64RequestCrossProcessHeavyFlush( CROSS_PROCESS_WORK_HDR *li
     return TRUE;
 }
 
+/***********************************************************************
+ *              RtlWow64SuspendThread (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlWow64SuspendThread( HANDLE thread, ULONG *count )
+{
+    return NtSuspendThread( thread, count );
+}
+
 #endif /* _WIN64 */
 
 /**********************************************************************

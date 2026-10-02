@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import Darwin
+#endif
 #if canImport(CoreGraphics)
 import CoreGraphics
 #endif
@@ -71,5 +74,36 @@ extension RuntimeLaunchGeometry {
               sourceFrame(targetBounds, in: targetBounds) != nil else { return nil }
         return visible.offsetBy(dx: targetBounds.minX - sourceBounds.minX,
                                 dy: targetBounds.minY - sourceBounds.minY)
+    }
+}
+
+struct RuntimeMemorySnapshot {
+    let usedBytes: UInt64
+    let availableBytes: UInt64?
+
+    static func sample() -> Self? {
+        #if INTERFACE_PREVIEW
+        // Include the expanding RAM meter in the existing simulator layout test.
+        if ProcessInfo.processInfo.arguments.contains("--memory-budget") {
+            return Self(usedBytes: 1_234_000_000, availableBytes: 5_208_000_000)
+        }
+        #endif
+        #if os(iOS)
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        #if targetEnvironment(simulator)
+        return Self(usedBytes: info.phys_footprint, availableBytes: nil)
+        #else
+        return Self(usedBytes: info.phys_footprint, availableBytes: UInt64(os_proc_available_memory()))
+        #endif
+        #else
+        return nil
+        #endif
     }
 }

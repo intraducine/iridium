@@ -128,6 +128,9 @@ targets:
           - -lsoftfloat_3e
           - -liridium-wineserver-ios
     dependencies:
+      - framework: Frameworks/IridiumSteam.xcframework
+        embed: true
+        link: false
       - package: AltKit
         product: AltKit
       - package: IridiumPackage

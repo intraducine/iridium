@@ -58,8 +58,9 @@ struct IridiumApp: App {
                 switch newPhase {
                 case .active:
                     viewModel.requestRefresh()
+                    SteamLibraryModel.shared.resumeForeground()
                 case .background:
-                    break
+                    SteamLibraryModel.shared.pauseForBackground()
                 case .inactive:
                     break
                 @unknown default:

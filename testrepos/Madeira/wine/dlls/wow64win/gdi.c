@@ -531,16 +531,16 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.hResource = desc32->hResource;
     desc.hGlobalShare = desc32->hGlobalShare;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     if (!desc32->Flags.StandardAllocation)
     {
-        desc.pPrivateDriverData = UlongToPtr( desc32->pPrivateDriverData );
+        desc.pPrivateDriverData = guest_ptr32( desc32->pPrivateDriverData );
         desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
     }
     else
     {
-        standard32 = UlongToPtr( desc32->pStandardAllocation );
+        standard32 = guest_ptr32( desc32->pStandardAllocation );
         standard.Type = standard32->Type;
         standard.ExistingHeapData.Size = standard32->ExistingHeapData.Size;
         standard.Flags = standard32->Flags;
@@ -549,7 +549,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation( UINT *args )
         desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
     }
     desc.NumAllocations = desc32->NumAllocations;
-    allocs32 = UlongToPtr( desc32->pAllocationInfo );
+    allocs32 = guest_ptr32( desc32->pAllocationInfo );
     desc.pAllocationInfo = NULL;
     if (desc32->pAllocationInfo && desc32->NumAllocations)
     {
@@ -559,8 +559,8 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation( UINT *args )
         for (i = 0; i < desc32->NumAllocations; i++)
         {
             desc.pAllocationInfo[i].hAllocation = allocs32->hAllocation;
-            desc.pAllocationInfo[i].pSystemMem = UlongToPtr( allocs32->pSystemMem );
-            desc.pAllocationInfo[i].pPrivateDriverData = UlongToPtr( allocs32->pPrivateDriverData );
+            desc.pAllocationInfo[i].pSystemMem = guest_ptr32( allocs32->pSystemMem );
+            desc.pAllocationInfo[i].pPrivateDriverData = guest_ptr32( allocs32->pPrivateDriverData );
             desc.pAllocationInfo[i].PrivateDriverDataSize = allocs32->PrivateDriverDataSize;
             desc.pAllocationInfo[i].VidPnSourceId = allocs32->VidPnSourceId;
             desc.pAllocationInfo[i].Flags.Value = allocs32->Flags.Value;
@@ -640,16 +640,16 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation2( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.hResource = desc32->hResource;
     desc.hGlobalShare = desc32->hGlobalShare;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     if (!desc32->Flags.StandardAllocation)
     {
-        desc.pPrivateDriverData = UlongToPtr( desc32->pPrivateDriverData );
+        desc.pPrivateDriverData = guest_ptr32( desc32->pPrivateDriverData );
         desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
     }
     else
     {
-        standard32 = UlongToPtr( desc32->pStandardAllocation );
+        standard32 = guest_ptr32( desc32->pStandardAllocation );
         standard.Type = standard32->Type;
         standard.ExistingHeapData.Size = standard32->ExistingHeapData.Size;
         standard.Flags = standard32->Flags;
@@ -658,7 +658,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation2( UINT *args )
         desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
     }
     desc.NumAllocations = desc32->NumAllocations;
-    allocs32 = UlongToPtr( desc32->pAllocationInfo2 );
+    allocs32 = guest_ptr32( desc32->pAllocationInfo2 );
     desc.pAllocationInfo2 = NULL;
     if (desc32->pAllocationInfo2 && desc32->NumAllocations)
     {
@@ -668,8 +668,8 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateAllocation2( UINT *args )
         for (i = 0; i < desc32->NumAllocations; i++)
         {
             desc.pAllocationInfo2[i].hAllocation = allocs32->hAllocation;
-            desc.pAllocationInfo2[i].pSystemMem = UlongToPtr( allocs32->pSystemMem );
-            desc.pAllocationInfo2[i].pPrivateDriverData = UlongToPtr( allocs32->pPrivateDriverData );
+            desc.pAllocationInfo2[i].pSystemMem = guest_ptr32( allocs32->pSystemMem );
+            desc.pAllocationInfo2[i].pPrivateDriverData = guest_ptr32( allocs32->pPrivateDriverData );
             desc.pAllocationInfo2[i].PrivateDriverDataSize = allocs32->PrivateDriverDataSize;
             desc.pAllocationInfo2[i].VidPnSourceId = allocs32->VidPnSourceId;
             desc.pAllocationInfo2[i].Flags.Value = allocs32->Flags.Value;
@@ -709,13 +709,13 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateDCFromMemory( UINT *args )
     NTSTATUS status;
 
     if (!desc32) return STATUS_INVALID_PARAMETER;
-    desc.pMemory = UlongToPtr( desc32->pMemory );
+    desc.pMemory = guest_ptr32( desc32->pMemory );
     desc.Format = desc32->Format;
     desc.Width = desc32->Width;
     desc.Height = desc32->Height;
     desc.Pitch = desc32->Pitch;
     desc.hDeviceDc = UlongToHandle( desc32->hDeviceDc );
-    desc.pColorTable = UlongToPtr( desc32->pColorTable );
+    desc.pColorTable = guest_ptr32( desc32->pColorTable );
     desc.hDc = UlongToHandle( desc32->hDc );
     desc.hBitmap = UlongToHandle( desc32->hBitmap );
 
@@ -749,11 +749,11 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateDevice( UINT *args )
     desc.hAdapter = desc32->hAdapter;
     desc.hDevice = desc32->hDevice;
     desc.Flags = desc32->Flags;
-    desc.pCommandBuffer = UlongToPtr( desc32->pCommandBuffer );
+    desc.pCommandBuffer = guest_ptr32( desc32->pCommandBuffer );
     desc.CommandBufferSize = desc32->CommandBufferSize;
-    desc.pAllocationList = UlongToPtr( desc32->pAllocationList );
+    desc.pAllocationList = guest_ptr32( desc32->pAllocationList );
     desc.AllocationListSize = desc32->AllocationListSize;
-    desc.pPatchLocationList = UlongToPtr( desc32->pPatchLocationList );
+    desc.pPatchLocationList = guest_ptr32( desc32->pPatchLocationList );
     desc.PatchLocationListSize = desc32->PatchLocationListSize;
     if (!(status = NtGdiDdDDICreateDevice( &desc )))
         desc32->hDevice = desc.hDevice;
@@ -785,7 +785,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDICreateKeyedMutex2( UINT *args )
     desc.InitialValue = desc32->InitialValue;
     desc.hSharedHandle = desc32->hSharedHandle;
     desc.hKeyedMutex = desc32->hKeyedMutex;
-    desc.pPrivateRuntimeData = ULongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     desc.Flags = desc32->Flags;
     status = NtGdiDdDDICreateKeyedMutex2( &desc );
@@ -827,7 +827,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIDestroyAllocation( UINT *args )
 
     desc.hDevice = desc32->hDevice;
     desc.hResource = desc32->hResource;
-    desc.phAllocationList = ULongToPtr( desc32->phAllocationList );
+    desc.phAllocationList = guest_ptr32( desc32->phAllocationList );
     desc.AllocationCount = desc32->AllocationCount;
     return NtGdiDdDDIDestroyAllocation( &desc );
 }
@@ -846,7 +846,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIDestroyAllocation2( UINT *args )
 
     desc.hDevice = desc32->hDevice;
     desc.hResource = desc32->hResource;
-    desc.phAllocationList = ULongToPtr( desc32->phAllocationList );
+    desc.phAllocationList = guest_ptr32( desc32->phAllocationList );
     desc.AllocationCount = desc32->AllocationCount;
     desc.Flags = desc32->Flags;
     return NtGdiDdDDIDestroyAllocation2( &desc );
@@ -907,7 +907,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIEnumAdapters2( UINT *args )
     if (!desc32) return STATUS_INVALID_PARAMETER;
 
     desc.NumAdapters = desc32->NumAdapters;
-    desc.pAdapters = UlongToPtr( desc32->pAdapters );
+    desc.pAdapters = guest_ptr32( desc32->pAdapters );
 
     status = NtGdiDdDDIEnumAdapters2( &desc );
 
@@ -935,7 +935,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIEscape( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.Type = desc32->Type;
     desc.Flags = desc32->Flags;
-    desc.pPrivateDriverData = UlongToPtr( desc32->pPrivateDriverData );
+    desc.pPrivateDriverData = guest_ptr32( desc32->pPrivateDriverData );
     desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
     desc.hContext = desc32->hContext;
 
@@ -954,7 +954,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenAdapterFromDeviceName( UINT *args )
     NTSTATUS status;
 
     if (!desc32) return STATUS_INVALID_PARAMETER;
-    desc.pDeviceName = UlongToPtr( desc32->pDeviceName );
+    desc.pDeviceName = guest_ptr32( desc32->pDeviceName );
     desc.hAdapter = desc32->hAdapter;
     desc.AdapterLuid = desc32->AdapterLuid;
 
@@ -1021,7 +1021,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenKeyedMutex2( UINT *args )
 
     desc.hSharedHandle = desc32->hSharedHandle;
     desc.hKeyedMutex = desc32->hKeyedMutex;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     status = NtGdiDdDDIOpenKeyedMutex2( &desc );
     desc32->hKeyedMutex = desc.hKeyedMutex;
@@ -1042,7 +1042,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenKeyedMutexFromNtHandle( UINT *args )
 
     desc.hNtHandle = UlongToHandle( desc32->hNtHandle );
     desc.hKeyedMutex = desc32->hKeyedMutex;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     status = NtGdiDdDDIOpenKeyedMutexFromNtHandle( &desc );
     desc32->hKeyedMutex = desc.hKeyedMutex;
@@ -1062,7 +1062,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenNtHandleFromName( UINT *args )
     NTSTATUS status;
 
     desc.dwDesiredAccess = desc32->dwDesiredAccess;
-    desc.pObjAttrib = objattr_32to64( &attr, UlongToPtr( desc32->pObjAttrib ) );
+    desc.pObjAttrib = objattr_32to64( &attr, guest_ptr32( desc32->pObjAttrib ) );
     desc.hNtHandle = UlongToHandle( desc32->hNtHandle );
     status = NtGdiDdDDIOpenNtHandleFromName( &desc );
     desc32->hNtHandle = HandleToUlong( desc.hNtHandle );
@@ -1098,7 +1098,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResource( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.hGlobalShare = desc32->hGlobalShare;
     desc.NumAllocations = desc32->NumAllocations;
-    allocs32 = UlongToPtr( desc32->pOpenAllocationInfo );
+    allocs32 = guest_ptr32( desc32->pOpenAllocationInfo );
     desc.pOpenAllocationInfo = NULL;
     if (desc32->pOpenAllocationInfo && desc32->NumAllocations)
     {
@@ -1108,16 +1108,16 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResource( UINT *args )
         for (i = 0; i < desc32->NumAllocations; i++)
         {
             desc.pOpenAllocationInfo[i].hAllocation = allocs32->hAllocation;
-            desc.pOpenAllocationInfo[i].pPrivateDriverData = UlongToPtr( allocs32->pPrivateDriverData );
+            desc.pOpenAllocationInfo[i].pPrivateDriverData = guest_ptr32( allocs32->pPrivateDriverData );
             desc.pOpenAllocationInfo[i].PrivateDriverDataSize = allocs32->PrivateDriverDataSize;
         }
     }
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.ResourcePrivateDriverDataSize = desc32->ResourcePrivateDriverDataSize;
-    desc.pResourcePrivateDriverData = UlongToPtr( desc32->pResourcePrivateDriverData );
+    desc.pResourcePrivateDriverData = guest_ptr32( desc32->pResourcePrivateDriverData );
     desc.TotalPrivateDriverDataBufferSize = desc32->TotalPrivateDriverDataBufferSize;
-    desc.pTotalPrivateDriverDataBuffer = UlongToPtr( desc32->pTotalPrivateDriverDataBuffer );
+    desc.pTotalPrivateDriverDataBuffer = guest_ptr32( desc32->pTotalPrivateDriverDataBuffer );
     desc.hResource = desc32->hResource;
 
     status = NtGdiDdDDIOpenResource( &desc );
@@ -1162,7 +1162,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResource2( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.hGlobalShare = desc32->hGlobalShare;
     desc.NumAllocations = desc32->NumAllocations;
-    allocs32 = UlongToPtr( desc32->pOpenAllocationInfo2 );
+    allocs32 = guest_ptr32( desc32->pOpenAllocationInfo2 );
     desc.pOpenAllocationInfo2 = NULL;
     if (desc32->pOpenAllocationInfo2 && desc32->NumAllocations)
     {
@@ -1172,17 +1172,17 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResource2( UINT *args )
         for (i = 0; i < desc32->NumAllocations; i++)
         {
             desc.pOpenAllocationInfo2[i].hAllocation = allocs32->hAllocation;
-            desc.pOpenAllocationInfo2[i].pPrivateDriverData = UlongToPtr( allocs32->pPrivateDriverData );
+            desc.pOpenAllocationInfo2[i].pPrivateDriverData = guest_ptr32( allocs32->pPrivateDriverData );
             desc.pOpenAllocationInfo2[i].PrivateDriverDataSize = allocs32->PrivateDriverDataSize;
             desc.pOpenAllocationInfo2[i].GpuVirtualAddress = allocs32->GpuVirtualAddress;
         }
     }
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.ResourcePrivateDriverDataSize = desc32->ResourcePrivateDriverDataSize;
-    desc.pResourcePrivateDriverData = UlongToPtr( desc32->pResourcePrivateDriverData );
+    desc.pResourcePrivateDriverData = guest_ptr32( desc32->pResourcePrivateDriverData );
     desc.TotalPrivateDriverDataBufferSize = desc32->TotalPrivateDriverDataBufferSize;
-    desc.pTotalPrivateDriverDataBuffer = UlongToPtr( desc32->pTotalPrivateDriverDataBuffer );
+    desc.pTotalPrivateDriverDataBuffer = guest_ptr32( desc32->pTotalPrivateDriverDataBuffer );
     desc.hResource = desc32->hResource;
 
     status = NtGdiDdDDIOpenResource2( &desc );
@@ -1232,7 +1232,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResourceFromNtHandle( UINT *args )
     desc.hDevice = desc32->hDevice;
     desc.hNtHandle = UlongToHandle( desc32->hNtHandle );
     desc.NumAllocations = desc32->NumAllocations;
-    allocs32 = UlongToPtr( desc32->pOpenAllocationInfo2 );
+    allocs32 = guest_ptr32( desc32->pOpenAllocationInfo2 );
     desc.pOpenAllocationInfo2 = NULL;
     if (desc32->pOpenAllocationInfo2 && desc32->NumAllocations)
     {
@@ -1242,18 +1242,18 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenResourceFromNtHandle( UINT *args )
         for (i = 0; i < desc32->NumAllocations; i++)
         {
             desc.pOpenAllocationInfo2[i].hAllocation = allocs32->hAllocation;
-            desc.pOpenAllocationInfo2[i].pPrivateDriverData = UlongToPtr( allocs32->pPrivateDriverData );
+            desc.pOpenAllocationInfo2[i].pPrivateDriverData = guest_ptr32( allocs32->pPrivateDriverData );
             desc.pOpenAllocationInfo2[i].PrivateDriverDataSize = allocs32->PrivateDriverDataSize;
             desc.pOpenAllocationInfo2[i].GpuVirtualAddress = allocs32->GpuVirtualAddress;
         }
     }
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.ResourcePrivateDriverDataSize = desc32->ResourcePrivateDriverDataSize;
-    desc.pResourcePrivateDriverData = UlongToPtr( desc32->pResourcePrivateDriverData );
+    desc.pResourcePrivateDriverData = guest_ptr32( desc32->pResourcePrivateDriverData );
     desc.TotalPrivateDriverDataBufferSize = desc32->TotalPrivateDriverDataBufferSize;
-    desc.pTotalPrivateDriverDataBuffer = UlongToPtr( desc32->pTotalPrivateDriverDataBuffer );
-    desc.pKeyedMutexPrivateRuntimeData = UlongToPtr( desc32->pKeyedMutexPrivateRuntimeData );
+    desc.pTotalPrivateDriverDataBuffer = guest_ptr32( desc32->pTotalPrivateDriverDataBuffer );
+    desc.pKeyedMutexPrivateRuntimeData = guest_ptr32( desc32->pKeyedMutexPrivateRuntimeData );
     desc.KeyedMutexPrivateRuntimeDataSize = desc32->KeyedMutexPrivateRuntimeDataSize;
     desc.hResource = desc32->hResource;
     desc.hKeyedMutex = desc32->hKeyedMutex;
@@ -1319,11 +1319,11 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenSyncObjectFromNtHandle2( UINT *args )
     desc.Flags = desc32->Flags;
     desc.hSyncObject = desc32->hSyncObject;
     desc.MonitoredFence.EngineAffinity = desc32->MonitoredFence.EngineAffinity;
-    desc.MonitoredFence.FenceValueCPUVirtualAddress = UlongToPtr( desc32->MonitoredFence.FenceValueCPUVirtualAddress );
+    desc.MonitoredFence.FenceValueCPUVirtualAddress = guest_ptr32( desc32->MonitoredFence.FenceValueCPUVirtualAddress );
     desc.MonitoredFence.FenceValueGPUVirtualAddress = desc32->MonitoredFence.FenceValueGPUVirtualAddress;
 
     status = NtGdiDdDDIOpenSyncObjectFromNtHandle2( &desc );
-    desc32->MonitoredFence.FenceValueCPUVirtualAddress = PtrToUlong( desc.MonitoredFence.FenceValueCPUVirtualAddress );
+    desc32->MonitoredFence.FenceValueCPUVirtualAddress = host_ptr32( desc.MonitoredFence.FenceValueCPUVirtualAddress );
     desc32->MonitoredFence.FenceValueGPUVirtualAddress = desc.MonitoredFence.FenceValueGPUVirtualAddress;
     desc32->hSyncObject = desc.hSyncObject;
     return status;
@@ -1342,7 +1342,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIOpenSyncObjectNtHandleFromName( UINT *args )
     NTSTATUS status;
 
     desc.dwDesiredAccess = desc32->dwDesiredAccess;
-    desc.pObjAttrib = objattr_32to64( &attr, UlongToPtr( desc32->pObjAttrib ) );
+    desc.pObjAttrib = objattr_32to64( &attr, guest_ptr32( desc32->pObjAttrib ) );
     desc.hNtHandle = UlongToHandle( desc32->hNtHandle );
     status = NtGdiDdDDIOpenSyncObjectNtHandleFromName( &desc );
     desc32->hNtHandle = HandleToUlong( desc.hNtHandle );
@@ -1370,7 +1370,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIQueryAdapterInfo( UINT *args )
 
     desc.hAdapter = desc32->hAdapter;
     desc.Type = desc32->Type;
-    desc.pPrivateDriverData = UlongToPtr( desc32->pPrivateDriverData );
+    desc.pPrivateDriverData = guest_ptr32( desc32->pPrivateDriverData );
     desc.PrivateDriverDataSize = desc32->PrivateDriverDataSize;
 
     return NtGdiDdDDIQueryAdapterInfo( &desc );
@@ -1393,7 +1393,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIQueryResourceInfo( UINT *args )
 
     desc.hDevice = desc32->hDevice;
     desc.hGlobalShare = desc32->hGlobalShare;
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     desc.TotalPrivateDriverDataSize = desc32->TotalPrivateDriverDataSize;
     desc.ResourcePrivateDriverDataSize = desc32->ResourcePrivateDriverDataSize;
@@ -1423,7 +1423,7 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIQueryResourceInfoFromNtHandle( UINT *args )
 
     desc.hDevice = desc32->hDevice;
     desc.hNtHandle = UlongToHandle( desc32->hNtHandle );
-    desc.pPrivateRuntimeData = UlongToPtr( desc32->pPrivateRuntimeData );
+    desc.pPrivateRuntimeData = guest_ptr32( desc32->pPrivateRuntimeData );
     desc.PrivateRuntimeDataSize = desc32->PrivateRuntimeDataSize;
     desc.TotalPrivateDriverDataSize = desc32->TotalPrivateDriverDataSize;
     desc.ResourcePrivateDriverDataSize = desc32->ResourcePrivateDriverDataSize;
@@ -1529,8 +1529,8 @@ NTSTATUS WINAPI wow64_NtGdiDdDDISetVidPnSourceOwner( UINT *args )
 
     if (!desc32) return STATUS_INVALID_PARAMETER;
     desc.hDevice = desc32->hDevice;
-    desc.pType = UlongToPtr( desc32->pType );
-    desc.pVidPnSourceId = UlongToPtr( desc32->pVidPnSourceId );
+    desc.pType = guest_ptr32( desc32->pType );
+    desc.pVidPnSourceId = guest_ptr32( desc32->pVidPnSourceId );
     desc.VidPnSourceCount = desc32->VidPnSourceCount;
 
     return NtGdiDdDDISetVidPnSourceOwner( &desc );
@@ -1568,8 +1568,8 @@ NTSTATUS WINAPI wow64_NtGdiDdDDISignalSynchronizationObjectFromCpu( UINT *args )
     if (!desc32) return STATUS_INVALID_PARAMETER;
     desc.hDevice = desc32->hDevice;
     desc.ObjectCount = desc32->ObjectCount;
-    desc.ObjectHandleArray = UlongToPtr( desc32->ObjectHandleArray );
-    desc.FenceValueArray = UlongToPtr( desc32->FenceValueArray );
+    desc.ObjectHandleArray = guest_ptr32( desc32->ObjectHandleArray );
+    desc.FenceValueArray = guest_ptr32( desc32->FenceValueArray );
     desc.Flags = desc32->Flags;
 
     return NtGdiDdDDISignalSynchronizationObjectFromCpu( &desc );
@@ -1591,8 +1591,8 @@ NTSTATUS WINAPI wow64_NtGdiDdDDIWaitForSynchronizationObjectFromCpu( UINT *args 
     if (!desc32) return STATUS_INVALID_PARAMETER;
     desc.hDevice = desc32->hDevice;
     desc.ObjectCount = desc32->ObjectCount;
-    desc.ObjectHandleArray = UlongToPtr( desc32->ObjectHandleArray );
-    desc.FenceValueArray = UlongToPtr( desc32->FenceValueArray );
+    desc.ObjectHandleArray = guest_ptr32( desc32->ObjectHandleArray );
+    desc.FenceValueArray = guest_ptr32( desc32->FenceValueArray );
     desc.hAsyncEvent = UlongToHandle( desc32->hAsyncEvent );
     desc.Flags = desc32->Flags;
 
@@ -1800,7 +1800,7 @@ NTSTATUS WINAPI wow64_NtGdiExtGetObjectW( UINT *args )
                 bitmap32->bmWidthBytes = dib.dsBm.bmWidthBytes;
                 bitmap32->bmPlanes = dib.dsBm.bmPlanes;
                 bitmap32->bmBitsPixel = dib.dsBm.bmBitsPixel;
-                bitmap32->bmBits = PtrToUlong( dib.dsBm.bmBits );
+                bitmap32->bmBits = host_ptr32( dib.dsBm.bmBits );
             }
             if (ret != sizeof(dib)) return sizeof(*bitmap32);
 
@@ -2207,6 +2207,9 @@ NTSTATUS WINAPI wow64_NtGdiGetOutlineTextMetricsInternalW( UINT *args )
         memcpy( &out, otm, FIELD_OFFSET( OUTLINETEXTMETRIC32, otmpFamilyName ));
         if (out.otmSize >= sizeof(*otm)) out.otmSize -= otm_size_diff;
 
+        /* the otmp* members are OFFSETS from the start of the structure,
+         * not addresses (hence the otm_size_diff adjustment): never
+         * window-converted. */
         if (!otm->otmpFamilyName) out.otmpFamilyName = 0;
         else out.otmpFamilyName = PtrToUlong( otm->otmpFamilyName ) - otm_size_diff;
 
@@ -2272,7 +2275,8 @@ NTSTATUS WINAPI wow64_NtGdiGetRealizationInfo( UINT *args )
 
 NTSTATUS WINAPI wow64_NtGdiGetRegionData( UINT *args )
 {
-    HRGN hrgn = get_ptr( &args );
+    /* a GDI handle is never offset by the guest base */
+    HRGN hrgn = get_handle( &args );
     DWORD count = get_ulong( &args );
     RGNDATA *data = get_ptr( &args );
 
@@ -2281,7 +2285,8 @@ NTSTATUS WINAPI wow64_NtGdiGetRegionData( UINT *args )
 
 NTSTATUS WINAPI wow64_NtGdiGetTextCharsetInfo( UINT *args )
 {
-    HDC hdc = get_ptr( &args );
+    /* a GDI handle is never offset by the guest base */
+    HDC hdc = get_handle( &args );
     FONTSIGNATURE *fs = get_ptr( &args );
     DWORD flags = get_ulong( &args );
 
@@ -2929,9 +2934,9 @@ NTSTATUS WINAPI wow64_NtGdiStartDoc( UINT *args )
 
     DOCINFOW doc;
     doc.cbSize = sizeof(doc);
-    doc.lpszDocName = UlongToPtr( doc32->lpszDocName );
-    doc.lpszOutput = UlongToPtr( doc32->lpszOutput );
-    doc.lpszDatatype = UlongToPtr( doc32->lpszDatatype );
+    doc.lpszDocName = guest_ptr32( doc32->lpszDocName );
+    doc.lpszOutput = guest_ptr32( doc32->lpszOutput );
+    doc.lpszDatatype = guest_ptr32( doc32->lpszDatatype );
     doc.fwType = doc32->fwType;
 
     return NtGdiStartDoc( hdc, &doc, banding, job );

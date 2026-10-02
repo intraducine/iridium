@@ -75,3 +75,25 @@ public:
   Ret(*__imp_##Name) Args = Name;       \
   Ret(*__imp_aux_##Name) Args = Name;   \
   Ret Name Args
+
+// Whether a caller's MEM_EXTENDED_PARAMETER list already names `Type` (used by VirtualAlloc2).
+//
+// NtAllocateVirtualMemoryEx rejects a list that names the same parameter type twice, so the WOW64
+// module must not append its own MemExtendedParameterAddressRequirements to a caller's list that
+// already has one: on the iOS host that failed every deliberate host-band placement FEX makes
+// (AllocatorHooks.h, CallRetStack.h). The caller's requirement is the stricter one. The ARM64EC
+// module keeps its current behaviour (always false). A template so that this header does not need
+// the memory-API declarations.
+template<typename ParamT, typename TypeT>
+static inline bool HasExtendedParameter(const ParamT* Params, unsigned long Count, TypeT Type) {
+#if defined(ARCHITECTURE_arm64ec)
+  return false;
+#else
+  for (unsigned long i = 0; Params && i < Count; ++i) {
+    if (Params[i].Type == Type) {
+      return true;
+    }
+  }
+  return false;
+#endif
+}

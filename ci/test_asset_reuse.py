@@ -87,6 +87,9 @@ class AssetReuseTests(unittest.TestCase):
             app = root / 'iridium/apps/ios/madeira.yml'
             app.parent.mkdir(parents=True)
             app.write_text('app frameworks')
+            project = app.with_name('project.yml')
+            project.write_text('targets:\n  Iridium:\n    dependencies:\n'
+                               '      - package: IridiumPackage\n        product: IridiumCore\n')
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit()
@@ -94,6 +97,20 @@ class AssetReuseTests(unittest.TestCase):
             app.write_text('different app frameworks')
             commit()
             reuse.compatible(root, original, 'native')
+            before_project = git('rev-parse', 'HEAD')
+            # PR #53 only embeds a separately built framework in the app. The
+            # native compiler checkpoint predates this app project change.
+            project.write_text(project.read_text().replace(
+                '    dependencies:\n',
+                '    dependencies:\n'
+                '      - framework: Frameworks/IridiumSteam.xcframework\n'
+                '        embed: true\n        link: false\n'))
+            commit()
+            reuse.compatible(root, before_project, 'native')
+            reuse.compatible(root, original, 'native')
+            # The broader prepared-runtime contract still tracks the project.
+            with self.assertRaisesRegex(ValueError, 'producer input: iridium/apps/ios/project.yml'):
+                reuse.compatible(root, before_project, 'native-runtime')
             for name in ('testrepos/Madeira/tools/check-jit-url.py',
                          'testrepos/Madeira/README.md',
                          'testrepos/Madeira/app/Madeira/Library.swift'):
@@ -110,10 +127,38 @@ class AssetReuseTests(unittest.TestCase):
                 commit()
                 with self.assertRaisesRegex(ValueError, 'producer input'):
                     reuse.compatible(root, before, 'native')
+            for name in ('ci/prepare-native-runtime.sh',
+                         'iridium/apps/ios/Scripts/build_media_runtime.sh',
+                         'iridium-fex-ios/iridium/ios/build_embedded_translator.sh',
+                         'iridium-wine-ios/iridium/ios/build_install_root.sh',
+                         'ci/compiled-components.py'):
+                with self.subTest(input=name):
+                    before = git('rev-parse', 'HEAD')
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text('changed native compiler flags or artifact contract')
+                    commit()
+                    with self.assertRaisesRegex(ValueError, 'producer input'):
+                        reuse.compatible(root, before, 'native')
             recipe.write_text('different compiler flags')
             commit()
             with self.assertRaisesRegex(ValueError, 'producer input'):
                 reuse.compatible(root, original, 'native')
+
+    def test_native_workflow_compiler_settings_still_invalidate(self):
+        workflow = ('jobs:\n  build:\n    runs-on: xcode-27\n    steps:\n'
+                    '      - name: Compile native\n        run: bash ci/prepare-native-runtime.sh\n')
+        original = reuse.producer_job(workflow, 'native')
+        for changed in (
+            workflow.replace('xcode-27', 'xcode-28'),
+            workflow.replace('    steps:', '    env:\n      CFLAGS: -O3\n    steps:'),
+            'env:\n  CFLAGS: -O3\n' + workflow,
+            'defaults:\n  run:\n    shell: zsh\n' + workflow,
+            workflow.replace('run: bash', 'env:\n          CFLAGS: -O3\n        run: bash'),
+            workflow.replace('run: bash', 'run: CFLAGS=-O3 bash'),
+        ):
+            with self.subTest(workflow=changed):
+                self.assertNotEqual(original, reuse.producer_job(changed, 'native'))
 
     def test_manual_producer_trust_and_success(self):
         run = {'event': 'workflow_dispatch', 'head_branch': 'feature',
@@ -149,13 +194,13 @@ class AssetReuseTests(unittest.TestCase):
              patch.object(reuse, 'compatible', side_effect=ValueError('Changed producer input')):
             with self.assertRaisesRegex(ValueError, 'Changed producer input'):
                 reuse.verify_producer(Path('.'), '123', 'media', 'feature')
-        with patch.object(reuse, 'api', return_value={'workflow_runs': [run]}), \
+        with patch.object(reuse, 'api', return_value={'artifacts': [{'expired': False, 'workflow_run': {'id': 123}}], 'total_count': 1}), \
              patch.object(reuse, 'verify_producer', return_value=revision) as verify:
             self.assertEqual(reuse.select(Path('.'), 'media', 'feature'), '123')
             verify.assert_called_once_with(Path('.'), '123', 'media', 'feature')
 
     def test_rerun_can_select_same_run_media_from_prior_attempt(self):
-        runs = {'workflow_runs': [{'id': 123}]}
+        runs = {'artifacts': [{'expired': False, 'workflow_run': {'id': 123}}], 'total_count': 1}
         env = {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
         with patch.dict(os.environ, env, clear=False), \
              patch.object(reuse, 'api', return_value=runs), \
@@ -185,6 +230,19 @@ class AssetReuseTests(unittest.TestCase):
              patch.object(reuse, 'verify_producer') as verify:
             self.assertEqual(reuse.select(Path('.'), 'native', 'feature'), '')
             verify.assert_not_called()
+
+    def test_all_stages_search_retained_artifacts_without_a_run_count_limit(self):
+        first = {'artifacts': [{'expired': True, 'workflow_run': {'id': 1}},
+                               {'expired': False, 'workflow_run': {'id': 2}}], 'total_count': 101}
+        second = {'artifacts': [{'expired': False, 'workflow_run': {'id': 3}}], 'total_count': 101}
+        for stage in ('media', 'prefix', 'linux-userland', 'native'):
+            with patch.dict(os.environ, {'NATIVE_TOOLCHAIN': 'b' * 64}, clear=False), \
+                 patch.object(reuse, 'api', side_effect=[first, second]) as api, \
+                 patch.object(reuse, 'verify_producer', side_effect=[ValueError('Changed producer input'), 'a' * 40]) as verify:
+                self.assertEqual(reuse.select(Path('.'), stage, 'feature'), '3')
+                self.assertTrue(all('/artifacts?name=' in call.args[0] for call in api.call_args_list))
+                self.assertTrue(api.call_args_list[-1].args[0].endswith('page=2'))
+                self.assertEqual([call.args[1] for call in verify.call_args_list], ['2', '3'])
 
     def test_producer_validation_reads_all_workflow_attempts(self):
         revision = 'a' * 40

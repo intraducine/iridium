@@ -133,6 +133,50 @@ void *__attribute__((naked)) xlate_ios_jit_rev( void *ptr )
 extern void *xlate_ios_jit_rev( void *ptr );
 #endif
 
+/* iOS-Madeira: UNWIND WALKS THAT CANNOT PROGRESS. The handler search
+ * and RtlUnwindEx stop only at a NULL or invalid frame or the stack base. A
+ * step that leaves both Pc and Sp where they were (a leaf fallback whose Lr
+ * is its own Pc, typically code outside every image) produces the same step
+ * forever. On device a WoW64 process's network thread spent the whole
+ * session at ~70% of a core in virtual_unwind -> RtlLookupFunctionEntry with
+ * a constant stack pointer, and the program above it made no progress. Three
+ * identical steps in a row end the walk; the handler search then reports the
+ * exception as unhandled. MADEIRA_UNWIND_GUARD=0 keeps walking (read only
+ * once a stall is seen, so the ordinary exception path never touches the
+ * environment).  Only threads of a WoW64 process (WowTebOffset set) are
+ * guarded; any other native ARM64 thread walks exactly as upstream. */
+struct ios_unwind_progress { ULONG64 pc, sp; int repeats; };
+
+static BOOL ios_unwind_stalled( struct ios_unwind_progress *p, const CONTEXT *context,
+                                const EXCEPTION_RECORD *rec, const char *walk )
+{
+    static int enabled = -1;
+    static LONG reported;
+
+    if (!NtCurrentTeb()->WowTebOffset) return FALSE;
+    if (context->Pc != p->pc || context->Sp != p->sp)
+    {
+        p->pc = context->Pc;
+        p->sp = context->Sp;
+        p->repeats = 0;
+        return FALSE;
+    }
+    if (++p->repeats < 3) return FALSE;
+    if (enabled < 0)
+    {
+        UNICODE_STRING nm, val;
+        WCHAR buf[8];
+        RtlInitUnicodeString( &nm, L"MADEIRA_UNWIND_GUARD" );
+        val.Buffer = buf; val.Length = 0; val.MaximumLength = sizeof(buf);
+        enabled = !(!RtlQueryEnvironmentVariable_U( NULL, &nm, &val ) && val.Length && buf[0] == '0');
+    }
+    if (!enabled) return FALSE;
+    if (InterlockedIncrement( &reported ) <= 16)
+        ERR( "[unwind-stall] %s code=%08lx pc=%I64x lr=%I64x sp=%I64x fp=%I64x: no progress, walk stopped\n",
+             walk, rec ? (ULONG)rec->ExceptionCode : 0, context->Pc, context->Lr, context->Sp, context->Fp );
+    return TRUE;
+}
+
 /**********************************************************************
  *           virtual_unwind
  */
@@ -256,6 +300,7 @@ NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
     NTSTATUS status;
     ULONG_PTR frame;
     DWORD res;
+    struct ios_unwind_progress progress = { 0 };
 
     context = *orig_context;
     dispatch.TargetPc      = 0;
@@ -267,6 +312,7 @@ NTSTATUS call_seh_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_context )
     {
         status = virtual_unwind( UNW_FLAG_EHANDLER, &dispatch, &context );
         if (status != STATUS_SUCCESS) return status;
+        if (ios_unwind_stalled( &progress, &context, rec, "dispatch" )) break;
 
     unwind_done:
         if (!dispatch.EstablisherFrame) break;
@@ -509,6 +555,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     NTSTATUS status;
     ULONG_PTR frame;
     DWORD i, res;
+    struct ios_unwind_progress progress = { 0 };
 
     RtlCaptureContext( context );
     new_context = *context;
@@ -541,6 +588,8 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     {
         status = virtual_unwind( UNW_FLAG_UHANDLER, &dispatch, &new_context );
         if (status != STATUS_SUCCESS) raise_status( status, rec );
+        if (ios_unwind_stalled( &progress, &new_context, rec, "unwind" ))
+            raise_status( STATUS_INVALID_DISPOSITION, rec );
 
     unwind_done:
         if (!dispatch.EstablisherFrame) break;

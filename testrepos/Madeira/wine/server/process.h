@@ -153,4 +153,13 @@ static inline int is_wow64_process( struct process *process )
 
 static const unsigned int default_session_id = 1;
 
+#ifdef WINE_IOS
+/* A 32-bit (WoW64) process.  The iOS-only thread-context rules in thread.c
+ * apply to these alone; 64-bit processes keep upstream's semantics. */
+static inline int ios_process_is_wow64( const struct process *process )
+{
+    return process->machine == IMAGE_FILE_MACHINE_I386;
+}
+#endif
+
 #endif  /* __WINE_SERVER_PROCESS_H */

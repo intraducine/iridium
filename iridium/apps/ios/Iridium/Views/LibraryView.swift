@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @ObservedObject var viewModel: AppViewModel
+    var showDownloads: () -> Void = {}
     @Environment(\.scenePhase) private var scenePhase
     @State private var isPresentingImportPicker = false
     @State private var isShowingImportChoices = false
@@ -44,11 +45,12 @@ struct LibraryView: View {
             launchDetail: { viewModel.isLaunchActionDisabled(for: $0) ? viewModel.launchActionDetail(for: $0) : nil },
             details: { detailGame = $0 },
             search: $search, favorites: $favorites, selectedID: $selectedID,
-            importGame: { relocatingGame = nil; requestGameImport() }, settings: { appSettings = true },
+            importGame: { relocatingGame = nil; isShowingImportChoices = true }, settings: { appSettings = true },
             acceptsControllerInput: detailGame == nil && !appSettings && !isPresentingImportPicker && !isShowingImportChoices && !isPresentingGamesFolder && viewModel.importScanResult == nil && !isShowingLiveContainerRepair && !isShowingLiveContainerRelaunchRequired && artwork.error == nil)
             .toolbar(.hidden, for: .navigationBar)
         }
         }
+        .toolbar(.hidden, for: .tabBar)
         .safeAreaInset(edge: .bottom) {
             if !appSettings, detailGame == nil, let message = liveContainerIntegrationMessage ?? viewModel.importStatusMessage ?? artwork.lookupNote {
                 Text(message).font(.footnote).padding(12).frame(maxWidth: .infinity).background(.regularMaterial)
@@ -75,15 +77,18 @@ struct LibraryView: View {
         .navigationDestination(item: $detailGame) { game in
             GameDetailView(game: game, viewModel: viewModel, locate: {
                 relocatingGame = game; requestGameImport()
-            })
+            }, launch: { requestGameLaunch(game) })
         }
         .task(id: "\(viewModel.games.map(\.id))-\(artwork.connected)") { await artwork.prepare(viewModel.games) }
         .alert("Artwork", isPresented: Binding(get: { artwork.error != nil }, set: { if !$0 { artwork.error = nil } })) {
             Button("OK") { artwork.error = nil }
         } message: { Text(artwork.error ?? "") }
         .confirmationDialog(relocatingGame == nil ? "Add Game" : "Locate Game", isPresented: $isShowingImportChoices) {
+            if relocatingGame == nil { Button("Download from Steam", action: showDownloads) }
             Button("Choose Folder") { openImportPicker() }
-            Button("Find Games in Iridium Folder") { isPresentingGamesFolder = true }
+            if !liveContainerStatus.isHosted {
+                Button("Find Games in Iridium Folder") { isPresentingGamesFolder = true }
+            }
         } message: {
             Text("To use Files, place each game in \(filesDeviceLocation) → Iridium → Games.")
         }

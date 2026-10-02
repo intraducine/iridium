@@ -25,9 +25,17 @@ extern "C" void ios_fex_mono_arm(uint64_t Base, uint64_t End);
 #endif
 
 namespace FEX::Windows {
+#if !defined(ARCHITECTURE_arm64ec)
+InvalidationTracker::InvalidationTracker(FEXCore::Context::Context& CTX,
+                                         const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads, uint64_t GuestBase)
+  : CTX {CTX}
+  , Threads {Threads}
+  , GuestBase {GuestBase} {
+#else
 InvalidationTracker::InvalidationTracker(FEXCore::Context::Context& CTX, const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads)
   : CTX {CTX}
   , Threads {Threads} {
+#endif
   FEX_CONFIG_OPT(SMCChecks, SMCCHECKS);
   SMCDetectionDisabled = (SMCChecks == FEXCore::Config::CONFIG_SMC_NONE);
 
@@ -67,6 +75,27 @@ void InvalidationTracker::HandleMemoryProtectionNotification(uint64_t Address, u
     FEXCore::IntervalList<uint64_t>::Interval ProtInterval {AlignedBase, AlignedBase + AlignedSize};
 
     const bool HasExec = ProtHasExec(Prot);
+#if !defined(ARCHITECTURE_arm64ec)
+    // Guest window: DEP-off does not promote here. Treating every readable allocation or reprotect
+    // as executable arms an SMC write-trap on plain data at the guest's allocation rate, although
+    // most programs without NX_COMPAT never execute from their data. Under a window promotion is
+    // lazy, on an actual execute attempt (QueryExecutableRange -> PromoteDEPRegionLocked).
+    // Identity-mapped builds keep the eager promotion below.
+    const bool EagerDEP = DEPDisabled && !GuestBase;
+    const bool EffectiveExec = HasExec || (EagerDEP && ProtIsReadable(Prot));
+    const bool EffectiveRWX = EffectiveExec && ProtIsWritable(Prot);
+
+    if (EffectiveExec) {
+      XIntervals.Insert(ProtInterval);
+      if (EffectiveRWX) {
+        LogMan::Msg::DFmt("Add SMC interval: {:X} - {:X}", AlignedBase, AlignedBase + AlignedSize);
+        RWXIntervals.Insert(ProtInterval);
+      }
+      if (EagerDEP && !HasExec) {
+        DEPPromotedIntervals.Insert(ProtInterval);
+      }
+      return true;
+#else
     const bool EffectiveExec = HasExec || (DEPDisabled && ProtIsReadable(Prot));
     const bool EffectiveRWX = EffectiveExec && ProtIsWritable(Prot);
 
@@ -80,6 +109,7 @@ void InvalidationTracker::HandleMemoryProtectionNotification(uint64_t Address, u
         DEPPromotedIntervals.Insert(ProtInterval);
       }
       return true;
+#endif
     } else if (XIntervals.Intersect(ProtInterval)) {
       /* iOS-Madeira ml208 ROOT-CAUSE FIX.
        *
@@ -137,6 +167,16 @@ void InvalidationTracker::HandleProcessExecuteFlagsChange(ULONG Flags) {
   if (DisableDEP) {
     DEPPromotedIntervals.Clear();
 
+#if !defined(ARCHITECTURE_arm64ec)
+    if (GuestBase) {
+      // Guest window: nothing is promoted up front (see PromoteDEPRegionLocked). A sweep here
+      // would walk the whole 64-bit host address space - FEX's own heap and the JIT pool's RW
+      // alias included - and arm write-traps on every data page of the process.
+      LogMan::Msg::EFmt("[dep-off] DEP disabled for this process: a committed readable page becomes executable when the guest "
+                        "first branches into it");
+    } else
+#endif
+    {
     MEMORY_BASIC_INFORMATION Info;
     uint64_t Address = 0;
 
@@ -156,10 +196,24 @@ void InvalidationTracker::HandleProcessExecuteFlagsChange(ULONG Flags) {
 
       Address = BaseAddress + Info.RegionSize;
     }
+    }
   } else {
     for (const auto& Interval : DEPPromotedIntervals) {
       LogMan::Msg::EFmt("[iOS-xrem] via=depflags tracker={} {:#x}-{:#x}", static_cast<void*>(this),
                         Interval.Offset, Interval.End);
+#if !defined(ARCHITECTURE_arm64ec)
+      // Untrap before forgetting: a promoted region that held compiled code had write access
+      // removed by ProtectRWXIntervalsInternal (GetTrapProt -> PAGE_READONLY). Dropping the
+      // interval without restoring it would leave the guest's own data read-only, and the next
+      // store would be delivered as an access violation. PAGE_READWRITE, not GetUntrapProt:
+      // DEPDisabled is already false, and the host page never was executable.
+      if (GuestBase && RWXIntervals.Query(Interval.Offset).Enclosed) {
+        void* TmpAddress = reinterpret_cast<void*>(Interval.Offset);
+        SIZE_T TmpSize = static_cast<SIZE_T>(Interval.End - Interval.Offset);
+        ULONG TmpProt;
+        NtProtectVirtualMemory(NtCurrentProcess(), &TmpAddress, &TmpSize, PAGE_READWRITE, &TmpProt);
+      }
+#endif
       XIntervals.Remove(Interval);
       RWXIntervals.Remove(Interval);
     }
@@ -430,8 +484,87 @@ bool InvalidationTracker::BeginUntrackedWriteLocked(uint64_t Address, uint64_t S
  * HandleProcessExecuteFlagsChange (DEP) and InvalidateAlignedInterval (via
  * NotifyMemoryFree), neither of which was instrumented. Tag each site so the culprit
  * path names itself. */
+#if !defined(ARCHITECTURE_arm64ec)
+FEXCore::HLE::ExecutableRangeInfo InvalidationTracker::QueryExecutableRange(uint64_t Address) {
+  {
+    // The hot path: one interval query under a shared lock. A zero Size means "not executable",
+    // which only gets a second chance under a guest window with DEP off.
+    std::shared_lock Lock(IntervalsLock);
+    const auto Info = QueryExecutableRangeLocked(Address);
+    if (Info.Size || !DEPDisabled || !GuestBase) {
+      return Info;
+    }
+  }
+
+  /* Lazy DEP-off promotion, the decode-time half of DEP-off under a guest window.
+   *
+   * On Windows a 32-bit image without IMAGE_DLLCHARACTERISTICS_NX_COMPAT runs with DEP disabled:
+   * executing from any committed readable page is legal (unpackers, copy-protection wrappers and
+   * runtime thunks rely on it). Here nothing host-executes a guest page; the only thing deciding
+   * whether a guest address may be executed is XIntervals, which the decoder asks before it emits
+   * anything. So promotion happens here, on the miss: the block is compiled correctly the first
+   * time, and a program that never executes from its data pays nothing.
+   *
+   * Only IntervalsLock is taken, and nothing is invalidated: nothing can have been compiled for a
+   * range the decoder is only now asking about, and the compiling thread already holds
+   * CodeInvalidationMutex shared. A miss that is not a committed readable page still returns a
+   * zero-size result, so a wild branch still faults. */
+  std::unique_lock Lock(IntervalsLock);
+  if (!XIntervals.Query(Address).Enclosed && !PromoteDEPRegionLocked(Address).End) {
+    return {};
+  }
+  return QueryExecutableRangeLocked(Address);
+}
+
+FEXCore::IntervalList<uint64_t>::Interval InvalidationTracker::PromoteDEPRegionLocked(uint64_t Address) {
+  // DEP is a property of the guest's memory: a host address outside the window is FEX's heap, the
+  // JIT pool or a host module, and must never be promoted.
+  if (Address < GuestBase || (Address - GuestBase) >= (1ULL << 32)) {
+    return {};
+  }
+
+  MEMORY_BASIC_INFORMATION Info;
+  if (!VirtualQuery(reinterpret_cast<LPCVOID>(Address), &Info, sizeof(Info))) {
+    return {};
+  }
+  // A guard page reads as readable; promoting one would arm a write-trap on a page whose job is
+  // to fault once. Not committed, not readable, or already executable: leave it to fault.
+  if ((Info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) || Info.State != MEM_COMMIT || !ProtIsReadable(Info.Protect) ||
+      ProtHasExec(Info.Protect)) {
+    return {};
+  }
+
+  const auto BaseAddress = reinterpret_cast<uint64_t>(Info.BaseAddress);
+  const auto AlignedBase = BaseAddress & FEXCore::Utils::FEX_PAGE_MASK;
+  const auto AlignedSize = (BaseAddress - AlignedBase + Info.RegionSize + FEXCore::Utils::FEX_PAGE_SIZE - 1) & FEXCore::Utils::FEX_PAGE_MASK;
+  FEXCore::IntervalList<uint64_t>::Interval ProtInterval {AlignedBase, AlignedBase + AlignedSize};
+
+  if (DEPPromotedIntervals.Query(Address).Enclosed) {
+    return ProtInterval;
+  }
+
+  XIntervals.Insert(ProtInterval);
+  if (ProtIsWritable(Info.Protect)) {
+    // Writable and now executable, so the SMC write-trap must cover it: a self-decrypting unpacker
+    // writes the next stage into the page it is about to jump into.
+    RWXIntervals.Insert(ProtInterval);
+  }
+  DEPPromotedIntervals.Insert(ProtInterval);
+
+  static std::atomic<uint32_t> PromoteLogCount {0};
+  if (PromoteLogCount.fetch_add(1, std::memory_order_relaxed) < 64) {
+    LogMan::Msg::EFmt("[dep-off] promoting guest {:#x}+{:#x} to executable on an execute attempt (prot={:#x})", AlignedBase - GuestBase,
+                      AlignedSize, Info.Protect);
+  }
+  return ProtInterval;
+}
+
+// NOTE: IntervalsLock must be held (shared or exclusive) by the caller.
+FEXCore::HLE::ExecutableRangeInfo InvalidationTracker::QueryExecutableRangeLocked(uint64_t Address) {
+#else
 FEXCore::HLE::ExecutableRangeInfo InvalidationTracker::QueryExecutableRange(uint64_t Address) {
   std::shared_lock Lock(IntervalsLock);
+#endif
   const auto XResult = XIntervals.Query(Address);
   if (!XResult.Enclosed) {
     return {};
@@ -454,7 +587,15 @@ void InvalidationTracker::DetectMonoBackpatcherBlock(FEXCore::Core::InternalThre
     return;
   }
 
+#if !defined(ARCHITECTURE_arm64ec)
+  // RestoreRIPFromHostPC returns a guest RIP, while MonoBase/MonoEnd come from HandleImageMap and
+  // are host addresses. Lift the RIP for the range test and the code reads; BlockEntry below stays
+  // guest because it is a FEXCore invalidation key.
+  const uint64_t GuestRIP = CTX.RestoreRIPFromHostPC(Thread, HostPc);
+  const uint64_t RIP = GuestRIP ? GuestRIP + GuestBase : 0;
+#else
   uint64_t RIP = CTX.RestoreRIPFromHostPC(Thread, HostPc);
+#endif
   if (!RIP || RIP < MonoBase || RIP >= MonoEnd) {
     return;
   }
@@ -483,8 +624,13 @@ void InvalidationTracker::DetectMonoBackpatcherBlock(FEXCore::Core::InternalThre
       const auto* Bytes = reinterpret_cast<const uint8_t*>(RIP);
       LogMan::Msg::EFmt("[mono-site] ml712 FIRST detect rip={:#x} (mono+{:#x}) block={:#x} (mono+{:#x}) "
                         "bytes={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+#if !defined(ARCHITECTURE_arm64ec)
+                        RIP, RIP - MonoBase, BlockEntry, BlockEntry + GuestBase - MonoBase, Bytes[0], Bytes[1], Bytes[2], Bytes[3],
+                        Bytes[4], Bytes[5], Bytes[6], Bytes[7]);
+#else
                         RIP, RIP - MonoBase, BlockEntry, BlockEntry - MonoBase, Bytes[0], Bytes[1], Bytes[2], Bytes[3],
                         Bytes[4], Bytes[5], Bytes[6], Bytes[7]);
+#endif
     }
   }
 #ifndef FEX_IOS_HOST
@@ -499,7 +645,12 @@ void InvalidationTracker::DetectMonoBackpatcherBlock(FEXCore::Core::InternalThre
     std::scoped_lock CodeLock(CTX.GetCodeInvalidationMutex());
     CTX.MarkMonoBackpatcherBlock(BlockEntry);
   }
+#if !defined(ARCHITECTURE_arm64ec)
+  // InvalidateAlignedInterval takes host addresses like the rest of this class.
+  InvalidateAlignedInterval(BlockEntry + GuestBase, FEXCore::Utils::FEX_PAGE_SIZE, false);
+#else
   InvalidateAlignedInterval(BlockEntry, FEXCore::Utils::FEX_PAGE_SIZE, false);
+#endif
 }
 
 void InvalidationTracker::DisableSMCDetection() {
@@ -542,6 +693,23 @@ void InvalidationTracker::InvalidateIntervalInternal(uint64_t Address, uint64_t 
 
 void InvalidationTracker::InvalidateIntervalInternalLocked(uint64_t Address, uint64_t Size) {
   // NOTE: This assumes CodeInvalidationMutex is locked by the caller
+#if !defined(ARCHITECTURE_arm64ec)
+  // The boundary into FEXCore: Address is a host address, FEXCore's code buffers and lookup caches
+  // are keyed on guest addresses. Clip the range to the window and convert; the part outside the
+  // window has no guest counterpart (the JIT pool's own addresses also flow through the BTCpuNotify*
+  // callbacks) and cannot name guest code. The "everything" range (0, max) maps to the whole window.
+  if (GuestBase) {
+    const uint64_t WindowEnd = GuestBase + (1ULL << 32);
+    const uint64_t Begin = std::max(Address, GuestBase);
+    const uint64_t RangeEnd = Size > std::numeric_limits<uint64_t>::max() - Address ? std::numeric_limits<uint64_t>::max() : Address + Size;
+    const uint64_t End = std::min(RangeEnd, WindowEnd);
+    if (Begin >= End) {
+      return;
+    }
+    Address = Begin - GuestBase;
+    Size = End - Begin;
+  }
+#endif
   CTX.InvalidateCodeBuffersCodeRange(Address, Size);
   for (auto Thread : Threads) {
     CTX.InvalidateThreadCachedCodeRange(Thread.second, Address, Size);

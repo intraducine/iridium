@@ -75,7 +75,7 @@ DLLEXPORT_FUNC(void*, VirtualAlloc2,
                 MEM_EXTENDED_PARAMETER* ExtendedParameters, ULONG ParameterCount)) {
   NTSTATUS Status;
 #ifndef _M_ARM64EC
-  if (!BaseAddress) {
+  if (!BaseAddress && !HasExtendedParameter(ExtendedParameters, ParameterCount, MemExtendedParameterAddressRequirements)) {
     // Add address requirements for WOW64 to limit allocations to outside the 32-bit user address space
     auto* NewExtParams = reinterpret_cast<MEM_EXTENDED_PARAMETER*>(alloca((ParameterCount + 1) * sizeof(MEM_EXTENDED_PARAMETER)));
     if (ExtendedParameters && ParameterCount > 0) {

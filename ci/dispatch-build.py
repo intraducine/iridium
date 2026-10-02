@@ -9,7 +9,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = "intraducine/iridium"
+REPO = os.environ.get("GITHUB_REPOSITORY", "nurtrino/Iridium-fork")
 WORKFLOW = "build-unsigned-ipa.yml"
 
 

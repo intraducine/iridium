@@ -627,9 +627,20 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
   uintptr_t CallerAddress = JumpThunkStartAddress + Record->CallerOffset;
   auto BranchOffset = HostCode / 4 - CallerAddress / 4;
 
+  // The known-call marker is the `adr TMP1, <l_CallReturn>` a linked CALL emits before its branch.
+  // Without the shadow-stack push (FEX_CALLRET_STACK_UNUSED) it sits one instruction closer to the
+  // callsite and its immediate is 4 bytes smaller; both values come from the same macro as the
+  // emission in BranchOps.cpp.
+#ifdef FEX_CALLRET_STACK_UNUSED
+  constexpr uint32_t KnownCallMarkerImm = 0x8;
+  constexpr uintptr_t KnownCallMarkerDisp = 0x4;
+#else
+  constexpr uint32_t KnownCallMarkerImm = 0xC;
+  constexpr uintptr_t KnownCallMarkerDisp = 0x8;
+#endif
   uint32_t ExpectedKnownCallMarkerInst = 0;
   ARMEmitter::Emitter ExpectedKnownCallMarkerEmit(reinterpret_cast<uint8_t*>(&ExpectedKnownCallMarkerInst), 4);
-  ExpectedKnownCallMarkerEmit.adr(TMP1, 0xC);
+  ExpectedKnownCallMarkerEmit.adr(TMP1, KnownCallMarkerImm);
 
   // Guard the LookupCache lock with the code invalidation mutex, to avoid issues with forking
   auto lk_inval = GuardSignalDeferringSection<std::shared_lock>(static_cast<Context::ContextImpl*>(Thread->CTX)->CodeInvalidationMutex, Thread);
@@ -639,7 +650,7 @@ uint64_t Arm64JITCore::ExitFunctionLink(FEXCore::Core::CpuStateFrame* Frame, FEX
 
   // For non-calls, this would extend into the block's code, however that's fine as an out-of-range adr would never
   // be generated avoiding any false positives.
-  uintptr_t KnownCallMarkerAddr = CallerAddress - 0x8;
+  uintptr_t KnownCallMarkerAddr = CallerAddress - KnownCallMarkerDisp;
   uint32_t KnownCallMarkerInst = *reinterpret_cast<uint32_t*>(KnownCallMarkerAddr);
   if (ARMEmitter::Emitter::IsInt26(BranchOffset)) {
     // Directly patch the callsite with the appropriate branch instruction.

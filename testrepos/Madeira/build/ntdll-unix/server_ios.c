@@ -139,6 +139,7 @@ static void wine_log_write(const char *fmt, ...)
 #include "wine/server.h"
 #include "wine/debug.h"
 #include "unix_private.h"
+#include "ios_wow.h"
 #include "ddk/wdm.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(server);
@@ -412,6 +413,81 @@ static DECLSPEC_NORETURN void server_protocol_perror( const char *err )
 }
 
 
+#ifdef WINE_IOS
+/* A thread killed inside an uninterrupted section leaves the section first.
+ *
+ * When the server kills a thread (TerminateThread, or TerminateProcess ending
+ * the other threads of a process) it closes the thread's request and reply
+ * pipes and sends SIGQUIT. On Linux SIGQUIT is blocked inside
+ * server_enter_uninterrupted_section, so a killed thread always finishes the
+ * section and releases its mutex before it dies. On iOS no signal reaches a
+ * thread (send_thread_signal fails): the killed thread keeps running until a
+ * request finds its pipe closed, and that request is often inside a section:
+ * NtClose, NtDuplicateObject and server_get_unix_fd make theirs holding
+ * fd_cache_mutex. The thread then exited holding the mutex, and every Windows
+ * process here is a thread group in one Mach task sharing that mutex, so every
+ * later NtClose in every process blocked for good. Seen on a device: an
+ * installer's msiexec failed and ended its other threads, one was in its
+ * DLL-detach calls; the program waiting for msiexec then hung in NtClose.
+ *
+ * So inside a section a dead pipe fails the request with
+ * STATUS_THREAD_IS_TERMINATING instead of exiting, later requests fail the same
+ * way without touching the pipes, and the thread exits when it leaves its
+ * outermost section, which is where Linux delivers the SIGQUIT. Outside a
+ * section nothing changes. The depth lives in a pthread key rather than a
+ * _Thread_local, whose first touch on a Darwin thread allocates: entering a
+ * section must not allocate. */
+static pthread_key_t ios_section_key;
+static int ios_section_key_ready;
+
+static void __attribute__((constructor)) ios_section_key_init(void)
+{
+    ios_section_key_ready = !pthread_key_create( &ios_section_key, NULL );
+}
+
+#define IOS_SECTION_DEPTH   0x0fffffffu  /* sections this thread is in */
+#define IOS_SECTION_EXITING 0x20000000u  /* the deferred exit has started */
+#define IOS_SECTION_ABORT   0x40000000u  /* killed: requests fail, exit on leaving */
+
+static inline uintptr_t ios_section_state(void)
+{
+    return ios_section_key_ready ? (uintptr_t)pthread_getspecific( ios_section_key ) : 0;
+}
+
+static inline void ios_section_set_state( uintptr_t state )
+{
+    if (ios_section_key_ready) pthread_setspecific( ios_section_key, (void *)state );
+}
+
+/* A dead pipe on the current thread. TRUE: fail the request, the thread exits when
+ * it leaves its sections. FALSE: exit now (not in a section, or switched off). */
+static BOOL ios_defer_section_abort(void)
+{
+    static int enabled = -1;
+    static int logged;
+    uintptr_t state = ios_section_state();
+
+    if (!(state & IOS_SECTION_DEPTH)) return FALSE;
+    if (enabled < 0)
+    {
+        /* MADEIRA_DEFER_SECTION_ABORT=0: a killed thread exits at once, even inside a section */
+        const char *env = getenv( "MADEIRA_DEFER_SECTION_ABORT" );
+        enabled = !(env && env[0] == '0');
+    }
+    if (!enabled) return FALSE;
+    if (!(state & IOS_SECTION_ABORT))
+    {
+        ios_section_set_state( state | IOS_SECTION_ABORT );
+        if (__sync_fetch_and_add( &logged, 1 ) < 16)
+            dprintf( 2, "[section-abort] tid=%04x killed inside %u uninterrupted section(s); "
+                     "the thread exits when it leaves them\n", (unsigned int)GetCurrentThreadId(),
+                     (unsigned int)(state & IOS_SECTION_DEPTH) );
+    }
+    return TRUE;
+}
+#endif
+
+
 /***********************************************************************
  *           send_request
  *
@@ -472,7 +548,13 @@ static unsigned int send_request( const struct __server_request_info *req )
         }
     }
 
-    if (errno == EPIPE) abort_thread(0);
+    if (errno == EPIPE)
+    {
+#ifdef WINE_IOS
+        if (ios_defer_section_abort()) return STATUS_THREAD_IS_TERMINATING;
+#endif
+        abort_thread(0);
+    }
     if (errno == EFAULT) return STATUS_ACCESS_VIOLATION;
     server_protocol_perror( "write" );
 }
@@ -482,8 +564,9 @@ static unsigned int send_request( const struct __server_request_info *req )
  *           read_reply_data
  *
  * Read data from the reply buffer; helper for wait_reply.
+ * Returns FALSE only when a killed thread's exit is deferred (iOS).
  */
-static void read_reply_data( void *buffer, size_t size )
+static BOOL read_reply_data( void *buffer, size_t size )
 {
     int ret;
 
@@ -491,7 +574,7 @@ static void read_reply_data( void *buffer, size_t size )
     {
         if ((ret = read( ntdll_get_thread_data()->reply_fd, buffer, size )) > 0)
         {
-            if (!(size -= ret)) return;
+            if (!(size -= ret)) return TRUE;
             buffer = (char *)buffer + ret;
             continue;
         }
@@ -513,6 +596,7 @@ static void read_reply_data( void *buffer, size_t size )
 #ifdef WINE_IOS
     /* EOF flavor: the server-side write end of our reply pipe vanished */
     ios_fdt_autopsy( "reply-read-eof", ntdll_get_thread_data()->reply_fd, ret, errno );
+    if (ios_defer_section_abort()) return FALSE;
 #endif
     /* the server closed the connection; time to die... */
     abort_thread(0);
@@ -526,9 +610,10 @@ static void read_reply_data( void *buffer, size_t size )
  */
 static inline unsigned int wait_reply( struct __server_request_info *req )
 {
-    read_reply_data( &req->u.reply, sizeof(req->u.reply) );
-    if (req->u.reply.reply_header.reply_size)
-        read_reply_data( req->reply_data, req->u.reply.reply_header.reply_size );
+    if (!read_reply_data( &req->u.reply, sizeof(req->u.reply) )) return STATUS_THREAD_IS_TERMINATING;
+    if (req->u.reply.reply_header.reply_size &&
+        !read_reply_data( req->reply_data, req->u.reply.reply_header.reply_size ))
+        return STATUS_THREAD_IS_TERMINATING;
     return req->u.reply.reply_header.error;
 }
 
@@ -1759,6 +1844,10 @@ unsigned int server_call_unlocked( void *req_ptr )
     unsigned int ret;
 
     ios_srv_req_count++;
+#ifdef WINE_IOS
+    /* killed inside a section (ios_defer_section_abort): no more requests */
+    if (ios_section_state() & IOS_SECTION_ABORT) return STATUS_THREAD_IS_TERMINATING;
+#endif
     if ((ret = send_request( req ))) return ret;
     /* iOS-Madeira 2026-07-05: kick the in-process server loop out of its
      * tick sleep so the request is picked up in ~50us instead of waiting
@@ -1806,6 +1895,9 @@ void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigse
 {
     pthread_sigmask( SIG_BLOCK, &server_block_set, sigset );
     mutex_lock( mutex );
+#ifdef WINE_IOS
+    ios_section_set_state( ios_section_state() + 1 );
+#endif
 }
 
 
@@ -1814,8 +1906,21 @@ void server_enter_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigse
  */
 void server_leave_uninterrupted_section( pthread_mutex_t *mutex, sigset_t *sigset )
 {
+#ifdef WINE_IOS
+    uintptr_t state = ios_section_state() - 1;
+
+    ios_section_set_state( state );
+#endif
     mutex_unlock( mutex );
     pthread_sigmask( SIG_SETMASK, sigset, NULL );
+#ifdef WINE_IOS
+    /* a request inside the section found this thread killed: exit now that it is out */
+    if (state == IOS_SECTION_ABORT)
+    {
+        ios_section_set_state( IOS_SECTION_ABORT | IOS_SECTION_EXITING );
+        abort_thread( 0 );
+    }
+#endif
 }
 
 
@@ -1911,6 +2016,13 @@ static void invoke_system_apc( const union apc_call *call, union apc_result *res
         else result->async_io.status = STATUS_PENDING; /* restart it */
         break;
     }
+    /* in every APC below, `addr` is a
+     * client_ptr_t and therefore a HOST address (one namespace per process),
+     * while zero_bits / limit_low / limit_high are GUEST-namespace ceilings.
+     * Nothing is converted here: these calls execute inside the TARGET
+     * process, so NtAllocateVirtualMemory / NtMapViewOfSection / the
+     * MEM_ADDRESS_REQUIREMENTS path translate the ceiling into that
+     * process's own window.  Do not "fix" this by adding B here. */
     case APC_VIRTUAL_ALLOC:
         result->type = call->type;
         addr = wine_server_get_ptr( call->virtual_alloc.addr );
@@ -3504,6 +3616,14 @@ void process_exit_wrapper( int status )
          * the session (else-branch) lives as long as the app. Reuse is
          * grace-delayed inside the allocator for laggard exit threads. */
         ios_jit_reclaim_process( dead_peb );
+        /* and its guest window, if it had one.  Here rather
+         * than only in ios_child_thread_entry because THIS is the chokepoint
+         * every pseudo-process exit reaches, on whichever thread called
+         * ExitProcess — a guest worker thread that ends the process does not
+         * return to the boot thread's setjmp at all.  Keyed by the dying PEB,
+         * not by the calling thread.  Nothing is unmapped here; see
+         * ios_wow_window_mark_released(). */
+        ios_wow_window_release( dead_peb );
         /* ml988 phase 2: only now may the retired fixed base be handed on. Until
          * this point the old generation's pool mappings and FEX translations are
          * still live, so a new claimant taking the same VA would race them. */
@@ -3512,7 +3632,17 @@ void process_exit_wrapper( int status )
             ios_exe_win_mark_ready( dead_peb );
         }
     }
-    else close( fd_socket );
+    else
+    {
+        /* No slot: this is the session's initial process, the program the app
+         * itself handed to __wine_main (WineProcessBridge.m). Its exit status
+         * is how the app's library tells a crash from a normal quit. A weak
+         * hook with one integer argument: no names, no allocation, no logging;
+         * helpers and anything the program starts have a slot and never call it. */
+        extern void wine_launched_process_did_exit( int status ) __attribute__((weak));
+        if (wine_launched_process_did_exit) wine_launched_process_did_exit( status );
+        close( fd_socket );
+    }
 #else
     close( fd_socket );
 #endif
@@ -3905,6 +4035,12 @@ void server_init_process_done(void)
         extern uintptr_t ios_srv_game_teb;
         ios_srv_game_teb = (uintptr_t)NtCurrentTeb();
     }
+
+    /* Opt-in fastsync (wine/dlls/ntdll/unix/sync.c): the handle -> cell cache is
+     * shared by every process of this task and keyed by process id, and the server
+     * reissues the ids of dead processes, so drop what a dead process with this id
+     * left behind. This process owns no handles yet. A no-op while fastsync is off. */
+    madeira_fast_flush_pid();
 
     if (!get_device_info( initial_cwd, &info ) && (info.Characteristics & FILE_REMOVABLE_MEDIA))
         chdir( "/" );
@@ -4518,16 +4654,26 @@ NTSTATUS wow64_wine_server_call( void *args )
     NTSTATUS status;
     struct __server_request_info req;
 
+    /* the WoW64 module converted the OUTER args pointer
+     * only, so req32 is a host pointer but every pointer INSIDE it is still a
+     * guest address — the request's own iov data blocks and the reply buffer
+     * live in the 32-bit caller's window.  ios_wow_host_ptr() is +B and
+     * NULL-preserving (a NULL iov entry stays NULL). */
     req.u.req = req32->u.req;
     req.data_count = req32->data_count;
     for (i = 0; i < req.data_count; i++)
     {
-        req.data[i].ptr = ULongToPtr( req32->data[i].ptr );
+        req.data[i].ptr = ios_wow_host_ptr( req32->data[i].ptr );
         req.data[i].size = req32->data[i].size;
     }
-    req.reply_data = ULongToPtr( req32->reply_data );
+    req.reply_data = ios_wow_host_ptr( req32->reply_data );
     status = wine_server_call( &req );
     req32->u.reply = req.u.reply;
+    /* NOTE: req.u.req is copied verbatim.  client_ptr_t members inside the
+     * request union that a 32-bit caller filled in are guest addresses and are
+     * NOT converted here.  No request made through this entry point by the
+     * 32-bit ntdll (debug output, file I/O, handle/console requests) carries
+     * one. */
     return status;
 }
 
@@ -4544,7 +4690,8 @@ NTSTATUS wow64_wine_server_fd_to_handle( void *args )
         ULONG        handle;
     } const *params32 = args;
 
-    ULONG *handle32 = ULongToPtr( params32->handle );
+    /* embedded guest pointer: the caller's output slot */
+    ULONG *handle32 = ios_wow_host_ptr( params32->handle );
     HANDLE handle;
     NTSTATUS ret;
 
@@ -4566,8 +4713,11 @@ NTSTATUS wow64_wine_server_handle_to_fd( void *args )
         ULONG        options;
     } const *params32 = args;
 
+    /* handle stays a handle; unix_fd and options are embedded guest pointers
+     * to the caller's output slots */
     return wine_server_handle_to_fd( ULongToHandle( params32->handle ), params32->access,
-                                     ULongToPtr( params32->unix_fd ), ULongToPtr( params32->options ));
+                                     ios_wow_host_ptr( params32->unix_fd ),
+                                     ios_wow_host_ptr( params32->options ));
 }
 
 #endif /* _WIN64 */

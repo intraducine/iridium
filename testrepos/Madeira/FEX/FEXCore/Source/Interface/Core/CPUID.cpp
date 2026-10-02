@@ -14,6 +14,7 @@ $end_info$
 #include <FEXCore/Core/CPUID.h>
 #include <FEXCore/Core/HostFeatures.h>
 #include <FEXCore/Utils/FileLoading.h>
+#include <FEXCore/Utils/LogManager.h>
 #include <FEXCore/Utils/MathUtils.h>
 #include <FEXCore/fextl/string.h>
 #include <FEXHeaderUtils/Syscalls.h>
@@ -454,10 +455,15 @@ FEXCore::CPUID::FunctionResults CPUIDEmu::Function_01h(uint32_t Leaf) const {
 
   Res.eax = FAMILY_IDENTIFIER;
 
-  Res.ebx = 0 |                 // Brand index
-            (8 << 8) |          // Cache line size in bytes
-            (Cores << 16) |     // Number of addressable IDs for the logical cores in the physical CPU
-            (GetCPUID() << 24); // Local APIC ID
+  // MADEIRA ml980: the local APIC ID must be one of the `Cores` addressable IDs reported in the
+  // same register. GetCPUID() is a raw host core number that is not bounded by Cores, so a host
+  // whose MIDR list is shorter than its real core count (see WrapCPUIndex in CPUID.h) reported an
+  // APIC ID outside its own topology, and returned a different value for the same leaf depending on
+  // which core the thread happened to be on.
+  Res.ebx = 0 |                       // Brand index
+            (8 << 8) |                // Cache line size in bytes
+            (Cores << 16) |           // Number of addressable IDs for the logical cores in the physical CPU
+            (CurrentCPUIndex() << 24); // Local APIC ID
 
   Res.ecx = (1 << 0) |                                      // SSE3
             (CTX->HostFeatures.SupportsPMULL_128Bit << 1) | // PCLMULQDQ
@@ -916,8 +922,10 @@ FEXCore::CPUID::FunctionResults CPUIDEmu::Function_15h(uint32_t Leaf) const {
 FEXCore::CPUID::FunctionResults CPUIDEmu::Function_1Ah(uint32_t Leaf) const {
   FEXCore::CPUID::FunctionResults Res {};
   if (Hybrid) {
-    uint32_t CPU = GetCPUID();
-    auto& Data = PerCPUData[CPU];
+    // MADEIRA ml980: bounded subscript, same reason as the brand-string leaves. Unreachable on a
+    // host that reports a single MIDR (Hybrid needs two differing ones) but wrong in exactly the
+    // same way if it ever is reached.
+    auto& Data = PerCPUData[CurrentCPUIndex()];
     // 0x40 is a big CPU
     // 0x20 is a little CPU
     Res.eax |= (Data.IsBig ? 0x40 : 0x20) << 24;
@@ -1101,16 +1109,19 @@ FEXCore::CPUID::FunctionResults CPUIDEmu::Function_8000_0001h(uint32_t Leaf) con
 }
 
 // Processor brand string
+// MADEIRA ml980: CurrentCPUIndex(), not GetCPUID(). GetCPUID() is a HOST core number and is not
+// bounded by PerCPUData.size(); these three overloads dereference Data.ProductName, so an
+// out-of-range subscript is a wild-pointer strlen(). See WrapCPUIndex in CPUID.h.
 FEXCore::CPUID::FunctionResults CPUIDEmu::Function_8000_0002h(uint32_t Leaf) const {
-  return Function_8000_0002h(Leaf, GetCPUID());
+  return Function_8000_0002h(Leaf, CurrentCPUIndex());
 }
 
 FEXCore::CPUID::FunctionResults CPUIDEmu::Function_8000_0003h(uint32_t Leaf) const {
-  return Function_8000_0003h(Leaf, GetCPUID());
+  return Function_8000_0003h(Leaf, CurrentCPUIndex());
 }
 
 FEXCore::CPUID::FunctionResults CPUIDEmu::Function_8000_0004h(uint32_t Leaf) const {
-  return Function_8000_0004h(Leaf, GetCPUID());
+  return Function_8000_0004h(Leaf, CurrentCPUIndex());
 }
 
 FEXCore::CPUID::FunctionResults CPUIDEmu::Function_8000_0002h(uint32_t Leaf, uint32_t CPU) const {
@@ -1355,5 +1366,15 @@ CPUIDEmu::CPUIDEmu(const FEXCore::Context::ContextImpl* ctx)
     GetCPUID = GetCPUID_TPIDRRO;
   }
 #endif
+
+  /* MADEIRA ml980: one line naming the two numbers that have to agree, because nothing else in a
+   * log does. `entries' is PerCPUData.size() (= HostFeatures.CPUMIDRs.size()); `host cpu' is what
+   * GetCPUID() answers right now. The brand-string leaves (0x8000'0002..4) and the hybrid leaf
+   * (0x1A) subscript the table with the second number, so when entries < the machine's real core
+   * count every such CPUID from a thread on a higher core used to read past the end of the table --
+   * see WrapCPUIndex in CPUID.h. Printed once per process, at construction. */
+  LogMan::Msg::EFmt("[cpuid] ml980 PerCPUData entries={} host cpu now={} source={} -- brand-string/hybrid leaves "
+                    "subscript the table with the host cpu index; indices are wrapped into range",
+                    PerCPUData.size(), GetCPUID(), SupportsCPUIndexInTPIDRRO ? "TPIDRRO_EL0" : "getcpu");
 }
 } // namespace FEXCore

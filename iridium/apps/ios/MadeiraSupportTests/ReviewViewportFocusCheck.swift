@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 @main struct ViewportFocusCheck {
     static func main() throws {
         for bounds in [CGRect(x:0,y:0,width:844,height:390),CGRect(x:10,y:20,width:390,height:844),CGRect(x:0,y:0,width:1024,height:768)] {

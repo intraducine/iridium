@@ -666,12 +666,13 @@ public struct LaunchEligibilityAuditor: Sendable {
                 status: installReady ? .ready : .blocked
             )
         } else {
+            let nativeDownload = game.launchProfile.titleFlags.contains("steam-native-download")
             installCheck = VerificationCheck(
                 title: "Install pipeline",
-                detail: game.source == .steam
+                detail: nativeDownload ? "Game files were downloaded and verified on this device." : game.source == .steam
                     ? "Steam library entry is not resolved yet."
                     : "Game added from a local folder.",
-                status: game.source == .steam ? .warning : .ready
+                status: game.source == .steam && !nativeDownload ? .warning : .ready
             )
         }
 

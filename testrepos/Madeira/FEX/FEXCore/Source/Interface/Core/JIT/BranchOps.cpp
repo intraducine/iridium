@@ -202,6 +202,15 @@ DEF_OP(ExitFunction) {
           (void)Bind(&l_callret_ok);
         }
 #endif
+#ifdef FEX_CALLRET_STACK_UNUSED
+        // Nothing reads the call-ret shadow stack in this module (see FEX_CALLRET_STACK_UNUSED in
+        // Arm64Emitter.h), so there is no push. The adr stays: it is the known-call marker that
+        // ExitFunctionLink looks for to relink this callsite as a `bl`.
+        if (!Op->CallReturnBlock.IsInvalid()) {
+          PendingCallReturnTargetLabel = &CallReturnTargets.try_emplace(Op->CallReturnBlock.ID()).first->second;
+          (void)adr(TMP1, &l_CallReturn);
+        }
+#else
         if (!Op->CallReturnBlock.IsInvalid()) {
           auto CallReturnAddressReg = GetReg(Op->CallReturnAddress).X();
           PendingCallReturnTargetLabel = &CallReturnTargets.try_emplace(Op->CallReturnBlock.ID()).first->second;
@@ -210,6 +219,7 @@ DEF_OP(ExitFunction) {
         } else {
           stp<ARMEmitter::IndexType::PRE>(ARMEmitter::XReg::zr, ARMEmitter::XReg::zr, REG_CALLRET_SP, -0x10);
         }
+#endif
 #ifdef ARCHITECTURE_arm64ec
         /* Write back post-push x17 so dispatcher LoopTop's reload picks
          * up the new top. Without this, in-register PUSH changes get
@@ -236,6 +246,7 @@ DEF_OP(ExitFunction) {
     ARMEmitter::ForwardLabel SkipFullLookup;
     auto RipReg = GetReg(Op->NewRIP);
 
+#ifndef FEX_CALLRET_STACK_UNUSED
     if (Op->Hint == IR::BranchHint::Return) {
       // First try to pop from the call-ret stack, otherwise follow the normal path (but ending in a ret)
 #ifdef ARCHITECTURE_arm64ec
@@ -302,6 +313,7 @@ DEF_OP(ExitFunction) {
       (void)cbz(ARMEmitter::Size::i64Bit, TMP1, &SkipFullLookup);
 #endif
     }
+#endif // !FEX_CALLRET_STACK_UNUSED
 
     // L1 Cache
     ldp<ARMEmitter::IndexType::OFFSET>(TMP1, TMP2, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.L1Pointer));
@@ -342,6 +354,13 @@ DEF_OP(ExitFunction) {
         (void)Bind(&l_callret_ok);
       }
 #endif
+#ifdef FEX_CALLRET_STACK_UNUSED
+      // No shadow-stack push in this module; this callsite is a register blr that is never
+      // backpatched, so no marker is needed either.
+      if (!Op->CallReturnBlock.IsInvalid()) {
+        PendingCallReturnTargetLabel = &CallReturnTargets.try_emplace(Op->CallReturnBlock.ID()).first->second;
+      }
+#else
       if (!Op->CallReturnBlock.IsInvalid()) {
         auto CallReturnAddressReg = GetReg(Op->CallReturnAddress).X();
         PendingCallReturnTargetLabel = &CallReturnTargets.try_emplace(Op->CallReturnBlock.ID()).first->second;
@@ -350,6 +369,7 @@ DEF_OP(ExitFunction) {
       } else {
         stp<ARMEmitter::IndexType::PRE>(ARMEmitter::XReg::zr, ARMEmitter::XReg::zr, REG_CALLRET_SP, -0x10);
       }
+#endif
 #ifdef ARCHITECTURE_arm64ec
       /* Write back post-push x17 so dispatcher LoopTop reload sees it. */
       str(REG_CALLRET_SP, STATE, offsetof(FEXCore::Core::CpuStateFrame, State.callret_sp));
@@ -511,7 +531,10 @@ DEF_OP(Thunk) {
 DEF_OP(ValidateCode) {
   auto Op = IROp->C<IR::IROp_ValidateCode>();
   auto OldCode = Op->CodeOriginal.data();
-  auto Base = GetReg(Op->Header.Args[0]).X();
+  // Guest window: this reads guest code bytes to compare against the recorded originals, so it is
+  // a guest load. Base must stay live across the whole unrolled check, which the reserved
+  // REG_GUEST_ADDR_TMP guarantees (TMP1/TMP2 are consumed by the comparison).
+  auto Base = GetGuestMemReg(Op->Header.Args[0]).X();
   int len = Op->CodeLength;
   int Offset = 0;
   ARMEmitter::ForwardLabel Fail;

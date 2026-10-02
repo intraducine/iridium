@@ -62,7 +62,7 @@ static const UINT EXTERNAL_FENCE_WIN32_BITS = VK_EXTERNAL_FENCE_HANDLE_TYPE_OPAQ
 
 static BOOL use_external_memory(void)
 {
-    return zero_bits != 0;
+    return caller_zero_bits() != 0;
 }
 
 struct mempool
@@ -207,7 +207,7 @@ static VkResult allocate_external_host_memory( struct vulkan_device *device, VkM
 
     if (!once++) FIXME( "Using VK_EXT_external_memory_host\n" );
 
-    if (NtAllocateVirtualMemory( GetCurrentProcess(), &mapping, zero_bits, &alloc_size, MEM_COMMIT, PAGE_READWRITE ))
+    if (NtAllocateVirtualMemory( GetCurrentProcess(), &mapping, caller_zero_bits(), &alloc_size, MEM_COMMIT, PAGE_READWRITE ))
     {
         ERR( "NtAllocateVirtualMemory failed\n" );
         return VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -503,7 +503,7 @@ static VkResult init_physical_device( struct vulkan_physical_device *physical_de
     }
     physical_device->extensions = extensions;
 
-    if (zero_bits && physical_device->extensions.has_VK_EXT_map_memory_placed && physical_device->extensions.has_VK_KHR_map_memory2)
+    if (caller_zero_bits() && physical_device->extensions.has_VK_EXT_map_memory_placed && physical_device->extensions.has_VK_KHR_map_memory2)
     {
         VkPhysicalDeviceMapMemoryPlacedFeaturesEXT map_placed_feature = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT};
         VkPhysicalDeviceFeatures2 features = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &map_placed_feature};
@@ -520,7 +520,7 @@ static VkResult init_physical_device( struct vulkan_physical_device *physical_de
         }
     }
 
-    if (zero_bits && physical_device->extensions.has_VK_EXT_external_memory_host && !physical_device->map_placed_align)
+    if (caller_zero_bits() && physical_device->extensions.has_VK_EXT_external_memory_host && !physical_device->map_placed_align)
     {
         VkPhysicalDeviceExternalMemoryHostPropertiesEXT host_mem_props = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
         VkPhysicalDeviceProperties2 props = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &host_mem_props};
@@ -532,7 +532,7 @@ static VkResult init_physical_device( struct vulkan_physical_device *physical_de
     }
 
     driver_funcs->p_map_device_extensions( &extensions );
-    if (extensions.has_VK_KHR_external_memory_win32 && zero_bits && !physical_device->map_placed_align)
+    if (extensions.has_VK_KHR_external_memory_win32 && caller_zero_bits() && !physical_device->map_placed_align)
     {
         WARN( "Cannot export WOW64 memory without VK_EXT_map_memory_placed\n" );
         extensions.has_VK_KHR_external_memory_win32 = 0;
@@ -1143,7 +1143,7 @@ static VkResult win32u_vkMapMemory2KHR( VkDevice client_device, const VkMemoryMa
         info.size = VK_WHOLE_SIZE;
         info.flags |= VK_MEMORY_MAP_PLACED_BIT_EXT;
 
-        if (NtAllocateVirtualMemory( GetCurrentProcess(), &placed_info.pPlacedAddress, zero_bits,
+        if (NtAllocateVirtualMemory( GetCurrentProcess(), &placed_info.pPlacedAddress, caller_zero_bits(),
                                      &alloc_size, MEM_COMMIT, PAGE_READWRITE ))
         {
             ERR( "NtAllocateVirtualMemory failed\n" );

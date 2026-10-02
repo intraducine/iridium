@@ -43,6 +43,22 @@ struct dce
     UINT        flags;
     LONG        count;         /* usage count; 0 or 1 for cache DCEs, always 1 for window DCEs,
                                   always >= 1 for class DCEs */
+#ifdef WINE_IOS
+    /* iOS-Madeira: dce_list is a win32u global, and win32u is ONE instance for
+     * the whole task, so the cache-DCE pool is shared by every pseudo-process.
+     * That is invisible for a 64-bit-only session, but a DC carries a DC_ATTR
+     * whose address is published to the OWNING process's gdi32 through
+     * GDI_HANDLE_ENTRY.UserPointer — and 32-bit gdi32 truncates it to 32 bits
+     * (wine/dlls/gdi32/objects.c get_gdi_client_ptr).  Handing a 32-bit
+     * process a cache DC created by the 64-bit desktop therefore hands it a
+     * host pointer it cannot address, and vice versa.  Windows gives each
+     * process its own cache anyway, so tag the owner and only recycle within
+     * it when a WoW64 process is involved; 64-bit processes share the cache
+     * as upstream.  Keyed on (pid, peb). */
+    DWORD       owner_pid;
+    void       *owner_peb;
+    BOOL        owner_wow;
+#endif
 };
 
 static struct list dce_list = LIST_INIT(dce_list);
@@ -972,10 +988,35 @@ static struct dce *alloc_dce(void)
     dce->clip_rgn  = 0;
     dce->flags     = 0;
     dce->count     = 1;
+#ifdef WINE_IOS
+    dce->owner_pid = 0;
+    dce->owner_peb = NULL;
+    dce->owner_wow = FALSE;
+    if (win32u_wow_session)
+    {
+        dce->owner_pid = HandleToULong( NtCurrentTeb()->ClientId.UniqueProcess );
+        dce->owner_peb = NtCurrentTeb()->Peb;
+        dce->owner_wow = !!NtCurrentTeb()->WowTebOffset;
+    }
+#endif
 
     set_dc_dce( dce->hdc, dce );
     return dce;
 }
+
+#ifdef WINE_IOS
+/* iOS-Madeira: is this DCE recyclable by the calling pseudo-process?  See the
+ * owner_peb comment on struct dce. */
+static inline BOOL dce_is_own( const struct dce *dce )
+{
+    if (!win32u_wow_session) return TRUE;
+    if (!dce->owner_wow && !NtCurrentTeb()->WowTebOffset) return TRUE;
+    return dce->owner_peb == NtCurrentTeb()->Peb &&
+           dce->owner_pid == HandleToULong( NtCurrentTeb()->ClientId.UniqueProcess );
+}
+#else
+static inline BOOL dce_is_own( const struct dce *dce ) { return TRUE; }
+#endif
 
 /***********************************************************************
  *           get_window_dce
@@ -1322,6 +1363,11 @@ HDC WINAPI NtUserGetDCEx( HWND hwnd, HRGN clip_rgn, DWORD flags )
         LIST_FOR_EACH_ENTRY( dce, &dce_list, struct dce, entry )
         {
             if (!(dce->flags & DCX_CACHE)) break;
+            /* iOS-Madeira: never recycle another pseudo-process's cache DC when
+             * a WoW64 process is involved — its DC_ATTR lives in that process's
+             * pointer namespace.  The DCE_CACHE_SIZE budget becomes per-process
+             * for those, which is what Windows does. */
+            if (!dce_is_own( dce )) continue;
             count++;
             if (dce->count) continue;
             dceUnused = dce;

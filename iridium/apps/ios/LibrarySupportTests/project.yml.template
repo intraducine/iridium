@@ -11,6 +11,7 @@ targets:
       - path: __REPOSITORY__/apps/ios/LibrarySupportTests/Preview.swift
       - path: __REPOSITORY__/apps/ios/Iridium/LibraryArtwork.swift
       - path: __REPOSITORY__/apps/ios/Iridium/LibraryController.swift
+      - path: __REPOSITORY__/apps/ios/Iridium/Views/LibraryChrome.swift
       - path: __REPOSITORY__/apps/ios/Iridium/Views/LibraryAppearanceEditor.swift
       - path: __REPOSITORY__/apps/ios/Iridium/Views/LibraryShelf.swift
     dependencies:

@@ -137,6 +137,45 @@ class RuntimeInputTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn(b'Missing Wine link input', result.stderr)
 
+    def test_wine_compile_selects_windows_modules_and_resources_only(self):
+        stage = load('wine_stage_compile_test', 'stage-windows-runtime.py')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'ci').mkdir()
+            script = root / 'ci/compile-wine.sh'
+            script.write_text((ROOT / 'ci/compile-wine.sh').read_text())
+            tools = root / 'bin'
+            tools.mkdir()
+            for name, body in {
+                'brew': 'echo "$MOCK_PREFIX"',
+                'make': 'printf "%s\\n" "$@" > "$CAPTURE"; exit 17',
+            }.items():
+                tool = tools / name
+                tool.write_text('#!/bin/sh\n' + body + '\n')
+                tool.chmod(0o755)
+            build = root / 'testrepos/Madeira/wine/build-macos'
+            build.mkdir(parents=True)
+            targets = [f'{group}/fixture/{arch}-windows/fixture{suffix}'
+                       for group in ('dlls', 'programs')
+                       for arch in ('aarch64', 'arm64ec') for suffix in stage.SUFFIXES]
+            excluded = ['dlls/winegstreamer/winegstreamer.so',
+                        'dlls/fixture/i386-windows/fixture.dll',
+                        'dlls/fixture/aarch64-windows/fixture.o']
+            makefile = build / 'Makefile'
+            makefile.write_text('\n'.join(f'{target}: dependency' for target in targets + excluded))
+            capture = root / 'args'
+            env = dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'],
+                       CAPTURE=str(capture), MOCK_PREFIX=str(root))
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 17, result.stderr.decode())
+            self.assertEqual(capture.read_text().splitlines(),
+                             ['-C', str(build), '-j2', 'nls/all'] + sorted(targets))
+            capture.unlink()
+            makefile.write_text('\n'.join(f'{target}:' for target in excluded))
+            result = subprocess.run(['bash', str(script)], env=env, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(capture.exists())
+
 
     def test_wineboot_wrapper_preserves_executable_path_and_arguments(self):
         with tempfile.TemporaryDirectory() as temp:
