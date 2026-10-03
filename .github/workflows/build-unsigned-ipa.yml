@@ -1,5 +1,5 @@
-name: Build unsigned IPA
-run-name: Manual unsigned IPA · ${{ github.ref_name }} · ${{ inputs.dispatch_id }}
+name: Build sideloading IPA
+run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatch_id }}
 "on":
   workflow_dispatch:
     inputs:

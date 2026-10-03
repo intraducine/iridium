@@ -18,14 +18,14 @@ installer. Its SHA-256 must be
 `0e7b6c83617a0b67905614579e82031d177ed49cfaacccb0aaef6ddadf19107c`.
 The build extracts it without installing it system-wide.
 
-Use **Actions → Build unsigned IPA → Run workflow**. Select the branch to build.
+Use **Actions → Build sideloading IPA → Run workflow**. Select the branch to build.
 For a checked local checkout, `python3 ci/dispatch-build.py` starts the workflow
 and verifies that GitHub builds the selected commit. Builds are manual; the
 source privacy check runs on pushes and pull requests.
 
 The workflow compiles the app without signing, then packaging adds the anonymous
-ad-hoc entitlement carrier described below. The existing **Build unsigned IPA**
-workflow and `Iridium-unsigned.ipa` filename are retained for compatibility.
+ad-hoc entitlement carrier described below. The `build-unsigned-ipa.yml` workflow
+filename and `Iridium-unsigned.ipa` filename are retained for compatibility.
 Packaging requires the checks in
 `ci/binary-release-blockers.json` and `ci/binary-package-blockers.json` to pass.
 A stopped packaging step does not mean that compilation failed. Inspect the
