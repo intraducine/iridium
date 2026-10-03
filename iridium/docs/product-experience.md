@@ -11,15 +11,46 @@ Artwork is optional. Edit the name, catalog match, cover, or background in
 **Game Options → Rename & Artwork**. Artwork matching is independent of game
 compatibility.
 
+## Download from Steam
+
+Open **Downloads → Steam**, or **Add Game → Download from Steam**. Sign in with
+a password or QR code and complete Steam Guard when requested. Choose an owned
+game, then select its language, unprotected branch, Windows 32/64-bit files,
+owned DLC, and download connections in **Download Options**.
+
+**Queue** provides pause, resume, retry, cancel, and priority controls. Keep
+Iridium open while downloading; after backgrounding or reopening the app, resume
+the paused job explicitly. Verified partial files can be reused. **Download
+Anyway…** appears for an estimated-space or unknown-capacity warning and requires
+confirmation for one attempt. Pausing or retrying checks storage again. File
+verification and real out-of-space failures remain enforced.
+
+Under **Installed**, choose **Add to Library**, select the executable, and then
+use **Play** in the library. **Check for Updates** and **Repair or Update** keep
+the previous game copy. Saves inside that older copy may need manual copying;
+keep it until saves work in the new copy. **Remove from Downloads** removes only
+history. **Delete Game Files** deletes the selected copy and its library entry,
+including saves inside that game folder; separate Windows-profile saves remain.
+
+Steam Cloud, Workshop, Steam Families discovery, protected branches, and desktop
+Steam services are unavailable. A successful download does not establish runtime
+compatibility. Real-account downloads and network recovery still need device
+validation; see the [Steam guide](../packages/steam/README.md).
+
 ## Choose and play
 
 Use **All Games** or **Favorites** to browse. Search finds games in your library.
 Select a cover and choose **Play**. When setup needs attention, follow the action
 shown beside the launch message, such as locating a game file or enabling JIT.
 
-JIT allows the runtime to translate Windows game code. Launch Support in Settings
-contains setup options. External StikDebug setup uses LiveContainer2. A prompt to
-restart Iridium requires closing and reopening the app before continuing.
+JIT allows the runtime to translate Windows game code. **Settings → Launch
+Support** contains setup options. Standalone Iridium can use built-in JIT with
+debugging permission, a pairing file, and LocalDevVPN. In LiveContainer, use
+external JIT and the app's setup/repair action. **External JIT App** selects the
+route; Automatic tries LiveContainer2, StikDebug, LiveContainer, then a
+LiveContainer3 fallback. A prompt to restart Iridium requires closing and
+reopening the app before continuing. See the [JIT guide](builtin-stikjit-ios27.md)
+for signing and device-validation limits.
 Compatibility and performance vary by game, runtime, and device.
 
 ## Game Options
@@ -43,6 +74,9 @@ installer that contains its required files. Successful setup is recorded so it
 does not run again on each Play. Choosing an installer again requests a new run.
 The original installer and existing game saves are kept. Restart Iridium before
 another runtime session if requested.
+Closing the player during prerequisite setup requests cancellation. Runtime exit
+is still observed afterward; a close timeout does not establish successful setup
+or shutdown. Check **View Log** and restart when the app requires it.
 
 ## During play
 
@@ -54,7 +88,10 @@ session log when troubleshooting.
 ## Settings and support
 
 Settings contains launch support, runtime information, artwork settings, storage,
-and diagnostics. Storage shows the device's capacity and available space.
+and diagnostics. **Storage** shows device-volume capacity and raw available
+space when readable, or offers **Refresh** after a read failure. Steam's download
+preflight separately uses iOS important-usage capacity, including reclaimable
+space, with a raw-volume fallback and an explicit unknown-capacity warning.
 Use diagnostics to export logs when reporting an import or launch problem.
 
 ## Interface writing

@@ -7,7 +7,7 @@
 
 An experimental iPhone and iPad Windows-game runtime, with a native game library and touch, keyboard, mouse, and controller integration. Compatibility varies by game and device.
 
-This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The new [Steam integration](iridium/packages/steam/README.md) is experimental and still requires iOS build and device validation; game compatibility and Iridium's JIT requirements apply.
+This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The [Steam integration](iridium/packages/steam/README.md) has passed iOS compilation and limited simulator checks. Real-account authentication, downloads, and physical-device validation remain outstanding; game compatibility and Iridium's JIT requirements apply.
 
 | Directory | Purpose |
 | --- | --- |
@@ -25,7 +25,7 @@ Clone this repository. Optional external dependencies are pinned in the root `.g
 
 The [manual IPA workflow](docs/actions-ipa.md) builds runtime dependencies and the app, with source and license checks before packaging. IPA packaging requires the final binary and source audits to pass. Start with the [product guide](iridium/docs/product-experience.md) for app navigation and the build guide for development setup.
 
-## Build an unsigned IPA locally
+## Build a sideloading IPA locally
 
 Install Xcode 27, Python 3.12 or newer, XcodeGen, LLVM, and .NET SDK 10.0.401. Prepare the runtime
 dependencies by following [the full IPA build guide](docs/actions-ipa.md), then
@@ -36,9 +36,13 @@ bash ci/build-local-ipa.sh
 ```
 
 The script checks the staged dependencies, builds the Release app without
-signing, audits the package, and prints the path to `Iridium-unsigned.ipa`.
+Apple signing, audits the package, and prints the path to `Iridium-unsigned.ipa`.
+Packaging adds an anonymous ad-hoc signature to the main executable carrying
+only `com.apple.developer.kernel.increased-memory-limit=true`; helpers remain
+unsigned. The existing filename is retained for download compatibility.
 It keeps `.build/local-ipa`, so later builds reuse unchanged Xcode outputs.
-The IPA must be signed with a suitable sideloading tool before installation.
+Re-sign the app and sign its helper extensions with a suitable sideloading tool
+before installation.
 
 ## Privacy and contributions
 

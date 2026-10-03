@@ -1,5 +1,12 @@
 # Madeira runtime integration
 
+Madeira is selected by the current `apps/ios/stikjit.yml` app build. This document
+retains the source trace and earlier migration criteria; use the root
+[IPA guide](../../docs/actions-ipa.md) for preparation and the
+[manual runbook](manual-validation-runbook.md) for release-specific acceptance.
+The integrated runtime now includes i386 Wine/FEX WoW64, D3D9, and D3D12 build
+inputs; their presence is not a compatibility guarantee for every game.
+
 ## Source trace
 
 Madeira README describes one Mach process, native iOS Wine unix libraries,
@@ -10,7 +17,7 @@ The checked-out source supports that description:
   pool, publishes its RX/RW addresses, detaches, starts wineserver, then Wine.
 - `StikJITHelper.swift:allocatePool` preserves placement constraints and creates
   the writable alias. The external JIT route is selected in Launch Support.
-  Automatic tries LiveContainer2, StikDebug, then LiveContainer.
+  Automatic tries LiveContainer2, StikDebug, LiveContainer, then a LiveContainer3 fallback.
 - `WineServerBridge.m` starts the native server thread. `WineProcessBridge.m`
   supplies a socketpair, prepares the prefix and loads the native Wine entry.
 - `build/ntdll-unix/build.sh` links native loader, memory, signal and thread
@@ -31,10 +38,14 @@ an adapter for Iridium's player. Use separate prefixes for migration tests.
 
 ## License notices
 
-Madeira's current application code is GPL-3.0-or-later. Its Wine fork carries
-an LGPL-to-GPL conversion notice; FEX and DXMT retain upstream MIT notices
-with Madeira modifications under GPL-3.0-or-later. The rpmalloc fork retains
-0BSD upstream terms and separately identifies GPL modifications.
+Madeira's application code is GPL-3.0-or-later. The currently integrated Wine
+source is its rebuilt `madeira-lgpl` branch under LGPL-2.1-or-later, as recorded
+in `testrepos/Madeira/wine/LICENSE-MADEIRA.md`; the earlier branch's LGPL-to-GPL
+conversion does not apply to this source. FEX and DXMT retain upstream MIT notices
+with Madeira modifications under GPL-3.0-or-later. The imported D3D9/DXSO frontend
+retains LGPL-2.1-or-later. The rpmalloc fork retains 0BSD upstream terms and
+separately identifies GPL modifications. See the root [license guide](../../LICENSING.md)
+for component boundaries and the adopted converter exception's scope.
 
 Preserve Madeira's LICENSE, THIRD-PARTY-NOTICES.md, LICENSES directory, and
 fork-specific LICENSE-MADEIRA.md notices with reused code. Mark adapter changes
@@ -47,12 +58,14 @@ license grants redistribution rights to them. See its tools/fetch-vcruntime.md.
 
 ## Acceptance
 
-1. Build with Xcode 27 and verify the final signed bundle.
+1. Build with Xcode 27 through `stikjit.yml`, audit the sideloading package, and
+   verify the recipient's final signed bundle and profile before device tests.
 2. Launch the x64 DX11 cube inside Iridium with the complete Madeira runtime.
 3. Verify changing rendered frames and input response.
 4. Launch Hollow Knight in a separate prefix; verify menu, sound, gameplay,
    shutdown, and save persistence across a fresh process.
-5. Only after those checks pass, switch the default runtime.
+5. Record these results for the selected source/build/device before claiming
+   release compatibility. The build's runtime selection alone is not acceptance.
 
 Opening the player, a running status, or a successful build is not acceptance.
 

@@ -1,7 +1,19 @@
 # Roadmap
 
 Iridium focuses on adding a local Windows game, choosing it from the library,
-and playing it with touch, a controller, or keyboard and mouse.
+and playing it with touch, a controller, or keyboard and mouse. The app also
+provides native Steam downloads; transfer success and game compatibility need
+separate validation.
+
+## Steam acceptance
+
+- Validate real password/Guard/QR login and saved-session/account switching.
+- Test owned game/DLC downloads, branch/language choices, and large libraries.
+- Check low/unknown storage and one-attempt Download Anyway behavior, network
+  loss, backgrounding, termination, and verified resume.
+- Verify repair/update registration and manual game-local save migration while
+  retaining older installations. Steam Cloud and desktop Steam services remain
+  outside the current implementation.
 
 ## Runtime reliability
 

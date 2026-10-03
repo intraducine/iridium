@@ -1,5 +1,12 @@
 # Media playback integration
 
+The probe results and local build steps below record earlier media development;
+they do not establish playback in the 0.2.0 app. Current release builds prepare
+the source-built Cerbero media SDK through `ci/prepare-media-sdk.sh` and the
+root [IPA guide](../../docs/actions-ipa.md), then generate `stikjit.yml`.
+Keep the per-probe limits below and verify visible video, audible sync, seek,
+skip, and completion in each release game/device separately.
+
 Status: iPhone Media Foundation video decode and end-of-stream passed for the
 first Hollow Knight intro; full playback acceptance is pending.
 

@@ -16,6 +16,19 @@ Import the pairing file in Launch Support, connect LocalDevVPN, then play a game
 When using Iridium inside LiveContainer, use external StikDebug through
 LiveContainer2.
 
+The sideloading IPA's main app has an anonymous ad-hoc signature containing only
+`com.apple.developer.kernel.increased-memory-limit=true`; its helper is unsigned.
+This carrier supplies no debugging permission or provisioning profile. Sign the
+app and helper with your supported setup; built-in JIT checks `get-task-allow`
+on the installed app. Confirm increased-memory-limit in both the final app
+signature and profile. In LiveContainer, the host process's effective rights
+apply. Packaging checks do not establish recipient signing or device behavior.
+
+External JIT is selected under Launch Support → External JIT App. Automatic
+tries LiveContainer2, StikDebug, LiveContainer, then a LiveContainer3 fallback.
+Built-in and external requests have bounded waits. Cancellation may leave a
+helper alive if it could own a stopped thread; follow the app's restart request.
+
 ## Implementation
 
 The host launches `IridiumJITHelper.appex` and accepts an XPC connection only from
@@ -40,15 +53,22 @@ connection failures. Do not terminate a helper that may own a stopped host threa
 ## Build and validation
 
 Use the repository build instructions in [setup](setup.md) and the
-[IPA workflow](../../docs/actions-ipa.md). Run
-`apps/ios/BuiltinJIT/Tests/check.sh` against the resulting app bundle.
-The checks cover pairing validation, XPC decoding, the initial handshake,
-launch recovery, iOS 18 deployment metadata, and helper packaging.
+[IPA workflow](../../docs/actions-ipa.md) for current helper/app compilation and
+package validation. The retained component script
+`iridium/apps/ios/BuiltinJIT/Tests/check.sh` assumes Xcode is installed at
+`/Applications/Xcode-beta.app` and overrides `DEVELOPER_DIR`; it is not a portable
+check for any selected Xcode installation. In that environment, its checks cover
+pairing validation, XPC decoding, the initial handshake, and launch recovery,
+plus iOS 18 metadata and helper packaging when passed an app bundle.
 
 No physical-device compatibility is implied by these build checks. Built-in JIT
 still needs device validation on the supported iOS 18-25 path and on iOS 26+
 TXM/SPTM devices, including helper launch, debugger attachment, executable-region
 preparation where required, Wine startup, and rendered gameplay.
+The [2026-10-03 baseline build](https://github.com/intraducine/iridium/actions/runs/37096956724)
+passed helper/app compilation and package checks at
+`25e5763ee1c56b731f9df235e7bbea4f9f0cafba`, still configured as 0.1.1. It is
+not a 0.2.0 device or recipient-signing verification.
 
 ## Sources and notices
 

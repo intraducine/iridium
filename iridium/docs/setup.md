@@ -1,157 +1,101 @@
 # Setup
 
-The Iridium workspace is now multi-repo. This repo owns the app shell and Swift packages, while the native runtime host and engine-port work live in sibling repos beside it.
+Iridium is a monorepo. The current iOS app uses the Madeira integration in
+`testrepos/Madeira`, the Steam NativeAOT framework, and the built-in JIT helper.
+Start with the root [IPA build guide](../../docs/actions-ipa.md) and
+[local build guide](../../docs/local-ipa-build.md).
 
-## Prerequisites
+## Current app prerequisites
 
-- macOS with current Xcode installed.
-- Accepted local Xcode and Apple SDK license via `sudo xcodebuild -license accept`.
-- Apple platform command line tools enabled.
-- Git.
-- `xcodegen` installed locally.
-- `python3`, `tar`, and `zstd` available on PATH.
-- `zsh` for the Wine fork build/stage/package helpers.
-- CMake for native host and FEX bridge builds. SwiftPM is still used for app/package validation.
-- Docker when rebuilding the default `linux-x86_64` Wine userland from the source fork.
-- `Amethyst-iOS` checked out next to this workspace, or `IRIDIUM_AMETHYST_ROOT` pointing at that checkout, so app staging can copy `libEGL.framework` and `libGLESv2.framework`.
+- An Apple Silicon Mac, Homebrew, Python 3.11 or newer for the local build, and
+  full Xcode 27 with its iPhoneOS SDK. The Actions recipe uses Python 3.12.
+- A working Xcode toolchain with its license and first-run setup completed.
+  Set `DEVELOPER_DIR` when selecting a particular full Xcode installation;
+  Command Line Tools alone are insufficient.
+- .NET SDK **10.0.401** for the Steam framework.
+- The initial Linux userland, media, prefix, graphics, and JIT inputs prepared
+  using the root IPA guide. A fresh checkout cannot build the complete runtime
+  from the incremental app command alone.
 
-## Verify the toolchain
+The local command checks host tools before changing dependencies and can install
+missing Homebrew tools together. Set `IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0` to
+report missing tools without installing them. It does not upgrade all tools or
+clear existing caches.
 
-Run:
+## Clone and build
 
-```bash
-xcodebuild -version
-swift --version
-git --version
-xcodegen --version
-python3 --version
-zstd --version
-```
-
-Those commands should work without triggering first-run setup or license prompts. If `swift` or `xcodebuild` reports that the Xcode license has not been accepted, fix that before trying to build.
-
-If simulator builds fail because required Xcode components are missing or damaged, run:
-
-```bash
-xcodebuild -runFirstLaunch
-xcodebuild -downloadPlatform iOS
-```
-
-## Clone and inspect
-
-```bash
-git clone <iridium-repo-url>
-git clone <iridium-runtime-sdk-url>
-git clone <iridium-fex-ios-url>
-git clone <iridium-wine-ios-url>
+```sh
+git clone https://github.com/intraducine/iridium.git
 cd iridium
-find apps packages docs scripts -maxdepth 4 -type d | sort
 ```
 
-Expected top-level working directories in this repo:
+The root `.gitmodules` and `DEPENDENCIES.json` pin external sources. Prepare
+those sources and the initial runtime inputs with the root build guide; do not
+substitute independently cloned latest dependency heads.
 
-- `apps/ios`
-- `packages/core`
-- `packages/profiles`
-- `packages/runtime`
-- `docs`
+After preparation, run from the monorepo root:
 
-Expected sibling repos beside this one:
-
-- `../iridium-runtime-sdk`
-- `../iridium-fex-ios`
-- `../iridium-wine-ios`
-
-## Prepare the embedded FEX artifacts
-
-Before validating translator-backed execution or building the iOS app, refresh the canonical embedded FEX artifacts:
-
-```bash
-cd ../iridium-fex-ios
-./iridium/ios/build_embedded_translator.sh --platform host
-./iridium/ios/build_embedded_translator.sh --platform device
-./iridium/ios/build_embedded_translator.sh --platform simulator
-cd ../iridium
+```sh
+bash ci/build-local-ipa.sh
 ```
 
-These commands populate the canonical manifests and archives used by the native runtime and Xcode linker. The default-root `device` and `simulator` builds also refresh the SDK-specific alias roots `build-iridium-ios-iphoneos` and `build-iridium-ios-iphonesimulator`; the app and test consumers use those SDK-specific aliases rather than relying on `build-iridium-ios-current`.
+This command generates `iridium/apps/ios/IridiumStikJIT.xcodeproj` from
+`iridium/apps/ios/stikjit.yml`, which includes `madeira.yml` and `project.yml`.
+It builds the Release app without Xcode signing, then stages and audits the IPA
+with the anonymous main-app memory entitlement carrier. The output still uses
+`Iridium-unsigned.ipa`. For standalone installation, sign the app and helper and
+confirm increased-memory-limit in Iridium's final signature and profile.
+LiveContainer uses its host process's effective signing/JIT rights; importing
+the guest IPA does not grant those rights.
+No Apple account credentials, certificate, profile, or pairing file belongs in
+Actions or the source checkout.
 
-A valid host archive enables the translator-backed macOS package path. Package resolution uses the source fallback when a host archive is unavailable. The Xcode app target always expects the matching device or simulator archive so it cannot silently link the source fallback in place of FEXCore.
+Logs and reusable outputs remain in `.build`. Retry the same command after
+fixing a failure. Do not delete saves, game folders, or prefixes to repair a
+build. A completed build does not establish device compatibility.
 
-The Xcode target runs `apps/ios/Scripts/prepare_embedded_translator.sh` and selects `host`, `device`, or `simulator` from `PLATFORM_NAME`. It refreshes the archive when CMake is available, or reuses an existing nonempty archive with a matching canonical manifest. Set `IRIDIUM_REBUILD_EMBEDDED_TRANSLATOR=1` to reject reuse when CMake is unavailable.
+## Source validation
 
-## Bootstrap the repo
+From the monorepo root:
 
-```bash
-./scripts/doctor.sh --bootstrap
-./scripts/bootstrap.sh
+```sh
+python3 check-public-source.py
+python3 ci/check-standards.py
+python3 -B -m unittest discover -s ci -p 'test_*.py'
+git diff --check
 ```
 
-This verifies the expected sibling-repo workspace layout, checks the local toolchain and canonical FEX manifests, verifies the package graph, and generates `apps/ios/Iridium.xcodeproj` from `apps/ios/project.yml`.
+Swift package checks run from the `iridium/` component directory. The root
+workflow supplies the current iOS SDK, Steam NativeAOT, simulator, helper,
+application, and package checks. A simulator fixture does not establish account
+login, downloads, or game behavior on an iPhone or iPad.
 
-If bootstrap fails before Swift package resolution starts, confirm that these sibling repos exist beside this repo:
+## Earlier runtime component development
 
-- `../iridium-runtime-sdk`
-- `../iridium-fex-ios`
-- `../iridium-wine-ios`
+`iridium-runtime-sdk`, `iridium-fex-ios`, and `iridium-wine-ios` remain sibling
+directories within the monorepo for the earlier embedded-runtime contracts and
+tests. Their component READMEs describe their own host/device/simulator builds.
+The `iridium/scripts/doctor.sh`, `bootstrap.sh`, and `generate-project.sh`
+helpers still target that older path and generate `Iridium.xcodeproj` from
+`project.yml`. They are not the complete Madeira/Steam/JIT IPA build entry point.
+The older app-stage path expects Amethyst framework inputs; current release
+preparation uses the graphics inputs in the root workflow instead.
 
-If translator-backed validation or the Xcode link fails, rerun the canonical embedded FEX build command for the affected platform and verify its manifest with `scripts/doctor.sh`.
+## Device setup and validation
 
-Before an app build that stages the bundled runtime, run:
+Use [the JIT guide](builtin-stikjit-ios27.md) for standalone built-in JIT and
+LiveContainer external JIT. Built-in JIT requires debugging permission, a valid
+pairing file, and LocalDevVPN; it is unavailable when Iridium is hosted.
 
-```bash
-./scripts/doctor.sh --app-build
-```
+In **Settings → Runtime → Display & Memory**, choose resolution and the maximum
+JIT code pool for the next launch. Automatic checks the current app memory
+limit and tries smaller pools if allocation fails. Smaller pools can limit games.
 
-That additionally checks the canonical runtime bundle at `../iridium-runtime-sdk/build/iridium-runtime-base` and the `Amethyst-iOS` framework inputs used by `apps/ios/Scripts/stage_runtime_userland.sh`.
+In **Launch Support → External JIT App**, select the route. Automatic tries
+LiveContainer2, StikDebug, LiveContainer, then a LiveContainer3 fallback. Pending
+JIT requests are bounded; close the player to cancel, and restart if requested.
 
-If you only want to regenerate the Xcode project after the environment is already healthy, run:
-
-```bash
-./scripts/generate-project.sh
-```
-
-## Validate the workspace
-
-From the repo root:
-
-```bash
-swift test
-xcodebuild -project apps/ios/Iridium.xcodeproj -scheme Iridium -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
-xcodebuild -project apps/ios/Iridium.xcodeproj -scheme Iridium -destination 'platform=iOS Simulator,name=<available-simulator-name>' test
-```
-
-Use any locally available iPhone/iPad simulator that satisfies the current deployment target. If you need to discover valid simulator names first, run:
-
-```bash
-xcrun simctl list devices available
-```
-
-Those are the repo-level validation commands and should stay green after each slice in the main repo. Rebuild the canonical embedded FEX artifacts first whenever the bridge code or embedded archive inputs change.
-
-## Current contribution flow
-
-The recommended first steps are:
-
-1. Read [Architecture](architecture.md) and [Roadmap](roadmap.md).
-2. Confirm whether the work belongs in `profiles`, `runtime`, `core`, or the iOS app shell.
-3. Put native host and engine-port work in the sibling runtime repos instead of forcing it into the SwiftUI shell.
-4. Prefer extending existing package seams before inventing new ones.
-5. Update docs when the implementation changes the plan.
-
-## Runtime validation
-
-Use the [manual validation runbook](manual-validation-runbook.md) to check
-rendering, input, audio, saves, and shutdown on a physical device. Check the
-runtime selected by the app; results from one runtime do not validate another.
-
-### Display and JIT memory
-
-In Settings → Runtime → Display & Memory, choose the resolution and the maximum
-JIT code pool size for the next launch. Automatic checks the current app memory
-limit and tries smaller pools if an allocation fails. A smaller pool can limit
-which games can run.
-
-In Launch Support → External JIT App, select StikDebug, LiveContainer, or
-LiveContainer2. Automatic tries LiveContainer2 first. JIT requests expire after
-three minutes. Close the player to cancel a pending launch.
+Use [the manual validation runbook](manual-validation-runbook.md) to record
+rendering, input, audio, saves, and shutdown separately on a physical device.
+Results from the earlier embedded runtime do not validate Madeira or the release
+IPA. Real Steam account/download and recipient-signing checks remain outstanding.

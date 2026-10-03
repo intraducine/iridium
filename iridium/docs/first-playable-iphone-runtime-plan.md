@@ -1,5 +1,11 @@
 # First Playable iPhone Runtime Plan
 
+Historical plan for the earlier embedded-runtime SDK/FEX/Wine path. The current
+release app uses the Madeira integration; its build and device acceptance are
+described in [Setup](setup.md) and [the manual runbook](manual-validation-runbook.md).
+The milestones and evidence below apply to that earlier path and do not replace
+release-specific compatibility checks.
+
 This document exists to close the gap between “the app no longer crashes” and “the app can actually run a game on a physical iPhone.”
 
 It is intentionally narrower than the general roadmap. The roadmap records project direction. This document records the concrete engineering work required to make the bundled-device runtime become genuinely playable on iPhone.

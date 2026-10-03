@@ -1,6 +1,9 @@
 # Architecture
 
-This document describes the target architecture for Iridium. It reflects the current repository layout, the package seams already present in the main repo, and the sibling runtime repos that now own the real engine-port work.
+This document describes Iridium's package boundaries in the source monorepo.
+The current iOS target is generated from `apps/ios/stikjit.yml`; it includes the
+Madeira adapter, native Steam framework, and built-in JIT helper. The earlier
+runtime SDK/FEX/Wine path remains for component development and host tests.
 
 ## Goals
 
@@ -18,6 +21,7 @@ Owns the iOS entry point, app lifecycle, scene wiring, entitlement configuration
 The current app shell already renders:
 
 - Library and game detail views backed by the shared store.
+- A native Downloads tab backed by the account-scoped Steam queue.
 - Onboarding and runtime checks derived from JIT and runtime health.
 - Prefix and settings surfaces that mutate the shared state.
 - Pending-launch and queued-resume UX owned by store/runtime truth.
@@ -66,9 +70,24 @@ Owns live execution concerns:
 
 `runtime` can depend on `core` and `profiles`. `profiles` can depend on `core`. `core` should remain dependency-light.
 
-### Sibling runtime repos
+### Current Madeira and Steam integration
 
-The real engine-port work is intentionally split out of the main app repo:
+`../testrepos/Madeira` supplies the current native iOS Wine/FEX/DXMT implementation.
+`apps/ios/MadeiraSupport` adapts its JIT, prefix, launch, prerequisite, input, and
+shutdown lifecycle to the player. This build path is separate from the earlier
+runtime SDK bridge described below. Runtime readiness and game compatibility
+still require evidence from the selected implementation and device.
+
+`packages/steam` owns NativeAOT authentication, metadata, authorization, and
+verified transfers behind a C ABI. The iOS shell owns Keychain sessions and an
+atomic account-scoped queue; core registration preserves game identity and
+settings. Downloads/repairs use separate managed directories and retain older
+copies. See [the Steam decision](../../docs/decisions/native-steam-downloads.md)
+for storage consent, integrity checks, and unsupported Steam services.
+
+### Earlier runtime components
+
+The earlier embedded-runtime work remains in adjacent monorepo directories:
 
 - `../iridium-runtime-sdk`
   - owns the native runtime host SDK, embedded host core, macOS harness entrypoint, and runtime-bundle assembly
@@ -77,9 +96,9 @@ The real engine-port work is intentionally split out of the main app repo:
 - `../iridium-wine-ios`
   - owns the source-owned Wine fork, iOS userland build path, and direct-launch bridge surface
 
-Engine-port work should land in those repos unless it changes a stable contract that the main app repo consumes.
+Changes belong in the component actually consumed by the selected runtime.
 
-## Planned dependency shape
+## Earlier embedded-runtime dependency shape
 
 ```mermaid
 flowchart LR
@@ -94,7 +113,7 @@ flowchart LR
     SDK --> WINE["../iridium-wine-ios"]
 ```
 
-## Runtime flow
+## Earlier embedded-runtime flow
 
 1. `apps/ios` boots the app and gathers platform signals.
 2. `runtime` provisions and validates the bundled runtime, then probes host capability state.
@@ -117,12 +136,16 @@ flowchart LR
 
 ## What is intentionally deferred
 
-- A true playable iPhone Wine/FEX engine beyond the current host/bridge seams.
-- Production Steam networking and content transfer on top of the same bundled local runtime path.
+- Physical-device gameplay acceptance of the selected release app, beyond builds
+  and the earlier host/bridge tests.
+- Real-account Steam download and recovery acceptance on physical devices.
 - Production persistence beyond the current JSON snapshot backend.
 - Fleet telemetry aggregation and analytics beyond the current local runtime telemetry snapshot path.
 
-Those decisions remain deferred, but the app/store/runtime seams now exist and are exercised by tests so the repo can harden them without re-architecting the app shell. The current physical-device blocker is now specific and explicit: local launch/playability readiness can be derived from real registered services, but a physical iPhone still must prove that the Wine/FEX path renders a first frame, receives input, initializes audio, and remains in a running session without development-only readiness overrides.
+These limits require tests of the selected runtime, not just package seams or
+readiness flags. For the current release build, verify changing frames, input,
+audio, saves, and shutdown on the stated game/device, and test Steam account
+behavior separately. Earlier runtime host evidence does not validate Madeira.
 
 ## Runtime contract maintenance
 
