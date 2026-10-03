@@ -126,4 +126,4 @@ class BuildSpaceTests(unittest.TestCase):
                      'name: Check final binary audit before packaging'):
             self.assertLess(text.index(step), text.index('reclaim-build-space.py package-ready'))
         self.assertLess(text.index('reclaim-build-space.py package-ready'),
-                        text.index('name: Prepare and audit unsigned package'))
+                        text.index('name: Prepare and audit sideloading package'))

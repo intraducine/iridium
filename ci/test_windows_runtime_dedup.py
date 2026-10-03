@@ -115,7 +115,7 @@ class WindowsRuntimeDedupTests(unittest.TestCase):
         shutil.copytree(self.app, moved, symlinks=True)
         alias = moved / "arm64ec-windows/module with spaces.dll"
         self.assertEqual(alias.read_bytes(), self.pe)
-        self.assertTrue(alias.resolve().is_relative_to(moved))
+        self.assertTrue(alias.resolve().is_relative_to(moved.resolve()))
 
     def test_missing_directory_pair_is_rejected_but_legacy_only_app_is_allowed(self):
         (self.app / "arm64ec-windows").rmdir()
@@ -219,11 +219,25 @@ class WindowsRuntimeDedupTests(unittest.TestCase):
     def package_with_fixture_writer(self, preserve_links=True):
         def run(command, **kwargs):
             self.assertEqual(command[0], "/usr/bin/ditto")
+            if command[1:3] == ["-x", "-k"]:
+                ipa, extracted = map(Path, command[-2:])
+                with zipfile.ZipFile(ipa) as archive:
+                    for entry in archive.infolist():
+                        path = extracted / entry.filename
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        if stat.S_ISLNK(entry.external_attr >> 16):
+                            path.symlink_to(archive.read(entry).decode("utf-8"))
+                        else:
+                            path.write_bytes(archive.read(entry))
+                            path.chmod(stat.S_IMODE(entry.external_attr >> 16))
+                return subprocess.CompletedProcess(command, 0)
             payload, destination = map(Path, command[-2:])
             write_zip(payload / "Iridium.app", destination, preserve_links)
             return subprocess.CompletedProcess(command, 0)
         with mock.patch.object(packager, "unsigned_status", return_value=True), \
              mock.patch.object(packager, "check_asset_catalog"), \
+             mock.patch.object(packager, "sign_entitlement_carrier"), \
+             mock.patch.object(packager, "audit_package_signatures", return_value={}), \
              mock.patch.object(packager.subprocess, "run", side_effect=run):
             packager.package(self.app, self.root / "output")
 

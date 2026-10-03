@@ -55,7 +55,10 @@ Do not use a placeholder command as proof that publication happened.
    dependency revisions, source archive, notices, and checksums. Fix failures
    through reviewed source changes, then choose another manual run.
 3. Audit the actual IPA and corresponding source. Check every nested executable
-   is unsigned, no signing/pairing material is present, and bundle versions match.
+   is unsigned except the main app's anonymous ad-hoc increased-memory-limit
+   carrier. Verify its sole entitlement, empty CMS payload, absent team identity,
+   and bundle resource seal with the packaging audit. No credential or pairing
+   material may be present, and bundle versions must match.
    Confirm the source archive includes local patches and required build inputs.
 4. Perform the release's stated simulator/device tests. Do not claim untested
    games or input/audio paths work. If device checks are unavailable, label the
@@ -63,7 +66,7 @@ Do not use a placeholder command as proof that publication happened.
 5. Complete the release description. Include installation and signing limits,
    JIT requirements, migration/save advice, test evidence, and known problems.
 6. With publication authorization, tag the verified commit and make a draft.
-   Attach the unsigned IPA, exact corresponding-source archive, checksums, and
+   Attach the sideloading IPA, exact corresponding-source archive, checksums, and
    required notices. Check downloads and checksum verification before publishing.
 7. If a serious regression appears, mark the release as affected and publish a
    new fix version. Preserve old source and checksums. Give data-safe recovery
@@ -72,6 +75,8 @@ Do not use a placeholder command as proof that publication happened.
 Actions artifacts are temporary test outputs, not permanent release source
 hosting. A published binary needs accessible matching source beside it. Retain
 both together. No maintainer signing certificate is used at any stage.
+The historical `Iridium-unsigned.ipa` filename is retained; the anonymous carrier
+does not replace the recipient's app and helper signing before installation.
 
 ## Enforcement and limits
 
