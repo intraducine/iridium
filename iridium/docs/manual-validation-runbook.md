@@ -1,8 +1,9 @@
 # Manual Validation Runbook
 
-This runbook covers the lab-only acceptance flow for real licensed Windows game payloads imported into an otherwise empty Iridium install.
+This runbook covers manual acceptance of licensed Windows games and native Steam downloads. Test the current Madeira app separately from the earlier embedded-runtime harness.
 
-Use this with licensed local payloads only. These checks are intended for manual device labs, not CI.
+Use licensed game payloads and authorized accounts. These checks are intended
+for manual device labs, not CI.
 
 ## Scope
 
@@ -13,7 +14,42 @@ translator artifact before starting the checks below.
 
 ## Preconditions
 
-- Latest package and app tests are green:
+- Select the exact source commit and build run. Verify the actual app/helper
+  version and build number, matching source/checksums, package audit, and final
+  recipient signature/profile before installing. The anonymous memory carrier
+  alone does not grant installation, debugging, or increased-memory rights.
+- Prepare the current app through the root [IPA guide](../../docs/actions-ipa.md)
+  and `stikjit.yml`, with green source and relevant build checks. Do not use the
+  earlier `Iridium.xcodeproj` as evidence for the complete release app.
+- Configure JIT using the [JIT guide](builtin-stikjit-ios27.md). Built-in JIT
+  needs standalone hosting, debugging permission, pairing, and LocalDevVPN;
+  LiveContainer uses external JIT. Follow restart requests.
+- Preserve existing games, prefixes, and saves. Use a separate test installation
+  and enough storage for downloads plus retained repair/update copies.
+
+## Current Madeira app acceptance
+
+1. Import a licensed game through Add Game, select its executable, and Play.
+2. Observe changing frames and guest interaction; a player screen or running
+   status alone is insufficient. Test touch, keyboard/mouse, and controller
+   paths separately where available.
+3. Verify audible output, save/reload across a fresh process, shutdown, app
+   switching, and relaunch. Record faults for the specific game and device.
+4. Exercise Game Options → Run Installer with a valid game prerequisite. Check
+   setup prompts, success recording, cancellation, late runtime exit, and the
+   restart-required path. A close timeout is not confirmed shutdown.
+5. Repeat signing/JIT checks for standalone and LiveContainer hosting. For
+   standalone, confirm increased-memory-limit in Iridium's final app signature
+   and profile. Hosted execution uses the container process's effective rights;
+   importing the guest IPA does not grant them.
+
+## Earlier embedded-runtime checks
+
+The following package, capability, allocator, and harness checks exercise the
+retained earlier runtime. They are component-development procedures, not a
+replacement for current Madeira release/device acceptance.
+
+- Earlier package and app checks:
   - `../iridium-fex-ios/iridium/ios/build_embedded_translator.sh --platform host`
   - `ctest --test-dir ../iridium-fex-ios/build-iridium-ios-host --output-on-failure`
   - `../iridium-fex-ios/iridium/ios/build_embedded_translator.sh --platform device`
@@ -22,9 +58,8 @@ translator artifact before starting the checks below.
   - `xcodebuild -project apps/ios/Iridium.xcodeproj -scheme Iridium -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build`
   - `xcodebuild -project apps/ios/Iridium.xcodeproj -scheme Iridium -destination 'platform=iOS Simulator,name=<available-simulator-name>' test` when simulator coverage is relevant to the slice under test
   - If you need to discover a valid simulator name first, run `xcrun simctl list devices available`
-- The bundled runtime is provisioned and validated in Settings.
-- The test device has enough managed storage headroom for the selected title.
-- The validation operator understands that JIT enablement is external to Iridium and may still be the gating step for queued launch resume.
+- Provision and validate the earlier bundled runtime in Settings when testing it.
+- Its external JIT provider may gate queued launch resume.
 
 ## Physical-Device JIT Proof Loop
 
@@ -157,25 +192,36 @@ Expected result:
 
 ## Steam Flow
 
-Use this flow only when a real Steam path is being exercised intentionally on top of the same bundled local runtime used by manual imports.
+Use the current native **Downloads** tab. Real-account acceptance remains
+outstanding; public metadata, QR challenge/cancel, and fixtures are narrower checks.
 
-1. Sign in through the host-side Steam flow.
-2. Sync the library and confirm the session reference is persisted outside the JSON snapshot boundary.
-3. Queue the install and confirm `InstallExecutionRecord` captures:
-   - account session reference
-   - depot progress bytes
-   - verification state
-   - resume checkpoint
-   - runtime bundle id/version
-4. Interrupt the install mid-transfer, then resume it.
-5. Verify the install, register the artifact, and confirm the executable fingerprint is persisted.
-6. Launch through the same bundled local runtime path used by manual imports.
-7. Uninstall and confirm managed artifacts are removed while history remains intact.
+1. In Downloads → Steam, test password, each available Guard method, QR refresh/
+   cancel, saved-session restore, expired tokens, sign-out, and account switching.
+   Confirm passwords/tokens are absent from queue JSON and exported diagnostics.
+2. Select an owned game and exercise language, unprotected branch, 32/64-bit
+   depots, and owned DLC. Queue multiple jobs; verify priority, pause/resume,
+   retry/cancel, and account scoping.
+3. Interrupt the network, background, and terminate the app. Reopen and resume
+   explicitly; verify partial chunks and final files rather than trusting progress.
+4. Exercise low and unknown storage warnings. Download Anyway permits one
+   attempt; pause, ordinary retry, and relaunch must check storage again. Real
+   out-of-space and verification errors must still fail.
+5. In Installed, select Add to Library and the executable, then Play through
+   Madeira. Record rendering, input, audio, saves, and shutdown separately.
+6. Check for Updates and Repair or Update. Confirm older game files remain,
+   registration preserves settings/prefix/save mappings, and game-local saves
+   are copied manually when needed.
+7. In a disposable test copy, distinguish Remove from Downloads (history only)
+   from Delete Game Files (selected copy and library entry, including game-local
+   saves). Confirm separate Windows-profile saves remain.
+8. Check VoiceOver, large text, orientation, keyboard and controller navigation,
+   and both standalone and LiveContainer hosting.
 
 ## Acceptance
 
 - Direct launch succeeds or fails with a structured persisted reason.
-- No Windows desktop, explorer, launcher shell, or fallback shell is exposed.
+- Game launch does not fall back to a Windows desktop or shell. Prerequisite
+  setup may intentionally display Windows installer prompts before the game.
 - Prefix bootstrap succeeds before launch submission.
 - Runtime evidence references the imported executable fingerprint or the registered Steam artifact.
 - Explicit host-capability gating, storage gating, and whitelist policy are enforced when the selected runtime policy requires them.
@@ -183,5 +229,6 @@ Use this flow only when a real Steam path is being exercised intentionally on to
 ## Record the result
 
 Record the app build, selected runtime, device model, OS version, game, input
-method, and observed failures. Keep private device identifiers and raw logs out
+method, exact source commit/run, steps, and observed results and limits. Keep
+private device identifiers and raw logs out
 of public reports. Follow the repository release policy for acceptance.

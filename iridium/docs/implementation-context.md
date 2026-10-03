@@ -1,10 +1,18 @@
-# Implementation Context
+# Earlier embedded-runtime implementation context
+
+This is a historical handoff for the earlier runtime SDK/FEX/Wine bring-up,
+including its dated repository snapshots and tests below. Its Steam-hidden and
+standalone-repository statements do not describe the current release app.
+Current source is a monorepo; `apps/ios/stikjit.yml` selects Madeira, native Steam
+downloads, and the built-in JIT helper. Use [Setup](setup.md),
+[Architecture](architecture.md), and [Product experience](product-experience.md)
+for current instructions, and [0.2.0 release preparation](../../docs/releases/0.2.0.md)
+for build evidence and remaining device limits.
 
 This document is the compact-resilient handoff for `/path/to/iridium`.
 Paths below intentionally use `/path/to/...` placeholders so the handoff stays portable across workspaces.
 
-Update it when a meaningful runtime/store slice lands or when the active target changes.
-Treat the repo-state fields below as a point-in-time snapshot that should be refreshed with each handoff update.
+Keep the dated repo-state fields below as the evidence for that earlier work.
 
 ## Current repo state
 

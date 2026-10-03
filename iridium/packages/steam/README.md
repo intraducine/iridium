@@ -101,9 +101,14 @@ controls, audio, saves, and shutdown for each tested game. Check VoiceOver, larg
 text, orientation, keyboard navigation, and controller dismissal separately.
 
 See the architecture decision and third-party notices for storage migration and
-source/relink requirements. The source collector retains the new dependencies;
-the binary inventory must be updated against a real compiled iOS framework before
-an IPA containing this module is distributed.
+source/relink requirements. The source collector retains the dependencies. The
+[2026-10-03 baseline run](https://github.com/intraducine/iridium/actions/runs/37096956724)
+at `25e5763ee1c56b731f9df235e7bbea4f9f0cafba` passed iOS framework/application
+compilation, native/simulator checks, source collection, and final binary/package
+checks. It still uses app version 0.1.1 and does not establish real-account login,
+owned-game downloads, or physical-device compatibility. A 0.2.0 build and its
+matching source, bundle metadata, checksums, and recipient signing still need
+release verification.
 
 
 ## Native Downloads tab

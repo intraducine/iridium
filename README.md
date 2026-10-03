@@ -7,7 +7,7 @@
 
 An experimental iPhone and iPad Windows-game runtime, with a native game library and touch, keyboard, mouse, and controller integration. Compatibility varies by game and device.
 
-This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The new [Steam integration](iridium/packages/steam/README.md) is experimental and still requires iOS build and device validation; game compatibility and Iridium's JIT requirements apply.
+This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The [Steam integration](iridium/packages/steam/README.md) has passed iOS compilation and limited simulator checks. Real-account authentication, downloads, and physical-device validation remain outstanding; game compatibility and Iridium's JIT requirements apply.
 
 | Directory | Purpose |
 | --- | --- |

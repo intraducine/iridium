@@ -29,7 +29,10 @@ Run `apps/ios/Scripts/check_library_ui.sh` with Xcode 27 and XcodeGen installed.
 
 CatalogSmoke.swift is an optional simulator executable for a live query supplied as its argument. It tests matching, downloading both image types, decoding, and reopening the cache in an isolated temporary directory. A live run with Hollow Knight passed without credentials. No game launch is part of that check.
 
-Device builds use Xcode-beta and the Madeira scheme. No phone was accessed or installed during this work. Simulator UI tests do not prove physical input or game runtime behavior.
+These artwork checks record earlier development. Current device builds use
+the Iridium scheme generated from `stikjit.yml`; see [Setup](setup.md).
+No phone was accessed or installed during that artwork work. Simulator UI tests
+do not prove physical input or game runtime behavior.
 
 ## Artwork sources
 
@@ -39,6 +42,6 @@ Device builds use Xcode-beta and the Madeira scheme. No phone was accessed or in
 
 Artwork remains owned by its respective rights holders. No game art from the concept is bundled with the production app. The editor links to the selected artwork source. Custom images stay local. Example screenshots use an explicitly assigned local test image; they do not demonstrate automatic recognition of the arbitrary fixture titles.
 
-## Current verification limit
+## Earlier artwork verification limit
 
-The final signed device build and runtime package checks passed. The direct simulator storage checker and live catalog checker passed. Earlier touch UI tests passed, but the last automated UI reruns stalled during startup; the complete final native controller host has not received device sign-off. See `design-qa.md`. The debugger warnings alone are not a confirmed cause of those stalls.
+The earlier signed device build and runtime package checks passed. The direct simulator storage checker and live catalog checker passed. Earlier touch UI tests passed, but the last automated UI reruns stalled during startup; the complete native controller host had not received device sign-off. The debugger warnings alone are not a confirmed cause of those stalls. These results do not validate the 0.2.0 release app; use the [manual runbook](manual-validation-runbook.md) for current acceptance.
