@@ -53,6 +53,10 @@ Keep these backups until any local source edits have been reviewed.
 
 Every invocation saves console output under `.build/local-build-logs/` and
 prints the path. A failure prints that path and exits without packaging an IPA.
+Packaging places the anonymous increased-memory-limit carrier on the main
+executable and verifies the sealed bundle; helper extensions remain unsigned.
+The retained `Iridium-unsigned.ipa` filename needs re-signing with a sideloading
+tool before installation. See [the signature policy](actions-ipa.md#source-and-binary-checks).
 The native-input cache and `.build/local-ipa` Xcode directory are retained.
 The existing native cache skips native compilation when its inputs match;
 this change does not replace it with unconditional native builds.

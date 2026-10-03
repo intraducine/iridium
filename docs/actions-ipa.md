@@ -1,4 +1,4 @@
-# Build an unsigned IPA
+# Build a sideloading IPA
 
 The Madeira D3D12 runtime downloads a checksum-pinned Metal Shader Converter
 4.0 beta 2 dependency from the repository's `deps-metal-shader-converter-4.0-beta2`
@@ -23,13 +23,20 @@ For a checked local checkout, `python3 ci/dispatch-build.py` starts the workflow
 and verifies that GitHub builds the selected commit. Builds are manual; the
 source privacy check runs on pushes and pull requests.
 
-The workflow builds the app without signing. Packaging requires the checks in
+The workflow compiles the app without signing, then packaging adds the anonymous
+ad-hoc entitlement carrier described below. The existing **Build unsigned IPA**
+workflow and `Iridium-unsigned.ipa` filename are retained for compatibility.
+Packaging requires the checks in
 `ci/binary-release-blockers.json` and `ci/binary-package-blockers.json` to pass.
 A stopped packaging step does not mean that compilation failed. Inspect the
 individual steps and their logs.
 
-An unsigned IPA must be signed with a suitable sideloading tool before it can
-be installed. Sign the app and its helper extensions. JIT, game playback, audio,
+The IPA must be re-signed with a suitable sideloading tool before it can
+be installed. Re-sign the app and sign its helper extensions. Preserve
+`com.apple.developer.kernel.increased-memory-limit=true` on the main app and
+verify it in both the final signature and the recipient's provisioning profile.
+The carrier supplies the request to the signing tool; it does not authorize
+installation or guarantee a higher device memory allowance. JIT, game playback, audio,
 and input need separate device tests.
 
 ## Build requirements
@@ -87,6 +94,24 @@ The package check rejects signing files, unreviewed private-key material, device
 identifiers, missing helpers, and symlinks outside the app. Only exact reviewed
 public test-library hashes have a private-key scan exception. Vendor signatures
 are removed in a staging copy; the original build output stays intact.
+
+Only the staged main executable receives an ad-hoc signature, with the fixed
+`software.iridium` identifier and the sole boolean entitlement
+`com.apple.developer.kernel.increased-memory-limit=true`, in XML and DER. It
+contains no CMS payload, certificates, team identifier, timestamp, or identity
+entitlements. Packaging signs the app bundle without `--deep`, retaining its
+`_CodeSignature/CodeResources` seal; helpers and every other Mach-O stay unsigned.
+Runtime manifests are refreshed after signature changes, then the bundle is
+resealed if those manifests changed. The final audit checks actual artifact
+hashes without modifying sealed files.
+
+The audit checks the embedded binary signature policy and uses strict codesign
+verification of every architecture and sealed resource. It rejects unknown
+signature formats, additional entitlements, signed nested code, and unexpected
+signature resources. The ZIP is extracted and audited again before publication;
+all bundle paths, modes, and symlink targets must survive the round trip.
+`ipa-signature-audit.json` records the delivered main executable hash, resource
+seal hash, exact entitlement, and count of unsigned native executables.
 
 Do not supply signing keys, provisioning profiles, pairing records, Apple account
 credentials, or private device logs to Actions. Release the IPA with matching
@@ -308,7 +333,7 @@ native compiler outputs remain cached even when Xcode or packaging fails.
 A missing initial Linux/media/prefix/graphics/JIT input is reported with its
 path before native compilation. A fresh checkout still needs the initial
 cross-platform dependencies described above. This command does not download a
-complete runtime from an unspecified Actions run, sign an app, trigger Actions,
+complete runtime from an unspecified Actions run, use an Apple signing identity, trigger Actions,
 or bypass source/license/package checks. Keep matching source and notices for
 any IPA distributed. Successful source tests do not prove an Xcode build or
 device compatibility.

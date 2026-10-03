@@ -504,14 +504,15 @@ jobs:
         run: python3 ci/check-ipa-prerequisites.py --package
       - name: Free retained source and link intermediates
         run: python3 ci/reclaim-build-space.py package-ready
-      - name: Prepare and audit unsigned package
+      - name: Prepare and audit sideloading package
         run: python3 ci/package-unsigned-ipa.py .build/unsigned-ipa/Build/Products/Release-iphoneos/Iridium.app .build/ipa-output
-      - name: Upload unsigned IPA
+      - name: Upload sideloading IPA
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-unsigned-${{ github.sha }}
           path: |
             .build/ipa-output/Iridium-unsigned.ipa
             .build/ipa-output/SHA256SUMS
+            .build/ipa-output/ipa-signature-audit.json
           if-no-files-found: error
           retention-days: 7

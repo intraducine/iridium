@@ -145,13 +145,15 @@ class ConsolidatedPackagingTests(unittest.TestCase):
             if destination.parent == self.output:
                 if destination.name == "Iridium-unsigned.ipa":
                     self.assertTrue((self.output / "ipa-size-report.json").is_file())
+                    self.assertTrue((self.output / "ipa-signature-audit.json").is_file())
                     self.assertTrue((self.output / "SHA256SUMS").is_file())
                 published.append(destination.name)
             return replace(path, destination)
 
         with mock.patch.object(Path, "replace", checked_replace):
             self.fixture.package_with_fixture_writer()
-        self.assertEqual(published, ["ipa-size-report.json", "SHA256SUMS", "Iridium-unsigned.ipa"])
+        self.assertEqual(published, ["ipa-size-report.json", "ipa-signature-audit.json",
+                                     "SHA256SUMS", "Iridium-unsigned.ipa"])
         ipa = self.output / "Iridium-unsigned.ipa"
         report = json.loads((self.output / "ipa-size-report.json").read_text())
         self.assertEqual(report["ipaBytes"], ipa.stat().st_size)
@@ -171,6 +173,8 @@ class ConsolidatedPackagingTests(unittest.TestCase):
 
         with mock.patch.object(packager, "unsigned_status", return_value=True), \
              mock.patch.object(packager, "check_asset_catalog"), \
+             mock.patch.object(packager, "sign_entitlement_carrier"), \
+             mock.patch.object(packager, "audit_package_signatures", return_value={}), \
              mock.patch.object(packager.subprocess, "run", side_effect=failed_writer):
             with self.assertRaises(subprocess.CalledProcessError):
                 packager.package(self.app, self.output)
@@ -195,7 +199,7 @@ class ConsolidatedPackagingTests(unittest.TestCase):
         self.fixture.minimal_app()
         self.fixture.pair()
         replace = Path.replace
-        for name in ("ipa-size-report.json", "SHA256SUMS", "Iridium-unsigned.ipa"):
+        for name in ("ipa-size-report.json", "ipa-signature-audit.json", "SHA256SUMS", "Iridium-unsigned.ipa"):
             with self.subTest(output=name):
                 def failed_replace(path, destination):
                     if Path(destination) == self.output / name:
@@ -214,7 +218,7 @@ class ConsolidatedPackagingTests(unittest.TestCase):
             self.fixture.write(f"{arch}-windows/not-pe.dll", b"not PE")
         self.assertEqual(packager.deduplicate_windows_runtime(self.app), {})
         self.output.mkdir()
-        for name in ("ipa-size-report.json", "SHA256SUMS"):
+        for name in ("ipa-size-report.json", "ipa-signature-audit.json", "SHA256SUMS"):
             with self.subTest(output=name):
                 sidecar = self.output / name
                 sidecar.write_text("existing output")
@@ -223,6 +227,21 @@ class ConsolidatedPackagingTests(unittest.TestCase):
                 self.assertEqual(sidecar.read_text(), "existing output")
                 self.assertEqual(list(self.output.iterdir()), [sidecar])
                 sidecar.unlink()
+
+    def test_carrier_signing_or_signature_audit_failure_leaves_no_final_outputs(self):
+        self.fixture.minimal_app()
+        self.fixture.pair()
+        for operation in ("sign_entitlement_carrier", "audit_package_signatures"):
+            with self.subTest(operation=operation):
+                with mock.patch.object(packager, "unsigned_status", return_value=True), \
+                     mock.patch.object(packager, "check_asset_catalog"), \
+                     mock.patch.object(packager, "sign_entitlement_carrier") as signing, \
+                     mock.patch.object(packager, "audit_package_signatures") as audit:
+                    target = signing if operation == "sign_entitlement_carrier" else audit
+                    target.side_effect = subprocess.CalledProcessError(1, "codesign")
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        packager.package(self.app, self.output)
+                self.assertEqual(list(self.output.iterdir()), [])
 
 
 if __name__ == "__main__":
