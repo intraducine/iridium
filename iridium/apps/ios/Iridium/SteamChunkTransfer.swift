@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 // The request exists only during a private ABI handoff. Persisted metadata below
 // deliberately has no URL, headers, account name, token, depot key, or game path.
