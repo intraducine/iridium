@@ -106,6 +106,44 @@ private actor SteamNativeWorker {
     }
 }
 
+private struct SteamKeychainError: LocalizedError {
+    static let saveMessage = "Steam sign-in could not be saved. Keep Iridium open, unlock the device, then return to Steam to retry."
+    enum Operation: String { case save, load, clear }
+    let operation: Operation
+    let status: OSStatus
+    var errorDescription: String? {
+        switch operation {
+        case .save: Self.saveMessage
+        case .load: "Saved Steam sign-in could not be read. Unlock the device, then reopen Steam to retry."
+        case .clear: "Saved Steam sign-in could not be removed. Unlock the device, then try signing out again."
+        }
+    }
+    var safeLogLine: String { "[Steam] session-\(operation.rawValue) outcome=failed status=\(status)" }
+}
+
+private enum SteamSessionDiagnostic {
+    static func localFailure(_ error: Error) -> String {
+        switch error as? SteamModuleError {
+        case .rejected: "submission-rejected"
+        case .unavailable: "native-unavailable"
+        case .response: "unreadable-state"
+        default: "submission-or-state"
+        }
+    }
+
+    static func failure(_ message: String?) -> String {
+        guard let message, let start = message.range(of: "[steam/", options: .backwards), message.hasSuffix("]")
+        else { return "stage=unknown code=request-failed" }
+        let parts = message[start.lowerBound...].dropFirst().dropLast().split(separator: "/")
+        let phases = ["initializing", "connecting", "authenticating", "syncing", "request"]
+        let codes = ["steam", "authentication", "network", "timeout", "platform", "native-library", "runtime", "io", "unexpected"]
+        guard parts.count == 4, parts[0] == "steam", phases.contains(String(parts[1])), codes.contains(String(parts[2])),
+              parts[3].count == 8, parts[3].allSatisfy({ $0.isHexDigit })
+        else { return "stage=unknown code=request-failed" }
+        return "stage=\(parts[1]) code=\(parts[2])"
+    }
+}
+
 private enum SteamKeychain {
     static var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "software.iridium.steam",
@@ -116,9 +154,9 @@ private enum SteamKeychain {
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
-            guard SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess
-            else { throw SteamModuleError.storage }
-        } else if status != errSecSuccess { throw SteamModuleError.storage }
+            let added = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+            guard added == errSecSuccess else { throw SteamKeychainError(operation: .save, status: added) }
+        } else if status != errSecSuccess { throw SteamKeychainError(operation: .save, status: status) }
     }
     static func load() throws -> Data? {
         var lookup = query
@@ -127,12 +165,13 @@ private enum SteamKeychain {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(lookup as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess else { throw SteamModuleError.storage }
-        return item as? Data
+        guard status == errSecSuccess else { throw SteamKeychainError(operation: .load, status: status) }
+        guard let data = item as? Data else { throw SteamModuleError.response }
+        return data
     }
     static func clear() throws {
         let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw SteamModuleError.storage }
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw SteamKeychainError(operation: .clear, status: status) }
     }
 }
 
@@ -155,6 +194,10 @@ final class SteamLibraryModel: ObservableObject {
     private var persistence: SteamQueuePersistence?
     private var operationTask: Task<Void, Never>?
     private var didRestore = false
+    private var didRestoreSession = false
+    // The native handoff is destructive. Keep its bytes only in memory until
+    // Keychain confirms the write, or the user explicitly signs out.
+    private var pendingSession: Data?
     private var restoring = false
     private var queueWritable = false
     private var foreground = true
@@ -171,38 +214,59 @@ final class SteamLibraryModel: ObservableObject {
     var account: String? { state.signedIn ? state.accountName : nil }
 
     func restore() async {
-        guard !didRestore, !restoring else { return }
+        savePendingSession()
+        guard !busy, !didRestoreSession, foreground else { return }
         restoring = true
-        didRestore = true
-        do {
-            var folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
-                appropriateFor: nil, create: true).appendingPathComponent("SteamDownloads", isDirectory: true)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            try folder.setResourceValues(values)
-            let storage = SteamQueuePersistence(url: folder.appendingPathComponent("queue.json"))
-            persistence = storage
-            queue = try await storage.load()
-            queue.rebaseInstalledDirectories(steamGamesRoot: folder.deletingLastPathComponent()
-                .appendingPathComponent("SteamGames", isDirectory: true))
-            queue.recoverAfterRelaunch()
-            queueWritable = true
-            try await saveQueue()
-        } catch {
-            // A damaged queue is not silently overwritten by an empty one.
-            queueWritable = false
-            self.error = error.localizedDescription
+        if !didRestore {
+            didRestore = true
+            do {
+                var folder = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                    appropriateFor: nil, create: true).appendingPathComponent("SteamDownloads", isDirectory: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try folder.setResourceValues(values)
+                let storage = SteamQueuePersistence(url: folder.appendingPathComponent("queue.json"))
+                persistence = storage
+                queue = try await storage.load()
+                queue.rebaseInstalledDirectories(steamGamesRoot: folder.deletingLastPathComponent()
+                    .appendingPathComponent("SteamGames", isDirectory: true))
+                queue.recoverAfterRelaunch()
+                queueWritable = true
+                try await saveQueue()
+            } catch {
+                // A damaged queue is not silently overwritten by an empty one.
+                queueWritable = false
+                self.error = error.localizedDescription
+            }
         }
-        restoring = false
+        var failureStage = "initializing"
         do {
             try await worker.initialize()
-            if let saved = try SteamKeychain.load(),
-               var command = try JSONSerialization.jsonObject(with: saved) as? [String: String] {
-                command["action"] = "restore"
-                perform(command)
+            failureStage = "loading"
+            guard let saved = try SteamKeychain.load() else {
+                didRestoreSession = true
+                restoring = false
+                RuntimeLogCapture.writeLine("[Steam] session-load outcome=missing")
+                return
             }
-        } catch { self.error = error.localizedDescription }
+            RuntimeLogCapture.writeLine("[Steam] session-load outcome=loaded")
+            failureStage = "saved-data"
+            guard var command = try JSONSerialization.jsonObject(with: saved) as? [String: String],
+                  command["accountName"]?.isEmpty == false, command["refreshToken"]?.isEmpty == false
+            else { throw SteamModuleError.response }
+            command["action"] = "restore"
+            restoring = false
+            perform(command)
+        } catch {
+            restoring = false
+            self.error = error.localizedDescription
+            if let storage = error as? SteamKeychainError { RuntimeLogCapture.writeLine(storage.safeLogLine) }
+            else {
+                let code = failureStage == "saved-data" ? "invalid-session" : SteamSessionDiagnostic.localFailure(error)
+                RuntimeLogCapture.writeLine("[Steam] session-restore outcome=failed stage=\(failureStage) code=\(code)")
+            }
+        }
     }
 
     func perform(_ command: [String: Any]) {
@@ -217,7 +281,7 @@ final class SteamLibraryModel: ObservableObject {
         // Installation goes through the durable queue, never through a view task.
         guard action != "install", !busy else { return }
         starting = true
-        error = nil
+        if pendingSession == nil { error = nil }
         operationTask = Task {
             do {
                 if action == "signOut" {
@@ -227,11 +291,24 @@ final class SteamLibraryModel: ObservableObject {
                         catch { queueWritable = false; self.error = error.localizedDescription }
                     }
                     try SteamKeychain.clear()
+                    pendingSession = nil
+                    didRestoreSession = true
+                    RuntimeLogCapture.writeLine("[Steam] session-clear outcome=cleared")
                 }
                 try await send(command)
+                if action == "restore" { RuntimeLogCapture.writeLine("[Steam] session-restore outcome=submitted") }
                 starting = false
                 try await poll(expectedJob: nil)
-            } catch { self.error = error.localizedDescription }
+                if action == "restore" {
+                    didRestoreSession = state.signedIn
+                    RuntimeLogCapture.writeLine(state.signedIn ? "[Steam] session-restore outcome=restored" :
+                        "[Steam] session-restore outcome=failed " + SteamSessionDiagnostic.failure(state.error))
+                } else if state.signedIn { didRestoreSession = true }
+            } catch {
+                self.error = error.localizedDescription
+                if let storage = error as? SteamKeychainError { RuntimeLogCapture.writeLine(storage.safeLogLine) }
+                else if action == "restore" { RuntimeLogCapture.writeLine("[Steam] session-restore outcome=failed code=" + SteamSessionDiagnostic.localFailure(error)) }
+            }
             starting = false
             operationTask = nil
             startNext()
@@ -357,6 +434,10 @@ final class SteamLibraryModel: ObservableObject {
 
     func resumeForeground() {
         foreground = true
+        savePendingSession()
+        if didRestore, !didRestoreSession, !state.signedIn {
+            Task { await restore() }
+        }
         // A background pause is explicit in the UI. Do not undo a user's pause
         // or start a large cellular transfer merely because the app reopened.
     }
@@ -411,6 +492,19 @@ final class SteamLibraryModel: ObservableObject {
         try await worker.send(JSONSerialization.data(withJSONObject: command))
     }
 
+    private func savePendingSession() {
+        guard let saved = pendingSession else { return }
+        do {
+            try SteamKeychain.save(saved)
+            pendingSession = nil
+            if error == SteamKeychainError.saveMessage { error = nil }
+            RuntimeLogCapture.writeLine("[Steam] session-save outcome=saved")
+        } catch {
+            self.error = error.localizedDescription
+            if let storage = error as? SteamKeychainError { RuntimeLogCapture.writeLine(storage.safeLogLine) }
+        }
+    }
+
     private func saveQueue() async throws {
         guard queueWritable, let persistence else { throw SteamQueueError.invalidDocument }
         revision &+= 1
@@ -451,7 +545,7 @@ final class SteamLibraryModel: ObservableObject {
         starting = true
         rate.reset()
         bytesPerSecond = 0
-        error = nil
+        if pendingSession == nil { error = nil }
         operationTask = Task {
             do {
                 // Persist the operation identity before the first network write.
@@ -516,13 +610,13 @@ final class SteamLibraryModel: ObservableObject {
                     RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) download-ended outcome=\(outcome)")
                 }
             }
+            if let saved = await worker.session() {
+                pendingSession = saved
+            }
+            savePendingSession()
             if next.steamId != state.steamId || !next.signedIn { cloudByGame = [:]; cloudProblems = [:] }
             state = next
             if let details = next.details { detailsByApp[details.appId] = details }
-            if let saved = await worker.session() {
-                do { try SteamKeychain.save(saved) }
-                catch { self.error = error.localizedDescription }
-            }
             if let id = expectedJob {
                 rate.update(networkBytes: next.networkBytes, at: Date.timeIntervalSinceReferenceDate,
                     downloading: next.phase == "downloading" && next.busy)
