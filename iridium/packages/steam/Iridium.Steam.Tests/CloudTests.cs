@@ -112,6 +112,14 @@ static class CloudTests
         Directory.CreateSymbolicLink(Path.Combine(saves, "linked"), outside);
         await Reject(async () => _ = await Run("check"), "directory symlink escape");
         Directory.Delete(Path.Combine(saves, "linked"));
+        var ancestorLink = Path.Combine(root, "linked-sandbox");
+        Directory.CreateSymbolicLink(ancestorLink, Path.Combine(root, "sandbox"));
+        await Reject(() =>
+        {
+            CloudPaths.Safe(Path.Combine(ancestorLink, "Documents", "MadeiraTestPrefixes", game));
+            return Task.CompletedTask;
+        }, "symlink above the requested save root");
+        Directory.Delete(ancestorLink);
         if (OperatingSystem.IsLinux())
         {
             var fifo = Path.Combine(saves, "special.sav");
