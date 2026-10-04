@@ -10,6 +10,7 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
     CancellationTokenSource? operation;
     TaskCompletionSource<string>? guardCode;
     SavedSession? pendingSecret;
+    public SteamChunkHandoff ChunkHandoff { get; } = new();
 
     public Snapshot Read()
     {
@@ -53,6 +54,7 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
                 || command.OperationId == null || command.AppId == 0)) return false;
             if (command.Action == "install")
             {
+                if (command.BackgroundTransfers && !Guid.TryParseExact(command.OperationId, "D", out _)) return false;
                 try { _ = command.Options?.Validate() ?? throw new SteamFailure("Missing download options."); }
                 catch (SteamFailure) { return false; }
             }
@@ -121,7 +123,8 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
                             _ => "Downloading and verifying on this device…" } }), ct,
                     command.Options, command.ReuseDirectory,
                     bytes => Update(s => s with { NetworkBytes = checked(s.NetworkBytes + bytes) }), command.OperationId,
-                    measureCapacity, command.OverrideStoragePreflight, diagnostic => Update(s => s with { Storage = diagnostic }));
+                    measureCapacity, command.OverrideStoragePreflight, diagnostic => Update(s => s with { Storage = diagnostic }),
+                    command.BackgroundTransfers ? ChunkHandoff : null);
                 Update(s => s with { Phase = "installed", Installed = installed, Message = "Verified. Choose the game's executable to add it to your library." });
             }
         }

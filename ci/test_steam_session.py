@@ -98,7 +98,13 @@ enum RuntimeLogCapture {
     static var commands: [[String: String]] = []
     static var initializeError: Error?, sendError: Error?
     static var handoffs = 0
+    static var initializations = 0
+    static var runtimePermissions: [Bool] = []
+    func batch() async throws -> SteamChunkBatch? { nil }
+    func completeBatch(operation: String, batch: String, code: String) async throws {}
+    func permitChunkRuntime(_ allowed: Bool) async { Self.runtimePermissions.append(allowed) }
     func initialize() async throws {
+        Self.initializations += 1
         await Task.yield()
         if let error = Self.initializeError { throw error }
     }
@@ -126,9 +132,48 @@ enum RuntimeLogCapture {
     }
     static func reset() {
         nextSnapshot = ready; secret = nil; commands = []; handoffs = 0
+        initializations = 0; runtimePermissions = []
+        SteamBackgroundSession.shared.recoveries = 0; SteamBackgroundSession.shared.cancellations = 0
+        SteamDownloadActivity.shared.recoveries = 0
         initializeError = nil; sendError = nil; RuntimeLogCapture.lines = []
     }
 }
+
+// Host replacements cover platform I/O only; production model methods run unchanged.
+struct UIBackgroundTaskIdentifier: Equatable { static let invalid = Self() }
+@MainActor final class UIApplication {
+    static let shared = UIApplication()
+    var isProtectedDataAvailable = true
+    func beginBackgroundTask(withName: String, expirationHandler: @escaping () -> Void) -> UIBackgroundTaskIdentifier { .invalid }
+    func endBackgroundTask(_ identifier: UIBackgroundTaskIdentifier) {}
+}
+enum LiveContainerIntegration { static func isHosted() -> Bool { false } }
+@MainActor final class SteamBackgroundSession {
+    static let shared = SteamBackgroundSession()
+    var recoveries = 0, cancellations = 0
+    func recoverAfterRelaunch() async { recoveries += 1 }
+    func cancel(operation: String? = nil, discardRaw: Bool = false) async { cancellations += 1 }
+    func enqueue(_ batch: SteamChunkBatch) async throws {}
+    func result(operation: String, batch: String) async -> String? { nil }
+    func networkBytes(operation: String) async -> Int64 { 0 }
+    static func failureCode(_ error: Error) -> String { "io" }
+}
+@MainActor final class SteamDownloadActivity {
+    static let shared = SteamDownloadActivity()
+    var recoveries = 0
+    func recoverAfterRelaunch() async { recoveries += 1 }
+    func begin(_ job: SteamDownloadJob) {}
+    func update(_ job: SteamDownloadJob, phase: String? = nil, force: Bool = false) {}
+    func end(_ job: SteamDownloadJob) {}
+}
+@MainActor final class SteamDownloadRuntime {
+    static let shared = SteamDownloadRuntime()
+    var hasContinuedRuntime = false
+    func begin(operation: UUID, name: String, userInitiated: Bool, expiration: @escaping () -> Void) {}
+    func finish(operation: UUID, success: Bool) {}
+    func progress(operation: UUID, completed: Int64, total: Int64, phase: String) {}
+}
+
 '''
 
 CHECKS = r'''
@@ -178,6 +223,17 @@ extension SteamLibraryModel {
         try check(FixtureKeychain.stored == saved && SteamNativeWorker.handoffs == 1, "Retry saves retained token")
         try check(signingIn.error == nil, "Successful retry clears only its storage warning")
 
+        // A background cold launch cannot initialize Steam or restore credentials.
+        FixtureKeychain.reset(saved); SteamNativeWorker.reset()
+        let suspended = SteamLibraryModel()
+        suspended.pauseForBackground()
+        await suspended.restore()
+        try check(SteamNativeWorker.initializations == 0 && FixtureKeychain.loads == 0,
+                  "Background cold restore has no native or Keychain login work")
+        suspended.resumeForeground()
+        await suspended.restore(); try await finish(suspended)
+        try check(suspended.state.signedIn, "Foreground can restore after a background cold launch")
+
         // A new model cold-restores the saved JSON and preserves the queue.
         SteamNativeWorker.reset()
         let cold = SteamLibraryModel()
@@ -223,6 +279,8 @@ extension SteamLibraryModel {
         await locked.restore(); try await finish(locked)
         try check(locked.state.signedIn && FixtureKeychain.loads == 2, "Same model retries startup Keychain read")
         try check(locked.queue.jobs.count == 1, "Session retry does not reload or erase the current queue")
+        try check(SteamBackgroundSession.shared.recoveries == 1 && SteamDownloadActivity.shared.recoveries == 1,
+                  "Session retry never repeats daemon or Activity recovery")
 
         // Missing item is a completed check; corruption is preserved and diagnosed.
         FixtureKeychain.reset(); SteamNativeWorker.reset()
@@ -299,6 +357,8 @@ extension SteamLibraryModel {
         FixtureKeychain.clearStatus = errSecSuccess
         failedSignOut.perform(["action": "signOut"]); try await finish(failedSignOut)
         try check(FixtureKeychain.stored == nil, "Explicit sign-out remains retryable")
+        try check(SteamBackgroundSession.shared.cancellations == 2,
+                  "Every explicit sign-out attempt cancels raw transfers before credential changes")
 
         for malicious in ["synthetic-refresh-token", "[steam/private/account/80004005]", "[steam/connecting/network/secret]",
                           "[steam/connecting/network/80004005]/synthetic-account"] {
@@ -320,7 +380,7 @@ class SteamSessionTests(unittest.TestCase):
         # Replace only I/O adapters and host-only imports. Execute the entire
         # real model and Keychain logic, including restore, perform and poll.
         model = model[:start] + model[end:]
-        for name in ('Combine', 'Security', 'Darwin'):
+        for name in ('Combine', 'Security', 'Darwin', 'UIKit'):
             model = model.replace('import ' + name + '\n', '')
         model = model.replace('FileManager.default', 'FixtureFiles.default')
         with tempfile.TemporaryDirectory(prefix='iridium-session-checks-') as directory:
@@ -331,7 +391,7 @@ class SteamSessionTests(unittest.TestCase):
                 'swiftc', '-swift-version', '5', '-parse-as-library',
                 '-module-cache-path', str(Path(directory) / 'module-cache'),
                 str(APP / 'SteamDownloadQueue.swift'), str(APP / 'SteamCloudModels.swift'),
-                str(APP / 'SteamCloudFileAccess.swift'), str(source), '-o', str(binary),
+                str(APP / 'SteamCloudFileAccess.swift'), str(APP / 'SteamChunkTransfer.swift'), str(source), '-o', str(binary),
             ], check=True, timeout=180)
             subprocess.run([str(binary)], check=True, timeout=60)
 

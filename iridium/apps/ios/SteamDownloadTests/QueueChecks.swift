@@ -3,6 +3,7 @@ import Foundation
 @main struct QueueChecks {
     static func main() async throws {
         var checks = 0
+        checks += try await SteamChunkChecks.run()
         func check(_ condition: Bool, _ name: String) throws {
             guard condition else { throw NSError(domain: "QueueChecks", code: 1, userInfo: [NSLocalizedDescriptionKey: name]) }
             checks += 1

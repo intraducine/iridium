@@ -13,6 +13,7 @@ struct IridiumApp: App {
     private static let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
 
     @Environment(\.scenePhase) private var scenePhase
+    @UIApplicationDelegateAdaptor(SteamBackgroundAppDelegate.self) private var backgroundDelegate
     @State private var viewModel: AppViewModel?
 
     init() {

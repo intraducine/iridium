@@ -8,6 +8,7 @@ final class SteamCloudFileAccess {
     enum Operation: CaseIterable {
         case cloud, refresh, installer, deleteImportedFiles, deleteSteamFiles
         case removeLibraryEntry, relocate, register, repairPrefix, rebuildPrefix, clonePrefix
+        case editLaunchArguments
     }
     struct Lease: Equatable {
         fileprivate let id: UUID

@@ -71,7 +71,8 @@ struct GameDetailView: View {
                     List {
                         Section("Launch") {
                             MenuValue("Executable", value: game.launchProfile.executablePath)
-                            MenuValue("Arguments", value: game.launchProfile.arguments.isEmpty ? "None" : game.launchProfile.arguments.joined(separator: " "))
+                            MenuNavigationLink("Custom Arguments") { GameArgumentsEditor(game: game, viewModel: viewModel) }
+                                .disabled(!viewModel.canEditGameArguments(game.id))
                             MenuNavigationLink("Launch Checks") { GameCompatibilityView(game: game, viewModel: viewModel) }
                         }
                         Section {

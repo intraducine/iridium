@@ -142,7 +142,7 @@ targets:
     settings:
       base:
         IRIDIUM_RUNTIME_PROFILE: madeira
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME]
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME, IRIDIUM_APP]
         SWIFT_OBJC_BRIDGING_HEADER: MadeiraSupport/IridiumMadeira-Bridging-Header.h
         CODE_SIGN_ENTITLEMENTS: MadeiraSupport/Madeira.entitlements
     dependencies:
