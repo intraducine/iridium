@@ -12,7 +12,8 @@ import tempfile
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    app = root / 'iridium/apps/ios/Iridium'
+    ios = root / 'iridium/apps/ios'
+    app = ios / 'Iridium'
     sdk = subprocess.check_output(
         ['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
     with tempfile.TemporaryDirectory(prefix='iridium-steam-ui-') as directory:
@@ -20,6 +21,7 @@ def main():
         host.write_text('''import Combine
 import SwiftUI
 import UIKit
+enum LiveContainerIntegration { static func isHosted() -> Bool { false } }
 @MainActor final class AppViewModel: ObservableObject {
     func registerSteamDownload(title: String, appID: String,
         directory: String, executable: String) async throws {}
@@ -44,8 +46,15 @@ struct ArtworkImage: View {
         subprocess.run([
             'xcrun', '--sdk', 'iphoneos', 'swiftc', '-typecheck', '-parse-as-library',
             '-sdk', sdk, '-target', 'arm64-apple-ios18.0', '-swift-version', '5',
+            '-D', 'IRIDIUM_APP',
             str(app / 'SteamDownloadQueue.swift'),
             str(app / 'SteamLibraryModel.swift'),
+            str(app / 'SteamChunkTransfer.swift'),
+            str(app / 'SteamBackgroundSession.swift'),
+            str(app / 'SteamBackgroundAppDelegate.swift'),
+            str(app / 'SteamDownloadRuntime.swift'),
+            str(app / 'SteamDownloadActivity.swift'),
+            str(ios / 'SteamActivityShared/SteamDownloadActivityAttributes.swift'),
             str(app / 'SteamCloudModels.swift'),
             str(app / 'SteamCloudFileAccess.swift'),
             str(app / 'RuntimeLogCapture.swift'),
