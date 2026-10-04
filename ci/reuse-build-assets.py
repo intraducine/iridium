@@ -265,7 +265,8 @@ if __name__ == '__main__':
     values = {}
     for stage, key in [('media', 'media_run_id'), ('linux-userland', 'linux_run_id'), ('prefix', 'prefix_run_id')]:
         explicit = os.environ.get(key.upper(), '')
-        if stage in ('linux-userland', 'prefix') and os.environ.get('MEDIA_ONLY') == 'true':
+        if ((stage in ('linux-userland', 'prefix') and os.environ.get('MEDIA_ONLY') == 'true')
+                or (stage == 'linux-userland' and os.environ.get('IRIDIUM_RUNTIME_PROFILE') == 'madeira')):
             values[key] = ''
         else:
             values[key] = select(ROOT, stage, branch, explicit) if reuse or explicit else ''

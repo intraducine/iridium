@@ -45,13 +45,14 @@ Use a fresh checkout, Python 3.12 or newer, and Xcode 27. The workflow installs
 its host tools and prepares dependencies. Follow its commands for a local build;
 generate the app project with `iridium/apps/ios/stikjit.yml`.
 
-The Linux job prepares Wine userland, exact Debian source packages, and copyright
-notices. The macOS jobs prepare native libraries, Wine Windows modules, FEX,
+The v0.2.1 Madeira profile omits the legacy Linux runtime. The manual workflow
+does not build or download its Wine userland, host executable, or translator
+resources. The macOS jobs prepare native libraries, Wine Windows modules, FEX,
 DXMT, ANGLE, GStreamer, StikJIT/idevice, and a temporary prefix. Prefix preparation
 uses a separate build directory and does not modify player saves.
 
 Archive pins are in `ci/runtime-inputs.json`. Git dependencies use committed
-revisions. Host tools and the Debian image are not fully version-locked, so the
+revisions. Host tools and the prefix preparation image are not fully version-locked, so the
 build does not promise byte-for-byte reproducibility.
 
 Inspect inputs and run local checks before compilation:
@@ -69,7 +70,7 @@ Use the same isolated Python environment for media and source-package checks.
 ## Saved build outputs
 
 Successful native, Wine, Windows, graphics, and JIT builds are uploaded before
-later packaging steps. Linux and media outputs are also retained. A packaging
+later packaging steps. Media outputs are also retained. A packaging
 failure does not discard these completed components.
 
 Artifacts expire after seven days. Reuse does not create another copy or extend
@@ -79,7 +80,7 @@ matching source inputs, build recipes, toolchain details, and archive checksums.
 Changes to shared inputs can require more than one component to rebuild.
 
 The application is built and audited after component restoration. Set
-`reuse_assets=false` and leave explicit media/Linux overrides empty to request
+`reuse_assets=false` and leave explicit media overrides empty to request
 a fresh build. Source collection and release checks still run when components
 are reused.
 
@@ -289,11 +290,11 @@ bash ci/build-local-ipa.sh
 ```
 
 The script prepares missing host tools, checks retained inputs, refreshes native
-components when their inputs or outputs changed, restores extracted Wine files,
-and validates the actual Xcode staging contract before compiling the app. A
+components when their inputs or outputs changed, and stages the native Madeira
+package. It requires no Linux userland archive or extracted cache. A
 second build in the same checkout is rejected before shared files are modified.
 No manual extraction, clean build, or cache deletion is needed after a native
-refresh or a missing extracted-userland failure.
+refresh.
 
 The local build targets iOS 18. Its media link check rejects a retained SDK
 whose linked objects require a newer iOS version. Restore or rebuild the media
@@ -308,29 +309,38 @@ toolchain identity, staged input bytes and the presence/metadata of native
 outputs. A rebuild invalidates its success record before it starts. Failed or
 interrupted refreshes are retried; only validated completed outputs receive a
 new success record. The original retained-producer revision stays separate from
-the new native bundle version. Changing Linux Wine, media, prefix, ANGLE or JIT
-producer inputs requires matching component inputs from the procedures above;
-the native refresh does not silently relabel these old binaries as newly built.
+the native producer record. Changing media, prefix, ANGLE or JIT producer inputs
+requires matching component inputs from the procedures above; the native refresh
+does not silently relabel these old binaries as newly built.
 
-Wine userland is restored from the canonical manifest-checked archive into:
+`madeira.yml` and `stikjit.yml` select `IRIDIUM_RUNTIME_PROFILE=madeira`.
+`IRIDIUM_RUNTIME=legacy` cannot switch these apps to an absent Linux runtime.
+Xcode stages native Wine modules, the clean prefix, media/controller resources,
+and the shared ANGLE frameworks. The aggregate finalizer removes old Linux
+resources and the SwiftPM fallback after its resource copy. Packaging independently
+requires the native inventory and rejects leftover legacy resources. Incremental
+builds from the older package therefore receive the same resource layout.
 
-```text
-iridium-runtime-sdk/build/wine-userland-linux-x86_64/staged-root
-```
+The runtime SDK still references the embedded FEX and Wine server bridge archives,
+so their link inputs and source notices remain. Both `aarch64-windows` and
+`i386-windows` remain; a 64-bit game may use a 32-bit installer. No framework or
+media-library size saving is assumed. Legacy source, SDK bundle recipes, and their
+historical notices remain available to developers using the base `project.yml`.
+The normal source archive retains all checkout and linked-dependency source; it
+no longer demands Debian sources solely for the omitted Linux userland.
 
-This build-only cache lives outside `iridium-runtime-base`. It survives native
-bundle replacement and is not copied into SwiftPM resources. Unchanged valid
-extractions are reused; damaged or missing trees are reconstructed and checked
-before replacing the old tree. Xcode receives the same explicitly selected root
-and will not fall back to another stale tree. SwiftPM gets only the manifest
-fallback; the app stage supplies the runtime and one extracted userland copy.
+The measured v0.2.0 IPA is 399,916,792 compressed bytes. Its extracted Linux
+userland contributes 156,769,339 compressed bytes. Subtracting that component gives
+243,147,453 bytes (about 243 MB), an arithmetic estimate rather than a measured
+v0.2.1 IPA size. ZIP overhead, changed code and other resources can change the
+result. Measure a fresh v0.2.1 artifact before publishing a size claim.
 
 Logs are kept in `.build/local-build-logs`. Successful package audits produce a
 new `.build/local-ipa-output.XXXXXX/Iridium-unsigned.ipa` and its checksum. Earlier
 IPAs remain intact. Rerun the same build command after fixing an error; completed
 native compiler outputs remain cached even when Xcode or packaging fails.
 
-A missing initial Linux/media/prefix/graphics/JIT input is reported with its
+A missing initial media/prefix/graphics/JIT input is reported with its
 path before native compilation. A fresh checkout still needs the initial
 cross-platform dependencies described above. This command does not download a
 complete runtime from an unspecified Actions run, use an Apple signing identity, trigger Actions,

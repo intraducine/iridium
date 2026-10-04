@@ -18,6 +18,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>IridiumRuntimeProfile</key>
+	<string>$(IRIDIUM_RUNTIME_PROFILE)</string>
 	<key>IridiumBundledRuntimeRoot</key>
 	<string>BundledRuntime/iridium-runtime-base</string>
 	<key>LSApplicationQueriesSchemes</key>

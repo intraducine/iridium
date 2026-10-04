@@ -59,6 +59,35 @@ Protocol<CContentServerDirectory_GetCDNAuthToken_Response>();
 Protocol<ContentManifestPayload>();
 Protocol<ContentManifestMetadata>();
 Protocol<ContentManifestSignature>();
+Protocol<CCloud_GetAppFileChangelist_Request>();
+Protocol<CCloud_GetAppFileChangelist_Response>();
+Protocol<CCloud_ClientFileDownload_Request>();
+Protocol<CCloud_ClientFileDownload_Response>();
+Protocol<CCloud_BeginAppUploadBatch_Request>();
+Protocol<CCloud_BeginAppUploadBatch_Response>();
+Protocol<CCloud_ClientBeginFileUpload_Request>();
+Protocol<CCloud_ClientBeginFileUpload_Response>();
+Protocol<CCloud_ClientCommitFileUpload_Request>();
+Protocol<CCloud_ClientCommitFileUpload_Response>();
+Protocol<CCloud_CompleteAppUploadBatch_Request>();
+Protocol<CCloud_CompleteAppUploadBatch_Response>();
+using (var wire = new MemoryStream())
+{
+    var input = new CCloud_GetAppFileChangelist_Response();
+    input.path_prefixes.Add("%GameInstall%saves/");
+    input.files.Add(new() { file_name = "fixture.sav", sha_file = SHA1.HashData("fixture"u8), raw_file_size = 7 });
+    Serializer.Serialize(wire, input); wire.Position = 0;
+    Check(Serializer.Deserialize<CCloud_GetAppFileChangelist_Response>(wire).files.Single().raw_file_size == 7, "Cloud nested/repeated protobuf routes");
+}
+using (var wire = new MemoryStream())
+{
+    var input = new CCloud_ClientBeginFileUpload_Response();
+    var block = new ClientCloudFileUploadBlockDetails { block_length = 7, http_method = 4 };
+    block.request_headers.Add(new() { name = "Content-Type", value = "application/octet-stream" });
+    input.block_requests.Add(block);
+    Serializer.Serialize(wire, input); wire.Position = 0;
+    Check(Serializer.Deserialize<CCloud_ClientBeginFileUpload_Response>(wire).block_requests.Single().request_headers.Single().name == "Content-Type", "Cloud upload nested protobuf routes");
+}
 
 // Exercise the same serializers in both managed and NativeAOT runs.
 using (var wire = new MemoryStream())
@@ -75,6 +104,7 @@ var root = Path.Combine(Path.GetTempPath(), "iridium-steam-test-" + Guid.NewGuid
 Directory.CreateDirectory(root);
 try
 {
+    checks += await CloudTests.Run(root);
     foreach (var unsafePath in new[] { "../escape", "/absolute", "C:\\escape", "a/../../escape", "a\\..\\b", "a//b", "a/./b", "trailing.", "a/file:stream", "a/\0b" })
         Reject(() => VerifiedFiles.SafePath(root, unsafePath), unsafePath);
     Check(VerifiedFiles.SafePath(root, "game\\data/file.bin") == Path.Combine(root, "game", "data", "file.bin"), "Windows separators");

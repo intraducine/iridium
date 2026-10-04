@@ -159,7 +159,7 @@ class MediaTransferTests(unittest.TestCase):
 
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('needs: [asset-plan, linux-userland, media, prefix, steam, steam_simulator]', workflow)
+        self.assertIn('needs: [asset-plan, media, prefix, steam, steam_simulator]', workflow)
         self.assertIn("needs.steam.result == 'success'", workflow)
         self.assertIn("needs.steam_simulator.result == 'success'", workflow)
         self.assertIn('runs-on: macos-26', workflow)

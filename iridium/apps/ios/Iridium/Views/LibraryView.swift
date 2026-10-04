@@ -80,6 +80,7 @@ struct LibraryView: View {
             }, launch: { requestGameLaunch(game) })
         }
         .task(id: "\(viewModel.games.map(\.id))-\(artwork.connected)") { await artwork.prepare(viewModel.games) }
+        .modifier(SteamCloudLaunchPrompt(viewModel: viewModel))
         .alert("Artwork", isPresented: Binding(get: { artwork.error != nil }, set: { if !$0 { artwork.error = nil } })) {
             Button("OK") { artwork.error = nil }
         } message: { Text(artwork.error ?? "") }

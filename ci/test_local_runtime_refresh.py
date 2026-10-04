@@ -12,7 +12,7 @@ class LocalRuntimeRefreshTests(unittest.TestCase):
         xcode = build.index("xcodebuild -project")
         self.assertLess(refresh, provenance)
         self.assertLess(provenance, xcode)
-        self.assertIn('rm -rf "$runtime_resources/iridium-runtime-base"', build)
+        self.assertIn('python3 ci/madeira-package.py prepare', build)
 
     def test_refresh_uses_incremental_native_build_stages(self):
         source = (ROOT / "ci/prepare-local-runtime.py").read_text()

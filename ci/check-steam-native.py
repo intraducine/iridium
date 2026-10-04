@@ -57,6 +57,7 @@ def main():
         assert read('take_session') is None
         assert library.iridium_steam_submit(b'{invalid') == 0
         assert send('install') == 0
+        assert send('cloud') == 0
         assert send('unknown') == 0
         if args.network:
             assert send('qr') == 1

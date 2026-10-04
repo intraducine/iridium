@@ -2,6 +2,7 @@ import Foundation
 @MainActor final class UIApplication { enum State { case active, inactive }; static let shared=UIApplication(); var applicationState:State = .active }
 @MainActor var events:[(Int32,Int32)]=[]
 @MainActor func winios_post_key(_ key:Int32,_ down:Int32) { events.append((key,down)) }
+@MainActor func winios_pointer(_ x:Int32,_ y:Int32,_ flags:UInt32,_ data:UInt32) {}
 @main struct KeyboardRegression {
     @MainActor static func main() async {
         for byte in 32...126 { precondition(MadeiraKeys.virtualKey(character:Character(UnicodeScalar(byte)!)) != nil) }

@@ -6,9 +6,37 @@ import Foundation
         var failures:[String]=[]
         var reports:[String]=[]
         var exits=0
+        unsetenv("MADEIRA_FAST_SERVER_START")
+        if scenario.hasPrefix("server-legacy-") { setenv("MADEIRA_FAST_SERVER_START", "0", 1) }
+        let startTime = ProcessInfo.processInfo.systemUptime
         MadeiraRuntimeAdapter.start(executable:"/fixture/game.exe",gameRoot:"/fixture",gameID:UUID(),arguments:["--name", "a b", "", "quote\""]) {
             reports.append($0)
         } fail: { failures.append($0) } exited: { exits += 1 }
+        if scenario == "server-ready-cancel" {
+            let until = ProcessInfo.processInfo.systemUptime + 5
+            while wineserver_is_running() == 0 && ProcessInfo.processInfo.systemUptime < until {
+                try await Task.sleep(nanoseconds:10_000_000)
+            }
+            precondition(wineserver_is_running() != 0 && wineserver_is_ready() == 0)
+            precondition(NativeState.shared.startCount == 0)
+            var closed: Bool?
+            let cancelTime = ProcessInfo.processInfo.systemUptime
+            MadeiraRuntimeAdapter.requestClose { closed=$0 }
+            let deadline = cancelTime + 5
+            while closed == nil && ProcessInfo.processInfo.systemUptime < deadline {
+                try await Task.sleep(nanoseconds:10_000_000)
+            }
+            precondition(closed == true && ProcessInfo.processInfo.systemUptime - cancelTime < 5)
+            precondition(NativeState.shared.startCount == 0 && wineserver_is_running() == 0)
+            precondition(wine_process_is_running() == 0 && failures.isEmpty)
+            precondition(!MadeiraController.acceptingInput && !MadeiraHardwareInput.acceptingInput)
+            // AppViewModel releases its runtime reservation after confirmed close,
+            // which calls stop() for final controller teardown.
+            MadeiraRuntimeAdapter.stop()
+            precondition(!MadeiraController.active)
+            print("PASS \(scenario): readiness wait cancels before the startup deadline without launching Wine")
+            return
+        }
         if scenario == "cancel-startup" {
             var closed:Bool?
             MadeiraRuntimeAdapter.requestClose { closed=$0 }
@@ -20,19 +48,30 @@ import Foundation
             print("PASS \(scenario): canceled worker cannot launch another guest")
             return
         }
-        let until=ProcessInfo.processInfo.systemUptime+5
+        let until=ProcessInfo.processInfo.systemUptime+(scenario == "server-never-ready" ? 35 : 5)
         while failures.isEmpty && (reports.isEmpty || NativeState.shared.startCount == 0) && ProcessInfo.processInfo.systemUptime < until {
             try await Task.sleep(nanoseconds:10_000_000)
         }
-        if scenario.contains("failure") || scenario == "server-died" {
+        if scenario.contains("failure") || ["server-died", "server-never-ready", "server-exits-before-ready"].contains(scenario) {
             precondition(failures.count == 1, "terminal failure not reported exactly once: \(failures)")
             precondition(!MadeiraController.active && !MadeiraHardwareInput.acceptingInput)
             precondition(reports.isEmpty)
+            if scenario == "server-never-ready" {
+                precondition(ProcessInfo.processInfo.systemUptime - startTime >= 30)
+                precondition(NativeState.shared.startCount == 0 && failures[0].contains("registry"))
+            } else if scenario == "server-exits-before-ready" {
+                precondition(ProcessInfo.processInfo.systemUptime - startTime < 5)
+                precondition(NativeState.shared.startCount == 0 && failures[0].contains("stopped"))
+            }
             print("PASS \(scenario): terminal failure callback and input cleanup")
             return
         }
         precondition(!reports.isEmpty && failures.isEmpty, "startup did not report readiness: \(failures)")
         precondition(NativeState.shared.startCount == 1)
+        if scenario == "server-delayed-ready" || scenario.hasPrefix("server-legacy-") {
+            precondition(ProcessInfo.processInfo.systemUptime - startTime >= 2)
+            precondition(wineserver_is_ready() != 0)
+        }
         if ["prerequisite-success", "prerequisite-cancel", "prerequisite-close-timeout", "prerequisite-nonzero-exit", "prerequisite-nonzero-close-timeout"].contains(scenario) {
             precondition(String(cString: getenv("MADEIRA_EXE")) == "C:\\helper.exe")
             precondition(String(cString: getenv("IRIDIUM_MADEIRA_ARGS_JSON")) == "[\"C:\\\\plan.ini\"]")

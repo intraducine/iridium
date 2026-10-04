@@ -34,3 +34,14 @@ the pre-existing Madeira binary inventory does not cover this added framework.
 Replacing SteamKit is supported by rebuilding this framework from source with the
 desired compatible package or project reference and rerunning the tests. The
 application loads the replacement through the documented C ABI entry points, including the host storage-capacity callback.
+
+## Steam Cloud behavior research
+
+The original AGPL-3.0-only Cloud integration uses the same pinned SteamKit and
+protobuf source inputs above. Madeira PR130 and follow-ups through
+`4e9d45a74294cd820120791c4b3f2b79adf4fc70` informed conflict, missing-save and
+backup behavior; no Madeira Cloud/Dock code or SwiftSteam dependency is copied
+or linked. Exact research revisions and protocol sources are recorded in
+`docs/decisions/steam-cloud-saves.md`. Existing Madeira notices continue to apply
+to the existing runtime/preparation helper. No dependency license or source pin
+is changed by this feature.

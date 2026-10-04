@@ -31,7 +31,9 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
             if (command.Action == "cancel")
             {
                 operation?.Cancel();
-                if (state.Busy) state = state with { Phase = "pausing", Message = "Stopping the current request. Partial downloads are kept." };
+                if (state.Busy) state = state with { Phase = "pausing", Message = state.Phase == "cloud"
+                    ? "Stopping save sync. Saves, backups and recovery records are kept."
+                    : "Stopping the current request. Partial downloads are kept." };
                 return true;
             }
             if (command.Action == "guard")
@@ -43,10 +45,12 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
                 state = new();
                 return true;
             }
-            if (command.Action is not ("signIn" or "qr" or "restore" or "library" or "details" or "install")) return false;
-            if (command.Action is "library" or "details" or "install" && connection?.IsLoggedOn != true) return false;
+            if (command.Action is not ("signIn" or "qr" or "restore" or "library" or "details" or "install" or "cloud")) return false;
+            if (command.Action is "library" or "details" or "install" or "cloud" && connection?.IsLoggedOn != true) return false;
             if (command.Action == "signIn" && (string.IsNullOrWhiteSpace(command.AccountName) || string.IsNullOrEmpty(command.Password))) return false;
             if (command.OperationId?.Length > 64) return false;
+            if (command.Action == "cloud" && (command.Cloud == null || !Guid.TryParseExact(command.Cloud.GameId, "D", out _)
+                || command.OperationId == null || command.AppId == 0)) return false;
             if (command.Action == "install")
             {
                 try { _ = command.Options?.Validate() ?? throw new SteamFailure("Missing download options."); }
@@ -55,11 +59,13 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
             operation?.Dispose();
             operation = new();
             if (command.Action is "signIn" or "qr" or "restore") operation.CancelAfter(TimeSpan.FromMinutes(5));
+            if (command.Action == "cloud") operation.CancelAfter(TimeSpan.FromMinutes(10));
             state = state with { Busy = true, Error = null, FailureCode = null, Storage = null, ChallengeUrl = null, Installed = null,
-                Phase = command.Action == "install" ? "resolving" : "connecting",
-                Message = command.Action == "install" ? "Checking Windows game files…" : "Connecting to Steam…",
+                Phase = command.Action == "install" ? "resolving" : command.Action == "cloud" ? "cloud" : "connecting",
+                Message = command.Action == "install" ? "Checking Windows game files…" : command.Action == "cloud"
+                    ? "Comparing mapped Steam Cloud saves…" : "Connecting to Steam…",
                 AppId = command.Action is "install" or "details" ? command.AppId : null, CompletedBytes = 0, TotalBytes = 0,
-                NetworkBytes = 0, OperationId = command.OperationId, Details = null };
+                NetworkBytes = 0, OperationId = command.OperationId, Details = null, Cloud = null };
             var token = operation.Token;
             _ = Task.Run(() => Run(command, token));
             return true;
@@ -82,7 +88,8 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
                 var saved = await connection.SignIn(command, this,
                     url => Update(s => s with { Phase = "qr", ChallengeUrl = url, Message = "Scan with Steam Mobile to approve sign-in." }), ct);
                 lock (sync) pendingSecret = saved;
-                Update(s => s with { SignedIn = true, AccountName = saved.AccountName, ChallengeUrl = null });
+                Update(s => s with { SignedIn = true, AccountName = saved.AccountName, ChallengeUrl = null,
+                    SteamId = connection.Client.SteamID?.ConvertToUInt64().ToString(System.Globalization.CultureInfo.InvariantCulture) });
             }
             if (authenticating || command.Action == "library")
             {
@@ -94,6 +101,12 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
             {
                 var info = await connection!.AppInfo(command.AppId, ct);
                 Update(s => s with { Phase = "ready", Details = SteamDepotSelection.Details(command.AppId, info), Message = "Download options are ready." });
+            }
+            if (command.Action == "cloud")
+            {
+                Update(s => s with { Phase = "cloud", AppId = command.AppId, Message = "Comparing mapped Steam Cloud saves…" });
+                var cloud = await new CloudSync(root, new SteamCloudTransport(connection!)).Run(command.AppId, command.Cloud!, ct);
+                Update(s => s with { Phase = "ready", Cloud = cloud, Message = cloud.Message });
             }
             if (command.Action == "install")
             {
@@ -115,7 +128,9 @@ public sealed class SteamEngine(string root, Func<string, SteamCapacity>? measur
         catch (OperationCanceledException)
         {
             Update(s => s with { Phase = authenticating ? "signedOut" : "paused",
-                Message = authenticating ? "Sign-in cancelled or expired." : "Paused. Resume from Downloads to continue." });
+                Message = authenticating ? "Sign-in cancelled or expired." : command.Action == "cloud"
+                    ? "Cloud sync stopped. Saves and backups are kept. Recheck before retrying or launching."
+                    : "Paused. Resume from Downloads to continue." });
         }
         catch (Exception e)
         {

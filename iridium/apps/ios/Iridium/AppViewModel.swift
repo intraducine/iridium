@@ -998,6 +998,9 @@ final class AppViewModel: ObservableObject {
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             guard !closingMadeiraSession, let id = activeRuntimePlayerSession?.sessionIdentifier else { return }
+            if let gameID = activeRuntimePlayerSession?.gameID {
+                SteamCloudCoordinator.shared.cancelSession(gameID)
+            }
             closingMadeiraSession = true
             madeiraShutdownUnconfirmed = false
             activeRuntimePlayerSession?.statusSummary = "Close requested. Waiting for the game and runtime to stop."
@@ -1063,7 +1066,11 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
+            #if MADEIRA_RUNTIME
+            // Madeira uses app resources and per-game prefixes directly.
+            #else
             _ = try await Self.provisionRuntimeIfNeeded(runtimeProvisioningService)
+            #endif
             if activityStatusMessage?.hasPrefix("Bundled runtime provisioning failed:") == true {
                 activityStatusMessage = nil
             }
@@ -1199,21 +1206,27 @@ final class AppViewModel: ObservableObject {
     }
 
     func repairPrefix(_ prefix: PrefixRecord) {
+        guard let access = beginGameFileMutation(.repairPrefix) else { return }
         Task {
+            defer { SteamCloudFileAccess.shared.finish(access) }
             await store.repair(prefixID: prefix.id)
             await refresh()
         }
     }
 
     func rebuildPrefix(_ prefix: PrefixRecord) {
+        guard let access = beginGameFileMutation(.rebuildPrefix) else { return }
         Task {
+            defer { SteamCloudFileAccess.shared.finish(access) }
             await store.rebuild(prefixID: prefix.id)
             await refresh()
         }
     }
 
     func clonePrefix(_ prefix: PrefixRecord) {
+        guard let access = beginGameFileMutation(.clonePrefix) else { return }
         Task {
+            defer { SteamCloudFileAccess.shared.finish(access) }
             _ = await store.clone(prefixID: prefix.id, newName: "\(prefix.name) Copy")
             await refresh()
         }
@@ -1311,11 +1324,12 @@ final class AppViewModel: ObservableObject {
     func relocateScannedImport(_ game: GameRecord) {
         guard !isImportingGame else { return }
         guard let scan = importScanResult, let executable = scan.recommendedExecutable else { return }
+        guard let access = beginGameFileMutation(.relocate) else { return }
         let source = importSourceURL
         let storage = importStorage
         isImportingGame = true
         Task {
-            defer { isImportingGame = false }
+            defer { isImportingGame = false; SteamCloudFileAccess.shared.finish(access) }
             let access = source?.startAccessingSecurityScopedResource() ?? false
             defer { if access { source?.stopAccessingSecurityScopedResource() } }
             guard let metadata = validatedImportMetadata(title: game.title, executablePath: executable.path, installPath: scan.installPath) else { return }
@@ -1338,7 +1352,9 @@ final class AppViewModel: ObservableObject {
     func removeLibraryEntry(_ game: GameRecord) {
         guard !refreshingGameCopy, !preparingInstaller else { return }
         guard activeRuntimePlayerSession?.gameID != game.id, runtimePlayerReservation?.gameID != game.id else { return }
+        guard let access = beginGameFileMutation(.removeLibraryEntry) else { return }
         Task {
+            defer { SteamCloudFileAccess.shared.finish(access) }
             await store.removeLibraryEntry(gameID: game.id)
             await refresh()
         }
@@ -1347,6 +1363,8 @@ final class AppViewModel: ObservableObject {
     func deleteSteamDownload(_ job: SteamDownloadJob, from steam: SteamLibraryModel) async throws {
         guard !preparingInstaller, activeRuntimePlayerSession == nil, runtimePlayerReservation == nil,
               let path = job.installed?.directory else { throw CocoaError(.fileWriteNoPermission) }
+        let access = try requireGameFileMutation(.deleteSteamFiles)
+        defer { SteamCloudFileAccess.shared.finish(access) }
         let registered = games.filter { $0.installPath == path }
         try await steam.deleteFiles(job)
         for game in registered { await store.removeLibraryEntry(gameID: game.id) }
@@ -1359,6 +1377,8 @@ final class AppViewModel: ObservableObject {
               !games.contains(where: { $0.id != game.id && $0.installPath == game.installPath }),
               let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
         else { throw CocoaError(.fileWriteNoPermission) }
+        let access = try requireGameFileMutation(.deleteImportedFiles)
+        defer { SteamCloudFileAccess.shared.finish(access) }
         let gamesRoot = documents.appendingPathComponent("Games", isDirectory: true)
         let folder = URL(fileURLWithPath: game.installPath)
         try await Task.detached(priority: .utility) {
@@ -1407,6 +1427,7 @@ final class AppViewModel: ObservableObject {
         let requestID = importScanRequestID
         let importInstallPath =
             importSourceURL.map { resolvedImportInstallURL(for: $0).path } ?? scan.installPath
+        guard let access = beginGameFileMutation(.register) else { return }
 
         print(
             "[IridiumRuntime] registerScannedImport: metadata cache hit = \(cachedMetadata != nil) for \(executable.path)"
@@ -1414,7 +1435,7 @@ final class AppViewModel: ObservableObject {
 
         isImportingGame = true
         Task {
-            defer { isImportingGame = false }
+            defer { isImportingGame = false; SteamCloudFileAccess.shared.finish(access) }
             let metadata =
                 cachedMetadata
                 ?? withImportSecurityScopedAccess(
@@ -1490,6 +1511,8 @@ final class AppViewModel: ObservableObject {
             throw NSError(domain: "IridiumSteam", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Close the running game before registering a Steam installation."])
         }
+        let access = try requireGameFileMutation(.register)
+        defer { SteamCloudFileAccess.shared.finish(access) }
         let managedRoot = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: false).appendingPathComponent("SteamGames").resolvingSymlinksInPath()
         let root = URL(fileURLWithPath: directory).resolvingSymlinksInPath().standardizedFileURL
@@ -1906,7 +1929,7 @@ final class AppViewModel: ObservableObject {
         MadeiraLaunchReadiness.issue(
             runtimeAvailable: madeiraRuntimeAvailable,
             executableExists: FileManager.default.fileExists(atPath: buildLaunchSession(for: game, jitStatus: jitStatus).executablePath),
-            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy || preparingInstaller,
+            busy: activeRuntimePlayerSession != nil || runtimePlayerReservation != nil || refreshingGameCopy || preparingInstaller || SteamCloudFileAccess.shared.busy || SteamLibraryModel.shared.gameFilesBusy,
             started: MadeiraRuntimeAdapter.started
         )
     }
@@ -2084,6 +2107,25 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var closingMadeiraSession = false
     @Published private(set) var madeiraShutdownUnconfirmed = false
 
+    private func beginGameFileMutation(_ operation: SteamCloudFileAccess.Operation) -> SteamCloudFileAccess.Lease? {
+        guard !SteamCloudCoordinator.shared.busy, !SteamLibraryModel.shared.gameFilesBusy,
+              let access = SteamCloudFileAccess.shared.begin(operation) else {
+            let message = "Wait for save synchronization or the current game-file operation to stop. Finish or cancel any pending Play request before changing files."
+            activityStatusMessage = message
+            importStatusMessage = message
+            return nil
+        }
+        return access
+    }
+
+    private func requireGameFileMutation(_ operation: SteamCloudFileAccess.Operation) throws -> SteamCloudFileAccess.Lease {
+        guard let access = beginGameFileMutation(operation) else {
+            throw NSError(domain: "IridiumSteamCloud", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: activityStatusMessage ?? "Game files are in use."])
+        }
+        return access
+    }
+
     func prepareInstaller(_ source: URL, for game: GameRecord) async throws {
         #if MADEIRA_RUNTIME
         guard MadeiraRuntimeAdapter.enabled else { throw CocoaError(.featureUnsupported) }
@@ -2091,6 +2133,8 @@ final class AppViewModel: ObservableObject {
             throw NSError(domain: "IridiumPrerequisites", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: issue])
         }
+        let access = try requireGameFileMutation(.installer)
+        defer { SteamCloudFileAccess.shared.finish(access) }
         preparingInstaller = true
         defer { preparingInstaller = false }
         let prefix = MadeiraGamePreparation.prefix(for: game.id)
@@ -2109,9 +2153,10 @@ final class AppViewModel: ObservableObject {
         #if MADEIRA_RUNTIME
         guard MadeiraRuntimeAdapter.enabled, !refreshingGameCopy, !preparingInstaller,
               activeRuntimePlayerSession == nil, !MadeiraRuntimeAdapter.started else { return }
+        guard let access = beginGameFileMutation(.refresh) else { return }
         refreshingGameCopy = true
         Task {
-            defer { refreshingGameCopy = false }
+            defer { refreshingGameCopy = false; SteamCloudFileAccess.shared.finish(access) }
             do {
                 let executable = URL(fileURLWithPath: game.launchProfile.executablePath)
                 let root = URL(fileURLWithPath: game.installPath)
@@ -2129,7 +2174,22 @@ final class AppViewModel: ObservableObject {
         #endif
     }
 
-    func recordLaunchPreparation(for game: GameRecord) {
+    func recordLaunchPreparation(for game: GameRecord, cloudChecked: Bool = false) {
+        if !cloudChecked {
+            #if MADEIRA_RUNTIME
+            if MadeiraRuntimeAdapter.enabled, let issue = madeiraLaunchIssue(for: game) {
+                activityStatusMessage = issue
+                return
+            }
+            #endif
+            if SteamCloudCoordinator.shared.beforeLaunch(game, model: self, proceed: { [weak self] in
+                guard let self, self.games.contains(where: { $0.id == game.id }) else { return }
+                self.recordLaunchPreparation(for: game, cloudChecked: true)
+            }) {
+                activityStatusMessage = "Checking Steam Cloud saves before Play. Changes needing a choice stay on this device."
+                return
+            }
+        }
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled {
             if let issue = madeiraLaunchIssue(for: game) { activityStatusMessage = issue; return }
@@ -2180,6 +2240,7 @@ final class AppViewModel: ObservableObject {
                         self.activeRuntimePlayerSession?.statusSummary = message
                         self.activityStatusMessage = message
                         RuntimeLogCapture.writeLine("[Launch] \(message)")
+                        if presented { SteamCloudCoordinator.shared.confirmedExit(game, model: self) }
                     }
                 })
             }

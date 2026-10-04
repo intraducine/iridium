@@ -21,6 +21,8 @@ struct SteamDownloadSnapshot: Decodable {
     var operationId: String?
     var networkBytes: Int64 = 0
     var details: SteamGameDetails?
+    var steamId: String?
+    var cloud: SteamCloudStatus?
 }
 
 private enum SteamModuleError: LocalizedError {
@@ -77,7 +79,7 @@ private actor SteamNativeWorker {
             }
         }) == 1 else { throw SteamModuleError.unavailable }
         let start = unsafeBitCast(initSymbol, to: Input.self)
-        guard root.path.withCString({ start($0) }) == 1 else { throw SteamModuleError.storage }
+        guard root.resolvingSymlinksInPath().path.withCString({ start($0) }) == 1 else { throw SteamModuleError.storage }
         // NativeAOT libraries cannot be unloaded while their runtime is alive.
         library = handle
         submit = unsafeBitCast(submitSymbol, to: Input.self)
@@ -144,6 +146,10 @@ final class SteamLibraryModel: ObservableObject {
     @Published private(set) var bytesPerSecond: Double = 0
     @Published var error: String?
     @Published private(set) var starting = false
+    @Published private(set) var cloudByGame: [UUID: SteamCloudStatus] = [:]
+    @Published private(set) var cloudProblems: [UUID: String] = [:]
+    @Published private(set) var cloudOperation: UUID?
+    @Published private(set) var cloudShutdownUnconfirmed = false
 
     private let worker = SteamNativeWorker()
     private var persistence: SteamQueuePersistence?
@@ -160,6 +166,7 @@ final class SteamLibraryModel: ObservableObject {
     private var logAttempt: UInt64 = 0
 
     var busy: Bool { restoring || starting || state.busy || operationTask != nil || nativeStateUncertain }
+    var gameFilesBusy: Bool { activeJobID != nil || nativeStateUncertain }
     var pendingCount: Int { queue.jobs.filter(\.isPending).count }
     var account: String? { state.signedIn ? state.accountName : nil }
 
@@ -264,7 +271,7 @@ final class SteamLibraryModel: ObservableObject {
     }
 
     func downloadAnyway(_ id: UUID) {
-        guard foreground, !busy, queueWritable, let account,
+        guard foreground, !busy, !SteamCloudFileAccess.shared.busy, queueWritable, let account,
               let job = queue.jobs.first(where: { $0.id == id }),
               let authorization = SteamStorageRetryAuthorization(job: job, account: account),
               queue.resume(id, account: account) else {
@@ -319,7 +326,7 @@ final class SteamLibraryModel: ObservableObject {
 
     func remove(_ id: UUID) { if queue.remove(id) { checkpoint() } }
     func deleteFiles(_ job: SteamDownloadJob) async throws {
-        guard !busy, job.status == .completed, let installed = job.installed,
+        guard SteamCloudFileAccess.shared.isHeld(by: .deleteSteamFiles), !busy, job.status == .completed, let installed = job.installed,
               queue.jobs.contains(where: { $0.id == job.id && $0.installed?.directory == installed.directory }),
               !queue.jobs.contains(where: { $0.id != job.id &&
                   ($0.installed.map { SteamManagedFiles.overlaps($0.directory, installed.directory) } == true ||
@@ -345,12 +352,59 @@ final class SteamLibraryModel: ObservableObject {
     func pauseForBackground() {
         foreground = false
         pauseQueue()
+        if cloudOperation != nil { perform(["action": "cancel"]) }
     }
 
     func resumeForeground() {
         foreground = true
         // A background pause is explicit in the UI. Do not undo a user's pause
         // or start a large cellular transfer merely because the app reopened.
+    }
+
+    func setCloudProblem(_ gameID: UUID, _ message: String) { cloudProblems[gameID] = message }
+
+    // The application launch gate keeps every runtime idle while this runs.
+    // This shares the queue's native worker and busy state, without changing jobs.
+    @discardableResult
+    func cloud(_ target: SteamCloudTarget, mode: String, choice: SteamCloudChoice? = nil,
+               backupID: String? = nil, access: SteamCloudFileAccess.Lease) async -> SteamCloudStatus? {
+        guard SteamCloudFileAccess.shared.owns(access, operation: .cloud), !cloudShutdownUnconfirmed else { return nil }
+        guard foreground, !busy, state.signedIn, let accountID = state.steamId else {
+            cloudProblems[target.gameID] = "Steam is busy or offline. Wait, or sign in, then recheck saves."
+            return nil
+        }
+        let operationID = UUID()
+        cloudOperation = target.gameID
+        starting = true
+        cloudProblems[target.gameID] = nil
+        defer { cloudOperation = nil; starting = false; startNext() }
+        var submitted = false
+        do {
+            var request: [String: Any] = ["gameId": target.gameID.uuidString, "mode": mode]
+            if let choice { request["choice"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(choice)) }
+            if let backupID { request["backupId"] = backupID }
+            try await send(["action": "cloud", "appId": target.appID, "operationId": operationID.uuidString, "cloud": request])
+            submitted = true
+            cloudShutdownUnconfirmed = true
+            if !foreground { try await send(["action": "cancel"]) }
+            try await poll(expectedJob: nil)
+            cloudShutdownUnconfirmed = false
+            guard state.steamId == accountID, state.operationId == operationID.uuidString,
+                  let result = state.cloud, result.gameId == target.gameID.uuidString,
+                  result.appId == target.appID else {
+                cloudProblems[target.gameID] = state.error ?? state.message
+                return nil
+            }
+            cloudByGame[target.gameID] = result
+            return result
+        } catch {
+            if submitted {
+                cloudProblems[target.gameID] = "Cloud shutdown could not be confirmed. Restart Iridium before playing or changing game files, then recheck saves. Saves and backups are kept."
+            } else {
+                cloudProblems[target.gameID] = "Cloud state could not be confirmed. Saves and backups are kept; recheck before playing."
+            }
+            return nil
+        }
     }
 
     private func send(_ command: [String: Any]) async throws {
@@ -383,8 +437,10 @@ final class SteamLibraryModel: ObservableObject {
         }
     }
 
+    func resumeQueueAfterFileOperation() { startNext() }
+
     private func startNext(storageAuthorization: SteamStorageRetryAuthorization? = nil) {
-        guard foreground, !busy, queueWritable, let account,
+        guard foreground, !busy, !SteamCloudFileAccess.shared.busy, queueWritable, let account,
               let job = queue.next(account: account), queue.begin(job.id) else { return }
         var authorization = storageAuthorization
         let overrideStoragePreflight = authorization?.consume(jobID: job.id, account: account) ?? false
@@ -460,6 +516,7 @@ final class SteamLibraryModel: ObservableObject {
                     RuntimeLogCapture.writeLine("[Steam] attempt=\(attempt) download-ended outcome=\(outcome)")
                 }
             }
+            if next.steamId != state.steamId || !next.signedIn { cloudByGame = [:]; cloudProblems = [:] }
             state = next
             if let details = next.details { detailsByApp[details.appId] = details }
             if let saved = await worker.session() {

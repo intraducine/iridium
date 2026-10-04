@@ -6,6 +6,15 @@ case "${1:-}" in
   *) echo "Usage: stage_runtime_userland.sh [--check]" >&2; exit 64 ;;
 esac
 
+# Madeira ships native iOS Wine, with no Linux host/userland resources.
+case "${IRIDIUM_RUNTIME_PROFILE:-legacy}" in
+  madeira)
+    exec python3 "${SRCROOT}/../../../ci/madeira-package.py" stage "$@"
+    ;;
+  legacy) ;;
+  *) echo "error: Unknown runtime package profile" >&2; exit 64 ;;
+esac
+
 runtime_bundle_root="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/BundledRuntime/iridium-runtime-base"
 support_root="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/IridiumWineUserland"
 frameworks_root="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH:-Frameworks}"

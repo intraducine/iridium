@@ -6,6 +6,10 @@ trap 'rm -f "$check_binary"' EXIT
 xcrun swiftc "$root/MadeiraSupport/MadeiraGamePreparation.swift" \
   "$root/MadeiraSupportTests/GamePreparationCheck.swift" -o "$check_binary"
 "$check_binary"
+xcrun swiftc "$root/Iridium/Input/PhysicalControllerMapping.swift" \
+  "$root/MadeiraSupport/MadeiraControllerMappingState.swift" \
+  "$root/MadeiraSupportTests/ControllerMappingCheck.swift" -o "$check_binary"
+"$check_binary"
 xcrun clang "$root/MadeiraSupportTests/ControllerPacketCheck.c" -o "$check_binary"
 "$check_binary"
 xcrun swiftc "$root/MadeiraSupport/MadeiraKeys.swift" \
@@ -24,6 +28,8 @@ xcrun swiftc "$root/MadeiraSupport/MadeiraExternalJITRouting.swift" \
   "$root/MadeiraSupportTests/ExternalJITRoutingCheck.swift" -o "$check_binary"
 "$check_binary"
 python3 "$root/MadeiraSupportTests/HardwareKeyboardCheck.py"
+python3 "$root/MadeiraSupportTests/ControllerRoutingCheck.py"
+python3 "$root/MadeiraSupportTests/ControllerMappingEditorCheck.py"
 python3 "$root/MadeiraSupportTests/TouchControllerCheck.py"
 python3 "$root/MadeiraSupportTests/CursorCheck.py"
 python3 "$root/MadeiraSupportTests/InputDeliveryCheck.py"

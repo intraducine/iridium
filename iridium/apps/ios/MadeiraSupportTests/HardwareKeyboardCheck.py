@@ -108,7 +108,49 @@ import Foundation
         MadeiraHardwareInput.key(hid: 26, pressed: true)
         precondition(events.count == 4)
         precondition(!MadeiraHardwareInput.usesRawMouse)
+        UIApplication.shared.applicationState = .active
+        events.removeAll(); mouseEvents.removeAll()
+        MadeiraHardwareInput.controllerAction(.key(0x57), pressed: true)
+        MadeiraHardwareInput.key(hid: 26, pressed: true)
+        MadeiraHardwareInput.controllerAction(.key(0x57), pressed: false)
+        precondition(events.count == 1 && events[0].1 == 1)
+        MadeiraHardwareInput.key(hid: 26, pressed: false)
+        precondition(events.count == 2 && events[1].1 == 0)
+        events.removeAll()
+        MadeiraHardwareInput.key(hid: 26, pressed: true)
+        MadeiraHardwareInput.controllerAction(.key(0x57), pressed: true)
+        MadeiraHardwareInput.key(hid: 26, pressed: false)
+        precondition(events.count == 1)
+        MadeiraHardwareInput.controllerAction(.key(0x57), pressed: false)
+        precondition(events.count == 2 && events[1].1 == 0)
+        MadeiraHardwareInput.controllerAction(.mouseLeft, pressed: true)
+        MadeiraHardwareInput.mouseButton(flag: 2, pressed: true)
+        MadeiraHardwareInput.controllerAction(.mouseLeft, pressed: false)
+        precondition(mouseEvents == [2])
+        MadeiraHardwareInput.mouseButton(flag: 2, pressed: false)
+        precondition(mouseEvents == [2, 4])
+        mouseEvents.removeAll()
+        MadeiraHardwareInput.mouseButton(flag: 8, pressed: true)
+        MadeiraHardwareInput.controllerAction(.mouseRight, pressed: true)
+        MadeiraHardwareInput.pointerCaptured = false
+        precondition(mouseEvents == [8])
+        MadeiraHardwareInput.controllerAction(.mouseRight, pressed: false)
+        precondition(mouseEvents == [8, 16])
+        events.removeAll(); mouseEvents.removeAll()
+        MadeiraHardwareInput.controllerAction(.key(0x20), pressed: true)
+        MadeiraHardwareInput.controllerAction(.mouseMiddle, pressed: true)
+        MadeiraHardwareInput.softwareKeyboardActive = true
+        precondition(events.map { $0.1 } == [1, 0] && mouseEvents == [32, 64])
+        MadeiraHardwareInput.controllerAction(.key(0x20), pressed: true)
+        MadeiraHardwareInput.controllerMotion(x: 12, y: 13)
+        precondition(events.count == 2 && mouseEvents.count == 2)
+        MadeiraHardwareInput.softwareKeyboardActive = false
+        MadeiraHardwareInput.controllerAction(.key(0x20), pressed: true)
+        MadeiraHardwareInput.controllerAction(.mouseMiddle, pressed: true)
+        MadeiraHardwareInput.acceptingInput = false
+        precondition(events.map { $0.1 } == [1, 0, 1, 0] && mouseEvents == [32, 64, 32, 64])
         print("PASS keyboard fallback deduplication, menu release, inactive rejection")
+        print("PASS controller/hardware key and mouse ownership, device-keyboard and focus release")
     }
 }
 """
@@ -116,5 +158,5 @@ with tempfile.TemporaryDirectory(prefix="iridium-keyboard-") as directory:
     harness = Path(directory) / "Check.swift"
     harness.write_text(code)
     binary = Path(directory) / "check"
-    subprocess.run(["xcrun", "swiftc", str(root / "MadeiraSupport/MadeiraKeys.swift"), str(harness), "-o", str(binary)], check=True)
+    subprocess.run(["xcrun", "swiftc", str(root / "Iridium/Input/PhysicalControllerMapping.swift"), str(root / "MadeiraSupport/MadeiraKeys.swift"), str(harness), "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

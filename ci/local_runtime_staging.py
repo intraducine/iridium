@@ -143,7 +143,8 @@ def retained_inputs(root):
     return [*required['legacy graphics frameworks'], *required['StikJIT framework'],
             'testrepos/Madeira/app/Madeira/prefix-template.tar.gz',
             'iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a',
-            BUNDLE + '/manifest.json', BUNDLE + '/Userland/wine-userland.tar.zst']
+            *([] if os.environ.get('IRIDIUM_RUNTIME_PROFILE') == 'madeira' else
+              [BUNDLE + '/manifest.json', BUNDLE + '/Userland/wine-userland.tar.zst'])]
 
 
 def check_retained_inputs(root):
@@ -154,7 +155,8 @@ def check_retained_inputs(root):
                          + '\n  '.join(missing)
                          + '\nRestore matching runtime dependencies as described in docs/actions-ipa.md. '
                            'Do not delete compiler caches or bypass the package audit.')
-    archive_identity(root)
+    if os.environ.get('IRIDIUM_RUNTIME_PROFILE') != 'madeira':
+        archive_identity(root)
 
 
 def native_output_inventory(root):
@@ -162,7 +164,8 @@ def native_output_inventory(root):
     required = load(root, 'check-ipa-prerequisites.py').REQUIRED
     groups = ('legacy runtime host and userland', 'legacy native link libraries',
               'Madeira native runtime', 'Windows modules and clean prefix', 'media and input runtime')
-    names = {name for group in groups for name in required[group]}
+    names = {name for group in groups for name in required[group]
+             if group != 'legacy runtime host and userland' or os.environ.get('IRIDIUM_RUNTIME_PROFILE') != 'madeira'}
     # The embedded bridge is not a monolithic archive; its companion libraries
     # are still linked by Xcode. A deleted companion must invalidate reuse too.
     fex = 'iridium-fex-ios/build-iridium-ios-iphoneos/'

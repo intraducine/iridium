@@ -162,7 +162,7 @@ class PreparedRuntimeTests(unittest.TestCase):
         workflow = (prepared.ROOT / prepared.reuse.WORKFLOW).read_text()
         for component in ('native', 'wine', 'windows', 'graphics', 'jit'):
             self.assertLess(workflow.index('Retain ' + component + ' compilation'),
-                            workflow.index('Check full-runtime build readiness'))
+                            workflow.index('Check Madeira build readiness'))
         self.assertNotIn('Retain prepared runtime and source', workflow)
         self.assertIn('python3 ci/collect-release-source.py repository', workflow)
-        self.assertIn('run: bash ci/prepare-legacy-bundle.sh', workflow)
+        self.assertIn('run: python3 ci/madeira-package.py prepare', workflow)

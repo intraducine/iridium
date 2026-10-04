@@ -30,8 +30,11 @@ IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0 bash ci/build-local-ipa.sh
 
 A failed check reports the full missing-package set and one install command.
 Do not use this as a clean-room dependency bootstrap: the existing local runtime
-flow still requires staged media/JIT/ANGLE frameworks, a prefix and Linux
-userland. The native rebuild updates FEX/Wine/DXMT and uses those staged inputs.
+Madeira flow requires staged media/JIT/ANGLE frameworks, a prefix and a verified
+native producer record. The native rebuild updates FEX/Wine/DXMT and uses those
+staged inputs. It does not require or extract the legacy Linux userland. The
+package keeps 32-bit Windows modules for installers and retains shared bridge
+link inputs. See [the package profile](actions-ipa.md#local-incremental-app-builds).
 Installing an Actions IPA does not automatically stage development dependencies
 into a local checkout.
 

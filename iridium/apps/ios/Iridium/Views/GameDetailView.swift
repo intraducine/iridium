@@ -34,6 +34,11 @@ struct GameDetailView: View {
                 MenuNavigationLink { GameStorageView(game: game, viewModel: viewModel, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
                     Label("Files & Saves", systemImage: "folder")
                 }
+                if let target = SteamCloudTarget(game: game) {
+                    MenuNavigationLink { SteamCloudView(target: target, viewModel: viewModel) } label: {
+                        Label("Steam Cloud", systemImage: "icloud")
+                    }
+                }
             }
             if viewModel.usesMadeiraRuntime {
                 Section {

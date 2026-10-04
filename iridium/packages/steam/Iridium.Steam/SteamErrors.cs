@@ -35,7 +35,7 @@ public static class SteamErrors
         var stage = phase switch
         {
             "initializing" or "connecting" or "authenticating" or "syncing" or "resolving"
-                or "downloading" or "verifying" or "finalizing" or "guard" or "approval" or "qr" => phase,
+                or "downloading" or "verifying" or "finalizing" or "guard" or "approval" or "qr" or "cloud" => phase,
             _ => "request",
         };
         var (kind, message) = error switch
@@ -50,7 +50,9 @@ public static class SteamErrors
             HttpRequestException or WebSocketException or System.Net.Sockets.SocketException
                 => ("network", "Could not connect to Steam. Check your connection and retry."),
             IOException io when IsDiskFull(io) => ("disk-full", "The device ran out of storage while saving. Free some space, then resume. Verified partial downloads are kept."),
-            IOException => ("io", stage is "downloading" or "verifying" or "finalizing"
+            IOException => ("io", stage == "cloud"
+                ? "Cloud saves could not be read or preserved. Check available storage and file permissions; existing saves and backups are kept."
+                : stage is "downloading" or "verifying" or "finalizing"
                 ? "The download could not be saved because of a file I/O error. Retry; verified partial downloads are kept."
                 : "Steam communication was interrupted. Please retry."),
             _ => ("unexpected", "The Steam module could not complete this operation. Report the error code below."),

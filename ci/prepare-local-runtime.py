@@ -55,7 +55,7 @@ def head_short() -> str:
 
 
 def existing_producer(provenance) -> str | None:
-    manifest = RUNTIME_ROOT / "manifest.json"
+    manifest = provenance.producer_manifest()
     if not manifest.is_file():
         return None
     try:
@@ -75,6 +75,7 @@ def native_fingerprint(provenance) -> str:
         digest.update(value.encode())
         digest.update(b"\0")
 
+    add("profile", os.environ.get("IRIDIUM_RUNTIME_PROFILE", "legacy"))
     paths = provenance.native_contract_inputs(reuse)
     for path in paths:
         add("tree:" + path, reuse.git(ROOT, "ls-tree", "HEAD", "--", path))
@@ -100,7 +101,10 @@ def native_fingerprint(provenance) -> str:
     # These artifacts are deliberately reused by the local native build. Include
     # their actual bytes in the fingerprint so replacing one invalidates the
     # native cache even when git source did not change.
-    for label, path in (("media", MEDIA), ("prefix", PREFIX), ("userland", USERLAND)):
+    artifacts = [("media", MEDIA), ("prefix", PREFIX)]
+    if os.environ.get("IRIDIUM_RUNTIME_PROFILE") != "madeira":
+        artifacts.append(("userland", USERLAND))
+    for label, path in artifacts:
         add("artifact:" + label, file_digest(path) if path.is_file() else "missing")
 
     return digest.hexdigest()
@@ -148,7 +152,7 @@ def ensure_prefix_transfer() -> None:
 
 
 def rebuild_native_runtime(previous: str | None) -> None:
-    if not USERLAND.is_file():
+    if os.environ.get("IRIDIUM_RUNTIME_PROFILE") != "madeira" and not USERLAND.is_file():
         raise RuntimeError(
             "The staged runtime has no Wine userland to reuse. Run the full GitHub Actions IPA build once."
         )
@@ -169,6 +173,13 @@ def rebuild_native_runtime(previous: str | None) -> None:
 
     if not TRANSLATOR.is_file():
         raise RuntimeError(f"Native rebuild did not produce translator: {TRANSLATOR}")
+
+    if os.environ.get("IRIDIUM_RUNTIME_PROFILE") == "madeira":
+        manifest = ROOT / ".build/madeira-native-producer.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"version": "local-" + head_short()}) + "\n")
+        print("Local Madeira native runtime refreshed; Linux bundle retained outside the app.", flush=True)
+        return
 
     with tempfile.TemporaryDirectory(dir=ROOT / ".build") as temp_name:
         temp = Path(temp_name)
@@ -224,6 +235,8 @@ def verify_retained_inputs(reuse, revision: str) -> None:
         "graphics": reuse.COMPONENT_INPUTS["graphics"],
         "jit": reuse.COMPONENT_INPUTS["jit"],
     }
+    if os.environ.get("IRIDIUM_RUNTIME_PROFILE") == "madeira":
+        stages.pop("linux-userland")
     old_workflow = reuse.git(ROOT, "show", revision + ":" + WORKFLOW)
     new_workflow = reuse.git(ROOT, "show", "HEAD:" + WORKFLOW)
     media_mirror_only = reuse.media_mirror_transport_only(ROOT, revision) if hasattr(reuse, "media_mirror_transport_only") else False

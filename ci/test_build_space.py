@@ -114,7 +114,7 @@ class BuildSpaceTests(unittest.TestCase):
 
     def test_workflow_reclaims_only_after_consumption_and_upload(self):
         text = (space.ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertLess(text.index('run: bash ci/prepare-legacy-bundle.sh'),
+        self.assertLess(text.index('run: python3 ci/madeira-package.py prepare'),
                         text.index('reclaim-build-space.py prepare-source'))
         self.assertLess(text.index('name: Retain source archive for release audit'),
                         text.index('reclaim-build-space.py source-uploaded'))
