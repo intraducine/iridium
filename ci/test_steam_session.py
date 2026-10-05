@@ -100,8 +100,13 @@ enum RuntimeLogCapture {
     static var handoffs = 0
     static var initializations = 0
     static var runtimePermissions: [Bool] = []
-    func batch() async throws -> SteamChunkBatch? { nil }
-    func completeBatch(operation: String, batch: String, code: String) async throws {}
+    static var batchCompletions: [String] = []
+    static var nextBatch: SteamChunkBatch?
+    func batch() async throws -> SteamChunkBatch? {
+        defer { Self.nextBatch = nil }
+        return Self.nextBatch
+    }
+    func completeBatch(operation: String, batch: String, code: String) async throws { Self.batchCompletions.append(code) }
     func permitChunkRuntime(_ allowed: Bool) async { Self.runtimePermissions.append(allowed) }
     func initialize() async throws {
         Self.initializations += 1
@@ -132,7 +137,7 @@ enum RuntimeLogCapture {
     }
     static func reset() {
         nextSnapshot = ready; secret = nil; commands = []; handoffs = 0
-        initializations = 0; runtimePermissions = []
+        initializations = 0; runtimePermissions = []; batchCompletions = []; nextBatch = nil
         SteamBackgroundSession.shared.recoveries = 0; SteamBackgroundSession.shared.cancellations = 0
         SteamDownloadActivity.shared.recoveries = 0
         initializeError = nil; sendError = nil; RuntimeLogCapture.lines = []
@@ -140,31 +145,52 @@ enum RuntimeLogCapture {
 }
 
 // Host replacements cover platform I/O only; production model methods run unchanged.
-struct UIBackgroundTaskIdentifier: Equatable { static let invalid = Self() }
+struct UIBackgroundTaskIdentifier: Equatable {
+    let value: Int
+    static let invalid = Self(value: -1)
+}
 @MainActor final class UIApplication {
     static let shared = UIApplication()
     var isProtectedDataAvailable = true
-    func beginBackgroundTask(withName: String, expirationHandler: @escaping () -> Void) -> UIBackgroundTaskIdentifier { .invalid }
-    func endBackgroundTask(_ identifier: UIBackgroundTaskIdentifier) {}
+    var ended = 0
+    var allowsBackgroundTask = true
+    var expirationHandlers: [() -> Void] = []
+    func beginBackgroundTask(withName: String, expirationHandler: @escaping () -> Void) -> UIBackgroundTaskIdentifier {
+        guard allowsBackgroundTask else { return .invalid }
+        expirationHandlers.append(expirationHandler)
+        return .init(value: expirationHandlers.count)
+    }
+    func endBackgroundTask(_ identifier: UIBackgroundTaskIdentifier) { ended += 1 }
 }
 enum LiveContainerIntegration { static func isHosted() -> Bool { false } }
 @MainActor final class SteamBackgroundSession {
     static let shared = SteamBackgroundSession()
     var recoveries = 0, cancellations = 0
+    var resultCode: String?
     func recoverAfterRelaunch() async { recoveries += 1 }
     func cancel(operation: String? = nil, discardRaw: Bool = false) async { cancellations += 1 }
     func enqueue(_ batch: SteamChunkBatch) async throws {}
-    func result(operation: String, batch: String) async -> String? { nil }
+    func result(operation: String, batch: String) async -> String? { resultCode }
     func networkBytes(operation: String) async -> Int64 { 0 }
     static func failureCode(_ error: Error) -> String { "io" }
 }
 @MainActor final class SteamDownloadActivity {
     static let shared = SteamDownloadActivity()
     var recoveries = 0
+    var forcedVerifiedBytes: [Int64] = []
     func recoverAfterRelaunch() async { recoveries += 1 }
     func begin(_ job: SteamDownloadJob) {}
-    func update(_ job: SteamDownloadJob, phase: String? = nil, force: Bool = false) {}
+    func update(_ job: SteamDownloadJob, phase: String? = nil, force: Bool = false, receivedBytesPerSecond: Double? = nil) {
+        if force { forcedVerifiedBytes.append(job.completedBytes) }
+    }
     func end(_ job: SteamDownloadJob) {}
+    var flushStarted = false
+    var holdFlush = false
+    var flushContinuation: CheckedContinuation<Void, Never>?
+    func flush() async {
+        flushStarted = true
+        if holdFlush { await withCheckedContinuation { flushContinuation = $0 } }
+    }
 }
 @MainActor final class SteamDownloadRuntime {
     static let shared = SteamDownloadRuntime()
@@ -178,6 +204,48 @@ enum LiveContainerIntegration { static func isHosted() -> Bool { false } }
 
 CHECKS = r'''
 extension SteamLibraryModel {
+    func prepareFixtureWake(replenish: Bool = false, completion: @escaping () -> Void) -> UUID {
+        let job = SteamDownloadJob(game: SteamOwnedGame(appId: 42, name: "Fixture"),
+            account: "synthetic-account", options: SteamInstallOptions())
+        _ = queue.enqueue(job)
+        activeJobID = job.id
+        state.signedIn = true
+        state.accountName = "synthetic-account"
+        foreground = false
+        transferBatch = (job.id.uuidString, UUID().uuidString)
+        processTransferWake(completion: completion)
+        if replenish {
+            transferBatch = nil // The previous batch has been acknowledged.
+            let hash = String(repeating: "a", count: 40)
+            SteamNativeWorker.nextBatch = SteamChunkBatch(operationId: job.id.uuidString,
+                batchId: UUID().uuidString, connections: 4, requests: [
+                    .init(id: "10-" + hash, url: "https://fixture.invalid/depot/10/chunk/" + hash, expectedBytes: 8)])
+        }
+        return job.id
+    }
+    func pumpFixtureWake(_ id: UUID) async throws { _ = try await pumpTransfers(expectedJob: id) }
+    func pollFixtureWake(_ id: UUID) async throws { try await poll(expectedJob: id) }
+    var fixtureWakeProcessing: Bool { wakeProcessing }
+    var fixtureHasBatch: Bool { transferBatch != nil }
+    var fixtureStopRequested: SteamDownloadJob.Status? { stopRequested }
+    var fixtureWakeID: UUID? { wakeID }
+    func expireFixtureTimer(_ generation: UUID) { expireWake(generation) }
+    func prepareFixtureTerminalWake(completion: @escaping () -> Void) -> UUID {
+        let job = SteamDownloadJob(game: SteamOwnedGame(appId: 42, name: "Terminal fixture"),
+            account: "synthetic-account", options: SteamInstallOptions())
+        _ = queue.enqueue(job)
+        state.signedIn = true
+        state.accountName = "synthetic-account"
+        persistence = SteamQueuePersistence(url: FixtureFiles.root.appendingPathComponent("terminal-" + job.id.uuidString + ".json"))
+        queueWritable = true
+        startNext()
+        // Backgrounding before the first native submission settles this queued
+        // operation through the real common terminal path, without network I/O.
+        foreground = false
+        transferBatch = (job.id.uuidString, UUID().uuidString)
+        processTransferWake(completion: completion)
+        return job.id
+    }
     func addFixtureJob() {
         queue.isPaused = true
         _ = queue.enqueue(SteamDownloadJob(game: SteamOwnedGame(appId: 42, name: "Fixture"), account: "synthetic-account", options: SteamInstallOptions()))
@@ -359,6 +427,193 @@ extension SteamLibraryModel {
         try check(FixtureKeychain.stored == nil, "Explicit sign-out remains retryable")
         try check(SteamBackgroundSession.shared.cancellations == 2,
                   "Every explicit sign-out attempt cancels raw transfers before credential changes")
+
+        // An events callback can drain while the correlated daemon batch is
+        // still pending. Keep HTTP alive and finish its Activity update before
+        // releasing the background assertion and the OS completion handler.
+        for replenish in [true, false] {
+            SteamNativeWorker.reset()
+            SteamBackgroundSession.shared.resultCode = nil
+            SteamDownloadActivity.shared.flushStarted = false
+            SteamDownloadActivity.shared.holdFlush = true
+            UIApplication.shared.ended = 0
+            let pendingWake = SteamLibraryModel()
+            var pendingCallbacks = 0
+            let pendingID = pendingWake.prepareFixtureWake(replenish: replenish) { pendingCallbacks += 1 }
+            SteamDownloadActivity.shared.forcedVerifiedBytes = []
+            SteamNativeWorker.nextSnapshot["operationId"] = pendingID.uuidString
+            SteamNativeWorker.nextSnapshot["phase"] = "downloading"
+            SteamNativeWorker.nextSnapshot["busy"] = true
+            SteamNativeWorker.nextSnapshot["completedBytes"] = 75
+            SteamNativeWorker.nextSnapshot["totalBytes"] = 100
+            let pumping = Task { try await pendingWake.pollFixtureWake(pendingID) }
+            for _ in 0..<10000 {
+                if SteamDownloadActivity.shared.flushStarted { break }
+                await Task.yield()
+            }
+            try check(SteamDownloadActivity.shared.forcedVerifiedBytes == [75],
+                      "Handoff publishes current verified bytes instead of the previous poll's count")
+            try check(SteamDownloadActivity.shared.flushStarted,
+                      "An existing pending batch must refresh Activity and release its wake without timing out")
+            try check(pendingCallbacks == 0 && UIApplication.shared.ended == 0,
+                      "Wake resources stay held while the Activity update is suspended")
+            SteamDownloadActivity.shared.flushContinuation?.resume()
+            SteamDownloadActivity.shared.flushContinuation = nil
+            SteamDownloadActivity.shared.holdFlush = false
+            for _ in 0..<10000 {
+                if pendingCallbacks == 1 { break }
+                await Task.yield()
+            }
+            pumping.cancel()
+            do { try await pumping.value } catch is CancellationError { }
+            try check(pendingCallbacks == 1 && UIApplication.shared.ended == 1 && !pendingWake.fixtureWakeProcessing,
+                      "Completed Activity handoff releases the wake exactly once")
+            try check(pendingWake.fixtureHasBatch && SteamBackgroundSession.shared.cancellations == 0
+                      && SteamNativeWorker.batchCompletions.isEmpty,
+                      "Pending HTTP stays owned by the daemon without native acknowledgement or cancellation")
+        }
+
+        // An older suspended Activity upload must not close a newer wake.
+        SteamDownloadActivity.shared.flushStarted = false
+        SteamDownloadActivity.shared.holdFlush = true
+        let overlapping = SteamLibraryModel()
+        var oldCallbacks = 0, newCallbacks = 0
+        let oldID = overlapping.prepareFixtureWake { oldCallbacks += 1 }
+        SteamNativeWorker.nextSnapshot["operationId"] = oldID.uuidString
+        let oldPoll = Task { try await overlapping.pollFixtureWake(oldID) }
+        for _ in 0..<10000 {
+            if SteamDownloadActivity.shared.flushStarted { break }
+            await Task.yield()
+        }
+        try check(SteamDownloadActivity.shared.flushStarted, "Older wake reached its delayed Activity update")
+        overlapping.resumeForeground()
+        _ = overlapping.prepareFixtureWake { newCallbacks += 1 }
+        SteamDownloadActivity.shared.flushContinuation?.resume()
+        SteamDownloadActivity.shared.flushContinuation = nil
+        SteamDownloadActivity.shared.holdFlush = false
+        // Cancellation joins the old poll after its suspended flush returns.
+        oldPoll.cancel()
+        do { try await oldPoll.value } catch is CancellationError { }
+        try check(oldCallbacks == 1 && newCallbacks == 0 && overlapping.fixtureWakeProcessing,
+                  "Finishing an old Activity update cannot release a newer wake")
+        overlapping.resumeForeground()
+        try check(newCallbacks == 1, "The newer wake retains and releases its own completion")
+
+        // UIKit can deliver an old assertion expiration after its actor task
+        // has been queued. Invoke captured callbacks explicitly; no clock wait.
+        SteamNativeWorker.reset()
+        UIApplication.shared.expirationHandlers = []
+        UIApplication.shared.ended = 0
+        let expiring = SteamLibraryModel()
+        var expiredOldCallbacks = 0, expiredNewCallbacks = 0
+        _ = expiring.prepareFixtureWake { expiredOldCallbacks += 1 }
+        let oldExpiration = UIApplication.shared.expirationHandlers[0]
+        expiring.resumeForeground()
+        let currentExpirationJob = expiring.prepareFixtureWake { expiredNewCallbacks += 1 }
+        oldExpiration()
+        for _ in 0..<1000 { await Task.yield() }
+        try check(expiredOldCallbacks == 1 && expiredNewCallbacks == 0
+                  && UIApplication.shared.ended == 1 && expiring.fixtureWakeProcessing,
+                  "A stale UIKit expiration cannot release or end the new wake")
+        try check(expiring.fixtureStopRequested == nil && SteamBackgroundSession.shared.cancellations == 0
+                  && SteamNativeWorker.commands.isEmpty && expiring.activeJobID == currentExpirationJob,
+                  "A stale UIKit expiration cannot pause or cancel the new operation")
+        let currentExpiration = UIApplication.shared.expirationHandlers[1]
+        currentExpiration(); currentExpiration()
+        for _ in 0..<10000 {
+            if expiredNewCallbacks == 1 && SteamBackgroundSession.shared.cancellations == 1
+                && SteamNativeWorker.commands.count == 1 { break }
+            await Task.yield()
+        }
+        try check(expiredNewCallbacks == 1 && UIApplication.shared.ended == 2 && !expiring.fixtureWakeProcessing,
+                  "Current UIKit expiration releases its assertion and callback exactly once")
+        try check(expiring.fixtureStopRequested == .paused && SteamBackgroundSession.shared.cancellations == 1
+                  && SteamNativeWorker.commands.map { $0["action"] } == ["cancel"],
+                  "Current UIKit expiration requests one resumable pause and one native/raw cancellation")
+
+        // The timer reaches the same production expiration gate after its
+        // unchanged ten-second sleep. Invoke that gate with captured IDs to
+        // exercise both generations without advancing a real clock.
+        SteamNativeWorker.reset()
+        UIApplication.shared.ended = 0
+        let timerExpiry = SteamLibraryModel()
+        var oldTimerCallbacks = 0, newTimerCallbacks = 0
+        _ = timerExpiry.prepareFixtureWake { oldTimerCallbacks += 1 }
+        let oldTimerID = timerExpiry.fixtureWakeID!
+        timerExpiry.resumeForeground()
+        let newTimerJob = timerExpiry.prepareFixtureWake { newTimerCallbacks += 1 }
+        let newTimerID = timerExpiry.fixtureWakeID!
+        timerExpiry.expireFixtureTimer(oldTimerID)
+        try check(oldTimerCallbacks == 1 && newTimerCallbacks == 0 && UIApplication.shared.ended == 1
+                  && timerExpiry.fixtureWakeProcessing && timerExpiry.activeJobID == newTimerJob,
+                  "A stale ten-second timer cannot release or end the new wake")
+        try check(timerExpiry.fixtureStopRequested == nil && SteamBackgroundSession.shared.cancellations == 0
+                  && SteamNativeWorker.commands.isEmpty,
+                  "A stale ten-second timer cannot pause or cancel the new operation")
+        timerExpiry.expireFixtureTimer(newTimerID); timerExpiry.expireFixtureTimer(newTimerID)
+        for _ in 0..<10000 {
+            if SteamBackgroundSession.shared.cancellations == 1 && SteamNativeWorker.commands.count == 1 { break }
+            await Task.yield()
+        }
+        try check(newTimerCallbacks == 1 && UIApplication.shared.ended == 2 && !timerExpiry.fixtureWakeProcessing,
+                  "Current timer expiration releases its assertion and callback exactly once")
+        try check(timerExpiry.fixtureStopRequested == .paused && SteamBackgroundSession.shared.cancellations == 1
+                  && SteamNativeWorker.commands.map { $0["action"] } == ["cancel"],
+                  "Current timer expiration preserves resumable pause and cancellation exactly once")
+
+        SteamNativeWorker.reset()
+        SteamDownloadActivity.shared.flushStarted = false
+        SteamDownloadActivity.shared.holdFlush = true
+        UIApplication.shared.expirationHandlers = []
+        UIApplication.shared.ended = 0
+        let terminal = SteamLibraryModel()
+        var terminalCallbacks = 0
+        let terminalID = terminal.prepareFixtureTerminalWake { terminalCallbacks += 1 }
+        for _ in 0..<10000 {
+            if SteamDownloadActivity.shared.flushStarted { break }
+            await Task.yield()
+        }
+        try check(SteamDownloadActivity.shared.flushStarted && !terminal.fixtureHasBatch && terminal.busy,
+                  "Real terminal cleanup clears the batch before its suspended Activity flush")
+        var rejectedTerminalWake = 0
+        terminal.processTransferWake { rejectedTerminalWake += 1 }
+        try check(rejectedTerminalWake == 1 && terminalCallbacks == 0
+                  && UIApplication.shared.expirationHandlers.count == 1 && terminal.fixtureWakeProcessing,
+                  "A new URLSession wake is rejected while the terminal batch is nil")
+        terminal.resumeForeground()
+        SteamDownloadActivity.shared.holdFlush = false
+        SteamDownloadActivity.shared.flushContinuation?.resume()
+        SteamDownloadActivity.shared.flushContinuation = nil
+        try await finish(terminal)
+        try check(terminalCallbacks == 1 && UIApplication.shared.ended == 1 && !terminal.fixtureWakeProcessing,
+                  "Suspended terminal flush cannot release an already-ended generation twice")
+        try check(terminal.activeJobID == nil && terminal.queue.jobs.first { $0.id == terminalID }?.status == .paused,
+                  "Terminal cleanup preserves its paused result and completes operation ownership")
+
+        for blocked in ["protected-data", "assertion-denied"] {
+            UIApplication.shared.isProtectedDataAvailable = blocked != "protected-data"
+            UIApplication.shared.allowsBackgroundTask = blocked != "assertion-denied"
+            let deniedWake = SteamLibraryModel()
+            var deniedCallbacks = 0
+            _ = deniedWake.prepareFixtureWake { deniedCallbacks += 1 }
+            try check(deniedCallbacks == 1 && !deniedWake.fixtureWakeProcessing,
+                      "\(blocked) immediately returns the OS callback without resident processing")
+        }
+        UIApplication.shared.isProtectedDataAvailable = true
+        UIApplication.shared.allowsBackgroundTask = true
+
+        SteamBackgroundSession.shared.resultCode = "ok"
+        let readyWake = SteamLibraryModel()
+        var readyCallbacks = 0
+        let readyID = readyWake.prepareFixtureWake { readyCallbacks += 1 }
+        try await readyWake.pumpFixtureWake(readyID)
+        try check(SteamNativeWorker.batchCompletions == ["ok"] && !readyWake.fixtureHasBatch,
+                  "Ready batch is acknowledged for native verification")
+        try check(readyWake.fixtureWakeProcessing && readyCallbacks == 0,
+                  "A ready batch retains the original bounded verification wake")
+        readyWake.resumeForeground()
+        try check(readyCallbacks == 1, "Foreground transition releases the retained wake once")
+        SteamBackgroundSession.shared.resultCode = nil
 
         for malicious in ["synthetic-refresh-token", "[steam/private/account/80004005]", "[steam/connecting/network/secret]",
                           "[steam/connecting/network/80004005]/synthetic-account"] {

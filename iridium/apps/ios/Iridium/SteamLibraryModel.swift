@@ -234,6 +234,7 @@ final class SteamLibraryModel: ObservableObject {
     private var transferBatch: (operation: String, batch: String)?
     private var wakeTask: Task<Void, Never>?
     private var wakeCompletion: (() -> Void)?
+    private var wakeID: UUID?
     private var wakeBackgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var wakeProcessing = false
     private var backgroundTransfers: Bool { !LiveContainerIntegration.isHosted() }
@@ -495,8 +496,10 @@ final class SteamLibraryModel: ObservableObject {
         guard backgroundTransfers, !foreground, activeJobID != nil, transferBatch != nil,
               UIApplication.shared.isProtectedDataAvailable, wakeCompletion == nil else { completion(); return }
         wakeCompletion = completion
+        let generation = UUID()
+        wakeID = generation
         wakeBackgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Verify Steam batch") { [weak self] in
-            Task { @MainActor in self?.expireWake() }
+            Task { @MainActor in self?.expireWake(generation) }
         }
         guard wakeBackgroundTask != .invalid else { finishWake(); return }
         wakeProcessing = true
@@ -504,11 +507,12 @@ final class SteamLibraryModel: ObservableObject {
         wakeTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(10)) }
             catch { return }
-            self?.expireWake()
+            self?.expireWake(generation)
         }
     }
 
-    private func expireWake() {
+    private func expireWake(_ generation: UUID) {
+        guard wakeID == generation else { return }
         if let id = activeJobID {
             pause(id)
             stopReason = "iOS ended background processing. Resume to verify saved chunks and continue."
@@ -520,6 +524,7 @@ final class SteamLibraryModel: ObservableObject {
 
     private func finishWake() {
         wakeProcessing = false
+        wakeID = nil
         wakeTask?.cancel()
         wakeTask = nil
         let callback = wakeCompletion
@@ -532,8 +537,10 @@ final class SteamLibraryModel: ObservableObject {
         callback?()
     }
 
-    private func pumpTransfers(expectedJob: UUID) async throws {
-        guard backgroundTransfers, permittedDownloadRuntime, stopRequested == nil else { return }
+    private func pumpTransfers(expectedJob: UUID) async throws -> UUID? {
+        guard backgroundTransfers, permittedDownloadRuntime, stopRequested == nil else { return nil }
+        let currentWake = wakeID
+        var pendingWake: UUID?
         if transferBatch == nil, let batch = try await worker.batch() {
             guard batch.operationId == expectedJob.uuidString, activeJobID == expectedJob,
                   queue.jobs.contains(where: { $0.id == expectedJob && $0.account == account.map(SteamDownloadJob.accountKey) })
@@ -544,27 +551,27 @@ final class SteamLibraryModel: ObservableObject {
                 try await worker.completeBatch(operation: batch.operationId, batch: batch.batchId,
                     code: SteamBackgroundSession.failureCode(error))
                 transferBatch = nil
-                return
+                return nil
             }
+        }
+        if let batch = transferBatch {
             if wakeProcessing {
-                try await SteamChunkWakeHandoff.settle(session: .shared, operation: batch.operationId, batch: batch.batchId,
+                // Finishing an events delivery is not proof that every HTTP
+                // task in the batch is ready. Relinquish pending daemon work
+                // without spending the verification budget and cancelling it.
+                try await SteamChunkWakeHandoff.settle(session: .shared, operation: batch.operation, batch: batch.batch,
                     acknowledge: { code in
-                        try await worker.completeBatch(operation: batch.operationId, batch: batch.batchId, code: code)
+                        try await worker.completeBatch(operation: batch.operation, batch: batch.batch, code: code)
                         transferBatch = nil // Keep the existing bounded wake for verification/replanning.
                     }, pending: {
-                        if let job = queue.jobs.first(where: { $0.id == expectedJob }) {
-                            SteamDownloadActivity.shared.update(job, phase: "downloading", force: true)
-                        }
-                        finishWake() // Pending entire batch is owned by the daemon.
+                        pendingWake = currentWake
                     })
-                return
+            } else if let code = await SteamBackgroundSession.shared.result(operation: batch.operation, batch: batch.batch) {
+                try await worker.completeBatch(operation: batch.operation, batch: batch.batch, code: code)
+                transferBatch = nil
             }
         }
-        if let batch = transferBatch,
-           let code = await SteamBackgroundSession.shared.result(operation: batch.operation, batch: batch.batch) {
-            try await worker.completeBatch(operation: batch.operation, batch: batch.batch, code: code)
-            transferBatch = nil
-        }
+        return pendingWake
     }
 
     func setCloudProblem(_ gameID: UUID, _ message: String) { cloudProblems[gameID] = message }
@@ -713,7 +720,9 @@ final class SteamLibraryModel: ObservableObject {
                 if backgroundTransfers { await SteamBackgroundSession.shared.cancel(operation: job.id.uuidString, discardRaw: finished.status == .completed) }
             }
             transferBatch = nil
-            finishWake()
+            let endingWake = wakeID
+            if wakeProcessing { await SteamDownloadActivity.shared.flush() }
+            if wakeID == endingWake { finishWake() }
             activeJobID = nil
             stopRequested = nil
             stopReason = nil
@@ -741,13 +750,14 @@ final class SteamLibraryModel: ObservableObject {
     private func poll(expectedJob: UUID?, attempt: UInt64 = 0) async throws {
         var loggedStorage = false
         repeat {
+            var pendingWake: UUID?
             if let expectedJob, backgroundTransfers {
                 if !permittedDownloadRuntime && stopRequested == nil {
                     try await Task.sleep(for: .milliseconds(500))
                     continue
                 }
                 await worker.permitChunkRuntime(permittedDownloadRuntime)
-                try await pumpTransfers(expectedJob: expectedJob)
+                pendingWake = try await pumpTransfers(expectedJob: expectedJob)
             }
             let next: SteamDownloadSnapshot
             do { next = try JSONDecoder().decode(SteamDownloadSnapshot.self, from: await worker.read()) }
@@ -794,7 +804,8 @@ final class SteamLibraryModel: ObservableObject {
                     $0.storage = next.storage
                 }
                 if let job = queue.jobs.first(where: { $0.id == id }) {
-                    SteamDownloadActivity.shared.update(job)
+                    SteamDownloadActivity.shared.update(job, force: pendingWake != nil,
+                        receivedBytesPerSecond: bytesPerSecond)
                     SteamDownloadRuntime.shared.progress(operation: id, completed: next.completedBytes, total: next.totalBytes, phase: next.phase)
                 }
                 if !next.busy {
@@ -815,6 +826,12 @@ final class SteamLibraryModel: ObservableObject {
                         try await send(["action": "cancel"])
                     }
                 }
+            }
+            if let pendingWake, wakeID == pendingWake {
+                // Publish the snapshot read after handoff, rather than the
+                // previous poll's verified count, before releasing runtime.
+                await SteamDownloadActivity.shared.flush()
+                if wakeID == pendingWake { finishWake() }
             }
             if !next.busy { return }
             try await Task.sleep(for: .milliseconds(500))

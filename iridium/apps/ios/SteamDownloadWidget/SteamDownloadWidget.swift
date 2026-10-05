@@ -1,6 +1,8 @@
 import ActivityKit
 import SwiftUI
 import WidgetKit
+import UIKit
+import ImageIO
 
 #if !IRIDIUM_ACTIVITY_RENDERING
 @main
@@ -18,12 +20,11 @@ struct SteamDownloadWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        SteamDownloadSymbol(context: .init(context))
-                        Text("Iridium").font(.caption.weight(.semibold))
-                    }
+                    SteamDownloadSymbol(context: .init(context))
                 }
-                DynamicIslandExpandedRegion(.trailing) { SteamDownloadPercent(context: .init(context)) }
+                DynamicIslandExpandedRegion(.trailing) {
+                    SteamDownloadPercent(context: .init(context)).padding(.trailing, 4)
+                }
                 DynamicIslandExpandedRegion(.bottom) { SteamDownloadCard(context: .init(context), expandedIsland: true) }
             } compactLeading: {
                 SteamDownloadSymbol(context: .init(context))
@@ -48,10 +49,15 @@ struct SteamDownloadViewData {
         self.attributes = attributes; self.state = state; self.isStale = isStale
     }
     var presentation: SteamDownloadPresentation {
-        .init(phase: state.phase, verifiedBytes: state.verifiedBytes, totalBytes: state.totalBytes, isStale: isStale)
+        .init(phase: state.phase, verifiedBytes: state.verifiedBytes, totalBytes: state.totalBytes, isStale: isStale,
+              receivedBytesPerSecond: state.receivedBytesPerSecond)
     }
-    var phaseLabel: String { presentation.isStale ? "Open Iridium to refresh download status" : state.label }
-    var spokenSummary: String { "\(attributes.gameName). \(phaseLabel). \(presentation.verifiedSummary)." }
+    var phaseLabel: String { presentation.statusLabel }
+    var spokenSummary: String {
+        let phase = presentation.isStale ? "Open Iridium to refresh download status" : state.label
+        let rate = presentation.receivedRateSummary.map { " Last observed received rate: \($0)." } ?? ""
+        return "\(attributes.gameName). \(phase). \(presentation.verifiedSummary).\(rate)"
+    }
 }
 
 struct SteamDownloadCard: View {
@@ -59,65 +65,96 @@ struct SteamDownloadCard: View {
     var expandedIsland = false
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.isLuminanceReduced) private var luminanceReduced
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !expandedIsland && !typeSize.isAccessibilitySize {
-                HStack(spacing: 6) {
-                    SteamDownloadSymbol(context: context)
-                    Text("IRIDIUM").font(.caption2.weight(.semibold)).tracking(1)
-                    Spacer()
-                    Text("Steam Download").font(.caption2).foregroundStyle(.white.opacity(0.72))
-                }
-                .accessibilityHidden(true)
-            }
+        VStack(alignment: .leading, spacing: expandedIsland ? 4 : 8) {
             Text(context.attributes.gameName)
-                .font(.headline).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                .font(.title3.weight(.semibold)).lineLimit(1).truncationMode(.tail)
                 .privacySensitive()
                 .accessibilityLabel(context.attributes.gameName)
                 .accessibilityAddTraits(.isHeader)
-            HStack(alignment: .center, spacing: 8) {
-                Label(context.phaseLabel, systemImage: context.presentation.symbol)
-                    .font(.callout).foregroundStyle(SteamDownloadSymbol.color(context.presentation.tone, dimmed: luminanceReduced))
-                    .lineLimit(2).layoutPriority(1)
-                Spacer(minLength: 0)
-                if !context.state.isTerminal {
-                    Button(intent: CancelSteamDownloadIntent(operationId: context.attributes.operationId)) {
-                        Text("Cancel").font(.callout.weight(.semibold)).frame(minHeight: 28)
-                    }
-                    .buttonStyle(.bordered).tint(.white)
-                    .frame(minHeight: 44).contentShape(Rectangle())
-                    .accessibilityLabel("Cancel download for \(context.attributes.gameName)")
-                }
-            }
-            HStack(spacing: 10) {
-                SteamDownloadProgress(presentation: context.presentation)
-                if !expandedIsland, context.presentation.fractionCompleted != nil {
-                    SteamDownloadPercent(context: context)
-                }
-            }
-            ViewThatFits(in: .horizontal) {
-                if !expandedIsland && !typeSize.isAccessibilitySize {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        verifiedCount.fixedSize()
-                        Spacer(minLength: 0)
-                        Text("Updated \(context.state.lastUpdated, style: .time)")
-                            .font(.caption2).monospacedDigit().foregroundStyle(.white.opacity(0.65))
-                            .fixedSize()
-                    }
-                }
+            SteamDownloadProgress(presentation: context.presentation)
+            if typeSize.isAccessibilitySize {
                 verifiedCount
+                if let rate = context.presentation.receivedRateSummary { receivedRate(rate) }
+                status
+                if !context.state.isTerminal { cancel }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    verifiedCount
+                    Spacer(minLength: 0)
+                    if let rate = context.presentation.receivedRateSummary { receivedRate(rate) }
+                }
+                HStack(spacing: 8) {
+                    status
+                    Spacer(minLength: 0)
+                    if !context.state.isTerminal { cancel }
+                }
             }
         }
-        .padding(expandedIsland ? 0 : 14)
+        .padding(.horizontal, expandedIsland ? 10 : 14)
+        .padding(.vertical, expandedIsland ? 6 : 14)
         .foregroundStyle(.white)
+        .background {
+            GeometryReader { geometry in
+                ZStack {
+                    Color(white: 0.07)
+                    if !reduceTransparency, let image = artworkImage {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .blur(radius: 3).opacity(luminanceReduced ? 0.25 : 0.85)
+                        LinearGradient(colors: [.black.opacity(contrast == .increased ? 0.8 : 0.55),
+                                                .black.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                    }
+                }.clipped()
+            }.accessibilityHidden(true).privacySensitive()
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var status: some View {
+        Label(context.phaseLabel, systemImage: context.presentation.symbol)
+            .font(.callout).foregroundStyle(SteamDownloadSymbol.color(context.presentation.tone, dimmed: luminanceReduced))
+            .lineLimit(1).truncationMode(.tail)
+            .accessibilityLabel(context.spokenSummary)
+            .layoutPriority(1)
+    }
+
+    private var cancel: some View {
+        Button(intent: CancelSteamDownloadIntent(operationId: context.attributes.operationId)) {
+            Text("Cancel").font(.callout).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12).frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .background(.white.opacity(0.1), in: Capsule())
+        .contentShape(Rectangle())
+        .accessibilityLabel("Cancel download for \(context.attributes.gameName)")
     }
 
     private var verifiedCount: some View {
-        Text(context.presentation.verifiedSummary)
-            .font(.caption).monospacedDigit().foregroundStyle(.white.opacity(0.8))
-            .fixedSize(horizontal: false, vertical: true)
+        Text(context.presentation.verifiedAmount)
+            .font(.caption).monospacedDigit().foregroundStyle(.white.opacity(0.85))
+            .lineLimit(1).truncationMode(.tail)
             .accessibilityLabel(context.presentation.verifiedSummary)
+    }
+
+    private func receivedRate(_ rate: String) -> some View {
+        Label(rate, systemImage: "arrow.down").font(.caption).monospacedDigit().foregroundStyle(.white.opacity(0.85))
+            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Last observed received rate: \(rate)")
+    }
+
+    private var artworkImage: UIImage? {
+        guard let data = context.state.artworkJPEG, data.count <= 1_450,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetType(source) as String? == "public.jpeg",
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? NSNumber,
+              width.intValue > 0, width.intValue <= 80, height.intValue > 0, height.intValue <= 40 else { return nil }
+        return UIImage(data: data)
     }
 }
 

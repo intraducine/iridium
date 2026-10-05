@@ -1,5 +1,6 @@
 import ActivityKit
 import AppIntents
+import Foundation
 
 struct SteamDownloadActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
@@ -7,6 +8,24 @@ struct SteamDownloadActivityAttributes: ActivityAttributes {
         var verifiedBytes: Int64
         var totalBytes: Int64
         var lastUpdated: Date
+        var receivedBytesPerSecond: Double? = nil
+        var artworkJPEG: Data? = nil
+
+        // ActivityKit caps attributes and content together at 4 KB. Keep a
+        // safety margin, including JSON's base64 expansion, on every update.
+        func bounded(for attributes: SteamDownloadActivityAttributes) -> Self {
+            var value = self
+            if let rate = value.receivedBytesPerSecond,
+               !rate.isFinite || rate < 1 || rate >= Double(Int64.max) {
+                value.receivedBytesPerSecond = nil
+            }
+            if let artwork = value.artworkJPEG, artwork.count > 1_450 { value.artworkJPEG = nil }
+            let encoder = JSONEncoder()
+            let payload = SteamDownloadActivityPayload(attributes: attributes, state: value)
+            if let encoded = try? encoder.encode(payload), encoded.count <= 3_072 { return value }
+            value.artworkJPEG = nil
+            return value
+        }
 
         var fractionCompleted: Double {
             totalBytes > 0 ? min(1, max(0, Double(verifiedBytes) / Double(totalBytes))) : 0
@@ -29,6 +48,11 @@ struct SteamDownloadActivityAttributes: ActivityAttributes {
     }
     let operationId: String
     let gameName: String
+}
+
+private struct SteamDownloadActivityPayload: Encodable {
+    let attributes: SteamDownloadActivityAttributes
+    let state: SteamDownloadActivityAttributes.ContentState
 }
 
 struct CancelSteamDownloadIntent: LiveActivityIntent {

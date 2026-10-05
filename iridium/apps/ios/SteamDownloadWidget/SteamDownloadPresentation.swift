@@ -1,19 +1,46 @@
 import Foundation
 
 // Presentation only. Progress remains the number of verified bytes supplied by
-// the app; no timer, transfer speed, artwork lookup or download control lives here.
+// the app. The received rate is an observed network sample, never inferred from
+// verified progress; reused files and decompressed chunks are not wire bytes.
 struct SteamDownloadPresentation: Sendable {
     enum Tone: Equatable, Sendable { case neutral, success, attention, failure }
     let phase: String
     let verifiedBytes: Int64
     let totalBytes: Int64
     let isStale: Bool
+    let receivedBytesPerSecond: Double?
 
-    init(phase: String, verifiedBytes: Int64, totalBytes: Int64, isStale: Bool) {
+    init(phase: String, verifiedBytes: Int64, totalBytes: Int64, isStale: Bool, receivedBytesPerSecond: Double? = nil) {
         self.phase = phase
         self.verifiedBytes = max(0, verifiedBytes)
         self.totalBytes = max(0, totalBytes)
         self.isStale = isStale && !["completed", "cancelled", "failed"].contains(phase)
+        self.receivedBytesPerSecond = receivedBytesPerSecond
+    }
+    var statusLabel: String {
+        if isStale { return "Open to refresh" }
+        switch phase {
+        case "downloading": return "Downloading"
+        case "verifying": return "Verifying"
+        case "finalizing": return "Finishing"
+        case "waitingForeground": return "Open to continue"
+        case "paused": return "Paused"
+        case "completed": return "Ready"
+        case "cancelled": return "Cancelled"
+        case "failed": return "Stopped · open to retry"
+        default: return "Preparing"
+        }
+    }
+    var receivedRateSummary: String? {
+        guard phase == "downloading", !isStale, let rate = receivedBytesPerSecond,
+              rate.isFinite, rate >= 1, rate < Double(Int64.max) else { return nil }
+        return "\(ByteCountFormatter.string(fromByteCount: Int64(rate), countStyle: .file))/s"
+    }
+    var verifiedAmount: String {
+        let verified = ByteCountFormatter.string(fromByteCount: verifiedBytes, countStyle: .file)
+        guard totalBytes > 0 else { return "\(verified) verified" }
+        return "\(verified) / \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))"
     }
     var fractionCompleted: Double? {
         totalBytes > 0 ? min(1, Double(verifiedBytes) / Double(totalBytes)) : nil
