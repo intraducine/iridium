@@ -34,6 +34,11 @@ struct GameDetailView: View {
                 MenuNavigationLink { GameStorageView(game: game, viewModel: viewModel, usesMadeiraRuntime: viewModel.usesMadeiraRuntime) } label: {
                     Label("Files & Saves", systemImage: "folder")
                 }
+                if let target = SteamCloudTarget(game: game) {
+                    MenuNavigationLink { SteamCloudView(target: target, viewModel: viewModel) } label: {
+                        Label("Steam Cloud", systemImage: "icloud")
+                    }
+                }
             }
             if viewModel.usesMadeiraRuntime {
                 Section {
@@ -66,7 +71,8 @@ struct GameDetailView: View {
                     List {
                         Section("Launch") {
                             MenuValue("Executable", value: game.launchProfile.executablePath)
-                            MenuValue("Arguments", value: game.launchProfile.arguments.isEmpty ? "None" : game.launchProfile.arguments.joined(separator: " "))
+                            MenuNavigationLink("Custom Arguments") { GameArgumentsEditor(game: game, viewModel: viewModel) }
+                                .disabled(!viewModel.canEditGameArguments(game.id))
                             MenuNavigationLink("Launch Checks") { GameCompatibilityView(game: game, viewModel: viewModel) }
                         }
                         Section {

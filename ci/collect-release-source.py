@@ -167,14 +167,15 @@ def source_tree(source, output):
                 archive.add(path, arcname=str(path.relative_to(source)), recursive=False)
 
 
-def write_source_package(source, linux, output):
-    if not linux.is_dir():
+def write_source_package(source, linux, output, *, include_linux=True):
+    if include_linux and not linux.is_dir():
         raise ValueError('Missing Linux dependency sources')
     if (source / 'linux').exists():
         raise ValueError('Stale Linux source copy in package staging')
     with tarfile.open(output, 'w:gz') as archive:
         archive.add(source, arcname='corresponding-source')
-        archive.add(linux, arcname='corresponding-source/linux')
+        if include_linux:
+            archive.add(linux, arcname='corresponding-source/linux')
 
 
 def collect(kind):
@@ -248,7 +249,7 @@ def collect(kind):
         destination = ROOT / '.build/ipa-output'
         destination.mkdir(parents=True, exist_ok=True)
         output = destination / 'Iridium-corresponding-source.tar.gz'
-        write_source_package(OUT, debian, output)
+        write_source_package(OUT, debian, output, include_linux=os.environ.get('IRIDIUM_RUNTIME_PROFILE') != 'madeira')
         with output.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         (destination / 'SOURCE-SHA256SUMS').write_text(digest + '  ' + output.name + '\n')

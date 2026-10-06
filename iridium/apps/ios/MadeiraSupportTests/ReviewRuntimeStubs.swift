@@ -3,11 +3,11 @@ let scenario = CommandLine.arguments.dropFirst().first ?? "success"
 final class NativeState: @unchecked Sendable {
     static let shared = NativeState()
     private let lock = NSLock()
-    private var wine = Int32(0), server = Int32(0), code = Int32(0)
+    private var wine = Int32(0), server = Int32(0), code = Int32(0), ready = Int32(0)
     private var begins = 0, cancels = 0
     var recorded: [(Int32,Int32)] = []
-    func read(_ field: Int) -> Int32 { lock.lock(); defer { lock.unlock() }; return field == 0 ? wine : field == 1 ? server : code }
-    func write(_ field: Int, _ value: Int32) { lock.lock(); defer { lock.unlock() }; if field == 0 { wine=value } else if field == 1 { server=value } else { code=value } }
+    func read(_ field: Int) -> Int32 { lock.lock(); defer { lock.unlock() }; return field == 0 ? wine : field == 1 ? server : field == 2 ? code : ready }
+    func write(_ field: Int, _ value: Int32) { lock.lock(); defer { lock.unlock() }; if field == 0 { wine=value } else if field == 1 { server=value } else if field == 2 { code=value } else { ready=value } }
     func start() { lock.lock(); begins += 1; wine=1; lock.unlock() }
     var startCount: Int { lock.lock(); defer { lock.unlock() }; return begins }
     func cancelPrerequisites() { lock.lock(); cancels += 1; lock.unlock() }
@@ -44,7 +44,7 @@ enum IridiumGamePrerequisites {
     }
     static func cancel(prefix: URL) throws { NativeState.shared.cancelPrerequisites() }
 }
-@MainActor enum MadeiraController { static var acceptingInput = true; static var active = false; static func start(prefix: URL, touchControlsEnabled: Bool) { active=true }; static func stop() { active=false } }
+@MainActor enum MadeiraController { static var acceptingInput = true; static var active = false; static func start(prefix: URL, touchControlsEnabled: Bool, gameID: UUID) { active=true }; static func stop() { active=false } }
 enum MadeiraControllerInstall { static func install(prefix: URL, windowsExecutable: String) throws {} }
 @MainActor enum MadeiraHardwareInput { static var acceptingInput = true; static func stop() {} }
 struct MadeiraKeys { mutating func releaseAll()->[Int32] { [] }; mutating func update(name:String,value:Double)->[(Int32,Bool)] { [] } }
@@ -82,11 +82,24 @@ func iridium_reserve_fex_memory()->Int32 { scenario == "arena-failure" ? 0 : 1 }
 var ws_log_quiet:Int32=0
 func wineserver_start(_ path:String)->Int32 {
     if scenario == "server-failure" { return -1 }
-    NativeState.shared.write(1, scenario == "server-died" ? 0 : 1); return 0
+    NativeState.shared.write(1, scenario == "server-died" ? 0 : 1)
+    let waiting = ["server-delayed-ready", "server-never-ready", "server-ready-cancel",
+                   "server-exits-before-ready", "server-legacy-delayed-ready"].contains(scenario)
+    NativeState.shared.write(3, waiting ? 0 : 1)
+    if scenario == "server-delayed-ready" || scenario == "server-legacy-delayed-ready" {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2.1) {
+            if NativeState.shared.read(1) != 0 { NativeState.shared.write(3, 1) }
+        }
+    } else if scenario == "server-exits-before-ready" {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { NativeState.shared.write(1, 0) }
+    }
+    return 0
 }
-func wineserver_stop() { NativeState.shared.write(1,0) }
+func wineserver_stop() { NativeState.shared.write(3,0); NativeState.shared.write(1,0) }
 func wineserver_is_running()->Int32 { NativeState.shared.read(1) }
+func wineserver_is_ready()->Int32 { NativeState.shared.read(3) }
 func wine_process_start(_ path:String)->Int32 {
+    precondition(wineserver_is_ready() != 0, "guest launched before registry readiness")
     if scenario == "wine-failure" { return -1 }
     NativeState.shared.start(); return 0
 }

@@ -62,9 +62,16 @@ REQUIRED = {
     ],
 }
 
-def blockers(root, package=False):
+def required_for_profile(profile):
+    if profile not in {'madeira', 'legacy'}:
+        raise ValueError('Unknown runtime package profile: ' + profile)
+    return {group: paths for group, paths in REQUIRED.items()
+            if profile == 'legacy' or group != 'legacy runtime host and userland'}
+
+
+def blockers(root, package=False, profile='madeira'):
     result = []
-    for group, paths in REQUIRED.items():
+    for group, paths in required_for_profile(profile).items():
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
             result.append(f"{group}: missing " + ", ".join(missing))
@@ -82,11 +89,14 @@ def blockers(root, package=False):
     return result
 
 if __name__ == "__main__":
-    if sys.argv[1:] not in ([], ['--package']):
-        raise SystemExit('Usage: check-ipa-prerequisites.py [--package]')
-    problems = blockers(ROOT, package=bool(sys.argv[1:]))
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--package', action='store_true')
+    parser.add_argument('--profile', choices=('madeira', 'legacy'), default='madeira')
+    args = parser.parse_args()
+    problems = blockers(ROOT, package=args.package, profile=args.profile)
     if problems:
-        print("Unsigned IPA packaging is blocked." if sys.argv[1:] else
+        print("Unsigned IPA packaging is blocked." if args.package else
               "Unsigned IPA build is not ready. No app was built or uploaded.")
         for problem in problems:
             print(f"- {problem}")

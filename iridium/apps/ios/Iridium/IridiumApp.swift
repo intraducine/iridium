@@ -13,11 +13,17 @@ struct IridiumApp: App {
     private static let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
 
     @Environment(\.scenePhase) private var scenePhase
+    @UIApplicationDelegateAdaptor(SteamBackgroundAppDelegate.self) private var backgroundDelegate
     @State private var viewModel: AppViewModel?
 
     init() {
         // Install capture before recording host/JIT launch diagnostics.
         _ = Self.logFileURL
+        #if MADEIRA_RUNTIME
+        // Capture saved sync settings before the UI can change them. File I/O
+        // runs off the UI thread; this does not select a running native engine.
+        _ = MadeiraSyncSession.startup
+        #endif
         // Snapshot host-owned settings before any UI can repair them. They only
         // become active when LiveContainer creates the next guest process.
         LiveContainerIntegration.configureProcessLaunchEnvironment()

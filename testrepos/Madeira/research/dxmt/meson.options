@@ -15,3 +15,7 @@ option('wine_builtin_dll', type : 'boolean', value : false)
 option('enable_tests', type : 'boolean', value : false)
 option('enable_nvapi', type : 'boolean', value : false)
 option('enable_nvngx', type : 'boolean', value : false)
+# Metal language version of the embedded shaders (see metalir_generator in
+# meson.build). Raise it only when the shaders need a newer standard: a device
+# refuses a library written for a version its OS does not know.
+option('metal_std', type : 'string', value : 'metal3.1')

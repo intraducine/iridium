@@ -29,7 +29,7 @@ struct InputSettingsView: View {
             }
 
             Section("About Input") {
-                Text("Physical controllers and the on-screen controller share Iridium's XInput bridge. Touch layouts are configured per game from Game Options → Controls or from the player menu.")
+                Text("Physical controllers use Iridium's XInput bridge by default. Each game can opt into keyboard and mouse mapping from Game Options → Controls or the player menu. On-screen controller layouts are also saved per game.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -60,6 +60,7 @@ struct GameInputSettingsView: View {
     @State private var keyboardConnected = GCKeyboard.coalesced != nil
     @State private var mouseCount = GCMouse.mice().count
     @State private var confirmingReset = false
+    @State private var physicalControllerMode = PhysicalControllerMode.native
     @AppStorage("IridiumMouseSensitivity") private var mouseSensitivity = 1.0
     @AppStorage("IridiumScrollSensitivity") private var scrollSensitivity = 1.0
 
@@ -71,6 +72,15 @@ struct GameInputSettingsView: View {
 
     var body: some View {
         List {
+            Section("Physical Controller") {
+                MenuNavigationLink {
+                    PhysicalControllerMappingView(gameID: game.id, gameTitle: game.title)
+                } label: {
+                    LabeledContent("Controller Mapping", value: physicalControllerMode.displayName)
+                }
+                .accessibilityIdentifier("physicalControllerMapping")
+            }
+
             Section("On-Screen Controller") {
                 Toggle("Show On-Screen Controller", isOn: $touchControlsEnabled)
                     .accessibilityIdentifier("touchControllerEnabled")
@@ -133,8 +143,13 @@ struct GameInputSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .GCKeyboardDidDisconnect)) { _ in refreshDevices() }
         .onReceive(NotificationCenter.default.publisher(for: .GCMouseDidConnect)) { _ in refreshDevices() }
         .onReceive(NotificationCenter.default.publisher(for: .GCMouseDidDisconnect)) { _ in refreshDevices() }
+        .onReceive(NotificationCenter.default.publisher(for: PhysicalControllerMappingStore.settingsChanged)) { notification in
+            guard notification.object as? UUID == game.id else { return }
+            physicalControllerMode = PhysicalControllerMappingStore.configuration(for: game.id).mode
+        }
         .onAppear {
             touchControlsEnabled = TouchControllerLayoutStore.isEnabled(for: game.id)
+            physicalControllerMode = PhysicalControllerMappingStore.configuration(for: game.id).mode
             refreshDevices()
         }
         .confirmationDialog(

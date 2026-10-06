@@ -8,14 +8,15 @@ import plistlib
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'iridium/packages/steam'
 OUTPUT = ROOT / '.build/steam'
 
 
-def run(*args):
-    subprocess.run([str(a) for a in args], cwd=SOURCE, check=True)
+def run(*args, env=None):
+    subprocess.run([str(a) for a in args], cwd=SOURCE, check=True, env=env)
 
 
 def main():
@@ -29,12 +30,16 @@ def main():
     host = 'osx-arm64' if platform.machine() == 'arm64' else 'osx-x64'
     run(sys.executable, ROOT / 'ci/check-steam-queue.py')
     run(sys.executable, ROOT / 'ci/prepare-steamkit.py')
-    run('dotnet', 'run', '--project', 'Iridium.Steam.Tests', '-c', 'Release')
+    # The host's /var and /tmp aliases are outside the synthetic save tree.
+    # Canonicalize only this trusted temp anchor; keep Cloud's link checks intact.
+    test_env = os.environ.copy()
+    test_env['TMPDIR'] = str(Path(tempfile.gettempdir()).resolve(strict=True))
+    run('dotnet', 'run', '--project', 'Iridium.Steam.Tests', '-c', 'Release', env=test_env)
     # NativeAOT needs Apple's clang wrapper and SDK, not the LLVM-MinGW compiler.
     os.environ['PATH'] = '/usr/bin' + os.pathsep + os.environ['PATH']
     run('dotnet', 'publish', 'Iridium.Steam.Tests', '-c', 'Release', '-r', host,
         '-p:PublishAot=true', '-o', OUTPUT / 'tests')
-    run(OUTPUT / 'tests/Iridium.Steam.Tests')
+    run(OUTPUT / 'tests/Iridium.Steam.Tests', env=test_env)
     frameworks = []
     for rid in (['ios-arm64'] if args.device_only else ['ios-arm64', 'iossimulator-arm64']):
         dest = OUTPUT / rid
@@ -55,7 +60,8 @@ def main():
             }, file)
         shutil.copy2(SOURCE / 'THIRD-PARTY-NOTICES.md', framework)
         symbols = subprocess.check_output(['nm', '-gU', str(binary)], text=True)
-        for name in ('initialize', 'set_capacity_provider', 'submit', 'snapshot', 'take_session', 'free'):
+        for name in ('initialize', 'set_capacity_provider', 'submit', 'snapshot', 'take_session',
+                     'take_chunk_batch', 'complete_chunk_batch', 'set_chunk_runtime', 'free'):
             if '_iridium_steam_' + name not in symbols:
                 raise RuntimeError('Missing Steam ABI symbol: ' + name)
         frameworks.extend(['-framework', framework])

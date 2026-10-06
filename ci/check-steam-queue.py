@@ -12,7 +12,11 @@ def main():
         executable = Path(directory) / 'queue-checks'
         subprocess.run([
             'swiftc', '-swift-version', '6', '-parse-as-library',
+            '-D', 'IRIDIUM_STEAM_TESTS',
             str(ROOT / 'iridium/apps/ios/Iridium/SteamDownloadQueue.swift'),
+            str(ROOT / 'iridium/apps/ios/Iridium/SteamChunkTransfer.swift'),
+            str(ROOT / 'iridium/apps/ios/Iridium/SteamBackgroundSession.swift'),
+            str(ROOT / 'iridium/apps/ios/SteamDownloadTests/ChunkChecks.swift'),
             str(ROOT / 'iridium/apps/ios/SteamDownloadTests/QueueChecks.swift'),
             '-o', str(executable),
         ], check=True, timeout=180)

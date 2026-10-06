@@ -73,9 +73,12 @@ public static class SteamStorage
     }
 
     public static async Task Check(string install, string staging, IEnumerable<DepotManifest.FileData> files,
-        Func<string, SteamCapacity> measure, bool overridePreflight, Action<SteamStorageDiagnostic>? report, CancellationToken ct)
+        Func<string, SteamCapacity> measure, bool overridePreflight, Action<SteamStorageDiagnostic>? report, CancellationToken ct,
+        long rawTransferReservation = 0)
     {
-        long required = SafetyMarginBytes;
+        if (rawTransferReservation < 0 || rawTransferReservation > SteamBackgroundChunks.MaximumBatchBytes)
+            throw new ArgumentOutOfRangeException(nameof(rawTransferReservation));
+        long required = checked(SafetyMarginBytes + rawTransferReservation);
         foreach (var file in files)
             required = checked(required + await VerifiedFiles.RequiredStorage(install, staging, file, ct));
         ct.ThrowIfCancellationRequested();

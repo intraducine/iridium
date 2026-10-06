@@ -13,6 +13,7 @@ enum MadeiraController {
             guard acceptingInput != oldValue else { return }
             if !acceptingInput {
                 touch.releaseInputs()
+                releaseMappedInputs()
                 NotificationCenter.default.post(name: touchInputResetNotification, object: nil)
             }
             publishSnapshot(forceLog: true, reason: acceptingInput ? "input-resumed" : "input-paused")
@@ -91,6 +92,23 @@ enum MadeiraController {
     private static var previous = Data()
     private static var packet: UInt32 = 0
     private static var slots: [GCController?] = Array(repeating: nil, count: 4)
+    private static var gameID: UUID?
+    private static var mapping = PhysicalControllerConfiguration()
+    private static var mappingState = MadeiraControllerMappingState()
+    private static var sceneIsDeactivating = false
+
+    private static func deliver(_ events: [MadeiraControllerMappingState.Event]) {
+        for event in events {
+            switch event {
+            case .action(let action, let pressed): MadeiraHardwareInput.controllerAction(action, pressed: pressed)
+            case .motion(let x, let y): MadeiraHardwareInput.controllerMotion(x: x, y: y)
+            }
+        }
+    }
+
+    private static func releaseMappedInputs() {
+        deliver(mappingState.releaseAll())
+    }
 
     private static var hostIsForegroundInteractive: Bool {
         let scenes = UIApplication.shared.connectedScenes
@@ -134,6 +152,11 @@ enum MadeiraController {
     }
 
     static func stop() {
+        releaseMappedInputs()
+        mappingState = .init()
+        mapping = .init()
+        gameID = nil
+        sceneIsDeactivating = false
         timer?.invalidate()
         timer = nil
         observers.forEach(NotificationCenter.default.removeObserver)
@@ -156,8 +179,10 @@ enum MadeiraController {
         slots = Array(repeating: nil, count: 4)
     }
 
-    static func start(prefix: URL, touchControlsEnabled: Bool) {
+    static func start(prefix: URL, touchControlsEnabled: Bool, gameID: UUID) {
         stop()
+        self.gameID = gameID
+        mapping = PhysicalControllerMappingStore.configuration(for: gameID)
         touch.active = touchControlsEnabled
         previous = Data()
         let path = prefix.appendingPathComponent("drive_c/iridium-controller.bin")
@@ -172,9 +197,35 @@ enum MadeiraController {
         }
         observers.append(NotificationCenter.default.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
+                sceneIsDeactivating = true
                 touch.releaseInputs()
+                releaseMappedInputs()
                 NotificationCenter.default.post(name: touchInputResetNotification, object: nil)
                 publishSnapshot(forceLog: true, reason: "scene-deactivated")
+            }
+        })
+        observers.append(NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                sceneIsDeactivating = true
+                releaseMappedInputs()
+                publishSnapshot()
+            }
+        })
+        for name: Notification.Name in [UIScene.didActivateNotification, UIApplication.didBecomeActiveNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    sceneIsDeactivating = false
+                    publishSnapshot()
+                }
+            })
+        }
+        observers.append(NotificationCenter.default.addObserver(forName: PhysicalControllerMappingStore.settingsChanged, object: nil, queue: .main) { notification in
+            MainActor.assumeIsolated {
+                guard notification.object as? UUID == self.gameID, let gameID = self.gameID else { return }
+                // Release through the old bindings before loading any replacement.
+                releaseMappedInputs()
+                mapping = PhysicalControllerMappingStore.configuration(for: gameID)
+                publishSnapshot(forceLog: true, reason: "mapping-changed")
             }
         })
 
@@ -209,13 +260,31 @@ enum MadeiraController {
             if let i = slots.firstIndex(where: { $0 == nil }) { slots[i] = controller }
         }
 
-        let inputActive = acceptingInput && hostIsForegroundInteractive
+        let inputActive = acceptingInput && hostIsForegroundInteractive && !sceneIsDeactivating
+        var samples: [Int: MadeiraControllerMappingState.Sample] = [:]
+        for index in slots.indices where mapping.mode == .keyboardMouse {
+            guard let p = slots[index]?.extendedGamepad else { continue }
+            var buttons: UInt16 = 0
+            let pairs: [(GCControllerButtonInput?, UInt16)] = [
+                (p.dpad.up, 1), (p.dpad.down, 2), (p.dpad.left, 4), (p.dpad.right, 8),
+                (p.buttonMenu, 0x10), (p.buttonOptions, 0x20),
+                (p.leftThumbstickButton, 0x40), (p.rightThumbstickButton, 0x80),
+                (p.leftShoulder, 0x100), (p.rightShoulder, 0x200),
+                (p.buttonA, 0x1000), (p.buttonB, 0x2000), (p.buttonX, 0x4000), (p.buttonY, 0x8000)]
+            for (button, mask) in pairs where button?.isPressed == true { buttons |= mask }
+            samples[index] = .init(buttons: buttons, leftTrigger: p.leftTrigger.value, rightTrigger: p.rightTrigger.value,
+                                  leftX: p.leftThumbstick.xAxis.value, leftY: p.leftThumbstick.yAxis.value,
+                                  rightX: p.rightThumbstick.xAxis.value, rightY: p.rightThumbstick.yAxis.value)
+        }
+        deliver(mappingState.update(samples: samples, configuration: mapping,
+                                    active: inputActive && MadeiraHardwareInput.acceptingInput && !MadeiraHardwareInput.softwareKeyboardActive,
+                                    timestamp: ProcessInfo.processInfo.systemUptime))
         for index in 0..<4 {
-            let connectedPad = slots[index]?.extendedGamepad
+            let connectedPad = mapping.mode == .native ? slots[index]?.extendedGamepad : nil
             let pad = inputActive ? connectedPad : nil
-            // Keep slot 0 present so games that stop probing empty XInput slots
-            // can receive touch controls when the overlay is enabled later.
-            let touchConnected = index == 0
+            // Native mode keeps slot 0 probeable as before. Mapping mode exposes
+            // a controller only when the independent touch overlay is active.
+            let touchConnected = index == 0 && (mapping.mode == .native || touch.active)
             let touchInput = touchConnected && touch.active && inputActive
             put(UInt32(connectedPad != nil || touchConnected ? 1 : 0))
 

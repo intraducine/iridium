@@ -81,7 +81,10 @@ def toolchain():
     # Brew's inventory order is not an input, but every installed version is.
     record[-1] = '\n'.join(sorted(record[-1].splitlines()))
     record.append(inputs.digest(ROOT / '.build/media-transfer/media-sdk.tar.gz'))
-    record.append(inputs.digest(ROOT / '.build/linux-transfer/wine-userland.tar.zst'))
+    if os.environ.get('IRIDIUM_RUNTIME_PROFILE') == 'madeira':
+        record.append('runtime-profile:madeira')
+    else:
+        record.append(inputs.digest(ROOT / '.build/linux-transfer/wine-userland.tar.zst'))
     return fingerprint(record)
 
 

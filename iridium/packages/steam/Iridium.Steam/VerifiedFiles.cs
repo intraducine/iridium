@@ -110,11 +110,35 @@ public static class VerifiedFiles
         return CryptographicOperations.FixedTimeEquals(SHA1.HashData(buffer.AsSpan(0, length)), chunk.ChunkID);
     }
 
+    public static async Task<DepotManifest.ChunkData[]> MissingChunks(string root, string staging,
+        DepotManifest.FileData file, string? reuseFile, CancellationToken ct)
+    {
+        Validate(file);
+        if (file.Flags.HasFlag(EDepotFileFlag.Directory) || await Matches(SafePath(root, file.FileName), file, ct)) return [];
+        await using var partial = OpenRead(PartialPath(staging, file));
+        await using var source = OpenRead(reuseFile ?? SafePath(root, file.FileName));
+        var missing = new List<DepotManifest.ChunkData>();
+        foreach (var chunk in file.Chunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            var buffer = ArrayPool<byte>.Shared.Rent(checked((int)chunk.UncompressedLength));
+            try
+            {
+                if ((partial == null || !await HasChunk(partial, chunk, buffer, ct))
+                    && (source == null || !await HasChunk(source, chunk, buffer, ct))) missing.Add(chunk);
+            }
+            finally { ArrayPool<byte>.Shared.Return(buffer); }
+        }
+        return missing.ToArray();
+    }
+
     public static async Task Download(string root, string staging, DepotManifest.FileData file,
         Func<DepotManifest.ChunkData, byte[], CancellationToken, Task<int>> fetch,
         Action<long> progress, CancellationToken ct, string? reuseFile = null,
-        int maxDownloads = 4, Action<long>? networkProgress = null)
+        int maxDownloads = 4, Action<long>? networkProgress = null,
+        Func<CancellationToken, Task>? waitForRuntime = null)
     {
+        if (waitForRuntime != null) await waitForRuntime(ct);
         Validate(file);
         if (maxDownloads is < 1 or > 8) throw new SteamFailure("Choose between one and eight download connections.");
         var final = SafePath(root, file.FileName);
@@ -134,6 +158,7 @@ public static class VerifiedFiles
                 MaxDegreeOfParallelism = maxDownloads, CancellationToken = ct
             }, async (chunk, token) =>
             {
+                if (waitForRuntime != null) await waitForRuntime(token);
                 var length = checked((int)chunk.UncompressedLength);
                 var buffer = ArrayPool<byte>.Shared.Rent(length);
                 try
@@ -149,6 +174,7 @@ public static class VerifiedFiles
                                 throw new SteamFailure("A downloaded chunk failed verification. Resume to retry it.");
                         }
                         token.ThrowIfCancellationRequested();
+                        if (waitForRuntime != null) await waitForRuntime(token);
                         await RandomAccess.WriteAsync(stream.SafeFileHandle, buffer.AsMemory(0, length), (long)chunk.Offset, token);
                     }
                     progress(length);
@@ -158,6 +184,7 @@ public static class VerifiedFiles
             stream.Flush(flushToDisk: true);
         }
         ct.ThrowIfCancellationRequested();
+        if (waitForRuntime != null) await waitForRuntime(ct);
         if (!await Matches(partial, file, ct))
             throw new SteamFailure("A downloaded file failed verification. Resume to retry it.");
         ct.ThrowIfCancellationRequested();

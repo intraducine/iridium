@@ -492,6 +492,51 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
         persist()
     }
 
+    // Keep this actor transaction free of suspension; merge only arguments into
+    // the latest record and publish in-memory state only after verified saving.
+    public func saveLaunchArguments(_ draft: GameArgumentDraft, isBusy: Bool = false) throws -> GameRecord {
+        guard !isBusy, !pendingLaunchEntries.contains(where: { $0.gameID == draft.gameID }) else {
+            throw GameArgumentEditError.busy
+        }
+        guard let index = games.firstIndex(where: { $0.id == draft.gameID }) else {
+            throw GameArgumentEditError.gameMissing
+        }
+        let updated = try draft.applying(to: games[index])
+        var snapshot = currentSnapshot()
+        snapshot.games[index] = updated
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(snapshot)
+        let decoded = try JSONDecoder().decode(IridiumSnapshot.self, from: data)
+        guard decoded.games[index].launchProfile.arguments.map({ Array($0.utf8) })
+                == updated.launchProfile.arguments.map({ Array($0.utf8) }) else {
+            throw GameArgumentEditError.verificationFailed
+        }
+        if let snapshotURL {
+            try FileManager.default.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let previous = FileManager.default.fileExists(atPath: snapshotURL.path) ? try Data(contentsOf: snapshotURL) : nil
+            try data.write(to: snapshotURL, options: .atomic)
+            do {
+                let saved = try Data(contentsOf: snapshotURL)
+                let reread = try JSONDecoder().decode(IridiumSnapshot.self, from: saved)
+                guard saved == data, reread.games[index].launchProfile.arguments.map({ Array($0.utf8) })
+                        == updated.launchProfile.arguments.map({ Array($0.utf8) }) else {
+                    throw GameArgumentEditError.verificationFailed
+                }
+            } catch {
+                do {
+                    if let previous {
+                        try previous.write(to: snapshotURL, options: .atomic)
+                        guard try Data(contentsOf: snapshotURL) == previous else { throw GameArgumentEditError.recoveryFailed }
+                    } else { try FileManager.default.removeItem(at: snapshotURL) }
+                } catch { throw GameArgumentEditError.recoveryFailed }
+                throw GameArgumentEditError.verificationFailed
+            }
+        }
+        games[index] = updated
+        return updated
+    }
+
     public func verify(gameID: UUID) async -> Bool {
         guard let index = games.firstIndex(where: { $0.id == gameID }) else {
             return false
@@ -1383,7 +1428,11 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
             return
         }
 
-        let snapshot = IridiumSnapshot(
+        Self.persistSnapshot(currentSnapshot(), to: snapshotURL)
+    }
+
+    private func currentSnapshot() -> IridiumSnapshot {
+        IridiumSnapshot(
             games: games,
             downloads: downloads,
             installExecutions: installExecutionEntries,
@@ -1399,8 +1448,6 @@ public actor IridiumStore: GameLibraryService, SteamService, RuntimeService {
             verificationAudits: verificationAuditEntries,
             activityFeed: activityEntries
         )
-
-        Self.persistSnapshot(snapshot, to: snapshotURL)
     }
 
     private func createPrefixRecord(

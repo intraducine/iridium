@@ -70,6 +70,37 @@ public static class NativeExports
         catch { return 0; }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "iridium_steam_take_chunk_batch")]
+    public static nint TakeChunkBatch()
+    {
+        try
+        {
+            var batch = engine?.ChunkHandoff.Take();
+            return batch == null ? 0 : Marshal.StringToCoTaskMemUTF8(JsonSerializer.Serialize(batch, SteamJson.Default.ChunkBatch));
+        }
+        catch { return 0; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "iridium_steam_complete_chunk_batch")]
+    public static int CompleteChunkBatch(nint json)
+    {
+        try
+        {
+            var text = Marshal.PtrToStringUTF8(json);
+            if (text == null || text.Length > 1024) return 0;
+            var result = JsonSerializer.Deserialize(text, SteamJson.Default.ChunkBatchResult);
+            return result != null && engine?.ChunkHandoff.Complete(result) == true ? 1 : 0;
+        }
+        catch { return 0; }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "iridium_steam_set_chunk_runtime")]
+    public static void SetChunkRuntime(int allowed)
+    {
+        try { engine?.ChunkHandoff.SetRuntimeAllowed(allowed == 1); }
+        catch { } // No exception crosses the ABI.
+    }
+
     // One-time handoff to the native Keychain adapter. Never included in UI snapshots.
     [UnmanagedCallersOnly(EntryPoint = "iridium_steam_take_session")]
     public static nint TakeSession()

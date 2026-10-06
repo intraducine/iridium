@@ -193,11 +193,15 @@ echo "=== MADEIRA: dxmt_madeira_native -- internal command library ==="
 # with the metalir/metallib/xxd generator chain (src/dxmt/meson.build:24-32).
 # Same chain, same symbol names (xxd -n dxmt_command gives dxmt_command /
 # dxmt_command_len, which is what dxmt_command.cpp:16 expects).
+# Pin the language while preserving Iridium's native iOS SDK and AIR target.
+# Include this script in cache invalidation so flag changes rebuild the library.
 if [ ! -f "$BUILD_DIR/shader-headers/dxmt_command.h" ] \
-   || [ "$DXMT_SRC/dxmt/dxmt_command.metal" -nt "$BUILD_DIR/shader-headers/dxmt_command.h" ]; then
+   || [ "$DXMT_SRC/dxmt/dxmt_command.metal" -nt "$BUILD_DIR/shader-headers/dxmt_command.h" ] \
+   || [ "$0" -nt "$BUILD_DIR/shader-headers/dxmt_command.h" ]; then
     mkdir -p "$BUILD_DIR/shader-headers"
     (cd "$BUILD_DIR/shader-headers" \
-     && xcrun -sdk iphoneos metal --target=air64-apple-ios18.0 -o dxmt_command.air -c "$DXMT_SRC/dxmt/dxmt_command.metal" \
+     && xcrun -sdk iphoneos metal -std=metal3.1 --target=air64-apple-ios18.0 \
+          -o dxmt_command.air -c "$DXMT_SRC/dxmt/dxmt_command.metal" \
      && xcrun -sdk iphoneos metallib -o dxmt_command.metallib dxmt_command.air \
      && xxd -n dxmt_command -i dxmt_command.metallib dxmt_command.h)
     echo "  dxmt_command.h                           OK"

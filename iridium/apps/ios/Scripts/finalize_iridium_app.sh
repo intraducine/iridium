@@ -28,6 +28,17 @@ if [ ! -d "${app_root}" ]; then
   echo "error: Built Iridium app is missing at ${app_root}" >&2
   exit 1
 fi
+runtime_profile="$(python3 - "${app_root}/Info.plist" <<'PYPROFILE'
+import plistlib, sys
+with open(sys.argv[1], "rb") as stream:
+    print(plistlib.load(stream).get("IridiumRuntimeProfile", "legacy"))
+PYPROFILE
+)"
+case "${runtime_profile}" in
+  madeira)
+    python3 "${SRCROOT}/../../../ci/madeira-package.py" finalize "${app_root}"
+    ;;
+  legacy)
 if [ ! -s "${root_manifest}" ]; then
   echo "error: Canonical bundled runtime manifest is missing at ${root_manifest}" >&2
   exit 1
@@ -104,7 +115,10 @@ for artifact in manifest.get("artifacts", []):
         raise SystemExit(f"error: Runtime artifact checksum mismatch for {relative}")
 PY
 
-echo "Finalized Iridium.app after SwiftPM resource copying; runtime payload is singular and verified"
+
+    ;;
+  *) echo "error: Unknown runtime package profile ${runtime_profile}" >&2; exit 1 ;;
+esac
 
 # System-directory XInput loads must use the same bridge as app-local loads.
 # Madeira recreates prefix system32/sysx64 links from this bundle on each launch.

@@ -7,8 +7,11 @@ import MadeiraNative
         didSet {
             if !acceptingInput {
                 cancelSoftwareTaps()
-                for key in held { winios_post_key(key, 0) }
+                for key in held.union(controllerKeys) { winios_post_key(key, 0) }
                 held.removeAll()
+                controllerKeys.removeAll()
+                for flag in controllerMouse { if !heldMouse.contains(flag) { winios_pointer(0, 0, flag << 1, 0) } }
+                controllerMouse.removeAll()
                 pointerCaptured = false
             }
         }
@@ -24,7 +27,7 @@ import MadeiraNative
         if changed {
             if key == 0x14 && pressed { capsLockEnabled.toggle() }
             keyboardDelivered += 1
-            winios_post_key(key, pressed ? 1 : 0)
+            if !controllerKeys.contains(key) { winios_post_key(key, pressed ? 1 : 0) }
         }
     }
 
@@ -32,12 +35,39 @@ import MadeiraNative
         didSet {
             if !softwareKeyboardActive { cancelSoftwareTaps() }
             guard softwareKeyboardActive, !oldValue else { return }
-            for key in held { winios_post_key(key, 0) }
+            for key in held.union(controllerKeys) { winios_post_key(key, 0) }
             held.removeAll()
+            controllerKeys.removeAll()
+            for flag in controllerMouse { if !heldMouse.contains(flag) { winios_pointer(0, 0, flag << 1, 0) } }
+            controllerMouse.removeAll()
             pointerCaptured = false
         }
     }
     private static var capsLockEnabled = false
+
+    // Controller holds share the Wine output with hardware, but never steal its
+    // ownership. Releasing a mapped key/button cannot lift a physical hold.
+    private static var controllerKeys = Set<Int32>()
+    private static var controllerMouse = Set<UInt32>()
+    static func controllerAction(_ action: PhysicalControllerAction, pressed: Bool) {
+        if pressed && (!acceptingInput || softwareKeyboardActive) { return }
+        switch action {
+        case .key(let key):
+            let changed = pressed ? controllerKeys.insert(key).inserted : controllerKeys.remove(key) != nil
+            if changed && !held.contains(key) { winios_post_key(key, pressed ? 1 : 0) }
+        case .mouseLeft, .mouseRight, .mouseMiddle:
+            let flag: UInt32 = action == .mouseLeft ? 0x0002 : action == .mouseRight ? 0x0008 : 0x0020
+            let changed = pressed ? controllerMouse.insert(flag).inserted : controllerMouse.remove(flag) != nil
+            if changed && !heldMouse.contains(flag) { winios_pointer(0, 0, pressed ? flag : flag << 1, 0) }
+        case .none: break
+        }
+    }
+    static func controllerMotion(x: Int32, y: Int32) {
+        // MadeiraController owns the scene/menu gate; no physical mouse or
+        // system pointer lock is required to use a controller's mouse stick.
+        guard acceptingInput, !softwareKeyboardActive else { return }
+        if x != 0 || y != 0 { winios_pointer(x, y, 0x0001, 0) }
+    }
 
     @discardableResult
     static func insertText(_ text: String) -> Bool {
@@ -113,7 +143,7 @@ import MadeiraNative
                 mouseRemainderX = 0
                 mouseRemainderY = 0
                 scrollRemainder = 0
-                for flag in heldMouse { winios_pointer(0, 0, flag << 1, 0) }
+                for flag in heldMouse where !controllerMouse.contains(flag) { winios_pointer(0, 0, flag << 1, 0) }
                 heldMouse.removeAll()
             }
         }
@@ -121,7 +151,7 @@ import MadeiraNative
     static func mouseButton(flag: UInt32, pressed: Bool) {
         guard acceptingInput, UIApplication.shared.applicationState == .active else { return }
         let changed = pressed ? heldMouse.insert(flag).inserted : heldMouse.remove(flag) != nil
-        if changed { winios_pointer(0, 0, pressed ? flag : flag << 1, 0) }
+        if changed && !controllerMouse.contains(flag) { winios_pointer(0, 0, pressed ? flag : flag << 1, 0) }
     }
 
     private static var mouseRemainderX = 0.0
@@ -182,6 +212,10 @@ import MadeiraNative
     static func stop() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
+        for key in controllerKeys where !held.contains(key) { winios_post_key(key, 0) }
+        controllerKeys.removeAll()
+        for flag in controllerMouse where !heldMouse.contains(flag) { winios_pointer(0, 0, flag << 1, 0) }
+        controllerMouse.removeAll()
         unbind()
     }
 
@@ -204,9 +238,9 @@ import MadeiraNative
             mouse.mouseInput?.scroll.valueChangedHandler = nil
         }
         mice = []
-        for key in held { winios_post_key(key, 0) }
+        for key in held where !controllerKeys.contains(key) { winios_post_key(key, 0) }
         held.removeAll()
-        for flag in heldMouse { winios_pointer(0, 0, flag << 1, 0) }
+        for flag in heldMouse where !controllerMouse.contains(flag) { winios_pointer(0, 0, flag << 1, 0) }
         heldMouse.removeAll()
     }
 

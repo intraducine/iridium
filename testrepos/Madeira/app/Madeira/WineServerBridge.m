@@ -70,10 +70,12 @@ volatile int g_wineserver_should_stop = 0;
 
 static pthread_t g_wineserver_thread;
 static _Atomic int g_wineserver_running = 0;
+extern int wineserver_ready;
 static char *g_prefix_path = NULL;
 
 static void wineserver_mark_stopped(void *unused) {
     (void)unused;
+    __atomic_store_n(&wineserver_ready, 0, __ATOMIC_RELEASE);
     g_wineserver_running = 0;
 }
 
@@ -159,6 +161,7 @@ int wineserver_start(const char *prefix_path) {
         madeira_seed_prefix_if_needed(prefix_path);
     }
 
+    __atomic_store_n(&wineserver_ready, 0, __ATOMIC_RELEASE);
     g_wineserver_running = 1;
 
     /* 2026-07-04 perf: the wineserver thread used to be created at LOWERED
@@ -191,8 +194,13 @@ int wineserver_is_running(void) {
     return g_wineserver_running;
 }
 
+int wineserver_is_ready(void) {
+    return __atomic_load_n(&wineserver_ready, __ATOMIC_ACQUIRE);
+}
+
 void wineserver_stop(void) {
     wine_log_msg("Wineserver stop requested");
+    __atomic_store_n(&wineserver_ready, 0, __ATOMIC_RELEASE);
     g_wineserver_should_stop = 1;
     // Join the wineserver thread to ensure it actually stops before we return.
     // This prevents iOS from killing us for excessive CPU from a spinning wineserver.

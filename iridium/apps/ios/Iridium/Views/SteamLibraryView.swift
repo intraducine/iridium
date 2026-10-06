@@ -275,7 +275,11 @@ struct SteamLibraryView: View {
                 }
             }
         } header: { Text("Downloads · \(steam.pendingCount)") }
-        footer: { Text("Keep Iridium open while downloading. Downloads pause when you leave the app.") }
+        footer: {
+            Text(LiveContainerIntegration.isHosted()
+                ? "Keep Iridium open in LiveContainer. Downloads pause when you leave; guest Live Activities are unavailable."
+                : "Prepared batches can transfer on Wi-Fi in the background. iOS decides when verification and the next batch can run. If progress stops or the app is closed, reopen Iridium and resume. The Live Activity shows the last observed verified progress.")
+        }
         .modifier(SteamPanel())
     }
 
@@ -400,6 +404,7 @@ private struct SteamCover: View {
 
     private func cover(_ image: Image) -> some View {
         image.resizable().scaledToFill().frame(width: width, height: height).clipped()
+            .onAppear { SteamDownloadActivity.shared.cacheArtwork(image, for: appId) }
     }
 
     private var placeholder: some View {
@@ -418,6 +423,7 @@ private struct SteamCoverFallback: View {
         AsyncImage(url: url) { phase in
             if case .success(let image) = phase {
                 image.resizable().scaledToFill().frame(width: width, height: height).clipped()
+                    .onAppear { SteamDownloadActivity.shared.cacheArtwork(image, for: appId) }
             } else {
                 Image(systemName: "gamecontroller").font(.title3).foregroundStyle(.secondary)
                     .frame(width: width, height: height).background(Color.white.opacity(0.08))

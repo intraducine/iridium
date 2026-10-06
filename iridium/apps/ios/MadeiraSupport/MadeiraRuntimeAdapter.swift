@@ -5,11 +5,11 @@ import MadeiraNative
 
 enum MadeiraRuntimeAdapter {
     static let enabled: Bool = {
-        let selection = ProcessInfo.processInfo.environment["IRIDIUM_RUNTIME"]
         if let test = ProcessInfo.processInfo.environment["IRIDIUM_MADEIRA_TEST"] {
             UserDefaults.standard.set(test, forKey: "IridiumMadeiraTest")
         }
-        return selection != "legacy"
+        // Madeira builds no longer bundle the legacy Linux runtime.
+        return true
     }()
     private(set) static var started = false
     static var resolution = MadeiraResolution.selected
@@ -24,6 +24,22 @@ enum MadeiraRuntimeAdapter {
     private static var prerequisitePrefix: URL?
     private(set) static var desktopSession = false
 
+    // This runs on the boot worker. The registry loader changes the process
+    // directory, so Wine must not start until readiness is published. Allow
+    // slow registry loads up to 30 seconds; the rollback delay is separately
+    // two seconds. Poll cancellation and server liveness throughout both waits.
+    private static func waitForWineserverReady(timeout: TimeInterval = 30.0, legacyDelay: TimeInterval = 2.0, isCurrent: () -> Bool) -> Bool {
+        let start = ProcessInfo.processInfo.systemUptime
+        let fastStart = ProcessInfo.processInfo.environment["MADEIRA_FAST_SERVER_START"] != "0"
+        while isCurrent(), wineserver_is_running() != 0 {
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            if wineserver_is_ready() != 0, fastStart || elapsed >= legacyDelay { return true }
+            if elapsed >= timeout { return false }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return false
+    }
+
     // Lifecycle entry points are called on the main queue. Native boot stays on a worker.
     @MainActor
     static func start(executable: String, gameRoot: String, gameID: UUID,
@@ -34,6 +50,8 @@ enum MadeiraRuntimeAdapter {
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard !MadeiraSyncSession.isSaving else { fail("Wait for the sync setting to finish saving, then try Play again."); return }
+        guard !MadeiraSyncSession.requiresRestart else { fail("Restart Iridium from the app switcher to use the saved sync mode."); return }
         guard !started else { fail("Restart Iridium before another Madeira session."); return }
         #if os(iOS)
         for line in MadeiraLaunchEntitlements.logLines(
@@ -138,7 +156,8 @@ enum MadeiraRuntimeAdapter {
                             desktopSession = prerequisites != nil
                             MadeiraController.start(
                                 prefix: prefix,
-                                touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID)
+                                touchControlsEnabled: TouchControllerLayoutStore.isEnabled(for: gameID),
+                                gameID: gameID
                             )
                         }
                         setenv("WINEDLLOVERRIDES", "xinput1_1,xinput1_2,xinput1_3,xinput1_4,xinput9_1_0=n,b;windows.gaming.input=", 1)
@@ -204,12 +223,18 @@ enum MadeiraRuntimeAdapter {
                     failure("Madeira Wine server failed to start. Restart Iridium before retrying.")
                     return
                 }
-                Thread.sleep(forTimeInterval: 2)
+                let serverWaitStart = ProcessInfo.processInfo.systemUptime
+                let serverReady = waitForWineserverReady(isCurrent: current)
                 guard current() else { wineserver_stop(); return }
-                guard wineserver_is_running() != 0 else {
-                    failure("Madeira Wine server stopped during startup. Restart Iridium before retrying.")
+                guard serverReady else {
+                    failure(wineserver_is_running() == 0
+                            ? "Madeira Wine server stopped during startup. Restart Iridium before retrying."
+                            : "Madeira Wine server did not finish loading the registry. Restart Iridium before retrying.")
+                    wineserver_stop() // worker only; keep shutdown off the UI queue
                     return
                 }
+                RuntimeLogCapture.writeLine(String(format: "[Launch] Wine server registry ready after %.3f seconds.",
+                                                   ProcessInfo.processInfo.systemUptime - serverWaitStart))
                 RuntimeLogCapture.writeLine("[Launch] Starting the game process. Waiting for display output.")
                 let result = wine_process_start(prefix.path)
                 guard result == 0 else {

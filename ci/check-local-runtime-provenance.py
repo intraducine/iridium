@@ -2,6 +2,7 @@
 """Reject local IPA builds that mix current app code with a stale native runtime."""
 import importlib.util
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -10,6 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BUNDLE = ROOT / "iridium-runtime-sdk/build/iridium-runtime-base"
 MANIFEST = BUNDLE / "manifest.json"
 WORKFLOW = ".github/workflows/build-unsigned-ipa.yml"
+
+
+def producer_manifest():
+    native = ROOT / ".build/madeira-native-producer.json"
+    # Accept the old producer identity during migration, without copying its payload.
+    return native if os.environ.get("IRIDIUM_RUNTIME_PROFILE") == "madeira" and native.is_file() else MANIFEST
 
 
 def load_reuse():
@@ -81,9 +88,10 @@ def verify_native_contract(reuse, revision: str) -> None:
 
 
 def main() -> None:
-    if not MANIFEST.is_file():
-        raise SystemExit(f"Missing local runtime manifest: {MANIFEST}")
-    manifest = json.loads(MANIFEST.read_text())
+    path = producer_manifest()
+    if not path.is_file():
+        raise SystemExit(f"Missing local runtime producer record: {path}")
+    manifest = json.loads(path.read_text())
     try:
         short_sha = producer_from_version(str(manifest.get("version", "")))
         revision = resolve_commit(short_sha)

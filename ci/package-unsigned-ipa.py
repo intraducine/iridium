@@ -287,6 +287,12 @@ def check_payload(app):
         raise ValueError("Expected the Iridium application bundle")
     if not (app / "fonts/tahoma.ttf").is_file():
         raise ValueError("The bundled Windows fonts are missing")
+    if info.get("IridiumRuntimeProfile") == "madeira":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("madeira_package", Path(__file__).with_name("madeira-package.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check_app(app)
     executable = executable_path(app, info)
     if not executable.is_file() or executable.read_bytes()[:4] not in MACHO:
         raise ValueError("App executable is missing or is not Mach-O")

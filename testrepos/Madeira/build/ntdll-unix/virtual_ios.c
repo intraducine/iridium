@@ -6494,6 +6494,33 @@ static void ios_exe_win_init( void )
              (unsigned long long)(ios_exe_win_base + ios_exe_win_size) );
 }
 
+/* The image map_image_view is placing right now has its relocations stripped
+ * (IMAGE_FILE_RELOCS_STRIPPED): it runs at its ImageBase or not at all.  Set
+ * and cleared by map_image_view around its preferred-base attempt, under
+ * virtual_mutex.
+ *
+ * The 64 MB floor below assumes that a small image at the default ImageBase is
+ * relocatable, so it keeps the window for a later large fixed-base image.  A
+ * small image with stripped relocations is refused by that floor, placed
+ * elsewhere, and the loader then fails it with STATUS_CONFLICTING_ADDRESSES
+ * ("failed to create main module ... c0000018"): the program can never start.
+ * Such an image now gets the window whatever its size. */
+static int ios_exe_win_stripped_request;
+
+static int ios_exe_win_small_fixed(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+    {
+        /* 0 keeps the executable window from a fixed-base (relocations stripped) image smaller
+         * than 64 MB, as before; such a program then fails to start. */
+        const char *e = getenv( "MADEIRA_EXE_WINDOW_SMALL_FIXED" );
+        enabled = !(e && e[0] == '0');
+    }
+    return enabled;
+}
+
 /* Returns 1 if the reservation was released for this request. */
 static int ios_exe_win_claim( const void *addr, size_t size )
 {
@@ -6504,7 +6531,16 @@ static int ios_exe_win_claim( const void *addr, size_t size )
      * a released window still has to answer a matching request. */
     if (!ios_exe_win_base) return 0;
     if (a < ios_exe_win_base || a + size > ios_exe_win_base + ios_exe_win_size) return 0;
-    if (size < 64u * 1024u * 1024u)
+    if (size < 64u * 1024u * 1024u && ios_exe_win_stripped_request && ios_exe_win_small_fixed())
+    {
+        static int fixed_n;
+        if (fixed_n++ < 8)
+            dprintf( 2, "[exe-window] %p+%#lx is under the 64MB floor but its relocations are "
+                     "stripped: it can only run at this base, so it gets the window "
+                     "(MADEIRA_EXE_WINDOW_SMALL_FIXED=0 refuses it as before)\n",
+                     addr, (unsigned long)size );
+    }
+    else if (size < 64u * 1024u * 1024u)
     {
         static int small_n;
         if (small_n++ < 8)
@@ -11152,10 +11188,11 @@ volatile int ios_in_mach_exc;
  * host meaning, while VPROT_WRITE is load-bearing -- it is what makes an inline
  * hook, a runtime relocation fixup, or the emulator's own SMC untrap land.
  *
- * Deliberately NOT "anything in the window": a guest that allocates anonymous
- * RWX memory (a managed runtime's code buffers) still needs the pool alias and
- * the store emulator, and those views are not SEC_IMAGE.  The test is the view,
- * not the address range.
+ * Deliberately NOT "anything in the window": a guest's anonymous executable
+ * memory is decided by its own rule (ios_guest_anon_rwx_is_host_data, below):
+ * a managed runtime's code buffers keep the pool alias and the store emulator,
+ * and those views are not SEC_IMAGE.  The test is the view, not the address
+ * range.
  *
  * virtual_mutex is held by every caller that can reach here (mprotect_range from
  * set_vprot, and the map_image section loop), so find_view() is safe. */
@@ -11181,6 +11218,93 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
     if (!ios_wow_in_window( base )) return 0;
     if (!(view = find_view( base, size ))) return 0;
     return (view->protect & SEC_IMAGE) != 0;
+#else
+    return 0;
+#endif
+}
+
+
+/* A guest's anonymous RWX data heap is plain read/write memory to the host.
+ *
+ * Some runtimes allocate their data heap PAGE_EXECUTE_READWRITE (Mono's Boehm
+ * GC does). mprotect_exec cannot grant host exec, so it would back the heap
+ * with a JIT-pool R+X slot and route every store through the store emulator.
+ * Host exec is not needed: x86 bytes are decoded by FEX, never fetched by the
+ * host, and FEX tracks SMC on RWX ranges itself through NtProtectVirtualMemory
+ * (see ml1030). So PROT_EXEC is dropped for such a heap.
+ *
+ * Excluded, because they need (or already have) the pool path: EC_CODE requests
+ * (ios_alloc_ec_code while the request is in flight, VPROT_ARM64EC afterwards),
+ * the JIT pool, alias-backed ranges, images, file mappings, and views under
+ * 64 KB (possible native thunk pages).
+ *
+ * Guest JIT code chunks are excluded too: guests patch them with unaligned
+ * atomics, which must not land on a plain page FEX has armed for SMC. Two tests
+ * keep them out. Only a view ALLOCATED read-write-execute qualifies (its
+ * allocation protection, view->protect, has both VPROT_WRITE and VPROT_EXEC),
+ * as a GC heap is: a JIT that allocates read-write and makes its code
+ * executable later keeps the pool path. And code and data are told apart by
+ * size, a heuristic: Boehm's heap chunks are an expansion plus one 4 KB page
+ * (0x41000, ...), never a multiple of 64 KB, while Mono's code chunks, also
+ * allocated RWX, are (0x100000). A data heap sized in 64 KB multiples just
+ * keeps the pool path.
+ *
+ * The decision is per allocation and permanent. A page must not move to the
+ * pool later: that copies and remaps a live page, and a store landing between
+ * the two is lost.
+ *
+ * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour. */
+static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
+
+static int ios_guest_rwx_data_enabled(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        /* On by default: a guest's anonymous RWX data heap (Mono's Boehm GC) is
+         * plain read/write memory. 0 maps it through the JIT pool again, with
+         * every store emulated, as before. */
+        const char *s = getenv( "MADEIRA_GUEST_RWX_DATA" );
+        cached = (s && (*s == '0' || *s == 'n' || *s == 'N')) ? 0 : 1;
+    }
+    return cached;
+}
+
+static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
+{
+    if (!is_view_valloc( view )) return 0;
+    if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
+    /* allocated RWX, not made executable after the fact: see above */
+    if ((view->protect & (VPROT_WRITE | VPROT_EXEC)) != (VPROT_WRITE | VPROT_EXEC)) return 0;
+    if (view->size < 0x10000) return 0;
+    return (view->size & 0xffff) != 0;   /* data, not a code chunk: see above */
+}
+
+/* The range is host-page rounded (16 KB) and can run past the end of a guest
+ * allocation (0x41000 -> 0x44000), so every view it touches must qualify. */
+static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size )
+{
+#ifdef WINE_IOS
+    extern int ios_jit_anon_alias_find_cover(void *, size_t, void **, void **);
+    extern void *ios_jit_rx_base_global;
+    extern size_t ios_jit_pool_size_global;
+    void *cov_rw = NULL, *cov_rx = NULL;
+    uintptr_t b = (uintptr_t)base, e = b + size, a, rx = (uintptr_t)ios_jit_rx_base_global;
+    int any = 0;
+
+    if (!ios_guest_rwx_data_enabled() || ios_alloc_ec_code || !arm64ec_view) return 0;
+    if (e <= b) return 0;
+    if (rx && e > rx && b < rx + ios_jit_pool_size_global) return 0;
+    if (ios_jit_anon_alias_find_cover( (void *)base, size, &cov_rw, &cov_rx )) return 0;
+    for (a = b; a < e; )
+    {
+        struct file_view *view = find_view( (const void *)a, 1 );
+        if (!view) { a = (a + 0x1000) & ~(uintptr_t)0xfff; continue; }   /* rounding gap */
+        if (!ios_guest_anon_rwx_view_ok( view )) return 0;
+        any = 1;
+        a = (uintptr_t)view->base + view->size;
+    }
+    return any;
 #else
     return 0;
 #endif
@@ -11239,6 +11363,21 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
                      (unix_prot & PROT_WRITE) ? 'w' : '-' );
         unix_prot &= ~PROT_EXEC;
         if (!unix_prot) unix_prot = PROT_READ;   /* PAGE_EXECUTE alone: readable is the honest answer */
+    }
+    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size ))
+    {
+        static unsigned long grd_n;
+        if (++grd_n <= 24 && !ios_in_mach_exc)
+            dprintf( 2, "[guest-rwx] #%lu %p+0x%lx prot=%c%c%c — anonymous guest memory, "
+                        "EXEC is FEX bookkeeping; applying %c%c- instead\n",
+                     grd_n, base, (unsigned long)size,
+                     (unix_prot & PROT_READ)  ? 'r' : '-',
+                     (unix_prot & PROT_WRITE) ? 'w' : '-',
+                     (unix_prot & PROT_EXEC)  ? 'x' : '-',
+                     (unix_prot & PROT_READ)  ? 'r' : '-',
+                     (unix_prot & PROT_WRITE) ? 'w' : '-' );
+        unix_prot &= ~PROT_EXEC;
+        if (!unix_prot) unix_prot = PROT_READ;
     }
 
 #endif
@@ -15768,6 +15907,33 @@ static IMAGE_BASE_RELOCATION *process_relocation_block( char *page, IMAGE_BASE_R
 }
 
 
+/* A shared writable image section that is not aligned to the host page is mapped private.
+ *
+ * A section marked IMAGE_SCN_MEM_SHARED | IMAGE_SCN_MEM_WRITE is file-mapped
+ * MAP_SHARED from the server's shared-section file, so every process that maps
+ * the image sees the same bytes.  mmap works in host pages (16 KB here) and PE
+ * sections are aligned to 4 KB: a shared section that does not start and end on
+ * a host page cannot be file-mapped without replacing its neighbours' bytes, so
+ * map_file_into_view refuses it ("unaligned shared mapping"), the image load
+ * failed with STATUS_INVALID_IMAGE_FORMAT and the program never started.  Such
+ * a section is now loaded like any other writable section, from the image file:
+ * its contents are right, but writes are not seen by other processes that map
+ * the same image.  One log line names each section this happens to.
+ */
+static int ios_shared_section_private(void)
+{
+    static int enabled = -1;
+
+    if (enabled < 0)
+    {
+        /* 0 fails the load of an image whose shared writable section is not aligned to the
+         * host page, as before; otherwise that section is mapped private. */
+        const char *e = getenv( "MADEIRA_SHARED_SECTION_PRIVATE" );
+        enabled = !(e && e[0] == '0');
+    }
+    return enabled;
+}
+
 /***********************************************************************
  *           map_image_into_view
  *
@@ -15926,10 +16092,27 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
                             debugstr_us(nt_name), sec[i].Name, ptr + sec[i].VirtualAddress,
                             sec[i].PointerToRawData, (int)pos, file_size, map_size,
                             sec[i].Characteristics );
-            if (map_file_into_view( view, shared_fd, sec[i].VirtualAddress, map_size, pos,
-                                    VPROT_COMMITTED | VPROT_READ | VPROT_WRITE, FALSE ) != STATUS_SUCCESS)
+            NTSTATUS shared_status = map_file_into_view( view, shared_fd, sec[i].VirtualAddress, map_size, pos,
+                                                         VPROT_COMMITTED | VPROT_READ | VPROT_WRITE, FALSE );
+
+            if (shared_status == STATUS_INVALID_PARAMETER && ios_shared_section_private())
+            {
+                /* not host-page aligned: see ios_shared_section_private */
+                dprintf( 2, "[shared-section] %s section %.8s rva=0x%x size=0x%lx is not aligned to the "
+                            "0x%lx-byte host page: mapped private, its writes are not shared between "
+                            "processes (MADEIRA_SHARED_SECTION_PRIVATE=0 fails the load instead)\n",
+                         debugstr_us(nt_name), sec[i].Name, (unsigned)sec[i].VirtualAddress,
+                         (unsigned long)map_size, (unsigned long)host_page_size );
+                pos += map_size;
+                goto private_section;
+            }
+            if (shared_status != STATUS_SUCCESS)
             {
                 ERR_(module)( "Could not map %s shared section %.8s\n", debugstr_us(nt_name), sec[i].Name );
+                dprintf( 2, "[shared-section] %s section %.8s rva=0x%x size=0x%lx: shared mapping failed, "
+                            "status=0x%x shared_fd=%d\n", debugstr_us(nt_name), sec[i].Name,
+                         (unsigned)sec[i].VirtualAddress, (unsigned long)map_size,
+                         (unsigned)shared_status, shared_fd );
                 do { IOS_IMG_FAIL(8); goto done; } while (0);
             }
 
@@ -15949,6 +16132,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
             continue;
         }
 
+    private_section:
         TRACE_(module)( "mapping %s section %.8s at %p off %x size %x virt %x flags %x\n",
                         debugstr_us(nt_name), sec[i].Name, ptr + sec[i].VirtualAddress,
                         sec[i].PointerToRawData, sec[i].SizeOfRawData,
@@ -16336,7 +16520,10 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
 
     if (base)
     {
+        /* see ios_exe_win_stripped_request */
+        ios_exe_win_stripped_request = (image_info->image_charact & IMAGE_FILE_RELOCS_STRIPPED) != 0;
         status = map_view( view_ret, base, size, alloc_type, vprot, limit_low, limit_high, 0 );
+        ios_exe_win_stripped_request = 0;
         /* ml988: commit or roll back a pending fixed-base claim. No-ops unless
          * ios_exe_win_claim granted this exact interval during the call above. */
         ios_exe_win_commit_claim( base, size, !status );
@@ -19328,6 +19515,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
     /* Reserve the memory */
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    ios_alloc_ec_code = (attributes & MEM_EXTENDED_PARAMETER_EC_CODE) != 0;   /* see ios_guest_anon_rwx_is_host_data */
 
     if ((type & MEM_RESERVE) || !base)
     {
@@ -19473,6 +19661,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 
     if (!status) VIRTUAL_DEBUG_DUMP_VIEW( view );
 
+    ios_alloc_ec_code = 0;
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if (status == STATUS_SUCCESS)

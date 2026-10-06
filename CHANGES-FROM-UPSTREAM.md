@@ -1,5 +1,51 @@
 # Changes from upstream
 
+## Global sync setting in the consolidated v0.2.1 app
+
+Original Iridium Swift code exposes Fastsync, Madsync and Wine standard sync in
+Runtime settings using Madeira's existing `madeira.cfg` engine selection. It
+saves only after an explicit choice, writes both sync keys atomically, and
+preserves unrelated unified entries. When no unified file exists, it carries
+legacy one-value, environment and DXMT settings forward while retaining the
+original files; invalid text and unsafe early-lookup migration block the save.
+Opening settings does not migrate or rewrite configuration. File I/O stays off
+the UI thread. The host prevents launch during a save or before a required cold
+restart. Vendor sync implementations, installer exceptions, and server wake
+policy are unchanged. No upstream application UI code or dependency is added.
+
+## v0.2.1 Madeira package profile
+
+Normal Madeira builds omit the legacy Linux userland, runtime-host executable,
+and translator resource bundle. The Madeira adapter always selects native iOS
+Wine; the historical `IRIDIUM_RUNTIME=legacy` override no longer switches it.
+Staging, finalization and packaging validate the native resource inventory and
+remove stale legacy copies after SwiftPM copying. Local native refreshes record
+producer identity without building or extracting a Linux bundle. The manual IPA
+workflow no longer produces Linux userland, and source packaging requires sources
+for the retained components. Legacy source/build recipes and dependency notices,
+shared embedded bridge link inputs, ANGLE/media frameworks, and both 64-bit and
+32-bit Windows modules remain. Existing library data and saves are unchanged.
+
+## Optional physical-controller keyboard and mouse mapping
+
+Sources: https://github.com/willfaust/Madeira/pull/128 and follow-up
+`6722178dd9b93898b812ae9be6130565d92652fc`, inspected against
+`4e9d45a74294cd820120791c4b3f2b79adf4fc70`.
+Madeira application sources are GPL-3.0-or-later with the Madeira Converter
+Exception, version 1; the retained license and exception are in
+`testrepos/Madeira/COPYING` and `testrepos/Madeira/LICENSE-EXCEPTION.md`.
+
+Iridium adapts Madeira's WASD/button template, eight-way stick directions,
+disconnect releases, and elapsed-time mouse movement into its main-thread
+polling bridge. It keeps native controller mode as the default and touch
+layouts independent. UUID-scoped input preferences store the optional mode
+and bindings without changing existing library files. Unlike the upstream
+player-one mapper, all four existing physical slots can map input; shared
+outputs are coalesced across buttons, sticks, controllers, and hardware keys
+or mouse buttons. Only the strongest mouse stick moves the cursor, and
+subpixel carry uses elapsed time without a minimum interval. No upstream
+callback handlers or runtime gamepad transport are imported.
+
 ## Moonlight iOS touch input
 
 Source: https://github.com/moonlight-stream/moonlight-ios/blob/85af0f75622bb2636481afda8b0fc5cc33d5956e/Limelight/Input/OnScreenControls.m
@@ -230,3 +276,68 @@ The sources retain 125hz's copyright, GPL-3.0-or-later, and Madeira's converter
 exception. Shared redistributables are copied only when available. GDI shared
 sections, the session sync setting, and missing-only `fusion.dll` placement
 follow Madeira's installer path. Existing game files and saves are preserved.
+
+## Scoped Madeira compatibility ports for v0.2.1 (2026-10-03)
+
+These are selected source ports, based on Iridium PR61 commit
+`c74a032679d746f77485ca868c0bdef1b419952d`. The baseline snapshot revisions in
+`UPSTREAM-SOURCES.json` remain unchanged; its `ported_changes` records identify
+all additional source commits. The upstream reference inspected was Madeira
+`4e9d45a74294cd820120791c4b3f2b79adf4fc70`, not a wholesale snapshot update.
+
+- Madeira #107, `c62b9b29ae6da1d28192baa4354f6b4e73140225`, with mandatory
+  `374956226743873395c0365ca790090d7815511f`: anonymous guest RWX data heaps use
+  plain host memory. Eligibility requires original RWX allocation protection,
+  a size of at least 64 KB that is not a 64 KB multiple, and eligible neighbours
+  across host-page rounding. Native EC code, JIT pool/alias-backed allocations,
+  images and file mappings retain their existing paths. The size rule remains
+  a heuristic. `MADEIRA_GUEST_RWX_DATA=0` restores the previous behavior.
+- Madeira #110, `bcf54a365a0e5a69292628d8e91eb963e2e70b6f`: shared writable PE
+  sections that cannot be mapped on host-page boundaries fall back to private
+  image contents. Their writes are not shared between processes. Aligned shared
+  sections and other mapping failures retain their existing behavior.
+  `MADEIRA_SHARED_SECTION_PRIVATE=0` disables the fallback.
+- Madeira #111, `1bbaf6be2a92fe6887c8a09fcd4e1b0c2fa5505f`: images with stripped
+  relocations may claim the existing executable window below the 64 MB floor.
+  Bounds, retirement and commit/rollback handling are preserved.
+  `MADEIRA_EXE_WINDOW_SMALL_FIXED=0` restores the floor for these images.
+- Madeira #119, `c7191a36fa0faba366f77c775f12d636af5c0e5e`, with
+  `72d1a71eaa2713a470734474ae3e3f9a679e1ef4`: native D3D12 color
+  `ResolveSubresource` records a load/store/resolve pass, creates a render-target
+  stand-in when necessary, handles view-compatible destination formats, and
+  replaces the stand-in when dimensions or format change. A single-sampled
+  source takes the existing copy path. Depth resolves and
+  `ResolveSubresourceRegion` remain unsupported.
+- Madeira #120, `0c6764ac273932c32d2e0956df85c5dd9885c108`: native-ready IL-only
+  .NET children publish the promoted native machine and do not arm an i386
+  guest window; ordinary i386 children retain the guest path.
+- Madeira #125, `4612deeb75599da9760d850e04843a550ca461eb`, with mandatory
+  `cc20babfb175215465a08fd8dde242f7a9843eaf`: publish wineserver readiness only
+  after registry loading. Iridium waits on its existing boot worker, checks
+  cancellation and server liveness, and waits up to 30 seconds for slow registry
+  loading rather than launching Wine against an unfinished registry. Atomic
+  liveness and fatal-thread cleanup are retained. `MADEIRA_FAST_SERVER_START=0`
+  keeps a two-second minimum delay, then continues waiting for readiness up to
+  the independent 30-second deadline. Both modes remain cancellable.
+- Madeira #129: DXMT `3a78f7a8211cd36999ea1e3c147f0e077eabfefc` and Madeira
+  `1fae83a0ae01b573326bdb6d51a176cf43366ba7` supply the Metal 3.1 language
+  pin and cache invalidation. The PE Meson generator also uses the upstream AIR
+  macOS 14 target. Native command metallibs keep Iridium's existing `iphoneos`
+  SDK and iOS 18 AIR target with a fixed `-std=metal3.1`; the auxiliary AIR
+  preparation recipe is unchanged. The command-library header is invalidated
+  when its build script changes. Existing `research/dxmt` paths are preserved.
+
+The Madeira ports retain GPL-3.0-or-later and the Madeira Converter Exception;
+DXMT retains its upstream and Madeira notices. Original port authors are
+JesseLovelace (#107, #119, #120, #125), 125hz (#110, #111, DXMT shader pins),
+and Will Faust (mandatory follow-ups and the native shader target adapter).
+No binary, dependency gitlink, FEX source, signing material, frontend, input,
+Steam feature, cage-release policy or experimental CPU/fault/AVX series is
+included. Existing corresponding-source collection includes the changed tracked
+sources and build recipes; no newly linked dependency is introduced.
+
+Host regressions exercise the extracted allocation/window/section/child/startup
+logic and D3D12 commands with platform stubs, plus the shader recipe with tool
+stubs. Swift wait coverage runs when `swiftc` is available. These checks do not
+establish Apple compilation, AIR acceptance, physical-device behavior or game
+compatibility; those require separately authorized builds and device validation.

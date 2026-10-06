@@ -28,11 +28,6 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Test only the media SDK; do not compile the runtime or app
         type: boolean
         default: false
-      linux_runtime_run_id:
-        description: 'Optional Linux producer on main or this branch; source equivalence is checked'
-        required: false
-        type: string
-        default: ''
 permissions:
   contents: read
   actions: read
@@ -40,6 +35,8 @@ permissions:
 concurrency:
   group: unsigned-ipa-${{ github.ref }}
   cancel-in-progress: false
+env:
+  IRIDIUM_RUNTIME_PROFILE: madeira
 jobs:
   asset-plan:
     runs-on: ubuntu-24.04
@@ -47,7 +44,6 @@ jobs:
     outputs:
       prefix_run_id: ${{ steps.select.outputs.prefix_run_id }}
       media_run_id: ${{ steps.select.outputs.media_run_id }}
-      linux_run_id: ${{ steps.select.outputs.linux_run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,32 +60,7 @@ jobs:
           REUSE_ASSETS: ${{ inputs.reuse_assets }}
           MEDIA_ONLY: ${{ inputs.media_only }}
           MEDIA_RUN_ID: ${{ inputs.media_run_id }}
-          LINUX_RUN_ID: ${{ inputs.linux_runtime_run_id }}
         run: python3 ci/reuse-build-assets.py
-  linux-userland:
-    needs: asset-plan
-    if: ${{ !inputs.media_only && needs.asset-plan.outputs.linux_run_id == '' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          submodules: false
-          lfs: false
-      - name: Check source privacy
-        run: python3 check-public-source.py
-      - name: Install Linux packaging tools
-        run: sudo apt-get update && sudo apt-get install -y zsh zstd llvm
-      - name: Build Linux userland and collect its sources
-        run: bash ci/prepare-linux-runtime.sh
-      - name: Transfer userland with matching source
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: linux-runtime-with-source
-          path: .build/linux-transfer/
-          if-no-files-found: error
-          retention-days: 7
   media:
     needs: asset-plan
     if: ${{ needs.asset-plan.outputs.media_run_id == '' }}
@@ -194,11 +165,23 @@ jobs:
           dotnet-version: '10.0.401'
       - name: Prepare pinned SteamKit source
         run: python3 ci/prepare-steamkit.py
+      - name: Verify production Swift argument and Activity fixtures
+        run: |
+          swiftc --version
+          python3 -B -m unittest discover -s ci -p 'test_game_arguments.py' -v
+          python3 -B -m unittest discover -s ci -p 'test_live_activity_presentation.py' -v
+          python3 -B -m unittest discover -s ci -p 'test_steam_session.py' -v
+      - name: Check the Live Activity with the Simulator SDK
+        run: |
+          xcrun --sdk iphonesimulator swiftc -swift-version 5 -parse-as-library -typecheck \
+            -target arm64-apple-ios18.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -module-cache-path "$RUNNER_TEMP/iridium-widget-module-cache" \
+            iridium/apps/ios/SteamActivityShared/*.swift iridium/apps/ios/SteamDownloadWidget/*.swift
       - name: Verify Steam on iOS Simulator
         run: python3 ci/check-steam-ios.py
   build:
-    needs: [asset-plan, linux-userland, media, prefix, steam, steam_simulator]
-    if: ${{ !cancelled() && !inputs.media_only && needs.steam.result == 'success' && needs.steam_simulator.result == 'success' && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) && (needs.linux-userland.result == 'success' || (needs.asset-plan.outputs.linux_run_id != '' && needs.linux-userland.result == 'skipped')) }}
+    needs: [asset-plan, media, prefix, steam, steam_simulator]
+    if: ${{ !cancelled() && !inputs.media_only && needs.steam.result == 'success' && needs.steam_simulator.result == 'success' && needs.asset-plan.result == 'success' && (needs.prefix.result == 'success' || (needs.asset-plan.outputs.prefix_run_id != '' && needs.prefix.result == 'skipped')) && (needs.media.result == 'success' || (needs.asset-plan.outputs.media_run_id != '' && needs.media.result == 'skipped')) }}
     runs-on: xcode-27
     timeout-minutes: 300
     env:
@@ -206,7 +189,6 @@ jobs:
       CODE_SIGNING_REQUIRED: "NO"
       CODE_SIGN_IDENTITY: ""
       DEVELOPMENT_TEAM: ""
-      LINUX_RUNTIME_RUN_ID: ${{ needs.asset-plan.outputs.linux_run_id }}
       MEDIA_RUN_ID: ${{ needs.asset-plan.outputs.media_run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,16 +202,6 @@ jobs:
         run: bash ci/prepare-graphics.sh --preflight
       - name: Install native build tools
         run: brew install cmake ninja bison flex pkgconf llvm mingw-w64 xcodegen meson zstd
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: linux-runtime-with-source
-          path: .build/linux-transfer
-          run-id: ${{ needs.asset-plan.outputs.linux_run_id || github.run_id }}
-          github-token: ${{ github.token }}
-      - name: Verify Linux artifact provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 ci/verify-linux-reuse.py
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: media-sdk-with-source
@@ -447,10 +419,8 @@ jobs:
         run: |
           mkdir -p iridium/apps/ios/Frameworks
           tar -xzf .build/steam-transfer/steam-framework.tar.gz -C iridium/apps/ios/Frameworks
-      - name: Prepare legacy runtime bundle
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash ci/prepare-legacy-bundle.sh
+      - name: Prepare Madeira package resources
+        run: python3 ci/madeira-package.py prepare
       - name: Free verified transfer copies
         run: python3 ci/free-build-space.py
       - name: Collect exact repository and dependency source
@@ -467,7 +437,7 @@ jobs:
             .build/ipa-output/SOURCE-SHA256SUMS
           if-no-files-found: error
           retention-days: 7
-      - name: Check full-runtime build readiness
+      - name: Check Madeira build readiness
         run: |
           python3 ci/reclaim-build-space.py source-uploaded
           python3 ci/check-ipa-prerequisites.py

@@ -13,6 +13,9 @@ int wineserver_start(const char *prefix_path);
 // Check if wineserver is running
 int wineserver_is_running(void);
 
+// Ready after the registry has loaded, immediately before the main loop.
+int wineserver_is_ready(void);
+
 // Stop the wineserver (signals the thread to exit)
 void wineserver_stop(void);
 

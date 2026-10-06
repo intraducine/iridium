@@ -23,5 +23,98 @@
   ],
   "privacy_modified_files": [
     "testrepos/Madeira/scripts/deploy-thumper.sh"
+  ],
+  "ported_changes": [
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 107,
+      "commits": [
+        "c62b9b29ae6da1d28192baa4354f6b4e73140225",
+        "374956226743873395c0365ca790090d7815511f"
+      ],
+      "paths": [
+        "testrepos/Madeira/build/ntdll-unix/virtual_ios.c"
+      ]
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 110,
+      "commits": [
+        "bcf54a365a0e5a69292628d8e91eb963e2e70b6f"
+      ],
+      "paths": [
+        "testrepos/Madeira/build/ntdll-unix/virtual_ios.c"
+      ]
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 111,
+      "commits": [
+        "1bbaf6be2a92fe6887c8a09fcd4e1b0c2fa5505f"
+      ],
+      "paths": [
+        "testrepos/Madeira/build/ntdll-unix/virtual_ios.c"
+      ]
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 119,
+      "commits": [
+        "c7191a36fa0faba366f77c775f12d636af5c0e5e",
+        "72d1a71eaa2713a470734474ae3e3f9a679e1ef4"
+      ],
+      "paths": [
+        "testrepos/Madeira/research/madeira-d3d12/src/pe/madeira_d3d12.c"
+      ]
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 120,
+      "commits": [
+        "0c6764ac273932c32d2e0956df85c5dd9885c108"
+      ],
+      "paths": [
+        "testrepos/Madeira/build/ntdll-unix/process_ios.c"
+      ]
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 125,
+      "commits": [
+        "4612deeb75599da9760d850e04843a550ca461eb",
+        "cc20babfb175215465a08fd8dde242f7a9843eaf"
+      ],
+      "paths": [
+        "testrepos/Madeira/app/Madeira/WineServerBridge.h",
+        "testrepos/Madeira/app/Madeira/WineServerBridge.m",
+        "testrepos/Madeira/build/wineserver/main_ios.c",
+        "testrepos/Madeira/build/wineserver/request_ios.c",
+        "iridium/apps/ios/MadeiraSupport/MadeiraNative.h",
+        "iridium/apps/ios/MadeiraSupport/MadeiraRuntimeAdapter.swift"
+      ],
+      "adaptation": "Registry-ready flag and Iridium worker wait; preserve atomic liveness and cleanup; independent 30-second startup deadline and optional two-second rollback delay; fail closed on timeout or cancellation."
+    },
+    {
+      "upstream": "https://github.com/willfaust/dxmt",
+      "commits": [
+        "3a78f7a8211cd36999ea1e3c147f0e077eabfefc"
+      ],
+      "paths": [
+        "testrepos/Madeira/research/dxmt/meson.build",
+        "testrepos/Madeira/research/dxmt/meson.options"
+      ],
+      "madeira_pull_request": 129
+    },
+    {
+      "upstream": "https://github.com/willfaust/Madeira",
+      "pull_request": 129,
+      "commits": [
+        "1fae83a0ae01b573326bdb6d51a176cf43366ba7"
+      ],
+      "paths": [
+        "testrepos/Madeira/build/dxmt-ios/build.sh"
+      ],
+      "adaptation": "Fixed Metal 3.1 language pin and script-change cache invalidation; preserve native iphoneos SDK and ios18 AIR target; omit upstream macOS target, binary and include-layout changes. Auxiliary native AIR preparation is unchanged."
+    }
   ]
 }

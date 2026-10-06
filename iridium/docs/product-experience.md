@@ -18,9 +18,11 @@ a password or QR code and complete Steam Guard when requested. Choose an owned
 game, then select its language, unprotected branch, Windows 32/64-bit files,
 owned DLC, and download connections in **Download Options**.
 
-**Queue** provides pause, resume, retry, cancel, and priority controls. Keep
-Iridium open while downloading; after backgrounding or reopening the app, resume
-the paused job explicitly. Verified partial files can be reused. **Download
+**Queue** provides pause, resume, retry, cancel, and priority controls. Standalone
+Iridium can transfer bounded batches over Wi-Fi in the background on iOS 18+;
+iOS scheduling, suspension and processing limits can still interrupt progress.
+LiveContainer downloads pause in the background. After a cold restart, reopen
+Iridium and explicitly resume the paused job. Verified partial files can be reused. **Download
 Anyway…** appears for an estimated-space or unknown-capacity warning and requires
 confirmation for one attempt. Pausing or retrying checks storage again. File
 verification and real out-of-space failures remain enforced.
@@ -32,8 +34,13 @@ keep it until saves work in the new copy. **Remove from Downloads** removes only
 history. **Delete Game Files** deletes the selected copy and its library entry,
 including saves inside that game folder; separate Windows-profile saves remain.
 
-Steam Cloud, Workshop, Steam Families discovery, protected branches, and desktop
-Steam services are unavailable. A successful download does not establish runtime
+**Game Options → Steam Cloud** offers opt-in saves for supported Windows
+Auto-Cloud mappings. Compare both sides, choose how to resolve first saves or
+conflicts, and keep the backups created before replacement. Play checks never
+upload; automatic uploads require a confirmed game/runtime exit. Failed or
+offline transfers can be retried from the Cloud page. Unsupported paths report
+that limitation. Workshop, Steam Families discovery, protected branches, and
+desktop Steam services are unavailable. A successful download does not establish runtime
 compatibility. Real-account downloads and network recovery still need device
 validation; see the [Steam guide](../packages/steam/README.md).
 
@@ -63,7 +70,9 @@ Compatibility and performance vary by game, runtime, and device.
   The player shows the Windows installer and its current step. Tap its buttons
   directly or use a keyboard and mouse. The RAM bar measures Iridium's memory
   use and space available to the app; it is not a loading percentage.
-- **Advanced:** launch arguments and runtime settings.
+- **Advanced → Launch Arguments:** edit the game's arguments. Quotes group one
+  argument; use the preview to check what will be passed. Save applies to the
+  next launch and keeps other game settings.
 - **Remove from Library:** remove the entry while keeping game files and saves.
 
 Use Game Options to add a game to Favorites. Save locations vary by game; check
@@ -88,7 +97,16 @@ session log when troubleshooting.
 ## Settings and support
 
 Settings contains launch support, runtime information, artwork settings, storage,
-and diagnostics. **Storage** shows device-volume capacity and raw available
+and diagnostics. **Runtime → Sync engine** selects **Fastsync (default)**,
+**Madsync**, or **Wine standard sync** globally. This is the saved choice;
+close Iridium from the app switcher and reopen it after changing modes. A launch
+waits for an in-progress save and requires a restart if the saved mode differs
+from the process's startup selection. Some prerequisite-installer sessions use
+Wine standard sync. Compatibility varies by game; the setting is not proof of
+a running engine or a compatibility fix.
+
+**Runtime → Display & Memory** controls resolution and JIT memory.
+**Storage** shows device-volume capacity and raw available
 space when readable, or offers **Refresh** after a read failure. Steam's download
 preflight separately uses iOS important-usage capacity, including reclaimable
 space, with a raw-volume fallback and an explicit unknown-capacity warning.

@@ -43,19 +43,21 @@ def main():
                 raise SystemExit('Hardware test source boundary changed; refusing a partial/incorrect extraction.')
             hardware=hardware.split(delimiter)[0]
             hardware='\n'.join(line for line in hardware.splitlines() if not line.startswith('import '))
-            hardware+='\n    private static var held = Set<Int32>()\n    static var pointerCaptured = false\n}\n'
+            hardware+='\n    private static var held = Set<Int32>()\n    private static var heldMouse = Set<UInt32>()\n    static var pointerCaptured = false\n}\n'
             under_test=temp/'HardwareUnderTest.swift'
             under_test.write_text('import Foundation\n'+hardware)
-            run([build('keyboard', [support/'MadeiraKeys.swift', under_test, HERE/'ReviewKeyboardCheck.swift'])])
+            run([build('keyboard', [ios/'Iridium/Input/PhysicalControllerMapping.swift', support/'MadeiraKeys.swift', under_test, HERE/'ReviewKeyboardCheck.swift'])])
         if args.group in ('all', 'lifecycle'):
             original=(support/'MadeiraRuntimeAdapter.swift').read_text()
             under_test=temp/'RuntimeAdapterUnderTest.swift'
             under_test.write_text('\n'.join(line for line in original.splitlines()
                 if line not in ('import UIKit', 'import MadeiraNative'))+'\n')
-            binary=build('adapter', [HERE/'ReviewRuntimeStubs.swift', support/'MadeiraLaunchArguments.swift',
+            binary=build('adapter', [HERE/'ReviewRuntimeStubs.swift', support/'MadeiraLaunchArguments.swift', support/'MadeiraSyncEngine.swift',
                 under_test, HERE/'ReviewRuntimeCheck.swift'], ['-D','BUILTIN_STIKJIT'])
-            cases=['prepare-failure','prerequisite-failure','prerequisite-success','prerequisite-cancel','jit-failure','pool-failure','arena-failure','server-failure',
-                   'server-died','wine-failure','builtin-start-failure','builtin-detach-failure',
+            cases=['sync-save-in-flight','sync-restart','prepare-failure','prerequisite-failure','prerequisite-success','prerequisite-cancel','jit-failure','pool-failure','arena-failure','server-failure',
+                   'server-died','server-delayed-ready','server-never-ready','server-exits-before-ready',
+                   'server-ready-cancel','server-legacy-ready','server-legacy-delayed-ready',
+                   'wine-failure','builtin-start-failure','builtin-detach-failure',
                    'cancel-startup','success','duplicate-jit','process-exit','close-timeout','prerequisite-close-timeout',
                    'prerequisite-nonzero-exit','prerequisite-nonzero-close-timeout']
             for case in cases:
