@@ -19,6 +19,11 @@ struct IridiumApp: App {
     init() {
         // Install capture before recording host/JIT launch diagnostics.
         _ = Self.logFileURL
+        #if MADEIRA_RUNTIME
+        // Capture saved sync settings before the UI can change them. File I/O
+        // runs off the UI thread; this does not select a running native engine.
+        _ = MadeiraSyncSession.startup
+        #endif
         // Snapshot host-owned settings before any UI can repair them. They only
         // become active when LiveContainer creates the next guest process.
         LiveContainerIntegration.configureProcessLaunchEnvironment()

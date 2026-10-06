@@ -6,6 +6,23 @@ import Foundation
         var failures:[String]=[]
         var reports:[String]=[]
         var exits=0
+        if ["sync-save-in-flight", "sync-restart"].contains(scenario) {
+            let docs = MadeiraGamePreparation.directory.appendingPathComponent("sync-config")
+            try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
+            setenv("MADEIRA_DOCS_DIR", docs.path, 1)
+            _ = await MadeiraSyncSession.startup.value
+            let save = MadeiraSyncSession.save(.madsync)!
+            if scenario == "sync-restart" { _ = await save.value }
+            MadeiraRuntimeAdapter.start(executable:"/fixture/game.exe", gameRoot:"/fixture", gameID:UUID()) {
+                reports.append($0)
+            } fail: { failures.append($0) }
+            precondition(failures.count == 1 && reports.isEmpty)
+            precondition(!MadeiraRuntimeAdapter.started && NativeState.shared.startCount == 0)
+            precondition(failures[0].contains(scenario == "sync-restart" ? "Restart Iridium" : "finish saving"))
+            _ = await save.value
+            print("PASS \(scenario): sync setting guard runs before native/JIT state starts")
+            return
+        }
         unsetenv("MADEIRA_FAST_SERVER_START")
         if scenario.hasPrefix("server-legacy-") { setenv("MADEIRA_FAST_SERVER_START", "0", 1) }
         let startTime = ProcessInfo.processInfo.systemUptime

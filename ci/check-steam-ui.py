@@ -46,6 +46,7 @@ struct ArtworkImage: View {
         subprocess.run([
             'xcrun', '--sdk', 'iphoneos', 'swiftc', '-typecheck', '-parse-as-library',
             '-sdk', sdk, '-target', 'arm64-apple-ios18.0', '-swift-version', '5',
+            '-module-cache-path', str(Path(directory) / 'module-cache'),
             '-D', 'IRIDIUM_APP',
             str(app / 'SteamDownloadQueue.swift'),
             str(app / 'SteamLibraryModel.swift'),
@@ -60,9 +61,11 @@ struct ArtworkImage: View {
             str(app / 'RuntimeLogCapture.swift'),
             str(app / 'LibraryController.swift'),
             str(app / 'Views/LibraryChrome.swift'),
+            str(ios / 'MadeiraSupport/MadeiraSyncEngine.swift'),
+            str(ios / 'MadeiraSupport/MadeiraSyncSettingsView.swift'),
             str(app / 'Views/SteamLibraryView.swift'), str(host),
         ], check=True, timeout=180)
-    print('Steam model and SwiftUI screen passed iOS type checking.')
+    print('Steam model, SwiftUI screen and sync settings passed iOS type checking.')
 
 
 if __name__ == '__main__':

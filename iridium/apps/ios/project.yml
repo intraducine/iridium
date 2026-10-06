@@ -1,7 +1,7 @@
 name: Iridium
 settings:
   base:
-    MARKETING_VERSION: "0.2.2"
+    MARKETING_VERSION: "0.2.1"
     CURRENT_PROJECT_VERSION: "1"
     IRIDIUM_APP_BUNDLE_IDENTIFIER: software.iridium
 options:

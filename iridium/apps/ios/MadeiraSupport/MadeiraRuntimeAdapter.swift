@@ -50,6 +50,8 @@ enum MadeiraRuntimeAdapter {
                       fail: @escaping (String) -> Void,
                       exited: @escaping () -> Void = {}) {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard !MadeiraSyncSession.isSaving else { fail("Wait for the sync setting to finish saving, then try Play again."); return }
+        guard !MadeiraSyncSession.requiresRestart else { fail("Restart Iridium from the app switcher to use the saved sync mode."); return }
         guard !started else { fail("Restart Iridium before another Madeira session."); return }
         #if os(iOS)
         for line in MadeiraLaunchEntitlements.logLines(
