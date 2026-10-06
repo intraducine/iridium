@@ -1,14 +1,14 @@
 [
   {
     "name": "gmp",
-    "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+    "url": "https://mirrors.kernel.org/gnu/gmp/gmp-6.3.0.tar.xz",
     "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
     "destination": "testrepos/Madeira/build/gnutls-ios/src/gmp-6.3.0.tar.xz",
     "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"
   },
   {
     "name": "nettle",
-    "url": "https://ftp.gnu.org/gnu/nettle/nettle-3.10.1.tar.gz",
+    "url": "https://mirrors.kernel.org/gnu/nettle/nettle-3.10.1.tar.gz",
     "sha256": "b0fcdd7fc0cdea6e80dcf1dd85ba794af0d5b4a57e26397eee3bc193272d9132",
     "destination": "testrepos/Madeira/build/gnutls-ios/src/nettle-3.10.1.tar.gz",
     "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"
