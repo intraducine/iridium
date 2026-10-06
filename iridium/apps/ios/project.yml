@@ -3,6 +3,7 @@ settings:
   base:
     MARKETING_VERSION: "0.2.1"
     CURRENT_PROJECT_VERSION: "1"
+    IRIDIUM_APP_BUNDLE_IDENTIFIER: software.iridium
 options:
   bundleIdPrefix: com.iridium
 packages:
@@ -21,6 +22,7 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Iridium
+      - path: SteamActivityShared
     preBuildScripts:
       - name: Prepare Embedded Translator
         basedOnDependencyAnalysis: false
@@ -52,6 +54,9 @@ targets:
           - sidestore
         IridiumRuntimeProfile: "$(IRIDIUM_RUNTIME_PROFILE)"
         IridiumBundledRuntimeRoot: BundledRuntime/iridium-runtime-base
+        NSSupportsLiveActivities: true
+        BGTaskSchedulerPermittedIdentifiers:
+          - $(PRODUCT_BUNDLE_IDENTIFIER).steam-download
         LSSupportsOpeningDocumentsInPlace: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
@@ -73,11 +78,12 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: software.iridium
+        PRODUCT_BUNDLE_IDENTIFIER: $(IRIDIUM_APP_BUNDLE_IDENTIFIER)
         IRIDIUM_RUNTIME_PROFILE: legacy
         PRODUCT_NAME: Iridium
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: 5.10
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) IRIDIUM_APP
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -130,6 +136,8 @@ targets:
           - -lsoftfloat_3e
           - -liridium-wineserver-ios
     dependencies:
+      - target: SteamDownloadWidget
+        embed: true
       - framework: Frameworks/IridiumSteam.xcframework
         embed: true
         link: false
@@ -148,6 +156,29 @@ targets:
           - $(SRCROOT)/Scripts/stage_runtime_userland.sh
           - $(SRCROOT)/../../../ci/madeira-package.py
         basedOnDependencyAnalysis: false
+  SteamDownloadWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: SteamDownloadWidget
+      - path: SteamActivityShared
+    info:
+      path: SteamDownloadWidget/Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(IRIDIUM_APP_BUNDLE_IDENTIFIER).SteamDownloadWidget
+        SWIFT_VERSION: 5.10
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
 aggregateTargets:
   IridiumFinalized:
     targets:

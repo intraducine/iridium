@@ -45,7 +45,7 @@ public sealed class SteamInstaller(SteamConnection connection)
         Action<string> phase, CancellationToken ct, InstallOptions? requestedOptions = null,
         string? reuseDirectory = null, Action<long>? networkProgress = null, string? operationId = null,
         Func<string, SteamCapacity>? measureCapacity = null, bool overrideStoragePreflight = false,
-        Action<SteamStorageDiagnostic>? storageReport = null)
+        Action<SteamStorageDiagnostic>? storageReport = null, SteamChunkHandoff? backgroundHandoff = null)
     {
         var options = (requestedOptions ?? new()).Validate();
         reuseDirectory = ValidateReuseDirectory(root, game.AppId, reuseDirectory);
@@ -79,7 +79,7 @@ public sealed class SteamInstaller(SteamConnection connection)
         var serverDirectory = await ResolveServers(connection.Client.CellID ?? 0, 30);
         if (SelectContentServers(serverDirectory, game.AppId).Length == 0)
             serverDirectory = await ResolveServers(0, 50);
-        var authTokens = new ConcurrentDictionary<string, string>();
+        var authTokens = new ConcurrentDictionary<string, (string Token, DateTime Expires)>();
 
         async Task<T> FromCDN<T>(uint depotId, uint appId, Func<Server, string?, Task<T>> operation, CancellationToken token)
         {
@@ -95,14 +95,15 @@ public sealed class SteamInstaller(SteamConnection connection)
                 var tokenKey = $"{appId}:{depotId}:{server.Host}";
                 try
                 {
-                    authTokens.TryGetValue(tokenKey, out var auth);
+                    authTokens.TryGetValue(tokenKey, out var cachedAuth);
+                    var auth = cachedAuth.Expires > DateTime.UtcNow ? cachedAuth.Token : null;
                     try { return await operation(server, auth); }
                     catch (SteamKitWebRequestException e) when (e.StatusCode == HttpStatusCode.Forbidden)
                     {
                         var granted = await content.GetCDNAuthToken(appId, depotId, server.Host!)
                             .WaitAsync(TimeSpan.FromSeconds(30), token);
                         if (granted.Result != EResult.OK) throw new SteamFailure("Steam denied access to this game's content.");
-                        authTokens[tokenKey] = granted.Token;
+                        authTokens[tokenKey] = (granted.Token, granted.Expiration);
                         return await operation(server, granted.Token);
                     }
                 }
@@ -220,7 +221,55 @@ public sealed class SteamInstaller(SteamConnection connection)
         phase("verifying");
         progress(0, total);
         await SteamStorage.Check(install, staging, files.Values.Select(value => value.File),
-            measureCapacity ?? SteamCapacity.FromDrive, overrideStoragePreflight, storageReport, ct);
+            measureCapacity ?? SteamCapacity.FromDrive, overrideStoragePreflight, storageReport, ct,
+            backgroundHandoff == null ? 0 : SteamBackgroundChunks.MaximumBatchBytes);
+        SteamBackgroundChunks? background = null;
+        if (backgroundHandoff != null)
+        {
+            if (operationId == null || !Guid.TryParseExact(operationId, "D", out _))
+                throw new SteamFailure("Background downloads require a durable queue identity.");
+            var missing = new List<SteamBackgroundChunks.Chunk>();
+            foreach (var (depot, file) in files.Values)
+            {
+                var reuse = reuseDirectory == null ? null : VerifiedFiles.SafePath(reuseDirectory, file.FileName);
+                foreach (var chunk in await VerifiedFiles.MissingChunks(install, staging, file, reuse, ct))
+                {
+                    if (missing.Count >= 1_000_000) throw new SteamFailure("This download has too many chunks to plan safely.");
+                    missing.Add(new(depot.Id, depot.AuthorizationAppId, chunk, depot.Key));
+                }
+            }
+            async Task<ChunkRequest[]> Plan(SteamBackgroundChunks.Chunk[] batch, int attempt, CancellationToken token)
+            {
+                await backgroundHandoff.WaitForRuntime(token);
+                var result = new List<ChunkRequest>();
+                var refreshed = new HashSet<string>();
+                foreach (var chunk in batch)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var servers = SelectContentServers(serverDirectory, chunk.AuthorizationAppId);
+                    if (servers.Length == 0) throw new SteamFailure("Steam has no secure download servers available.");
+                    var server = servers[attempt % servers.Length];
+                    var tokenKey = $"{chunk.AuthorizationAppId}:{chunk.DepotId}:{server.Host}";
+                    authTokens.TryGetValue(tokenKey, out var cachedAuth);
+                    var auth = cachedAuth.Expires > DateTime.UtcNow ? cachedAuth.Token : null;
+                    // A failed batch refreshes authorization and rotates the server.
+                    // No token or depot key is persisted by the application.
+                    if (attempt > 0 && refreshed.Add(tokenKey))
+                    {
+                        var granted = await content.GetCDNAuthToken(chunk.AuthorizationAppId, chunk.DepotId, server.Host!)
+                            .WaitAsync(TimeSpan.FromSeconds(30), token);
+                        if (granted.Result != EResult.OK) throw new SteamFailure("Steam denied access to this game's content.");
+                        auth = granted.Token;
+                        authTokens[tokenKey] = (auth, granted.Expiration);
+                    }
+                    var url = new UriBuilder(Uri.UriSchemeHttps, server.Host!, 443,
+                        $"depot/{chunk.DepotId}/chunk/{Convert.ToHexString(chunk.Data.ChunkID!).ToLowerInvariant()}") { Query = auth ?? "" };
+                    result.Add(new(chunk.Id, url.Uri.AbsoluteUri, checked((int)chunk.Data.CompressedLength)));
+                }
+                return result.ToArray();
+            }
+            background = new(root, operationId, options.MaxDownloads, missing, Plan, backgroundHandoff);
+        }
         long complete = 0;
         foreach (var (depot, file) in files.Values)
         {
@@ -229,13 +278,17 @@ public sealed class SteamInstaller(SteamConnection connection)
                 (chunk, buffer, token) =>
                 {
                     phase("downloading");
+                    if (background != null) return background.Fetch(depot.Id, chunk, buffer, token);
                     return FromCDN(depot.Id, depot.AuthorizationAppId, (server, auth) =>
                         cdn.DownloadDepotChunkAsync(depot.Id, chunk, server, buffer, depot.Key, cdnAuthToken: auth), token);
                 }, bytes => progress(Interlocked.Add(ref complete, bytes), total), ct,
-                reuseDirectory == null ? null : VerifiedFiles.SafePath(reuseDirectory, file.FileName), options.MaxDownloads, networkProgress);
+                reuseDirectory == null ? null : VerifiedFiles.SafePath(reuseDirectory, file.FileName),
+                background == null ? options.MaxDownloads : 1, background == null ? networkProgress : null,
+                backgroundHandoff == null ? null : backgroundHandoff.WaitForRuntime);
         }
 
         phase("finalizing");
+        if (backgroundHandoff != null) await backgroundHandoff.WaitForRuntime(ct);
         var executables = files.Values.Where(f => !f.File.Flags.HasFlag(EDepotFileFlag.Directory)).Select(f => f.File.FileName)
             .Where(f => f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f.Count(c => c is '/' or '\\')).ThenBy(f => f, StringComparer.OrdinalIgnoreCase).ToArray();

@@ -1563,6 +1563,28 @@ final class AppViewModel: ObservableObject {
         compatibilityProfiles.first(where: { $0.slug == game.compatibilityProfileName })
     }
 
+    func canEditGameArguments(_ gameID: UUID) -> Bool {
+        games.contains(where: { $0.id == gameID }) && activeRuntimePlayerSession == nil
+            && runtimePlayerReservation == nil && pendingLaunches.isEmpty && !isResumingPendingLaunch
+            && !savingGameArguments && !preparingGameLaunch && !refreshingGameCopy && !preparingInstaller
+            && !closingMadeiraSession && !madeiraShutdownUnconfirmed
+            && !SteamCloudCoordinator.shared.busy && !SteamLibraryModel.shared.gameFilesBusy
+            && !SteamCloudFileAccess.shared.busy
+    }
+
+    func saveGameArguments(_ draft: GameArgumentDraft) async throws {
+        guard games.contains(where: { $0.id == draft.gameID }) else { throw GameArgumentEditError.gameMissing }
+        guard canEditGameArguments(draft.gameID) else { throw GameArgumentEditError.busy }
+        let access = try requireGameFileMutation(.editLaunchArguments)
+        savingGameArguments = true
+        defer {
+            savingGameArguments = false
+            SteamCloudFileAccess.shared.finish(access)
+        }
+        let saved = try await store.saveLaunchArguments(draft)
+        if let index = games.firstIndex(where: { $0.id == saved.id }) { games[index] = saved }
+    }
+
     func ownerTitle(for prefix: PrefixRecord) -> String? {
         games.first(where: { $0.launchProfile.prefixID == prefix.id })?.title
     }
@@ -2049,6 +2071,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func isLaunchActionDisabled(for game: GameRecord) -> Bool {
+        if savingGameArguments || preparingGameLaunch { return true }
         #if MADEIRA_RUNTIME
         if MadeiraRuntimeAdapter.enabled { return madeiraLaunchIssue(for: game) != nil }
         #endif
@@ -2104,6 +2127,8 @@ final class AppViewModel: ObservableObject {
 
     @Published private(set) var refreshingGameCopy = false
     @Published private(set) var preparingInstaller = false
+    @Published private(set) var savingGameArguments = false
+    @Published private(set) var preparingGameLaunch = false
     @Published private(set) var closingMadeiraSession = false
     @Published private(set) var madeiraShutdownUnconfirmed = false
 
@@ -2175,6 +2200,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func recordLaunchPreparation(for game: GameRecord, cloudChecked: Bool = false) {
+        guard !savingGameArguments, !preparingGameLaunch else { return }
         if !cloudChecked {
             #if MADEIRA_RUNTIME
             if MadeiraRuntimeAdapter.enabled, let issue = madeiraLaunchIssue(for: game) {
@@ -2247,7 +2273,9 @@ final class AppViewModel: ObservableObject {
             return
         }
         #endif
+        preparingGameLaunch = true
         Task {
+            defer { preparingGameLaunch = false }
             let currentGame = games.first(where: { $0.id == game.id }) ?? game
             var launchTimer = RuntimeLaunchPhaseTimer(
                 operation: "recordLaunchPreparation",
@@ -2555,6 +2583,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func resumePendingLaunch(_ pendingLaunch: PendingLaunchRecord) async {
+        guard !savingGameArguments else { isResumingPendingLaunch = false; return }
         defer {
             isResumingPendingLaunch = false
         }

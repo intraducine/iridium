@@ -294,6 +294,7 @@ private struct RuntimeSettingsView: View {
             #if MADEIRA_RUNTIME
             if viewModel.usesMadeiraRuntime {
                 MenuNavigationLink("Display & Memory") { RuntimeLaunchPreferences() }
+                MadeiraSyncSettingsSection()
             }
             #endif
             Section("Runtime") {

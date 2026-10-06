@@ -165,6 +165,18 @@ jobs:
           dotnet-version: '10.0.401'
       - name: Prepare pinned SteamKit source
         run: python3 ci/prepare-steamkit.py
+      - name: Verify production Swift argument and Activity fixtures
+        run: |
+          swiftc --version
+          python3 -B -m unittest discover -s ci -p 'test_game_arguments.py' -v
+          python3 -B -m unittest discover -s ci -p 'test_live_activity_presentation.py' -v
+          python3 -B -m unittest discover -s ci -p 'test_steam_session.py' -v
+      - name: Check the Live Activity with the Simulator SDK
+        run: |
+          xcrun --sdk iphonesimulator swiftc -swift-version 5 -parse-as-library -typecheck \
+            -target arm64-apple-ios18.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
+            -module-cache-path "$RUNNER_TEMP/iridium-widget-module-cache" \
+            iridium/apps/ios/SteamActivityShared/*.swift iridium/apps/ios/SteamDownloadWidget/*.swift
       - name: Verify Steam on iOS Simulator
         run: python3 ci/check-steam-ios.py
   build:

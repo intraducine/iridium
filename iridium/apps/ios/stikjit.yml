@@ -20,7 +20,7 @@ targets:
       base:
         IRIDIUM_JIT_REUSE_RUNTIME: "1"
         SWIFT_OBJC_BRIDGING_HEADER: BuiltinJIT/Host/Bridging.h
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME, BUILTIN_STIKJIT]
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", MADEIRA_RUNTIME, BUILTIN_STIKJIT, IRIDIUM_APP]
     dependencies:
       - sdk: Security.framework
       - target: IridiumJITHelper

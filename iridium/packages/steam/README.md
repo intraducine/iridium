@@ -78,8 +78,14 @@ including exception messages, passwords, tokens, or local paths.
   Hash, path, sparse-partial and actual disk-full/write failures cannot be bypassed.
   Exported runtime logs include only storage counts, source category, override choice,
   and fixed failure codes, without game names, account identifiers or local paths.
-- Downloads pause when backgrounded. Explicitly resume the saved queue job after reopening;
-  valid chunks are reused, including after a process restart.
+- Standalone iOS 18+ downloads use background URLSession for bounded encrypted HTTP
+  batches on Wi-Fi. App runtime still performs authorization, decrypt/decompress,
+  chunk/file verification and assembly. Resident operations can attempt bounded
+  processing and replenishment during a legitimate completion wake; scheduling,
+  suspension, budget expiration and force-quit can require reopening and explicit
+  resume. LiveContainer retains foreground downloads and background pause.
+  See [the background download decision](../../../docs/decisions/steam-background-downloads.md)
+  for bounds, recovery, redirect constraints and evidence requirements.
 - Installs live in Application Support, excluded from device backups. Each build
   has a separate directory. Existing imported games and their saves stay in place.
 - The initial selection is the public Windows 64-bit/neutral English build.

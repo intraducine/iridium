@@ -60,7 +60,8 @@ def main():
             }, file)
         shutil.copy2(SOURCE / 'THIRD-PARTY-NOTICES.md', framework)
         symbols = subprocess.check_output(['nm', '-gU', str(binary)], text=True)
-        for name in ('initialize', 'set_capacity_provider', 'submit', 'snapshot', 'take_session', 'free'):
+        for name in ('initialize', 'set_capacity_provider', 'submit', 'snapshot', 'take_session',
+                     'take_chunk_batch', 'complete_chunk_batch', 'set_chunk_runtime', 'free'):
             if '_iridium_steam_' + name not in symbols:
                 raise RuntimeError('Missing Steam ABI symbol: ' + name)
         frameworks.extend(['-framework', framework])

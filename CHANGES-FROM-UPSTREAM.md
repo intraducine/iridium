@@ -1,5 +1,18 @@
 # Changes from upstream
 
+## Global sync setting in the consolidated v0.2.1 app
+
+Original Iridium Swift code exposes Fastsync, Madsync and Wine standard sync in
+Runtime settings using Madeira's existing `madeira.cfg` engine selection. It
+saves only after an explicit choice, writes both sync keys atomically, and
+preserves unrelated unified entries. When no unified file exists, it carries
+legacy one-value, environment and DXMT settings forward while retaining the
+original files; invalid text and unsafe early-lookup migration block the save.
+Opening settings does not migrate or rewrite configuration. File I/O stays off
+the UI thread. The host prevents launch during a save or before a required cold
+restart. Vendor sync implementations, installer exceptions, and server wake
+policy are unchanged. No upstream application UI code or dependency is added.
+
 ## v0.2.1 Madeira package profile
 
 Normal Madeira builds omit the legacy Linux userland, runtime-host executable,

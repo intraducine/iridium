@@ -50,6 +50,7 @@ public sealed record Command
     public string? ReuseDirectory { get; init; }
     // This command only. Never part of InstallOptions or an installation receipt.
     public bool OverrideStoragePreflight { get; init; }
+    public bool BackgroundTransfers { get; init; }
     public CloudRequest? Cloud { get; init; }
 }
 
@@ -60,6 +61,8 @@ public sealed record Command
 [JsonSerializable(typeof(InstalledGame))]
 [JsonSerializable(typeof(InstallOptions))]
 [JsonSerializable(typeof(CloudRecord))]
+[JsonSerializable(typeof(ChunkBatch))]
+[JsonSerializable(typeof(ChunkBatchResult))]
 public partial class SteamJson : JsonSerializerContext;
 
 public sealed class SteamFailure(string message) : Exception(message);

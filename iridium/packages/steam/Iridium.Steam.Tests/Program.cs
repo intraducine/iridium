@@ -242,4 +242,5 @@ if (args.Contains("--network"))
     Check(!qr.Read().SignedIn && qr.TakeSecret() == null, "cancelled QR login does not create a session");
 }
 checks += await DownloadFeatureTests.Run();
+checks += await BackgroundChunkTests.Run();
 Console.WriteLine($"PASS: {checks} Steam integration checks.");
