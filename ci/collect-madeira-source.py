@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
 
 
 def load(name, filename):
@@ -27,12 +28,13 @@ fetch = load('frontend_source_fetch', 'fetch-runtime-inputs.py')
 def binary_component(name):
     p = Path(name)
     if name in {'Iridium', 'Iridium.debug.dylib', '__preview.dylib'}:
-        return 'Iridium and Madeira native libraries'
+        return 'Iridium, Madeira and SameBoy native libraries'
     if name.startswith('PlugIns/MadeiraJITHelper.appex/') and p.name in {
             'MadeiraJITHelper', 'MadeiraJITHelper.debug.dylib', '__preview.dylib'}:
         return 'Madeira JIT helper'
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
+    if name == 'Frameworks/ppsspp_libretro.dylib': return 'PPSSPP and its selected native dependencies'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
         if p.name in {'xtajit.dll', 'xtajit64.dll'}: return 'FEX'
         if p.name == 'dockhost.exe': return 'Madeira Dock and LLVM-MinGW runtime'
@@ -69,6 +71,35 @@ def snapshot(repo, destination, revisions):
         snapshot(child, destination / name, revisions)
 
 
+def snapshot_freetype(destination, revisions):
+    repo = build.UPSTREAM / 'research/freetype'
+    # Restored native archives skip the compiler step that normally clones this source.
+    if not repo.exists():
+        subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'VER-2-13-3',
+                        'https://github.com/freetype/freetype.git', str(repo)], check=True)
+    revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+    if revision != FREETYPE_REVISION: raise ValueError('Unexpected FreeType revision')
+    snapshot(repo, destination, revisions)
+
+
+def exclude_signing_fixtures(stage):
+    """Omit exact reviewed upstream fixtures and reject all other signing files."""
+    fixtures = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
+    exclusions = []
+    for path in sorted(stage.rglob('*')):
+        if path.suffix.lower() not in {'.p12', '.pfx', '.mobileprovision', '.provisionprofile'}:
+            continue
+        if path.is_dir() and not path.is_symlink(): continue
+        name = path.relative_to(stage).as_posix()
+        fixture = fixtures.get(name, {})
+        if (path.is_symlink() or not path.is_file()
+                or fixture.get('sha256') != hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise ValueError('Unexpected signing material in corresponding source: ' + name)
+        path.unlink()
+        exclusions.append({'path': name, **fixture})
+    return exclusions
+
+
 def collect(app, output, maps):
     build.verify_pin()
     build.check_bundle(app)
@@ -81,12 +112,14 @@ def collect(app, output, maps):
     static = audit.static_inputs(link_maps, ROOT.resolve())
     if not any(r['archive'].endswith('libntdll_unix.a') for r in static):
         raise ValueError('The maps do not contain the game runtime link; disable ENABLE_DEBUG_DYLIB')
+    if not any(r['archive'].endswith('libIridiumSameBoy.a') for r in static):
+        raise ValueError('The maps do not contain the selected console runtime')
     with tempfile.TemporaryDirectory(dir=ROOT / '.build', prefix='madeira-source-') as folder:
         stage = Path(folder) / 'iridium'
         revisions = {}
         snapshot(ROOT, stage, revisions)
         freetype = build.UPSTREAM / 'research/freetype'
-        snapshot(freetype, stage / freetype.relative_to(ROOT), revisions)
+        snapshot_freetype(stage / freetype.relative_to(ROOT), revisions)
         # Locked published inputs are shared with local builds, not local signing files.
         inputs = [item for item in json.loads((ROOT / 'ci/runtime-inputs.json').read_text()) if item['name'] in {
             'llvm', 'frontend-stikjit-source', 'idevice-source', 'llvm-target-runtime-source', 'mingw-runtime-source', 'mingw-build-source'}]
@@ -113,7 +146,11 @@ def collect(app, output, maps):
         shutil.copytree(app / 'licenses', notices / 'licenses')
         shutil.copytree(app / 'legal', notices / 'legal')
         shutil.copytree(app / 'd3d12', notices / 'd3d12', ignore=shutil.ignore_patterns('*.dylib', '*.dxil'))
-        manifest = {'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
+        psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
+        (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
+        manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
+                    'source_exclusions': exclude_signing_fixtures(stage),
+                    'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

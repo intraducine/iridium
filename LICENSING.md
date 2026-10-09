@@ -46,6 +46,43 @@ separate works.
 
 ## Source and library replacement
 
+The multi-runtime branch additionally links SameBoy's Libretro core at the
+revision in `UPSTREAM-SOURCES.json`. The selected Core, Libretro adapter and
+replacement boot ROMs use SameBoy's Expat (MIT) license. The Libretro API header
+retains its separate MIT notice. The upstream iOS and HexFiend frontends are not
+linked. The build preserves those notices in `licenses/LICENSE-SAMEBOY*.txt`,
+and source collection includes the pinned submodule, boot-ROM assembly,
+generated boot data and its reproducible generation recipe.
+The boot ROMs are SameBoy's replacement implementation, not supplied console
+firmware. The generated private symbol prefix and the generated Libretro
+adapter's 48 kHz public-API setting are Iridium build adaptations; upstream
+source files and emulation Core logic are not modified. This does not import RetroArch or grant
+rights to third-party game content. No additional emulator's license has been
+approved merely because it appears in the candidate research.
+
+The PSP component uses pinned PPSSPP and its selected dependencies, with original
+per-file grants preserved. This includes GPL-family PPSSPP code, GPLv3 libkirk
+and xBRZ material, LGPL-2.1-or-later at3_standalone, and permissive dependencies.
+FFmpeg, Discord and optional upstream frontend packages are disabled in this
+component. The generated `licenses/PPSSPP` directory contains upstream terms,
+GPLv3/LGPLv2.1 texts and source attribution; the build receipt records selected
+source pins and actual compiled units. It is not a blanket relicense.
+
+The bundled PGF fonts are described by PPSSPP as replacement fonts. The selected
+snapshot does not provide a separate generation recipe/license beside every
+PGF. Its PSP dialog atlas is distributed upstream; the atlas generator names
+font inputs not included in the snapshot. Preserve that provenance distinction:
+this repository does not claim a newly established font redistribution grant.
+Optional OFL TTF assets are not included. User-game font extraction, if invoked
+by upstream, stays in that game's writable memory-stick directory.
+
+Before public binary distribution, review the combined component terms,
+including PPSSPP dependencies and the proprietary Metal Shader Converter.
+Madeira's Converter Exception does not automatically extend to PPSSPP or other
+copyright holders. Separating a dylib is an engineering boundary, not by itself
+a determination of copyright aggregation or permission. Private validation and
+successful compilation do not establish clearance for a public release.
+
 An IPA release must include matching source, modifications, license texts,
 third-party notices, a component manifest, and usable build/relink instructions.
 Keep them available with that release. A changing branch or an expiring Actions

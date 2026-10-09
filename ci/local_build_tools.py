@@ -52,11 +52,16 @@ def validate_host():
         raise RuntimeError("Python 3.11 or newer is required. Install it with: brew install python")
 
 
-def build_path(root, prefix, original):
-    directories = [root / ".build/dotnet",
-                   root / "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"]
+def build_path(root, prefix, original, *, madeira=False):
+    runtime = "vendor/Madeira" if madeira else "testrepos/Madeira"
+    cross = root / runtime / "toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"
+    directories = [root / ".build/dotnet"]
+    if not madeira: directories.append(cross)
     directories += [prefix / "opt" / name / "bin" for name in FORMULAE]
     directories += [prefix / "bin", prefix / "sbin", Path.home() / ".cargo/bin"]
+    # Keep host clang ahead of LLVM-MinGW's unprefixed binaries. The target
+    # wrappers find their own compiler; this directory may be fetched later.
+    if madeira: directories.append(cross)
     return os.pathsep.join(dict.fromkeys([str(p) for p in directories] + original.split(os.pathsep)))
 
 
@@ -81,7 +86,7 @@ def prepare_environment(root, *, install=True, environ=None, madeira=False):
     if brew is None:
         raise RuntimeError("Homebrew is required. Install Homebrew, then rerun this command; no source was changed.")
     prefix = Path(require_output([brew, "--prefix"], env))
-    env["PATH"] = build_path(root, prefix, original)
+    env["PATH"] = build_path(root, prefix, original, madeira=madeira)
 
     # Preserve build-local-ipa.sh's historical Xcode-beta default when present.
     beta = Path("/Applications/Xcode-beta.app/Contents/Developer")

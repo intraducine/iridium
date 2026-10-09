@@ -38,7 +38,8 @@ jobs:
         run: python3 ci/dispatch-build.py --check
       - name: Initialize the pinned runtime sources
         run: |
-          git submodule update --init --depth 1 vendor/Madeira
+          git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
+          python3 ci/build-ppsspp.py --initialize
           git -C vendor/Madeira submodule update --init --depth 1 FEX wine dxmt madeira-dock
           git -C vendor/Madeira/FEX submodule update --init --depth 1 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/vixl External/xxhash Source/Common/cpp-optparse
           git -C vendor/Madeira/dxmt submodule update --init --recursive --depth 1
@@ -52,9 +53,21 @@ jobs:
           python3 ci/local_build_tools.py --madeira --write-env .build/madeira-build-tools.env
           source .build/madeira-build-tools.env
           echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
-          python3 -c 'import os; print("\n".join(os.environ["PATH"].split(":")))' >> "$GITHUB_PATH"
+          # Actions prepends each entry, so write least-preferred paths first.
+          python3 -c 'import os; print("\n".join(reversed(os.environ["PATH"].split(os.pathsep))))' >> "$GITHUB_PATH"
           python3 ci/madeira-frontend.py toolchains
           python3 ci/compiled-components.py madeira-toolchain
+      - name: Verify inherited build tools
+        run: |
+          for tool in bison python3 clang clang++ aarch64-w64-mingw32-clang arm64ec-w64-mingw32-clang x86_64-w64-mingw32-clang i686-w64-mingw32-clang; do
+            inherited=$(command -v "$tool")
+            prepared=$(source .build/madeira-build-tools.env; command -v "$tool")
+            if [ "$inherited" != "$prepared" ]; then
+              echo "::error::Prepared build tool was shadowed: $tool"
+              exit 1
+            fi
+            "$tool" --version
+          done
       - name: Select completed native compilation
         id: compiled_madeira_native
         env:

@@ -1,0 +1,7 @@
+{
+  "vendor/PPSSPP/UWP/PPSSPP_UWP_TemporaryKey.pfx": {
+    "sha256": "8a81c07290d15cc22e19b3711477d39204dd7660792bd0e5d9e6d643c8dd615d",
+    "source": "https://github.com/hrydgard/ppsspp/blob/35e27933ff28bffcf1eadce0574569958d14c9b9/UWP/PPSSPP_UWP_TemporaryKey.pfx",
+    "reason": "Public upstream Windows UWP signing fixture, unused by the iOS Libretro build; excluded from corresponding source."
+  }
+}

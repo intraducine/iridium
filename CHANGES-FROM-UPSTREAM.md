@@ -1,5 +1,27 @@
 # Changes from upstream
 
+## Multi runtime frontend boundary
+
+Original Iridium code adds an additive console library and a runtime driver
+contract. Madeira's native source stays pinned and unmodified. The generated
+app has four explicit guards at its Windows/Dock launch entry points to prevent
+overlap with a console session, and its bridging header imports the new core
+boundary. Its library view combines Madeira records with isolated console
+records. Existing Windows callbacks, settings, media and saves remain Madeira's.
+
+SameBoy's pinned Libretro C core is compiled as a separate static archive. The
+builder generates upstream replacement boot arrays and a complete private
+symbol namespace; it changes no vendored files. A generated copy of the Libretro
+adapter selects 48 kHz through `GB_set_sample_rate`, leaving the upstream Core
+and APU unchanged. The seven boot images are assembled from the pinned source
+using RGBDS 0.9.4 and stored as reviewed hexadecimal build inputs with source
+and output hashes; ordinary builds verify them without needing an assembler.
+Iridium supplies bounded
+software video/audio callbacks, joypad input, and battery/RTC save handling.
+The corresponding-source collector includes the initialized SameBoy gitlink
+and original notices along with the build generator. See `docs/multi-runtime.md`
+for validation scope, migration, recovery and currently unsupported engines.
+
 ## Madeira frontend target
 
 `vendor/Madeira` is pinned to `48f976429c189f8396e23d251d8a82f43c705922`.
@@ -35,6 +57,14 @@ operation in a generated tessellation shader instead of the changed private
 intrinsic. The installed iPhoneOS Metal tool can compile the original macOS AIR
 command target when the macOS tool lookup is absent. These are build adapters;
 the pinned source trees remain unchanged.
+
+The frontend orchestration stages rebuilt GnuTLS, Hogweed, Nettle and GMP
+archives at the app's existing link paths and records both prefix and app
+hashes. Its ntdll adapter stops on any failed compilation before archiving or
+installation. Its i386 adapter preserves serial retries, but retries every
+selected target after bulk failure, including existing DLLs. Failed retries
+prevent installation and a new completion record. These checks adapt the pinned
+recipes in memory without changing vendored source.
 
 Native build completion is saved before packaging, with a 14-day reuse limit
 and checks for matching inputs and output archives. The local frontend builder
@@ -389,3 +419,18 @@ logic and D3D12 commands with platform stubs, plus the shader recipe with tool
 stubs. Swift wait coverage runs when `swiftc` is available. These checks do not
 establish Apple compilation, AIR acceptance, physical-device behavior or game
 compatibility; those require separately authorized builds and device validation.
+
+## Pinned PSP component
+
+Iridium builds the unchanged PPSSPP Libretro target as an isolated Apple dylib.
+A separate companion exposes only asynchronous boot status. Iridium owns the
+UI, import metadata, serial stepping, bounded frame/audio delivery, per-game
+memory-stick paths and teardown coordination. The initial adapter uses the IR
+interpreter and software renderer, with no native JIT or networking advertised.
+The Apple recipe, export audit, selected support assets and source receipt are
+maintained outside upstream. No PPSSPP emulation source is rewritten.
+
+Corresponding-source collection omits only the digest-verified public UWP
+signing fixture, which the iOS Libretro target does not use. Its pinned upstream
+URL, path, SHA-256 and exclusion reason are recorded in the component manifest.
+The upstream checkout is unchanged; unreviewed signing files stop collection.

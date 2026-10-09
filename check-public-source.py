@@ -5,6 +5,7 @@ import re
 import sys
 import subprocess
 import hashlib
+import json
 
 ROOT = Path(__file__).resolve().parent
 PATTERNS = {
@@ -23,6 +24,9 @@ findings = []
 PUBLIC_SELF_TEST = {
     'vendor/Madeira/app/Madeira/libgnutls.a': '1d514008193616c017131714e74b585d8e09753c3681875a128db93cd2abaf7b',
 }
+# Only reviewed public upstream bytes may bypass the signing-file suffix check.
+# The source collector omits these files; other privacy patterns still apply.
+PUBLIC_SIGNING_FIXTURES = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
 def source_files(root):
     if (root / '.git').exists():
         result = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'])
@@ -49,7 +53,9 @@ for path in source_files(ROOT):
                 continue
             findings.append((path.relative_to(ROOT), category))
     if path.suffix.lower() in {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}:
-        findings.append((path.relative_to(ROOT), "signing material"))
+        fixture = PUBLIC_SIGNING_FIXTURES.get(path.relative_to(ROOT).as_posix(), {})
+        if path.is_symlink() or fixture.get('sha256') != hashlib.sha256(data).hexdigest():
+            findings.append((path.relative_to(ROOT), "signing material"))
 for path, category in findings:
     print(f"{path}: {category}")
 print(f"Privacy scan: {len(findings)} finding(s)")

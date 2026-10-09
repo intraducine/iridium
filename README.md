@@ -5,11 +5,29 @@
 ![Downloads](https://img.shields.io/github/downloads/intraducine/iridium/total?style=flat-square)
 ![License](https://img.shields.io/github/license/intraducine/iridium?style=flat-square)
 
-Iridium is an iPhone and iPad frontend for [Madeira](https://github.com/willfaust/Madeira).
+Iridium is an iPhone and iPad frontend for [Madeira](https://github.com/willfaust/Madeira)
+with an experimental multi-runtime library on this branch.
 Its library, game options, settings, Steam pages, setup, and player menus share
 Iridium's artwork and Apple-style navigation. Madeira provides game launch,
 JIT, input, Steam, downloads, saves, and the runtime. Compatibility varies by
 game and device.
+
+The additional runtimes are SameBoy for Game Boy/Game Boy Color and an
+experimental PPSSPP interpreter/software-renderer path for PSP. Use
+**Add Game → Import Game Boy or PSP Game** for an uncompressed `.gb`, `.gbc`,
+`.elf`, `.iso`, `.cso` or `.pbp` file you are entitled to use. It appears on the
+same library shelf; Game Options identifies its platform and runtime. Console
+games have their own player, touch/keyboard/controller input and audio. SameBoy
+battery/RTC saves and PSP memory sticks are isolated per game. Neither path
+requires JIT in this build. PSP hardware rendering and native JIT are not yet
+enabled; performance and compatibility remain experimental. Compilation and
+synthetic tests do not establish physical-device or commercial-game compatibility.
+
+Windows games still use Madeira's original backend, options, saves and JIT flow.
+After a Windows session has run, restart Iridium before switching to another
+runtime. Other console and Android candidates remain unavailable pending
+implementation, validation and redistribution review.
+See [runtime architecture and validation](docs/multi-runtime.md).
 
 Use **Add Game → Steam Library** for Madeira's Steam features. For local files,
 copy the game folder into **Iridium → wine → drive_c** in Files, then use
@@ -21,6 +39,9 @@ in place. A conflicting save stops import instead of overwriting either copy.
 | --- | --- |
 | `vendor/Madeira/` | Pinned Madeira app and its dependency submodules |
 | `iridium/apps/ios/MadeiraFrontend/` | Iridium presentation and data import |
+| `iridium/apps/ios/RuntimeSupport/`, `RuntimeBridge/` | Runtime contracts, isolated library and native core bridge |
+| `vendor/SameBoy/` | Pinned interpreter core and its permissive support sources |
+| `vendor/PPSSPP/` | Pinned PSP component; unchanged upstream source and selected dependencies |
 | `ci/madeira-frontend.py`, `ci/madeira_presentation.py` | Reviewed presentation overlay and native build preparation |
 | Other runtime and application directories | Retained migration and recovery source; excluded from the frontend target |
 

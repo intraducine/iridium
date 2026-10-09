@@ -12,20 +12,39 @@ import inspect
 import json
 import os
 import time
+import sys
 import madeira_presentation
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
 FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
+RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
+RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
 REVISION = '48f976429c189f8396e23d251d8a82f43c705922'
-# These are presentation hooks. No native code, launch sequence, input driver,
-# network implementation or allocator is patched.
+PSP_REVISION = '35e27933ff28bffcf1eadce0574569958d14c9b9'
+PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
+RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPBridge.h"\n'
+CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
+# Presentation hooks and explicit exclusive-runtime guards. Madeira's launch
+# sequence, native driver, network implementation and allocator remain intact.
 HOOKS = {
     'ContentView.swift': [
         ('LibraryView(play: launchLibraryEntry, enableJIT: enableJIT,',
          'IridiumLibraryView(play: launchLibraryEntry, enableJIT: enableJIT,'),
         ('.navigationTitle("Madeira")', '.navigationTitle("Iridium")'),
+        ('private func launchLibraryEntry(_ entry: LibraryEntry) {',
+         'private func launchLibraryEntry(_ entry: LibraryEntry) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func startLibraryEntry(_ entry: LibraryEntry) {',
+         'private func startLibraryEntry(_ entry: LibraryEntry) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func runWineFullSequence(profile: LibraryEntry? = nil) {',
+         'private func runWineFullSequence(profile: LibraryEntry? = nil) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {',
+         'private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
     ],
     'Library.swift': [
         ('@State private var tab = 0', '@State var tab = 0'),
@@ -86,20 +105,56 @@ def project(source, names):
     sources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXSourcesBuildPhase')
     for index, name in enumerate(names):
         reference, build = f'F000000000000000{index:08X}', f'F100000000000000{index:08X}'
-        objects[reference] = dict(isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=name, sourceTree='<group>')
+        kind = 'sourcecode.c.c' if name.endswith('.c') else 'sourcecode.swift'
+        objects[reference] = dict(isa='PBXFileReference', lastKnownFileType=kind, path=name, sourceTree='<group>')
         objects[build] = dict(isa='PBXBuildFile', fileRef=reference)
         group['children'].append(reference); sources['files'].append(build)
+    # This separately embedded component exports only its C interface. Never
+    # flatten emulator C++ archives into Madeira's native executable.
+    component_ref, component_build, embed = 'F20000000000000000000001', 'F20000000000000000000002', 'F20000000000000000000003'
+    objects[component_ref] = dict(isa='PBXFileReference', lastKnownFileType='compiled.mach-o.dylib',
+        path='../../ppsspp/$(PLATFORM_NAME)/ppsspp_libretro.dylib', sourceTree='SOURCE_ROOT')
+    objects[component_build] = dict(isa='PBXBuildFile', fileRef=component_ref)
+    objects[embed] = dict(isa='PBXCopyFilesBuildPhase', buildActionMask=2147483647, dstPath='',
+        dstSubfolderSpec=10, files=[component_build], name='Embed PSP component', runOnlyForDeploymentPostprocessing=0)
+    target['buildPhases'].append(embed); group['children'].append(component_ref)
+    asset_ref, asset_build = 'F20000000000000000000004', 'F20000000000000000000005'
+    objects[asset_ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='PSP', sourceTree='<group>')
+    objects[asset_build] = dict(isa='PBXBuildFile', fileRef=asset_ref)
+    resources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXResourcesBuildPhase')
+    resources['files'].append(asset_build); group['children'].append(asset_ref)
     for config in objects[target['buildConfigurationList']]['buildConfigurations']:
         settings = objects[config]['buildSettings']
         settings['PRODUCT_NAME'] = 'Iridium'
         settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
         settings['MARKETING_VERSION'] = '0.2.1'
         settings['CURRENT_PROJECT_VERSION'] = '1'
+        def append(key, additions, unique=True):
+            existing = settings.get(key, ['$(inherited)'])
+            if isinstance(existing, str): existing = shlex.split(existing)
+            settings[key] = existing + [item for item in additions if not unique or item not in existing]
+        append('HEADER_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)',
+                                      '$(SRCROOT)/../../../vendor/SameBoy/libretro',
+                                      '$(SRCROOT)/../../ppsspp/$(PLATFORM_NAME)/include'])
+        append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
+        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
+        append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PPSSPP'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
             value['buildSettings']['MADEIRA_BUNDLE_IDENTIFIER'] = 'software.iridium'
     return data
+
+
+def refresh_generated_tree(source, destination):
+    """Replace only a known generated tree; never follow a stale output link."""
+    if destination.is_symlink() or any(p.is_symlink() for p in destination.parents):
+        raise ValueError('Generated component directory contains a symbolic link')
+    if destination.exists():
+        if not destination.is_dir():
+            raise ValueError('Generated component directory is not a directory')
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
 
 
 def prepare():
@@ -126,14 +181,32 @@ def prepare():
     for source in (UPSTREAM / 'app/Madeira').rglob('*.swift'):
         target = app / 'Madeira' / source.relative_to(UPSTREAM / 'app/Madeira')
         target.write_text(overlay(source.name, source.read_text()))
-    names = sorted(path.name for path in FRONTEND.glob('*.swift'))
-    for name in names: shutil.copy2(FRONTEND / name, app / 'Madeira' / name)
+    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *RUNTIME_BRIDGE.glob('*.c')])
+    names = [path.name for path in sources]
+    if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
+    for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)
+    for name in ('IridiumCoreBridge.h', 'IRPSPBridge.h'):
+        shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
+    header = app / 'Madeira/Madeira-Bridging-Header.h'
+    header.write_text(header.read_text() + RUNTIME_HEADERS)
+    psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
+    component = PSP_OUTPUT / 'ppsspp_libretro.dylib'
+    if psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
+        raise ValueError('Build and audit the pinned PSP component before preparing the app')
+    refresh_generated_tree(PSP_OUTPUT / 'assets', app / 'Madeira/PSP/PPSSPP')
+    refresh_generated_tree(PSP_OUTPUT / 'licenses', app / 'Madeira/licenses/PPSSPP')
+    shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')
+    api = (ROOT / 'vendor/SameBoy/libretro/libretro.h').read_text()
+    if not api.startswith('/* Copyright') or '*/' not in api:
+        raise ValueError('Missing Libretro API license notice')
+    (app / 'Madeira/licenses/LICENSE-SAMEBOY-SUPPORT.txt').write_text(api[:api.index('*/') + 2] + '\n')
     generated = app / 'Madeira.xcodeproj/project.pbxproj'
     generated.write_bytes(plistlib.dumps(project(UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj', names)))
     info = app / 'Madeira/Info.plist'
     data = plistlib.loads(info.read_bytes())
     data['CFBundleDisplayName'] = 'Iridium'
     data['IridiumMadeiraRevision'] = REVISION
+    data['IridiumPPSSPPRevision'] = PSP_REVISION
     info.write_bytes(plistlib.dumps(data))
     icon = ROOT / 'iridium/apps/ios/Iridium/Assets.xcassets/AppIcon.appiconset'
     shutil.copytree(icon, app / 'Madeira/Assets.xcassets/AppIcon.appiconset', dirs_exist_ok=True)
@@ -147,15 +220,26 @@ def verify():
         if not path.is_file() or path.suffix not in {'.swift', '.h', '.c', '.m', '.mm', '.cpp'}: continue
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = overlay(path.name, path.read_text()).encode() if path.suffix == '.swift' else path.read_bytes()
+        if path.name == 'Madeira-Bridging-Header.h': expected += RUNTIME_HEADERS.encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Generated app differs from Madeira outside its presentation hooks: ' + str(path))
-    print('Madeira app code matches the pin outside the declared presentation hooks.')
+    print('Madeira app code matches the pin outside declared presentation and runtime ownership hooks.')
 
 
 def check_bundle(app):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     if info.get('IridiumMadeiraRevision') != REVISION:
         raise ValueError('Unexpected Madeira source pin in the app')
+    if info.get('IridiumPPSSPPRevision') != PSP_REVISION:
+        raise ValueError('Unexpected PSP source pin in the app')
+    component = app / 'Frameworks/ppsspp_libretro.dylib'
+    psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
+    if not component.is_file() or component.is_symlink() or hashlib.sha256(component.read_bytes()).hexdigest() != psp['sha256']:
+        raise ValueError('The app does not contain the audited PSP component')
+    for name, expected in psp['assetSHA256'].items():
+        resource = app / 'PSP/PPSSPP' / name
+        if resource.is_symlink() or not resource.is_file() or hashlib.sha256(resource.read_bytes()).hexdigest() != expected:
+            raise ValueError('A PSP runtime asset is missing or changed: ' + name)
     for name in ('arm64ec-windows', 'aarch64-windows', 'i386-windows'):
         source = UPSTREAM / 'app/Madeira' / name
         expected = {path.name for path in source.glob('*') if path.is_file() and not path.name.startswith('.')}
@@ -187,7 +271,8 @@ def windows():
     verify_pin()
     recipe = UPSTREAM / 'build/wine-i386/build.sh'
     stamp = UPSTREAM / '.build/iridium-i386.json'
-    key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode() + recipe.read_bytes()
+    key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode()
+                         + inspect.getsource(run_checked_recipe).encode() + recipe.read_bytes()
                          + compiler_identity().encode()
                          + subprocess.check_output([str(UPSTREAM / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/i686-w64-mingw32-clang'), '--version'])).hexdigest()
     def digest(path):
@@ -204,7 +289,7 @@ def windows():
     # toolchain is installed. Select the real tool without changing the recipe.
     metal = Path(subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--find', 'metal'], text=True).strip())
     env = dict(os.environ, TOOLCHAINS=str(metal.parents[2]))
-    subprocess.run(['bash', str(recipe)], env=env, cwd=UPSTREAM, check=True)
+    run_checked_recipe('wine-i386', env=env)
     outputs = sorted(path for path in (UPSTREAM / 'app/Madeira/i386-windows').glob('*')
                      if path.is_file() and not path.name.startswith('.'))
     if not outputs: raise ValueError('Madeira built no i386 runtime files')
@@ -223,6 +308,36 @@ def toolchains():
         if entry['name'] not in ('llvm', 'llvm-mingw'): continue
         entry = dict(entry, destination=entry['destination'].replace('testrepos/Madeira/', 'vendor/Madeira/', 1))
         if not (ROOT / entry['destination']).exists(): fetcher.fetch(ROOT, entry)
+
+
+def stage_crypto_libraries():
+    archives = [UPSTREAM / 'toolchains/gnutls-ios/lib' / f'lib{name}.a' for name in CRYPTO_LIBRARIES]
+    if any(not path.is_file() or not path.stat().st_size for path in archives):
+        raise ValueError('The rebuilt crypto libraries are missing or empty')
+    for path in archives: shutil.copy2(path, UPSTREAM / 'app/Madeira' / path.name)
+    return archives
+
+
+def run_checked_recipe(name, env=None):
+    """Keep upstream retries, but never install outputs after failed compilation."""
+    text = (UPSTREAM / 'build' / name / 'build.sh').read_text()
+    if name == 'ntdll-unix':
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/ntdll-unix'))),
+            ('echo "Results: $SUCCEEDED succeeded, $FAILED failed"',
+             'echo "Results: $SUCCEEDED succeeded, $FAILED failed"\n[ "$FAILED" -eq 0 ] || exit 1')]
+    elif name == 'wine-i386':
+        patches = [
+            ('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"', 'R=' + shlex.quote(str(UPSTREAM))),
+            ('make -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1\nset -e',
+             'make -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1\nBUILD_STATUS=$?\nset -e'),
+            ('    [ -f "$t" ] && continue', '    [ "$BUILD_STATUS" -eq 0 ] && [ -f "$t" ] && continue')]
+    else: raise ValueError('Unsupported checked native recipe: ' + name)
+    for old, new in patches:
+        if text.count(old) != 1: raise ValueError('Upstream build recipe changed: ' + name)
+        text = text.replace(old, new)
+    subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, env=env, check=True)
 
 
 def bootstrap():
@@ -248,7 +363,10 @@ def bootstrap():
                         '-DLLVM_TABLEGEN=' + str(host / 'bin/llvm-tblgen'), '-DLLVM_BUILD_UTILS=OFF',
                         '-DLLVM_INCLUDE_TOOLS=OFF', '-DLLVM_INCLUDE_UTILS=OFF'], check=True)
         subprocess.run(['cmake', '--build', str(ios), '--target', 'LLVMPasses', 'LLVMBitWriter', '-j6'], check=True)
-    if not (UPSTREAM / 'toolchains/gnutls-ios/include/gnutls/gnutls.h').is_file():
+    crypto = UPSTREAM / 'toolchains/gnutls-ios'
+    if (not (crypto / 'include/gnutls/gnutls.h').is_file() or any(
+            not (crypto / 'lib' / f'lib{name}.a').is_file()
+            or not (crypto / 'lib' / f'lib{name}.a').stat().st_size for name in CRYPTO_LIBRARIES)):
         subprocess.run(['shasum', '-a', '256', '-c', 'SHA256SUMS'], cwd=UPSTREAM / 'build/gnutls-ios/src', check=True)
         subprocess.run(['bash', 'build/gnutls-ios/build.sh'], cwd=UPSTREAM, check=True)
 
@@ -306,7 +424,8 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 '''
         subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
-        run('bash', f'build/{component}/build.sh')
+        if component == 'ntdll-unix': run_checked_recipe(component)
+        else: run('bash', f'build/{component}/build.sh')
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
     headers.mkdir(parents=True, exist_ok=True)
     for name in ('air_msad', 'air_samplepos', 'air_tessellation'):
@@ -339,7 +458,9 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 def native():
     verify_pin()
     stamp = UPSTREAM / '.build/iridium-native.json'
-    key = hashlib.sha256((REVISION + inspect.getsource(build_native) + inspect.getsource(bootstrap)).encode()
+    key = hashlib.sha256((REVISION + inspect.getsource(build_native) + inspect.getsource(bootstrap)
+                         + inspect.getsource(run_checked_recipe) + inspect.getsource(stage_crypto_libraries)
+                         + repr(CRYPTO_LIBRARIES)).encode()
                          + (ROOT / 'ci/runtime-inputs.json').read_bytes()
                          + compiler_identity().encode()).hexdigest()
     def digest(path):
@@ -354,7 +475,9 @@ def native():
     except (OSError, ValueError, KeyError): pass
     bootstrap()
     build_native()
+    crypto = stage_crypto_libraries()
     outputs = sorted((UPSTREAM / 'app/Madeira').glob('*.a')) + sorted((UPSTREAM / 'FEX/build-ios').rglob('*.a'))
+    outputs += crypto
     outputs += [UPSTREAM / 'app/Madeira' / name for name in (
         'arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
         'legal/LICENSES-rppairing-crates.txt')]
@@ -365,6 +488,11 @@ def native():
 
 
 def app():
+    subprocess.run([sys.executable, str(ROOT / 'ci/build-sameboy.py'),
+                    '--output', str(ROOT / '.build/sameboy/iphoneos'),
+                    '--sdk', 'iphoneos', '--target', 'arm64-apple-ios18.0'], check=True)
+    subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp.py'),
+                    '--output', str(PSP_OUTPUT), '--sdk', 'iphoneos'], check=True)
     prepare()
     command = ['xcodebuild', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',
