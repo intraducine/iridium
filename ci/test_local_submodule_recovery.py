@@ -17,7 +17,8 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        # Git resolves macOS's /var alias before reporting its worktree path.
+        self.base = Path(self.temp.name).resolve()
         self.source = self.base / "upstream"
         self.root = self.base / "superproject"
         self.module = "deps/fmt"
