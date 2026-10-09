@@ -11,7 +11,12 @@ records. Existing Windows callbacks, settings, media and saves remain Madeira's.
 
 SameBoy's pinned Libretro C core is compiled as a separate static archive. The
 builder generates upstream replacement boot arrays and a complete private
-symbol namespace; it changes no vendored files. Iridium supplies bounded
+symbol namespace; it changes no vendored files. A generated copy of the Libretro
+adapter selects 48 kHz through `GB_set_sample_rate`, leaving the upstream Core
+and APU unchanged. The seven boot images are assembled from the pinned source
+using RGBDS 0.9.4 and stored as reviewed hexadecimal build inputs with source
+and output hashes; ordinary builds verify them without needing an assembler.
+Iridium supplies bounded
 software video/audio callbacks, joypad input, and battery/RTC save handling.
 The corresponding-source collector includes the initialized SameBoy gitlink
 and original notices along with the build generator. See `docs/multi-runtime.md`

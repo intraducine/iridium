@@ -135,15 +135,18 @@
     {
       "id": "sameboy",
       "path": "vendor/SameBoy",
-      "upstream": "https://github.com/libretro/SameBoy",
-      "revision": "aa158a889a48b538a0302873704a34577c8eb67d",
+      "upstream": "https://github.com/LIJI32/SameBoy",
+      "revision": "208ba4afabffab9edde416f2dbb8ae459e34adb8",
       "platforms": [
         "gameBoy",
         "gameBoyColor"
       ],
-      "license": "MIT; libretro-common per-file permissive notices",
+      "license": "Expat (MIT); Libretro API header MIT",
       "build": "ci/build-sameboy.py",
-      "execution": "interpreter"
+      "execution": "interpreter",
+      "version": "1.0.3",
+      "adaptation": "Generated private symbol namespace and Libretro adapter 48 kHz public-API setting; upstream Core untouched",
+      "bootROMs": "ci/sameboy-bootroms.json; regenerate with ci/sameboy_bootroms.py and pinned RGBDS 0.9.4"
     }
   ]
 }

@@ -116,7 +116,7 @@ def project(source, names):
             if isinstance(existing, str): existing = shlex.split(existing)
             settings[key] = existing + [item for item in additions if not unique or item not in existing]
         append('HEADER_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)',
-                                      '$(SRCROOT)/../../../vendor/SameBoy/libretro/libretro-common/include'])
+                                      '$(SRCROOT)/../../../vendor/SameBoy/libretro'])
         append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
         append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
     for value in objects.values():
@@ -158,16 +158,10 @@ def prepare():
     header = app / 'Madeira/Madeira-Bridging-Header.h'
     header.write_text(header.read_text() + '\n#import "IridiumCoreBridge.h"\n')
     shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')
-    # libretro-common retains its per-file copyright notices as well as the
-    # full upstream source in the corresponding-source archive.
-    notices = []
-    for path in sorted((ROOT / 'vendor/SameBoy/libretro/libretro-common').rglob('*')):
-        if path.suffix in {'.c', '.h'}:
-            text = path.read_text().lstrip()
-            end = text.find('*/')
-            if text.startswith('/*') and end >= 0:
-                notices.append(str(path.relative_to(ROOT / 'vendor/SameBoy')) + '\n' + text[:end + 2])
-    (app / 'Madeira/licenses/LICENSE-SAMEBOY-SUPPORT.txt').write_text('\n\n'.join(notices) + '\n')
+    api = (ROOT / 'vendor/SameBoy/libretro/libretro.h').read_text()
+    if not api.startswith('/* Copyright') or '*/' not in api:
+        raise ValueError('Missing Libretro API license notice')
+    (app / 'Madeira/licenses/LICENSE-SAMEBOY-SUPPORT.txt').write_text(api[:api.index('*/') + 2] + '\n')
     generated = app / 'Madeira.xcodeproj/project.pbxproj'
     generated.write_bytes(plistlib.dumps(project(UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj', names)))
     info = app / 'Madeira/Info.plist'

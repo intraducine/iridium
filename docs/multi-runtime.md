@@ -28,17 +28,25 @@ failure handling. No new executable code is downloaded at runtime.
 
 ## First core
 
-`vendor/SameBoy` is pinned to `aa158a889a48b538a0302873704a34577c8eb67d`.
-The build compiles the actual Libretro core and its bundled permissive support
-sources, without RetroArch. It generates replacement boot-ROM arrays from the
-upstream project's tracked replacement boot code. Commercial games, console
+`vendor/SameBoy` is pinned to the official 1.0.3 source at
+`208ba4afabffab9edde416f2dbb8ae459e34adb8`.
+The build compiles its 21 Core/Libretro/generated-boot C units without RetroArch
+or libretro-common. It generates replacement boot-ROM arrays from reviewed
+hexadecimal data assembled from upstream's replacement boot code. The source
+and output hashes must match before compiling. Commercial games, console
 keys and proprietary BIOS files are not supplied.
 
 The builder first inventories defined symbols, then recompiles every core and
-support symbol into a private namespace. Hiding exports alone would not prevent
-duplicate static-link definitions. This also isolates libretro-common symbols,
+adapter symbol into a private namespace. Hiding exports alone would not prevent
+duplicate static-link definitions. This isolates all exported C symbols,
 not just `retro_*`. An audit rejects unisolated symbols. Compiler flags, source
 count, source pin, target and archive hash are recorded in the build output.
+
+The generated Libretro adapter calls the existing public `GB_set_sample_rate`
+API with 48 kHz instead of clock/2. The upstream Core and APU are unchanged.
+This keeps ordinary frames inside the bounded audio queue without silently
+dropping half of the high-rate upstream output. The adapted source hash and
+sample rate are recorded in the build manifest.
 
 The C bridge owns one interpreter instance, bounds ROM/video/audio buffers,
 accepts only the supported software pixel format, and copies frame data before
@@ -84,6 +92,22 @@ cartridge, with no downloaded game assets:
 python3 ci/check-sameboy.py
 python3 -B -m unittest discover -s ci -p 'test_multi_runtime.py'
 ```
+
+`ci/sameboy-bootroms.json` contains upstream replacement boot data and hashes,
+not proprietary console firmware. Ordinary builds need no RGBDS installation.
+To reproduce it, build RGBDS 0.9.4 from the unchanged source checkout at
+`https://github.com/gbdev/rgbds` commit
+`d1829ed92327a9f9210ffd45d865331f24dfa4e6` using its documented host compiler,
+Bison, Make/CMake and libpng prerequisites. Then run:
+
+```sh
+python3 ci/sameboy_bootroms.py --rgbds /path/to/rgbds-source --output /tmp/sameboy-bootroms.json
+cmp ci/sameboy-bootroms.json /tmp/sameboy-bootroms.json
+```
+
+The generator writes only to a temporary build directory and a new output
+file. It verifies tool versions and source hashes; the vendor checkout remains
+unchanged. A source archive includes the original assembly and this recipe.
 
 The core fixture checks CPU-executed battery markers, button press/release,
 frames, audio, repeated start/stop, and SRAM/RTC round trips. Foundation tests

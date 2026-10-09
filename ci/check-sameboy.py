@@ -78,14 +78,19 @@ def check(library):
             for _ in range(250):
                 assert lib.ir_core_step(0, c.byref(frame))
                 assert frame.width == 160 and frame.height == 144
-                assert 59 < frame.fps < 61 and frame.rate == 384000
+                assert 59 < frame.fps < 61 and frame.rate == 48000
+                assert 0 < frame.audio_frames < 1000
                 audio += frame.audio_frames
-            assert audio > 1000000
+            expected = 250 * frame.rate / frame.fps
+            assert expected * 0.98 < audio < expected * 1.02
             size = lib.ir_core_save_size(False)
             assert size == 8192
             data = (c.c_uint8 * size)()
             assert lib.ir_core_read_save(False, data, size)
             assert data[0] == 0x42 and data[1] & 1
+            marker = b'IRIDIUM-SAVE-TEST'
+            if saved is not None:
+                assert bytes(data)[512:512 + len(marker)] == marker
             assert not lib.ir_core_write_save(False, data, size - 1)
             assert lib.ir_core_step(1 << 8, c.byref(frame))
             assert lib.ir_core_read_save(False, data, size) and not data[1] & 1
@@ -97,6 +102,8 @@ def check(library):
                 for _ in range(3): assert lib.ir_core_step(1 << 8, c.byref(frame))
                 after = c.string_at(frame.pixels, frame.width * frame.height * 4)
                 assert before != after
+            for i, byte in enumerate(marker): data[512 + i] = byte
+            assert lib.ir_core_write_save(False, data, size)
             saved = bytes(data)
             clock_size = lib.ir_core_save_size(True)
             assert 0 < clock_size < 1024
@@ -115,7 +122,7 @@ def main():
     archive = build.build(out)
     library = out / ('core.dylib' if sys.platform == 'darwin' else 'core.so')
     command = ['cc', '-std=c11', '-O2', '-fPIC', '-shared', '-I' + str(out),
-               '-I' + str(ROOT / 'vendor/SameBoy/libretro/libretro-common/include'),
+               '-I' + str(ROOT / 'vendor/SameBoy/libretro'),
                str(ROOT / 'iridium/apps/ios/RuntimeBridge/IridiumCoreBridge.c'), str(archive), '-lm']
     if sys.platform == 'darwin': command += ['-framework', 'CoreFoundation']
     subprocess.run(command + ['-o', str(library)], check=True)
