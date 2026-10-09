@@ -38,7 +38,7 @@ jobs:
         run: python3 ci/dispatch-build.py --check
       - name: Initialize the pinned runtime sources
         run: |
-          git submodule update --init --depth 1 vendor/Madeira
+          git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy
           git -C vendor/Madeira submodule update --init --depth 1 FEX wine dxmt madeira-dock
           git -C vendor/Madeira/FEX submodule update --init --depth 1 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/vixl External/xxhash Source/Common/cpp-optparse
           git -C vendor/Madeira/dxmt submodule update --init --recursive --depth 1

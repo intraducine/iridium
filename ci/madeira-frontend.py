@@ -12,20 +12,35 @@ import inspect
 import json
 import os
 import time
+import sys
 import madeira_presentation
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
 FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
+RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
+RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
 REVISION = '48f976429c189f8396e23d251d8a82f43c705922'
-# These are presentation hooks. No native code, launch sequence, input driver,
-# network implementation or allocator is patched.
+# Presentation hooks and explicit exclusive-runtime guards. Madeira's launch
+# sequence, native driver, network implementation and allocator remain intact.
 HOOKS = {
     'ContentView.swift': [
         ('LibraryView(play: launchLibraryEntry, enableJIT: enableJIT,',
          'IridiumLibraryView(play: launchLibraryEntry, enableJIT: enableJIT,'),
         ('.navigationTitle("Madeira")', '.navigationTitle("Iridium")'),
+        ('private func launchLibraryEntry(_ entry: LibraryEntry) {',
+         'private func launchLibraryEntry(_ entry: LibraryEntry) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func startLibraryEntry(_ entry: LibraryEntry) {',
+         'private func startLibraryEntry(_ entry: LibraryEntry) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func runWineFullSequence(profile: LibraryEntry? = nil) {',
+         'private func runWineFullSequence(profile: LibraryEntry? = nil) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
+        ('private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {',
+         'private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {\n'
+         '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'),
     ],
     'Library.swift': [
         ('@State private var tab = 0', '@State var tab = 0'),
@@ -86,7 +101,8 @@ def project(source, names):
     sources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXSourcesBuildPhase')
     for index, name in enumerate(names):
         reference, build = f'F000000000000000{index:08X}', f'F100000000000000{index:08X}'
-        objects[reference] = dict(isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=name, sourceTree='<group>')
+        kind = 'sourcecode.c.c' if name.endswith('.c') else 'sourcecode.swift'
+        objects[reference] = dict(isa='PBXFileReference', lastKnownFileType=kind, path=name, sourceTree='<group>')
         objects[build] = dict(isa='PBXBuildFile', fileRef=reference)
         group['children'].append(reference); sources['files'].append(build)
     for config in objects[target['buildConfigurationList']]['buildConfigurations']:
@@ -95,6 +111,14 @@ def project(source, names):
         settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
         settings['MARKETING_VERSION'] = '0.2.1'
         settings['CURRENT_PROJECT_VERSION'] = '1'
+        def append(key, additions, unique=True):
+            existing = settings.get(key, ['$(inherited)'])
+            if isinstance(existing, str): existing = shlex.split(existing)
+            settings[key] = existing + [item for item in additions if not unique or item not in existing]
+        append('HEADER_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)',
+                                      '$(SRCROOT)/../../../vendor/SameBoy/libretro/libretro-common/include'])
+        append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
+        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
@@ -126,8 +150,24 @@ def prepare():
     for source in (UPSTREAM / 'app/Madeira').rglob('*.swift'):
         target = app / 'Madeira' / source.relative_to(UPSTREAM / 'app/Madeira')
         target.write_text(overlay(source.name, source.read_text()))
-    names = sorted(path.name for path in FRONTEND.glob('*.swift'))
-    for name in names: shutil.copy2(FRONTEND / name, app / 'Madeira' / name)
+    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *RUNTIME_BRIDGE.glob('*.c')])
+    names = [path.name for path in sources]
+    if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
+    for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)
+    shutil.copy2(RUNTIME_BRIDGE / 'IridiumCoreBridge.h', app / 'Madeira/IridiumCoreBridge.h')
+    header = app / 'Madeira/Madeira-Bridging-Header.h'
+    header.write_text(header.read_text() + '\n#import "IridiumCoreBridge.h"\n')
+    shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')
+    # libretro-common retains its per-file copyright notices as well as the
+    # full upstream source in the corresponding-source archive.
+    notices = []
+    for path in sorted((ROOT / 'vendor/SameBoy/libretro/libretro-common').rglob('*')):
+        if path.suffix in {'.c', '.h'}:
+            text = path.read_text().lstrip()
+            end = text.find('*/')
+            if text.startswith('/*') and end >= 0:
+                notices.append(str(path.relative_to(ROOT / 'vendor/SameBoy')) + '\n' + text[:end + 2])
+    (app / 'Madeira/licenses/LICENSE-SAMEBOY-SUPPORT.txt').write_text('\n\n'.join(notices) + '\n')
     generated = app / 'Madeira.xcodeproj/project.pbxproj'
     generated.write_bytes(plistlib.dumps(project(UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj', names)))
     info = app / 'Madeira/Info.plist'
@@ -147,9 +187,10 @@ def verify():
         if not path.is_file() or path.suffix not in {'.swift', '.h', '.c', '.m', '.mm', '.cpp'}: continue
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = overlay(path.name, path.read_text()).encode() if path.suffix == '.swift' else path.read_bytes()
+        if path.name == 'Madeira-Bridging-Header.h': expected += b'\n#import "IridiumCoreBridge.h"\n'
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Generated app differs from Madeira outside its presentation hooks: ' + str(path))
-    print('Madeira app code matches the pin outside the declared presentation hooks.')
+    print('Madeira app code matches the pin outside declared presentation and runtime ownership hooks.')
 
 
 def check_bundle(app):
@@ -365,6 +406,9 @@ def native():
 
 
 def app():
+    subprocess.run([sys.executable, str(ROOT / 'ci/build-sameboy.py'),
+                    '--output', str(ROOT / '.build/sameboy/iphoneos'),
+                    '--sdk', 'iphoneos', '--target', 'arm64-apple-ios18.0'], check=True)
     prepare()
     command = ['xcodebuild', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',

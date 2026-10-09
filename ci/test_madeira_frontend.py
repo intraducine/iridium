@@ -81,7 +81,7 @@ class FrontendImportTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('frontend_collect', ROOT / 'ci/collect-madeira-source.py')
         collect = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(collect)
-        for name, component in [('Iridium', 'Iridium and Madeira native libraries'),
+        for name, component in [('Iridium', 'Iridium, Madeira and SameBoy native libraries'),
                                 ('arm64ec-windows/xtajit64.dll', 'FEX'),
                                 ('i386-windows/winemetal.dll', 'DXMT'),
                                 ('arm64ec-windows/dockhost.exe', 'Madeira Dock and LLVM-MinGW runtime'),

@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// The same four native destinations for touch, keyboard and controller.
+/// The same native destinations for touch, keyboard and controller.
 struct IridiumAddGameView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected = 0
     @State private var guided = false
     @FocusState private var keyboardFocus: Bool
     var choose: (Int) -> Void
-    private let titles = ["Steam Library", "Choose Executable", "Import Existing Iridium Games", "Windows Desktop"]
+    private let titles = ["Steam Library", "Choose Executable", "Import Existing Iridium Games", "Windows Desktop", "Import Game Boy ROM"]
 
     var body: some View {
         NavigationStack {

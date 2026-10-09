@@ -103,3 +103,6 @@
 [submodule "vendor/Madeira"]
 	path = vendor/Madeira
 	url = https://github.com/willfaust/Madeira.git
+[submodule "vendor/SameBoy"]
+	path = vendor/SameBoy
+	url = https://github.com/libretro/SameBoy.git

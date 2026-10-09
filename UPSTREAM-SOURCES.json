@@ -130,5 +130,20 @@
       ],
       "adaptation": "Fixed Metal 3.1 language pin and script-change cache invalidation; preserve native iphoneos SDK and ios18 AIR target; omit upstream macOS target, binary and include-layout changes. Auxiliary native AIR preparation is unchanged."
     }
+  ],
+  "console_runtimes": [
+    {
+      "id": "sameboy",
+      "path": "vendor/SameBoy",
+      "upstream": "https://github.com/libretro/SameBoy",
+      "revision": "aa158a889a48b538a0302873704a34577c8eb67d",
+      "platforms": [
+        "gameBoy",
+        "gameBoyColor"
+      ],
+      "license": "MIT; libretro-common per-file permissive notices",
+      "build": "ci/build-sameboy.py",
+      "execution": "interpreter"
+    }
   ]
 }

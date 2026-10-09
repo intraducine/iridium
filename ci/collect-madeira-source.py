@@ -27,7 +27,7 @@ fetch = load('frontend_source_fetch', 'fetch-runtime-inputs.py')
 def binary_component(name):
     p = Path(name)
     if name in {'Iridium', 'Iridium.debug.dylib', '__preview.dylib'}:
-        return 'Iridium and Madeira native libraries'
+        return 'Iridium, Madeira and SameBoy native libraries'
     if name.startswith('PlugIns/MadeiraJITHelper.appex/') and p.name in {
             'MadeiraJITHelper', 'MadeiraJITHelper.debug.dylib', '__preview.dylib'}:
         return 'Madeira JIT helper'
@@ -81,6 +81,8 @@ def collect(app, output, maps):
     static = audit.static_inputs(link_maps, ROOT.resolve())
     if not any(r['archive'].endswith('libntdll_unix.a') for r in static):
         raise ValueError('The maps do not contain the game runtime link; disable ENABLE_DEBUG_DYLIB')
+    if not any(r['archive'].endswith('libIridiumSameBoy.a') for r in static):
+        raise ValueError('The maps do not contain the selected console runtime')
     with tempfile.TemporaryDirectory(dir=ROOT / '.build', prefix='madeira-source-') as folder:
         stage = Path(folder) / 'iridium'
         revisions = {}

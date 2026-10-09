@@ -1,11 +1,14 @@
-// Iridium presentation. Launch, input, Steam, saves and settings belong to Madeira.
+// Unified presentation; Windows behavior remains owned by Madeira.
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IridiumLibraryView: View {
     var play: (LibraryEntry) -> Void
     var enableJIT: () -> Void
     var startDock: (DockGame, Bool) -> Void
     @ObservedObject private var library = LibraryModel.shared
+    @ObservedObject private var consoles = IridiumConsoleLibrary.shared
+    @ObservedObject private var consoleSession = IridiumConsoleSession.shared
     @ObservedObject private var controller = LibraryController.shared
     @ObservedObject private var steamGames = SteamGamesModel.shared
     @ObservedObject private var steam = SteamOwnedLibrary.shared
@@ -20,6 +23,8 @@ struct IridiumLibraryView: View {
     @State private var searching = false
     @State private var selectedID: UUID?
     @State private var detail: LibraryEntry?
+    @State private var consoleDetail: IridiumConsoleGame?
+    @State private var importingROM = false
     @State private var features: Int?
     @State private var adding = false
     @State private var pendingDetail: LibraryEntry?
@@ -32,15 +37,27 @@ struct IridiumLibraryView: View {
     @FocusState private var searchFocus: Bool
     @FocusState private var keyboardFocus: Bool
 
-    private var games: [LibraryEntry] {
-        library.entries.filter {
-            $0.desktop != true && (!favorites || isFavorite($0)) &&
-                (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))
+    private var games: [IridiumGame] {
+        let all = library.entries.filter { $0.desktop != true }.map { IridiumGame(windows: $0) }
+            + consoles.games.map { IridiumGame(console: $0) }
+        return all.filter {
+            (!favorites || isFavorite($0)) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search))
         }
     }
-    private var selected: LibraryEntry? { games.first { $0.id == selectedID } ?? games.first }
-    private func isFavorite(_ entry: LibraryEntry) -> Bool {
+    private var selected: IridiumGame? { games.first { $0.id == selectedID } ?? games.first }
+    private func isFavorite(_ entry: IridiumGame) -> Bool {
         favoriteIDs.split(separator: ",").contains(Substring(entry.id.uuidString))
+    }
+    private func launch(_ game: IridiumGame) {
+        do {
+            let driver: any IridiumRuntimeDriver = game.windows != nil ?
+                IridiumWindowsDriver(start: play) : IridiumSameBoyDriver()
+            try driver.launch(gameID: game.id)
+        } catch { library.error = error.localizedDescription }
+    }
+    private func options(_ game: IridiumGame) {
+        if let windows = game.windows { detail = windows }
+        else { consoleDetail = game.console }
     }
     private func keepSelection() {
         if !games.contains(where: { $0.id == selectedID }) { selectedID = games.first?.id }
@@ -57,7 +74,7 @@ struct IridiumLibraryView: View {
                             Image(uiImage: importedBackdrop.1).resizable().scaledToFill()
                                 .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                         } else if selected.coverFile != nil || selected.steamID != nil || selected.steamAppID != nil {
-                            LibraryArtwork(entry: selected, backdrop: true)
+                            IridiumGameArtwork(game: selected, backdrop: true)
                         }
                     }
                         .id(selected.id).transition(.opacity)
@@ -112,7 +129,7 @@ struct IridiumLibraryView: View {
                                     description: Text("Add favorites through Game Options."))
                             } else {
                                 ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                    description: Text("Use Add Game (+) to open Steam or choose a Windows executable."))
+                                    description: Text("Use Add Game (+) for Steam, a Windows executable, or a Game Boy ROM."))
                             }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -137,7 +154,7 @@ struct IridiumLibraryView: View {
             .onKeyPress(.return) { key("accept") }
             .onKeyPress(.escape) { command("back"); return .handled }
             .onReceive(controller.commands) { value in
-                guard features == nil, detail == nil, !adding, !choosingAdd, !onboarding.presented else { return }
+                guard !consoleSession.isActive, consoleDetail == nil, !importingROM, features == nil, detail == nil, !adding, !choosingAdd, !onboarding.presented else { return }
                 showHints = true; showFocus = true; command(value)
             }
             .onAppear {
@@ -148,7 +165,7 @@ struct IridiumLibraryView: View {
                 if SteamOwnedLibrary.enabled { steam.start(); steam.reconcileSession() }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
+                if phase == .active && !consoleSession.isActive {
                     library.refreshFlag(); steamGames.refresh()
                     if SteamOwnedLibrary.enabled { steam.reconcileSession() }
                 }
@@ -168,6 +185,11 @@ struct IridiumLibraryView: View {
             .onChange(of: favoriteIDs) { _, _ in keepSelection() }
             .onChange(of: selectedID) { _, _ in pageArtwork = selected?.id.uuidString ?? "" }
             .onChange(of: library.entries.map(\.id)) { _, _ in keepSelection() }
+            .onChange(of: consoles.games.map(\.id)) { _, _ in keepSelection() }
+            .onChange(of: consoles.error) { _, error in if let error { library.error = error; consoles.error = nil } }
+            .onChange(of: consoleSession.error) { _, error in
+                if !consoleSession.isActive, let error { library.error = error; consoleSession.error = nil }
+            }
             .task(id: steamGames.games) {
                 for game in steamGames.games where game.installed {
                     guard !Task.isCancelled else { return }
@@ -182,6 +204,19 @@ struct IridiumLibraryView: View {
                     return try Data(contentsOf: IridiumImportPreferences.image(name))
                 }.value
                 if !Task.isCancelled, let data, let image = UIImage(data: data) { importedBackdrop = (id, image) }
+            }
+            .sheet(item: $consoleDetail, onDismiss: restoreKeyboardFocus) { game in
+                IridiumConsoleOptions(game: game) { consoleSession.start(game, store: consoles.store) }
+            }
+            .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: restoreKeyboardFocus) {
+                IridiumConsolePlayer()
+            }
+            .fileImporter(isPresented: $importingROM, allowedContentTypes: [.data], allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls): if let url = urls.first { consoles.importROM(url) }
+                case .failure(let error): library.error = error.localizedDescription
+                }
+                restoreKeyboardFocus()
             }
             .sheet(item: $detail, onDismiss: restoreKeyboardFocus) { entry in
                 LibraryDetail(entry: entry, play: play)
@@ -233,9 +268,9 @@ struct IridiumLibraryView: View {
             }
         }
     }
-    private func cover(_ entry: LibraryEntry, height: CGFloat) -> some View {
+    private func cover(_ entry: IridiumGame, height: CGFloat) -> some View {
         Button { selectedID = entry.id; focus = "games" } label: {
-            LibraryArtwork(entry: entry)
+            IridiumGameArtwork(game: entry)
                 .frame(width: height / 1.5, height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay {
@@ -264,17 +299,17 @@ struct IridiumLibraryView: View {
         Button(action: action) { Image(systemName: icon).frame(width: 44, height: 44) }
             .accessibilityLabel(label).buttonStyle(.plain).background(focusShape(id))
     }
-    private func title(_ entry: LibraryEntry) -> some View {
+    private func title(_ entry: IridiumGame) -> some View {
         Text(entry.title).font(.title.bold()).lineLimit(1).truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
     }
-    private func actions(_ entry: LibraryEntry) -> some View {
+    private func actions(_ entry: IridiumGame) -> some View {
         HStack(spacing: 18) {
-            Button { play(entry) } label: { Label("Play", systemImage: "play.fill").font(.headline).padding(.horizontal, 22).padding(.vertical, 12) }
+            Button { launch(entry) } label: { Label("Play", systemImage: "play.fill").font(.headline).padding(.horizontal, 22).padding(.vertical, 12) }
                 .buttonStyle(.plain).foregroundStyle(.black).background(.white, in: Capsule())
                 .overlay { Capsule().strokeBorder(showFocus && focus == "play" ? .white : .clear, lineWidth: 3).padding(-5) }
-                .disabled(library.launching).keyboardShortcut("p", modifiers: [])
-            Button { detail = entry } label: { Label("Game Options", systemImage: "ellipsis").padding(.vertical, 12) }
+                .disabled(library.launching || consoleSession.isActive || consoles.working).keyboardShortcut("p", modifiers: [])
+            Button { options(entry) } label: { Label("Game Options", systemImage: "ellipsis").padding(.vertical, 12) }
                 .buttonStyle(.plain).background(focusShape("options"))
         }.fixedSize(horizontal: true, vertical: false)
     }
@@ -294,7 +329,7 @@ struct IridiumLibraryView: View {
     }
     private func endSearch() { searching = false; search = ""; searchFocus = false; keyboardFocus = true }
     private func key(_ value: String) -> KeyPress.Result {
-        guard !searchFocus else { return .ignored }
+        guard !searchFocus, !consoleSession.isActive else { return .ignored }
         showFocus = true; showHints = false; command(value); return .handled
     }
     private func closePages() { detail = nil; features = nil; pendingDetail = nil; adding = false; pendingAdd = nil; choosingAdd = false }
@@ -305,11 +340,12 @@ struct IridiumLibraryView: View {
         case 1: adding = true
         case 2: features = 2
         case 3: detail = library.entries.first { $0.desktop == true } ?? .desktopEntry
+        case 4: importingROM = true
         default: break
         }
     }
     private func restoreKeyboardFocus() {
-        keyboardFocus = detail == nil && features == nil && !adding && !choosingAdd && !onboarding.presented
+        keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingROM && features == nil && !adding && !choosingAdd && !onboarding.presented
     }
     private func command(_ value: String) {
         guard !searchFocus else { if value == "back" { endSearch() }; return }
@@ -329,17 +365,17 @@ struct IridiumLibraryView: View {
                 let row = toolbar.contains(focus) ? toolbar : actions
                 focus = row[min(max((row.firstIndex(of: focus) ?? 0) + step, 0), row.count - 1)]
             }
-        case "play": if let selected { play(selected) }
+        case "play": if let selected { launch(selected) }
         case "add": choosingAdd = true
-        case "menu": detail = selected
+        case "menu": if let selected { options(selected) }
         case "accept":
             switch focus {
             case "filters": favorites.toggle(); keepSelection()
             case "search": searching = true; searchFocus = true
             case "add": choosingAdd = true
             case "settings": features = 1
-            case "options", "games": detail = selected
-            default: if let selected { play(selected) }
+            case "options", "games": if let selected { options(selected) }
+            default: if let selected { launch(selected) }
             }
         case "back": if searching { endSearch() } else { focus = "games" }
         default: break

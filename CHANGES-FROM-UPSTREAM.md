@@ -1,5 +1,22 @@
 # Changes from upstream
 
+## Multi runtime frontend boundary
+
+Original Iridium code adds an additive console library and a runtime driver
+contract. Madeira's native source stays pinned and unmodified. The generated
+app has four explicit guards at its Windows/Dock launch entry points to prevent
+overlap with a console session, and its bridging header imports the new core
+boundary. Its library view combines Madeira records with isolated console
+records. Existing Windows callbacks, settings, media and saves remain Madeira's.
+
+SameBoy's pinned Libretro C core is compiled as a separate static archive. The
+builder generates upstream replacement boot arrays and a complete private
+symbol namespace; it changes no vendored files. Iridium supplies bounded
+software video/audio callbacks, joypad input, and battery/RTC save handling.
+The corresponding-source collector includes the initialized SameBoy gitlink
+and original notices along with the build generator. See `docs/multi-runtime.md`
+for validation scope, migration, recovery and currently unsupported engines.
+
 ## Madeira frontend target
 
 `vendor/Madeira` is pinned to `48f976429c189f8396e23d251d8a82f43c705922`.

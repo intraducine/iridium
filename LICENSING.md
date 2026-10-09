@@ -46,6 +46,18 @@ separate works.
 
 ## Source and library replacement
 
+The multi-runtime branch additionally links SameBoy's Libretro core at the
+revision in `UPSTREAM-SOURCES.json`. SameBoy is MIT; its bundled libretro-common
+support retains per-file permissive notices. The selected GCC/Apple build uses
+the MIT support sources; the unused MSVC integer header has its own BSD notice.
+The build preserves all those notices in `licenses/LICENSE-SAMEBOY*.txt`, and
+source collection includes the full pinned submodule and boot-ROM assembly.
+The boot ROMs are SameBoy's replacement implementation, not supplied console
+firmware. The generated private symbol prefix is an Iridium build adaptation;
+upstream source files are not modified. This does not import RetroArch or grant
+rights to third-party game content. No additional emulator's license has been
+approved merely because it appears in the candidate research.
+
 An IPA release must include matching source, modifications, license texts,
 third-party notices, a component manifest, and usable build/relink instructions.
 Keep them available with that release. A changing branch or an expiring Actions
