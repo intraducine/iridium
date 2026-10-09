@@ -18,8 +18,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "software.iridium.console", qos: .userInteractive)
     private let lock = NSLock()
-    private var touchButtons: UInt16 = 0
-    private var keyboardButtons: UInt16 = 0
+    private var digitalInput = IridiumPolledInput() // protected by lock
     private var touchAnalog: (Int16, Int16) = (0, 0)
     private var keyboardAnalog: (Int16, Int16) = (0, 0)
     private var suppressController = false
@@ -277,15 +276,21 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         LibraryModel.shared.error = IridiumRuntimeError.restartRequired.localizedDescription
     }
 
-    func setButton(_ bit: UInt16, pressed: Bool, keyboard: Bool = false) {
+    func setButton(_ bit: UInt16, pressed: Bool, keyboard: Bool = false, source: String? = nil) {
         lock.lock(); defer { lock.unlock() }
         guard !pressed || intent.request == .play else { return }
-        if keyboard {
-            if pressed { keyboardButtons |= bit } else { keyboardButtons &= ~bit }
-        } else {
-            if pressed { touchButtons |= bit } else { touchButtons &= ~bit }
-        }
+        digitalInput.setButton(bit, pressed: pressed, source: source ?? (keyboard ? "keyboard" : "touch"))
     }
+
+    // Composite controls submit their complete physical state atomically.
+    // Updating changed D-pad bits individually could invent an intermediate
+    // opposite-direction chord that the input queue would correctly preserve.
+    func setButtons(_ buttons: UInt16, source: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard buttons == 0 || intent.request == .play else { return }
+        digitalInput.setButtons(buttons, source: source)
+    }
+
     func setAnalog(x: Int16, y: Int16, keyboard: Bool = false) {
         lock.lock(); defer { lock.unlock() }
         guard intent.request == .play else { return }
@@ -294,20 +299,29 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func releaseButtons() {
         lock.lock()
-        touchButtons = 0; keyboardButtons = 0
+        digitalInput.cancel()
         touchAnalog = (0, 0); keyboardAnalog = (0, 0); suppressController = true
         lock.unlock()
     }
 
-    private func input() -> (UInt16, Int16, Int16) {
-        lock.lock()
-        let enabled = intent.request == .play
-        var bits = touchButtons | keyboardButtons
-        var analog = touchAnalog != (0, 0) ? touchAnalog : keyboardAnalog
-        let suppressed = suppressController
-        lock.unlock()
-        guard enabled else { return (0, 0, 0) }
+    func resetInput() { releaseButtons() }
+
+    private struct InputSample {
+        let digital: IridiumPolledInput.Snapshot
+        let x: Int16
+        let y: Int16
+    }
+
+    private func acknowledge(_ sample: InputSample, polled: Bool) {
+        guard polled else { return }
+        lock.lock(); defer { lock.unlock() }
+        digitalInput.acknowledge(sample.digital)
+    }
+
+    private func input() -> InputSample {
         // Polling leaves Madeira's existing controller handlers untouched.
+        // Physical taps wholly between these samples still need a native event
+        // path; touch and keyboard callbacks already feed every edge above.
         var physical: UInt16 = 0
         var stick: (Int16, Int16) = (0, 0)
         if let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad {
@@ -333,16 +347,26 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 if pad.leftThumbstick.xAxis.value > 0.5 { physical |= 1 << 7 }
             }
         }
-        if suppressed {
+        // Recheck intent after controller sampling so pause/reset cannot let a
+        // stale UI copy back into the model. Never hold this lock over a step.
+        lock.lock(); defer { lock.unlock() }
+        guard intent.request == .play else {
+            digitalInput.cancel()
+            return InputSample(digital: digitalInput.snapshot(), x: 0, y: 0)
+        }
+        var analog = touchAnalog != (0, 0) ? touchAnalog : keyboardAnalog
+        if suppressController {
             if physical == 0, abs(Int(stick.0)) < 4096, abs(Int(stick.1)) < 4096 {
-                lock.lock(); suppressController = false; lock.unlock()
+                suppressController = false
             }
+            digitalInput.setButtons(0, source: "controller")
         } else {
-            bits |= physical
+            digitalInput.setButtons(physical, source: "controller")
             if analog == (0, 0) { analog = stick }
         }
         // UI and GameController are up-positive; libretro is down-positive.
-        return (bits, analog.0, Int16(clamping: -Int(analog.1)))
+        return InputSample(digital: digitalInput.snapshot(), x: analog.0,
+                           y: Int16(clamping: -Int(analog.1)))
     }
 
     private func startTimer(owner: IridiumRuntimeLease) {
@@ -362,7 +386,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         case .sameBoy:
             guard requested == .play else { return }
             var frame = IRCoreFrame()
-            guard ir_core_step(input().0, &frame) else {
+            let controls = input()
+            let valid = ir_core_step(controls.digital.buttons, &frame)
+            acknowledge(controls, polled: frame.input_polled)
+            guard valid else {
                 lock.lock(); intent.pause(); lock.unlock()
                 stopTimer(); silenceAudio()
                 DispatchQueue.main.async {
@@ -381,9 +408,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         case .psp:
             #if IRIDIUM_PPSSPP
             if bootComplete, requested == .pause { stopTimer(); silenceAudio(); return }
-            let controls = requested == .play ? input() : (UInt16(0), Int16(0), Int16(0))
+            let controls = requested == .play ? input() : nil
             var frame = IRPSPFrame()
-            switch ir_psp_step(controls.0, controls.1, controls.2, &frame) {
+            let result = ir_psp_step(controls?.digital.buttons ?? 0, controls?.x ?? 0, controls?.y ?? 0, &frame)
+            if let controls { acknowledge(controls, polled: frame.input_polled) }
+            switch result {
             case IR_PSP_CLOSED: complete(owner)
             case IR_PSP_RESTART_REQUIRED: requireRestart(owner)
             case IR_PSP_FAILED:

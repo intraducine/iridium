@@ -40,7 +40,8 @@ def cartridge():
 
 class Frame(c.Structure):
     _fields_ = [('pixels', c.POINTER(c.c_uint32)), ('width', c.c_uint), ('height', c.c_uint),
-                ('audio', c.POINTER(c.c_int16)), ('audio_frames', c.c_size_t), ('fps', c.c_double), ('rate', c.c_double)]
+                ('audio', c.POINTER(c.c_int16)), ('audio_frames', c.c_size_t), ('fps', c.c_double),
+                ('rate', c.c_double), ('input_polled', c.c_bool)]
 
 
 def check(library):

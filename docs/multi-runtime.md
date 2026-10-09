@@ -55,9 +55,46 @@ retry loop. Actual core timing supplies frame and sample rates; the audio mixer
 converts to the device output rate. UI deliveries and queued audio are bounded.
 
 Touch controls, arrow keys with Z/X/Space/Return, and controller sampling route
-to the active console instance. Controller Menu+Options opens pause; Select
-resumes and Back requests Quit while paused. Backgrounding pauses and saves;
-the user explicitly resumes. Madeira controller handlers are not replaced.
+to the active console instance. Controller Menu+Options opens the player menu.
+Directional input selects a menu row, A activates it, and B goes back. Closing
+uses a separate confirmation with Cancel selected initially. Backgrounding
+pauses and saves; the user explicitly resumes. Madeira controller handlers are
+not replaced.
+
+## Shared frontend experience
+
+The shipping Madeira frontend uses shared app-owned control faces, menu rows,
+confirmation UI, artwork storage and import entry points. Platform labels and
+available actions follow each runtime's capabilities. Landscape console video
+aspect-fits the available viewport before translucent controls are overlaid;
+keyboard mappings live under Player Menu > Help. Connecting a usable physical
+controller hides touch controls, with a temporary override in Controls.
+Windows retains its existing editable input layouts and native input delivery.
+
+Library covers use select-first interaction. Touch scrolling owns the carousel
+through dragging and deceleration; controller navigation requests a scroll
+explicitly. Backdrops retain the displayed image while replacement artwork
+loads and crossfade when it is ready. Reduced-motion settings remove the fade.
+
+Add Game starts with Files or Steam. Supported console files are inspected and
+routed to their adapter. A selected Windows folder can include dependencies;
+selecting only an EXE copies only that file. Imports preserve the source files.
+There is no migration screen. Existing library IDs and save locations remain
+valid; these presentation changes do not require reimporting existing entries.
+
+Game Options provides shared title and artwork editing. Steam metadata supplies
+Windows artwork; GB/GBC/PSP use the public per-platform Libretro thumbnail
+catalogs. Automatic matching accepts a unique normalized title, while ambiguous
+matches require a choice. Catalog outages do not block play, and local images
+can be selected manually. Artwork records remain separate from launch/save
+records, and late automatic results cannot replace a newer manual choice.
+
+Touch and keyboard transitions are retained until an actual native input poll.
+Each source has bounded queues, with the D-pad submitted as one atomic mask to
+avoid invented opposing directions. Pause, focus loss and session changes clear
+pending input. This prevents short event-driven taps disappearing between
+frames; physical controllers still use sampled state, and slow emulation is a
+separate performance limitation.
 
 ## Persistence and recovery
 
@@ -155,7 +192,7 @@ This does not claim to fix upstream's separate sanitizer thread-destruction
 failure or make an in-process emulator a sandbox for hostile games.
 
 Touch controls include the PSP face buttons, shoulders, D-pad and analog stick.
-Keyboard mappings are shown in the player. A controller's ordinary Start goes
+Keyboard mappings are shown in Player Menu > Help. A controller's ordinary Start goes
 to the game; Back + Start opens Iridium's pause controls. Backgrounding pauses
 console emulation. Madeira keeps its existing Windows input and JIT behavior.
 

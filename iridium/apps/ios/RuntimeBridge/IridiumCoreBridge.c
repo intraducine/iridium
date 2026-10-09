@@ -12,7 +12,7 @@
 #define MAX_ROM_BYTES (8 * 1024 * 1024)
 
 static struct {
-    bool opened, failed;
+    bool opened, failed, input_active, input_polled;
     unsigned width, height;
     uint16_t buttons;
     uint32_t pixels[MAX_WIDTH * MAX_HEIGHT];
@@ -99,7 +99,10 @@ static size_t audio(const int16_t *samples, size_t frames)
     return frames;
 }
 
-static void poll(void) {}
+static void poll(void)
+{
+    if (core.input_active) core.input_polled = true;
+}
 static int16_t input(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     if (port || device != RETRO_DEVICE_JOYPAD || index) return 0;
@@ -139,11 +142,14 @@ bool ir_core_open(const void *rom, size_t length, const char *system_directory)
 
 bool ir_core_step(uint16_t buttons, IRCoreFrame *frame)
 {
+    if (frame) memset(frame, 0, sizeof(*frame));
     if (!core.opened || core.failed || !frame) return false;
     core.buttons = buttons; core.sample_frames = 0;
+    core.input_polled = false; core.input_active = true;
     retro_run();
+    core.input_active = false;
     *frame = (IRCoreFrame){ core.pixels, core.width, core.height, core.samples,
-                           core.sample_frames, core.fps, core.rate };
+                           core.sample_frames, core.fps, core.rate, core.input_polled };
     return !core.failed;
 }
 

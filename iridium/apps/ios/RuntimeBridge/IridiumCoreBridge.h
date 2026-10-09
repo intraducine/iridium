@@ -13,6 +13,8 @@ typedef struct {
     const int16_t *audio;
     size_t audio_frames;
     double frames_per_second, samples_per_second;
+    // True only if this step reached the core's input-poll callback.
+    bool input_polled;
 } IRCoreFrame;
 
 bool ir_core_open(const void *rom, size_t length, const char *system_directory);

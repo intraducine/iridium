@@ -93,7 +93,7 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func importROM(_ url: URL) {
+    func importROM(_ url: URL, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
         guard !working else { return }
         guard Self.importExtensions.contains(url.pathExtension.lowercased()) else {
             error = IridiumRuntimeError.invalidGame.localizedDescription
@@ -113,9 +113,9 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
                 }
                 if let coordinatorError { throw coordinatorError }
                 guard let result else { throw IridiumRuntimeError.invalidGame }
-                _ = try result.get()
+                let game = try result.get()
                 let games = try self.store.load()
-                DispatchQueue.main.async { self.games = games; self.working = false }
+                DispatchQueue.main.async { self.games = games; self.working = false; imported(game) }
             } catch {
                 DispatchQueue.main.async { self.error = error.localizedDescription; self.working = false }
             }
@@ -148,19 +148,26 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
 struct IridiumGameArtwork: View {
     let game: IridiumGame
     var backdrop = false
+    @ObservedObject private var artwork = IridiumArtworkModel.shared
+    @State private var image: UIImage?
     var body: some View {
-        if let windows = game.windows {
-            LibraryArtwork(entry: windows, backdrop: backdrop)
-        } else {
-            ZStack {
-                LinearGradient(colors: [.indigo.opacity(0.7), .black], startPoint: .topLeading, endPoint: .bottomTrailing)
-                VStack(spacing: 16) {
-                    Image(systemName: "gamecontroller.fill").font(.largeTitle)
-                    Text(game.platform.title).font(.headline)
-                    Text(game.title).font(.caption).multilineTextAlignment(.center).lineLimit(3)
+        ZStack {
+            IridiumArtworkImage(image: image,
+                position: backdrop ? artwork.appearance(game.id).backgroundY : artwork.appearance(game.id).coverY,
+                fit: !backdrop && !artwork.appearance(game.id).customCover &&
+                    (game.coverFile == nil || artwork.appearance(game.id).ignoreLegacyCover == true))
+            if image == nil, !backdrop {
+                VStack(spacing: 12) {
+                    Image(systemName: "gamecontroller").font(.largeTitle)
+                    Text(artwork.title(game)).font(.headline).multilineTextAlignment(.center).lineLimit(3)
+                    Text(game.platform.title).font(.caption).foregroundStyle(.secondary)
                 }.padding().foregroundStyle(.white)
-            }.accessibilityHidden(true)
-        }
+            }
+        }.accessibilityHidden(true)
+            .task(id: artwork.key(game) + String(backdrop)) {
+                let value = await artwork.image(for: game, backdrop: backdrop)
+                if !Task.isCancelled { image = value }
+            }
     }
 }
 
@@ -170,6 +177,8 @@ struct IridiumConsoleOptions: View {
     let game: IridiumConsoleGame
     var play: (IridiumConsoleGame) -> Void
     @State private var removing = false
+    @State private var editingArtwork = false
+    @ObservedObject private var artwork = IridiumArtworkModel.shared
     @AppStorage("iridium.favoriteGames") private var favorites = ""
     private var isFavorite: Bool { favorites.split(separator: ",").contains(Substring(game.id.uuidString)) }
     private var currentGame: IridiumConsoleGame { library.games.first { $0.id == game.id } ?? game }
@@ -180,9 +189,12 @@ struct IridiumConsoleOptions: View {
         try? IridiumRuntimeRegistry.resolve(platform: currentGame.platform, preferred: currentGame.runtimeID)
     }
     private var runtimeDescription: String {
-        guard resolvedRuntime != nil else { return "This game's selected runtime is not available in this build." }
-        return game.platform == .psp ? "PPSSPP uses its IR interpreter and software renderer. JIT is not required." :
-            "SameBoy uses an interpreter. JIT is not required."
+        guard let runtime = resolvedRuntime else { return "This game's selected runtime is not available in this build." }
+        switch runtime.jit {
+        case .none: return "This runtime uses an interpreter. JIT is not required."
+        case .optional: return "This runtime can use JIT when it is available."
+        case .required: return "This runtime requires JIT before it can start."
+        }
     }
     private var saveDescription: String {
         if game.platform == .psp {
@@ -209,6 +221,7 @@ struct IridiumConsoleOptions: View {
                     Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
+                    Button("Rename & Artwork", systemImage: "photo") { editingArtwork = true }
                     Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
                         .disabled(library.working || resolvedRuntime == nil)
                     Button(isFavorite ? "Remove from Favorites" : "Add to Favorites",
@@ -219,7 +232,8 @@ struct IridiumConsoleOptions: View {
                     }
                     Button("Remove from Library", role: .destructive) { removing = true }
                 } footer: { Text(saveDescription) }
-            }.iridiumPageSurface().navigationTitle(game.title)
+            }.iridiumPageSurface().navigationTitle(artwork.title(IridiumGame(console: currentGame)))
+                .sheet(isPresented: $editingArtwork) { IridiumArtworkEditor(game: IridiumGame(console: currentGame)) }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
                 .confirmationDialog("Remove this library entry? Its files and saves will stay on this device.", isPresented: $removing) {
                     Button("Remove Entry", role: .destructive) { library.remove(game); dismiss() }

@@ -22,6 +22,7 @@ static struct {
     void *handle;
     IRPSPPhase phase;
     bool initialized, loaded, format_accepted, stop, failure;
+    bool input_active, input_polled;
     char *game, *system, *save;
     struct { char *key, *value; } options[512];
     unsigned option_count, width, height;
@@ -149,7 +150,10 @@ static size_t audio(const int16_t *data, size_t frames)
     core.frames += copy;
     return frames; // Drop bounded overflow rather than blocking the core.
 }
-static void poll(void) {}
+static void poll(void)
+{
+    if (core.input_active && !core.stop) core.input_polled = true;
+}
 static int16_t input(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     if (port || core.stop) return 0;
@@ -242,13 +246,19 @@ IRPSPPhase ir_psp_step(uint16_t buttons, int16_t analog_x, int16_t analog_y, IRP
     if (core.stop && !api.pending()) { release(); return core.phase; }
     if (core.failure && !core.stop) return IR_PSP_FAILED;
     core.buttons = buttons; core.x = analog_x; core.y = analog_y; core.frames = 0;
+    // One immutable snapshot for every input_state call in this retro_run.
+    // Repeated polls may observe that same held state, but acknowledge it once.
+    core.input_polled = false; core.input_active = true;
     api.retro_run();
+    core.input_active = false;
+    if (frame) frame->input_polled = core.input_polled;
     if (core.stop) {
         if (!api.pending()) { release(); return core.phase; }
         return IR_PSP_STOPPING;
     }
     core.phase = core.failure ? IR_PSP_FAILED : api.pending() ? IR_PSP_BOOTING : IR_PSP_RUNNING;
     if (frame && core.phase == IR_PSP_RUNNING)
-        *frame = (IRPSPFrame){core.pixels, core.width, core.height, core.audio, core.frames, core.fps, core.rate};
+        *frame = (IRPSPFrame){core.pixels, core.width, core.height, core.audio, core.frames,
+                             core.fps, core.rate, core.input_polled};
     return core.phase;
 }

@@ -289,8 +289,16 @@ class FrontendImportTests(unittest.TestCase):
         rendered = madeira_presentation.apply('Library.swift', original)
         # LibraryModel owns launches, files, saves and input ownership. Its code
         # must not change when reorganizing the pages that call it.
-        self.assertEqual(original[:original.index('struct LibraryView: View')],
-                         rendered[:rendered.index('struct LibraryView: View')])
+        artwork = 'struct LibraryArtwork: View'
+        after_artwork = '/// A pseudo-random sequence'
+        library_view = 'struct LibraryView: View'
+        self.assertEqual(original[:original.index(artwork)],
+                         rendered[:rendered.index(artwork)])
+        self.assertEqual(original[original.index(after_artwork):original.index(library_view)],
+                         rendered[rendered.index(after_artwork):rendered.index(library_view)])
+        # Only the artwork view inside this region adopts the shared renderer.
+        self.assertIn('IridiumGameArtwork(game: IridiumGame(windows: entry), backdrop: backdrop)',
+                      rendered[rendered.index(artwork):rendered.index(after_artwork)])
         start = '    private func start() {'
         end = '    /// A Steam game without a chosen cover'
         self.assertEqual(madeira_presentation.between(original, start, end),
@@ -305,7 +313,8 @@ class FrontendImportTests(unittest.TestCase):
             self.assertEqual(text, madeira_presentation.apply(name, text), name)
         self.assertIn('if command == "play" { start() }', rendered)
         self.assertNotIn('if command == "accept" { start() }', rendered)
-        self.assertIn('.confirmationDialog("Close this game?"', rendered)
+        self.assertIn('IridiumPlayerCloseConfirmation(selection: closeConfirmation.selection', rendered)
+        self.assertIn('case .close: confirmClose = false; model.requestQuit()', rendered)
         self.assertIn('height: min(bindsPage ? 650 : menuContentHeight', rendered)
         self.assertIn('action: { menuContentHeight = $0 }', rendered)
         # Native Escape dismissal must pop the submenu before closing its sheet.

@@ -12,6 +12,9 @@ typedef struct {
     const int16_t *audio;
     size_t audio_frames;
     double fps, sample_rate;
+    // True only when this step reached the core's input-poll callback. A boot
+    // pump, early return or stop drain is not an input acknowledgment.
+    bool input_polled;
 } IRPSPFrame;
 
 // Frame buffers are bridge-owned and change at the next operation. Copy them

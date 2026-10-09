@@ -124,11 +124,12 @@ class MultiRuntimeTests(unittest.TestCase):
         player = (frontend / 'IridiumConsolePlayer.swift').read_text()
         library = (frontend / 'IridiumRuntimeLibrary.swift').read_text()
         view = (frontend / 'IridiumLibraryView.swift').read_text()
+        layout = (ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift').read_text()
         for label, icon, bit in [('Cross', 'xmark', 0), ('Circle', 'circle', 8),
                                  ('Square', 'square', 1), ('Triangle', 'triangle', 9)]:
-            self.assertIn(f'pad("{label}", icon: "{icon}", bit: 1 << {bit})', player)
+            self.assertIn(f'add("{label}", "{icon}", bit: 1 << {bit},', layout)
         for label, bit in [('L', 10), ('R', 11), ('Start', 3), ('Select', 2)]:
-            self.assertIn(f'pad("{label}", bit: 1 << {bit})', player)
+            self.assertIn(f'add("{label}", bit: 1 << {bit},', layout)
         self.assertIn('session.setAnalog(x: Int16(x), y: Int16(y), keyboard: true)', player)
         self.assertIn('onChange(of: keyboardFocus)', player)
         self.assertIn('IridiumConsoleDriver(game: console)', view)

@@ -1,6 +1,8 @@
 """Presentation-only edits to the pinned SwiftUI views. Native actions stay upstream."""
 import json
 import re
+import madeira_player_presentation
+import madeira_artwork_presentation
 
 
 def replace(text, old, new):
@@ -357,4 +359,4 @@ def apply(name, text):
             end = match.end() + close.start()
             text = text[:end] + indent + '    }.iridiumRowSurface()\n' + text[end:]
             text = text[:match.end()] + '\n' + indent + '    Group {' + text[match.end():]
-    return text
+    return madeira_artwork_presentation.apply(name, madeira_player_presentation.apply(name, text))

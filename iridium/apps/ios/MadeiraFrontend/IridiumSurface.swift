@@ -3,6 +3,7 @@ import SwiftUI
 /// Pages share the selected game's artwork. Only the background ignores safe areas.
 struct IridiumPageBackdrop: View {
     @ObservedObject private var library = LibraryModel.shared
+    @ObservedObject private var consoles = IridiumConsoleLibrary.shared
     @AppStorage("iridium.selectedGame") private var selected = ""
     @Environment(\.accessibilityReduceTransparency) private var opaque
 
@@ -10,15 +11,20 @@ struct IridiumPageBackdrop: View {
         GeometryReader { geo in
             ZStack {
                 Color.black
-                if !opaque, let entry = library.entries.first(where: { $0.id.uuidString == selected }),
-                   entry.coverFile != nil || entry.steamID != nil || entry.steamAppID != nil {
-                    LibraryArtwork(entry: entry, backdrop: true)
+                if !opaque {
+                    IridiumLibraryBackdrop(game: selectedGame)
                         .frame(width: geo.size.width, height: geo.size.height).clipped()
                     Color.black.opacity(0.76)
                 }
             }
         }.ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
     }
+    private var selectedGame: IridiumGame? {
+        if let entry = library.entries.first(where: { $0.id.uuidString == selected }) { return IridiumGame(windows: entry) }
+        if let entry = consoles.games.first(where: { $0.id.uuidString == selected }) { return IridiumGame(console: entry) }
+        return nil
+    }
+
 }
 
 struct IridiumPageSurface: ViewModifier {
