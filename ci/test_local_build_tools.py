@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -97,6 +98,65 @@ else: sys.exit(2)
         env = tools.prepare_environment(self.root, environ=self.env)
         self.assertEqual(tools.shutil.which("bison", path=env["PATH"]), str(self.prefix / "opt/bison/bin/bison"))
         self.assertFalse(any(x[0] == "install" for x in self.commands()))
+
+    def test_actions_handoff_preserves_prepared_tools_over_system_shadows(self):
+        self.install_except()
+        system = self.root / "system bin"
+        for command, version in (("bison", "bison (GNU Bison) 2.3"), ("python3", "Python 3.9.6")):
+            self.stub(command, "print(" + repr(version) + ")\n", system / command)
+        self.env["PATH"] = os.pathsep.join((str(system), str(self.bin)))
+        self.stub("bison", "print('bison (GNU Bison) 3.8.2')\n", self.prefix / "opt/bison/bin/bison")
+        self.stub("python3", '''import os, sys
+if sys.argv[1:] == ["--version"]:
+    print("Python 3.11.0")
+else:
+    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+''')
+        prepared = tools.prepare_environment(self.root, environ=self.env, madeira=True)
+        output = self.root / ".build/madeira-build-tools.env"
+        with mock.patch.object(sys, "argv", ["local_build_tools.py", "--madeira", "--write-env", str(output)]), \
+                mock.patch.object(tools, "prepare_environment", return_value=prepared):
+            tools.main()
+
+        workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
+        handoff = workflow.split("          source .build/madeira-build-tools.env\n", 1)[1]
+        handoff = "source .build/madeira-build-tools.env\n" + textwrap.dedent(
+            handoff.split("          python3 ci/madeira-frontend.py toolchains\n", 1)[0])
+        verify = workflow.split("      - name: Verify inherited build tools\n        run: |\n", 1)[1]
+        verify = textwrap.dedent(verify.split("      - name:", 1)[0])
+        github_env = self.root / "github-env"
+        github_path = self.root / "github-path"
+        runner_env = dict(self.env, GITHUB_ENV=str(github_env), GITHUB_PATH=str(github_path))
+        bash = tools.shutil.which("bash")
+        subprocess.run([bash, "-e", "-o", "pipefail", "-c", handoff], cwd=self.root, env=runner_env, check=True)
+
+        # Match actions/runner's AddPathFileCommand and Handler: remove duplicate
+        # entries, append each line, then reverse the list before prepending it.
+        # https://github.com/actions/runner/blob/main/src/Runner.Worker/Handlers/Handler.cs
+        prepend = []
+        for line in github_path.read_text().splitlines():
+            if line:
+                prepend = [path for path in prepend if path != line] + [line]
+        inherited = dict(self.env)
+        inherited.update(line.split("=", 1) for line in github_env.read_text().splitlines())
+        inherited["PATH"] = os.pathsep.join([*reversed(prepend), self.env["PATH"]])
+        self.assertEqual(inherited["PATH"].split(os.pathsep)[:len(prepend)], prepared["PATH"].split(os.pathsep))
+        self.assertEqual(inherited["DEVELOPER_DIR"], prepared["DEVELOPER_DIR"])
+        result = subprocess.run([bash, "-e", "-o", "pipefail", "-c", verify], cwd=self.root,
+                                env=inherited, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["bison (GNU Bison) 3.8.2", "Python 3.11.0"])
+
+        # The subsequent-step check must reject shadows without silently
+        # repairing the environment and allowing later compilation to fail.
+        for command in ("bison", "python3"):
+            shadow = self.root / (command + " shadow")
+            self.stub(command, "print('old system tool')\n", shadow / command)
+            bad = dict(inherited, PATH=str(shadow) + os.pathsep + inherited["PATH"])
+            result = subprocess.run([bash, "-e", "-o", "pipefail", "-c", verify], cwd=self.root,
+                                    env=bad, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Prepared build tool was shadowed: " + command, result.stdout)
 
     def test_pinned_steam_sdk_is_checked_before_installing_or_compiling(self):
         steam = self.root / "iridium/packages/steam"
