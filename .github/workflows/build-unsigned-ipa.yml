@@ -59,7 +59,7 @@ jobs:
           python3 ci/compiled-components.py madeira-toolchain
       - name: Verify inherited build tools
         run: |
-          for tool in bison python3; do
+          for tool in bison python3 clang clang++ aarch64-w64-mingw32-clang arm64ec-w64-mingw32-clang x86_64-w64-mingw32-clang i686-w64-mingw32-clang; do
             inherited=$(command -v "$tool")
             prepared=$(source .build/madeira-build-tools.env; command -v "$tool")
             if [ "$inherited" != "$prepared" ]; then
