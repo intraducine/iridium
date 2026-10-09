@@ -54,7 +54,9 @@ class PSPBuildTests(unittest.TestCase):
 
     def test_minimal_assets_are_exact_hashed_and_originals_untouched(self):
         with tempfile.TemporaryDirectory() as folder:
-            source, delivered = Path(folder) / 'source', Path(folder) / 'delivered'
+            # Match build() while leaving fixture-owned descendants unresolved.
+            root = Path(folder).resolve(strict=True)
+            source, delivered = root / 'source', root / 'delivered'
             for name in psp.ASSETS:
                 path = source / 'assets' / name
                 path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(name.encode())
@@ -63,13 +65,24 @@ class PSPBuildTests(unittest.TestCase):
             self.assertEqual(psp.assets(source, delivered), before)
             self.assertEqual({p.relative_to(delivered).as_posix() for p in delivered.rglob('*') if p.is_file()}, set(psp.ASSETS))
             self.assertEqual({name: psp.digest(source / 'assets' / name) for name in psp.ASSETS}, before)
+            for relative in ('.', 'flash0', 'compat.ini'):
+                with self.subTest(symlink=relative):
+                    target = delivered / relative
+                    original = root / 'original'
+                    target.rename(original)
+                    target.symlink_to(original, target_is_directory=original.is_dir())
+                    with self.assertRaisesRegex(ValueError, 'symbolic'):
+                        psp.assets(source, delivered)
+                    self.assertTrue(target.is_symlink())
+                    target.unlink(); original.rename(target)
+                    self.assertEqual({name: psp.digest(delivered / name) for name in psp.ASSETS}, before)
             (delivered / 'unexpected').write_text('retain me')
             with self.assertRaises(ValueError): psp.assets(source, delivered)
             self.assertEqual((delivered / 'unexpected').read_text(), 'retain me')
 
     def test_compiled_inventory_excludes_unbuilt_targets_and_rejects_outside_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder); source = root / 'source'; destination = root / 'output'
+            root = Path(folder).resolve(strict=True); source = root / 'source'; destination = root / 'output'
             source.mkdir(); (destination / 'build').mkdir(parents=True)
             unit = source / 'core.cpp'; unit.write_text('fixture')
             companion = psp.ROOT / 'iridium/apps/ios/RuntimeBridge/IridiumPPSSPPAdapter.cpp'
@@ -85,6 +98,23 @@ class PSPBuildTests(unittest.TestCase):
             outside = root / 'outside.cpp'; outside.write_text('outside')
             records[0]['file'] = str(outside); manifest.write_text(json.dumps(records))
             with self.assertRaises(ValueError): psp.compiled_inputs(source, destination)
+            linked = source / 'linked.cpp'; linked.symlink_to(outside)
+            records[0]['file'] = str(linked); manifest.write_text(json.dumps(records))
+            with self.assertRaisesRegex(ValueError, 'outside the reviewed component'):
+                psp.compiled_inputs(source, destination)
+
+
+class PSPBuildAliasedTemporaryRootTests(PSPBuildTests):
+    """Repeat the fixtures through a macOS-style OS temp alias on any platform."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve(strict=True)
+        real = root / 'private'; real.mkdir()
+        alias = root / 'var'; alias.symlink_to(real, target_is_directory=True)
+        patched = patch.object(tempfile, 'tempdir', str(alias))
+        patched.start(); self.addCleanup(patched.stop)
 
 
 if __name__ == '__main__':
