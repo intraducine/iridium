@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Iridium's frontend model contains either backend's record without moving
 /// Windows games, rewriting Madeira models, or inventing Windows paths for ROMs.
@@ -37,8 +38,11 @@ struct IridiumGame: Identifiable {
     func stop() { LibraryModel.shared.requestQuit() }
 }
 
-@MainActor struct IridiumSameBoyDriver: IridiumRuntimeDriver {
-    var descriptor: IridiumRuntimeDescriptor { IridiumRuntimeRegistry.sameBoy }
+@MainActor struct IridiumConsoleDriver: IridiumRuntimeDriver {
+    let descriptor: IridiumRuntimeDescriptor
+    init(game: IridiumConsoleGame) throws {
+        descriptor = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
+    }
     var state: IridiumRuntimeState {
         switch IridiumConsoleSession.shared.phase {
         case .idle: return .idle
@@ -52,6 +56,8 @@ struct IridiumGame: Identifiable {
     func launch(gameID: UUID) throws {
         let library = IridiumConsoleLibrary.shared
         guard let game = library.games.first(where: { $0.id == gameID }) else { throw IridiumRuntimeError.invalidGame }
+        let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
+        guard runtime.id == descriptor.id else { throw IridiumRuntimeError.unavailable }
         IridiumConsoleSession.shared.start(game, store: library.store)
     }
     func pause() throws { IridiumConsoleSession.shared.pause() }
@@ -61,6 +67,15 @@ struct IridiumGame: Identifiable {
 
 final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
     static let shared = IridiumConsoleLibrary()
+    static var supportsPSP: Bool {
+        IridiumRuntimeRegistry.compatible(with: .psp).contains { $0.id == "ppsspp" }
+    }
+    static var importExtensions: [String] {
+        ["gb", "gbc"] + (supportsPSP ? ["elf", "iso", "cso", "pbp"] : [])
+    }
+    static var importContentTypes: [UTType] {
+        importExtensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
+    }
     @Published private(set) var games: [IridiumConsoleGame] = []
     @Published private(set) var working = false
     @Published var error: String?
@@ -80,6 +95,10 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
 
     func importROM(_ url: URL) {
         guard !working else { return }
+        guard Self.importExtensions.contains(url.pathExtension.lowercased()) else {
+            error = IridiumRuntimeError.invalidGame.localizedDescription
+            return
+        }
         working = true
         let scoped = url.startAccessingSecurityScopedResource()
         queue.async {
@@ -149,26 +168,49 @@ struct IridiumConsoleOptions: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var library = IridiumConsoleLibrary.shared
     let game: IridiumConsoleGame
-    var play: () -> Void
+    var play: (IridiumConsoleGame) -> Void
     @State private var removing = false
     @AppStorage("iridium.favoriteGames") private var favorites = ""
     private var isFavorite: Bool { favorites.split(separator: ",").contains(Substring(game.id.uuidString)) }
+    private var currentGame: IridiumConsoleGame { library.games.first { $0.id == game.id } ?? game }
+    private var compatibleRuntimes: [IridiumRuntimeDescriptor] {
+        IridiumRuntimeRegistry.compatible(with: currentGame.platform)
+    }
+    private var resolvedRuntime: IridiumRuntimeDescriptor? {
+        try? IridiumRuntimeRegistry.resolve(platform: currentGame.platform, preferred: currentGame.runtimeID)
+    }
+    private var runtimeDescription: String {
+        guard resolvedRuntime != nil else { return "This game's selected runtime is not available in this build." }
+        return game.platform == .psp ? "PPSSPP uses its IR interpreter and software renderer. JIT is not required." :
+            "SameBoy uses an interpreter. JIT is not required."
+    }
+    private var saveDescription: String {
+        if game.platform == .psp {
+            return "PSP saves are files in this game's virtual memory stick. Use the game's own Save command before quitting. Removing this entry keeps the imported game and memory stick in Files → Iridium → IridiumRuntimes."
+        }
+        return "Battery saves are stored separately for each game. Removing this entry keeps the ROM and saves in Files → Iridium → IridiumRuntimes."
+    }
     var body: some View {
         NavigationStack {
             Form {
                 Section("Runtime") {
                     LabeledContent("Platform", value: game.platform.title)
-                    Picker("Preferred runtime", selection: Binding(get: {
-                        library.games.first(where: { $0.id == game.id })?.runtimeID ?? game.runtimeID
-                    }, set: { value in var changed = game; changed.runtimeID = value; library.update(changed) })) {
-                        ForEach(IridiumRuntimeRegistry.compatible(with: game.platform)) { runtime in
-                            Text(runtime.name).tag(runtime.id)
-                        }
-                    }.disabled(library.working)
-                    Text("SameBoy uses an interpreter. JIT is not required.").font(.footnote).foregroundStyle(.secondary)
+                    if compatibleRuntimes.isEmpty {
+                        LabeledContent("Runtime", value: "Unavailable in this build")
+                    } else {
+                        Picker("Preferred runtime", selection: Binding(get: {
+                            currentGame.runtimeID
+                        }, set: { value in var changed = currentGame; changed.runtimeID = value; library.update(changed) })) {
+                            ForEach(compatibleRuntimes) { runtime in
+                                Text(runtime.name).tag(runtime.id)
+                            }
+                        }.disabled(library.working)
+                    }
+                    Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
-                    Button("Play", systemImage: "play.fill") { dismiss(); play() }
+                    Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
+                        .disabled(library.working || resolvedRuntime == nil)
                     Button(isFavorite ? "Remove from Favorites" : "Add to Favorites",
                            systemImage: isFavorite ? "heart.fill" : "heart") {
                         var ids = Set(favorites.split(separator: ",").map(String.init))
@@ -176,7 +218,7 @@ struct IridiumConsoleOptions: View {
                         favorites = ids.sorted().joined(separator: ",")
                     }
                     Button("Remove from Library", role: .destructive) { removing = true }
-                } footer: { Text("Battery saves are stored separately for each game. Removing this entry keeps the ROM and saves in Files → Iridium → IridiumRuntimes.") }
+                } footer: { Text(saveDescription) }
             }.iridiumPageSurface().navigationTitle(game.title)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
                 .confirmationDialog("Remove this library entry? Its files and saves will stay on this device.", isPresented: $removing) {

@@ -411,3 +411,13 @@ logic and D3D12 commands with platform stubs, plus the shader recipe with tool
 stubs. Swift wait coverage runs when `swiftc` is available. These checks do not
 establish Apple compilation, AIR acceptance, physical-device behavior or game
 compatibility; those require separately authorized builds and device validation.
+
+## Pinned PSP component
+
+Iridium builds the unchanged PPSSPP Libretro target as an isolated Apple dylib.
+A separate companion exposes only asynchronous boot status. Iridium owns the
+UI, import metadata, serial stepping, bounded frame/audio delivery, per-game
+memory-stick paths and teardown coordination. The initial adapter uses the IR
+interpreter and software renderer, with no native JIT or networking advertised.
+The Apple recipe, export audit, selected support assets and source receipt are
+maintained outside upstream. No PPSSPP emulation source is rewritten.

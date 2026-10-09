@@ -1,5 +1,7 @@
 """One migration check: old paths, save conflicts, containment and retry."""
 import pathlib
+import hashlib
+import json
 import importlib.util
 import plistlib
 import shutil
@@ -95,13 +97,24 @@ class FrontendImportTests(unittest.TestCase):
             root = pathlib.Path(folder)
             app, upstream = root / 'Iridium.app', root / 'upstream'
             app.mkdir()
-            (app / 'Info.plist').write_bytes(plistlib.dumps({'IridiumMadeiraRevision': BUILD.REVISION}))
+            (app / 'Info.plist').write_bytes(plistlib.dumps({
+                'IridiumMadeiraRevision': BUILD.REVISION, 'IridiumPPSSPPRevision': BUILD.PSP_REVISION}))
+            component = app / 'Frameworks/ppsspp_libretro.dylib'
+            component.parent.mkdir(); component.write_bytes(b'PSP component fixture')
+            asset = app / 'PSP/PPSSPP/compat.ini'
+            asset.parent.mkdir(parents=True); asset.write_bytes(b'PSP asset fixture')
+            psp_output = root / 'psp-output'; psp_output.mkdir()
+            (psp_output / 'component.json').write_text(json.dumps({
+                'revision': BUILD.PSP_REVISION,
+                'sha256': hashlib.sha256(component.read_bytes()).hexdigest(),
+                'assetSHA256': {'compat.ini': hashlib.sha256(asset.read_bytes()).hexdigest()},
+            }))
             for farm in ('arm64ec-windows', 'aarch64-windows', 'i386-windows'):
                 for parent in (app, upstream / 'app/Madeira'):
                     (parent / farm).mkdir(parents=True)
                     (parent / farm / '.gitkeep').touch()
                     if farm != 'i386-windows': (parent / farm / 'ntdll.dll').write_bytes(b'binary')
-            with patch.object(BUILD, 'UPSTREAM', upstream):
+            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
                 names = ('arm64ec-windows/xtajit64.dll', 'd3d12/libmetalirconverter.dylib',
@@ -119,6 +132,127 @@ class FrontendImportTests(unittest.TestCase):
                 (app / 'aarch64-windows/xtajit.dll').write_bytes(b'')
                 with self.assertRaisesRegex(ValueError, 'xtajit.dll'):
                     BUILD.check_bundle(app)
+                (app / 'aarch64-windows/xtajit.dll').write_bytes(b'binary')
+                original_component = component.read_bytes()
+                component.write_bytes(b'changed PSP component')
+                with self.assertRaisesRegex(ValueError, 'audited PSP component'):
+                    BUILD.check_bundle(app)
+                component.write_bytes(original_component)
+                original_asset = asset.read_bytes()
+                asset.unlink()
+                with self.assertRaisesRegex(ValueError, 'PSP runtime asset'):
+                    BUILD.check_bundle(app)
+                asset.write_bytes(b'changed PSP asset')
+                with self.assertRaisesRegex(ValueError, 'PSP runtime asset'):
+                    BUILD.check_bundle(app)
+                asset.write_bytes(original_asset)
+                BUILD.check_bundle(app)
+
+    def test_generated_psp_project_embeds_without_linking_and_preserves_settings(self):
+        # Model plutil's parsed PBX graph; exercise project(), not source text.
+        objects = {
+            'target': {'isa': 'PBXNativeTarget', 'name': 'Madeira', 'productName': 'Madeira',
+                       'productReference': 'product', 'buildPhases': ['sources', 'resources', 'frameworks'],
+                       'buildConfigurationList': 'configurations'},
+            'product': {'isa': 'PBXFileReference', 'path': 'Madeira.app'},
+            'group': {'isa': 'PBXGroup', 'path': 'Madeira', 'children': ['existing-reference']},
+            'sources': {'isa': 'PBXSourcesBuildPhase', 'files': ['existing-source']},
+            'resources': {'isa': 'PBXResourcesBuildPhase', 'files': ['existing-resource']},
+            'frameworks': {'isa': 'PBXFrameworksBuildPhase', 'files': ['existing-link']},
+            'configurations': {'buildConfigurations': ['debug', 'release']},
+            'debug': {'isa': 'XCBuildConfiguration', 'buildSettings': {
+                'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '$(inherited) DEBUG',
+                'HEADER_SEARCH_PATHS': ['$(inherited)', 'existing-include'],
+                'OTHER_LDFLAGS': ['$(inherited)', '-lexisting']}},
+            'release': {'isa': 'XCBuildConfiguration', 'buildSettings': {}},
+        }
+        with patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+            result = BUILD.project(pathlib.Path('/fixture/project.pbxproj'),
+                                   ['IRPSPBridge.c', 'IridiumConsoleSession.swift'])['objects']
+        target = result['target']
+        self.assertEqual(target['name'], 'Iridium')
+        self.assertEqual(result['product']['path'], 'Iridium.app')
+        embeds = [result[key] for key in target['buildPhases']
+                  if result[key]['isa'] == 'PBXCopyFilesBuildPhase']
+        self.assertEqual(len(embeds), 1)
+        embed = embeds[0]
+        self.assertEqual(embed['dstSubfolderSpec'], 10)  # App's Frameworks directory.
+        self.assertEqual(embed['dstPath'], '')
+        self.assertEqual(embed['runOnlyForDeploymentPostprocessing'], 0)
+        self.assertEqual(len(embed['files']), 1)
+        component_ref = result[embed['files'][0]]['fileRef']
+        component = result[component_ref]
+        self.assertEqual(component['sourceTree'], 'SOURCE_ROOT')
+        self.assertEqual(component['lastKnownFileType'], 'compiled.mach-o.dylib')
+        self.assertEqual(component['path'], '../../ppsspp/$(PLATFORM_NAME)/ppsspp_libretro.dylib')
+        for sdk in ('iphoneos', 'iphonesimulator'):
+            resolved = (BUILD.OUTPUT / 'app' / component['path'].replace('$(PLATFORM_NAME)', sdk)).resolve()
+            self.assertEqual(resolved, (BUILD.ROOT / '.build/ppsspp' / sdk / 'ppsspp_libretro.dylib').resolve())
+        self.assertEqual(result['frameworks']['files'], ['existing-link'])
+        self.assertIn(component_ref, result['group']['children'])
+        resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
+                         if key != 'existing-resource']
+        self.assertEqual(resource_refs, [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+                                         'path': 'PSP', 'sourceTree': '<group>'}])
+        self.assertIn('existing-resource', result['resources']['files'])
+        source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
+                       if key != 'existing-source']
+        self.assertEqual({item['path']: item['lastKnownFileType'] for item in source_refs},
+                         {'IRPSPBridge.c': 'sourcecode.c.c', 'IridiumConsoleSession.swift': 'sourcecode.swift'})
+        for configuration in ('debug', 'release'):
+            settings = result[configuration]['buildSettings']
+            self.assertIn('IRIDIUM_PPSSPP', settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'])
+            self.assertIn('$(inherited)', settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'])
+            self.assertIn('$(SRCROOT)/../../ppsspp/$(PLATFORM_NAME)/include', settings['HEADER_SEARCH_PATHS'])
+            self.assertIn('-lIridiumSameBoy', settings['OTHER_LDFLAGS'])
+            self.assertFalse(any('ppsspp' in flag.lower() for flag in settings['OTHER_LDFLAGS']))
+        self.assertIn('DEBUG', result['debug']['buildSettings']['SWIFT_ACTIVE_COMPILATION_CONDITIONS'])
+        self.assertIn('existing-include', result['debug']['buildSettings']['HEADER_SEARCH_PATHS'])
+        self.assertIn('-lexisting', result['debug']['buildSettings']['OTHER_LDFLAGS'])
+
+    def test_generated_tree_refresh_is_repeatable_and_removes_only_stale_outputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder).resolve()
+            source, destination = root / 'source', root / 'generated/PSP/PPSSPP'
+            (source / 'flash0/font').mkdir(parents=True)
+            (source / 'flash0/font/font.pgf').write_bytes(b'font')
+            (source / 'compat.ini').write_bytes(b'first')
+            outside = root / 'unrelated'; outside.mkdir()
+            retained = outside / 'keep'; retained.write_bytes(b'preserve')
+            BUILD.refresh_generated_tree(source, destination)
+            (destination / 'stale.ini').write_bytes(b'stale')
+            (destination / 'stale-link').symlink_to(outside, target_is_directory=True)
+            (source / 'compat.ini').write_bytes(b'second')
+            BUILD.refresh_generated_tree(source, destination)
+            BUILD.refresh_generated_tree(source, destination)
+            self.assertEqual((destination / 'compat.ini').read_bytes(), b'second')
+            self.assertEqual((destination / 'flash0/font/font.pgf').read_bytes(), b'font')
+            self.assertFalse((destination / 'stale.ini').exists())
+            self.assertFalse((destination / 'stale-link').is_symlink())
+            self.assertEqual(retained.read_bytes(), b'preserve')
+            self.assertEqual((source / 'compat.ini').read_bytes(), b'second')
+
+    def test_generated_tree_refresh_refuses_leaf_and_ancestor_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder).resolve()
+            source, outside = root / 'source', root / 'outside'
+            source.mkdir(); outside.mkdir()
+            (source / 'replacement').write_bytes(b'new')
+            retained = outside / 'keep'; retained.write_bytes(b'preserve')
+            leaf = root / 'leaf'; leaf.symlink_to(outside, target_is_directory=True)
+            ancestor = root / 'parent-link'; ancestor.symlink_to(outside, target_is_directory=True)
+            dangling = root / 'dangling'; dangling.symlink_to(root / 'absent', target_is_directory=True)
+            for destination in (leaf, ancestor / 'child', dangling):
+                with self.subTest(destination=destination.name), self.assertRaisesRegex(ValueError, 'symbolic link'):
+                    BUILD.refresh_generated_tree(source, destination)
+            self.assertTrue(leaf.is_symlink())
+            self.assertTrue(ancestor.is_symlink())
+            self.assertTrue(dangling.is_symlink())
+            self.assertEqual(retained.read_bytes(), b'preserve')
+            ordinary_file = root / 'file'; ordinary_file.write_bytes(b'preserve file')
+            with self.assertRaisesRegex(ValueError, 'not a directory'):
+                BUILD.refresh_generated_tree(source, ordinary_file)
+            self.assertEqual(ordinary_file.read_bytes(), b'preserve file')
 
     def test_i386_reuse_requires_matching_outputs_and_unexpired_inputs(self):
         with tempfile.TemporaryDirectory() as folder:

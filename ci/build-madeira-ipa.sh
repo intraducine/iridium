@@ -14,7 +14,8 @@ printf 'Build log: %s\n' "$log"
 python3 ci/local_build_tools.py --madeira --write-env .build/madeira-build-tools.env
 source .build/madeira-build-tools.env
 if [ -e .git ]; then
-  git submodule update --init vendor/Madeira vendor/SameBoy
+  git submodule update --init vendor/Madeira vendor/SameBoy vendor/PPSSPP
+  python3 ci/build-ppsspp.py --initialize
   git -C vendor/Madeira submodule update --init FEX wine dxmt madeira-dock
   git -C vendor/Madeira/FEX submodule update --init External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/vixl External/xxhash Source/Common/cpp-optparse
   git -C vendor/Madeira/dxmt submodule update --init --recursive

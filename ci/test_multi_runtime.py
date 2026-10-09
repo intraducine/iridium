@@ -96,8 +96,46 @@ class MultiRuntimeTests(unittest.TestCase):
         fixture = ROOT / 'iridium/apps/ios/RuntimeTests/main.swift'
         with tempfile.TemporaryDirectory() as folder:
             executable = Path(folder) / 'runtime-test'
-            subprocess.run(['swiftc', str(source), str(fixture), '-o', str(executable)], check=True)
-            subprocess.run([str(executable)], check=True, timeout=30)
+            # Both shipping configurations execute the same production model:
+            # PSP records must survive an installation without that component.
+            for flags in ([], ['-D', 'IRIDIUM_PPSSPP']):
+                subprocess.run(['swiftc', *flags, str(source), str(fixture), '-o', str(executable)], check=True)
+                subprocess.run([str(executable)], check=True, timeout=30)
+
+    def test_psp_session_has_fixed_component_and_drained_ownership(self):
+        # Source guards supplement, rather than replace, the executed Swift
+        # model and explicit native/device tests.
+        session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        self.assertIn('Bundle.main.privateFrameworksURL', session)
+        self.assertIn('appendingPathComponent("ppsspp_libretro.dylib")', session)
+        self.assertIn('appendingPathComponent("PSP", isDirectory: true)', session)
+        self.assertIn('try store.validateROM(game)', session)
+        self.assertIn('case IR_PSP_CLOSED: complete(owner)', session)
+        self.assertIn('case IR_PSP_RESTART_REQUIRED: requireRestart(owner)', session)
+        self.assertIn('ir_psp_request_stop()', session)
+        self.assertNotIn('ir_psp_close', session)
+        self.assertNotIn('dlclose', session)
+        self.assertIn('guard runningGame != nil, backend == .sameBoy else { return }', session)
+        self.assertIn('frame.width > 0 && frame.height > 0', session)
+        self.assertIn('guard self.lease == owner, self.phase == .starting, self.requested == .play', session)
+
+    def test_psp_frontend_routes_controls_and_runtime(self):
+        frontend = ROOT / 'iridium/apps/ios/MadeiraFrontend'
+        player = (frontend / 'IridiumConsolePlayer.swift').read_text()
+        library = (frontend / 'IridiumRuntimeLibrary.swift').read_text()
+        view = (frontend / 'IridiumLibraryView.swift').read_text()
+        for label, icon, bit in [('Cross', 'xmark', 0), ('Circle', 'circle', 8),
+                                 ('Square', 'square', 1), ('Triangle', 'triangle', 9)]:
+            self.assertIn(f'pad("{label}", icon: "{icon}", bit: 1 << {bit})', player)
+        for label, bit in [('L', 10), ('R', 11), ('Start', 3), ('Select', 2)]:
+            self.assertIn(f'pad("{label}", bit: 1 << {bit})', player)
+        self.assertIn('session.setAnalog(x: Int16(x), y: Int16(y), keyboard: true)', player)
+        self.assertIn('onChange(of: keyboardFocus)', player)
+        self.assertIn('IridiumConsoleDriver(game: console)', view)
+        self.assertNotIn('IridiumSameBoyDriver', view + library)
+        self.assertIn('descriptor = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)', library)
+        self.assertIn('IridiumRuntimeRegistry.compatible(with: .psp)', library)
+        self.assertIn('supportsPSP ? ["elf", "iso", "cso", "pbp"] : []', library)
 
     @unittest.skipUnless(os.environ.get('IRIDIUM_TEST_CORE') == '1',
                          'Native core execution is explicit; source CI must not trigger emulator builds')

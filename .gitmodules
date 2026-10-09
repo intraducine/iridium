@@ -106,3 +106,6 @@
 [submodule "vendor/SameBoy"]
 	path = vendor/SameBoy
 	url = https://github.com/LIJI32/SameBoy.git
+[submodule "vendor/PPSSPP"]
+	path = vendor/PPSSPP
+	url = https://github.com/hrydgard/ppsspp.git

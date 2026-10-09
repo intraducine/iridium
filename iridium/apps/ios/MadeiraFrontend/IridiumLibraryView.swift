@@ -50,9 +50,11 @@ struct IridiumLibraryView: View {
     }
     private func launch(_ game: IridiumGame) {
         do {
-            let driver: any IridiumRuntimeDriver = game.windows != nil ?
-                IridiumWindowsDriver(start: play) : IridiumSameBoyDriver()
-            try driver.launch(gameID: game.id)
+            if game.windows != nil {
+                try IridiumWindowsDriver(start: play).launch(gameID: game.id)
+            } else if let console = game.console {
+                try IridiumConsoleDriver(game: console).launch(gameID: game.id)
+            }
         } catch { library.error = error.localizedDescription }
     }
     private func options(_ game: IridiumGame) {
@@ -129,7 +131,9 @@ struct IridiumLibraryView: View {
                                     description: Text("Add favorites through Game Options."))
                             } else {
                                 ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                    description: Text("Use Add Game (+) for Steam, a Windows executable, or a Game Boy ROM."))
+                                    description: Text(IridiumConsoleLibrary.supportsPSP ?
+                                        "Use Add Game (+) for Steam, a Windows executable, a Game Boy ROM, or a PSP game." :
+                                        "Use Add Game (+) for Steam, a Windows executable, or a Game Boy ROM."))
                             }
                         }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -206,12 +210,12 @@ struct IridiumLibraryView: View {
                 if !Task.isCancelled, let data, let image = UIImage(data: data) { importedBackdrop = (id, image) }
             }
             .sheet(item: $consoleDetail, onDismiss: restoreKeyboardFocus) { game in
-                IridiumConsoleOptions(game: game) { consoleSession.start(game, store: consoles.store) }
+                IridiumConsoleOptions(game: game) { launch(IridiumGame(console: $0)) }
             }
             .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: restoreKeyboardFocus) {
                 IridiumConsolePlayer()
             }
-            .fileImporter(isPresented: $importingROM, allowedContentTypes: [.data], allowsMultipleSelection: false) { result in
+            .fileImporter(isPresented: $importingROM, allowedContentTypes: IridiumConsoleLibrary.importContentTypes, allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls): if let url = urls.first { consoles.importROM(url) }
                 case .failure(let error): library.error = error.localizedDescription

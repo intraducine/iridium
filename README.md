@@ -12,18 +12,21 @@ Iridium's artwork and Apple-style navigation. Madeira provides game launch,
 JIT, input, Steam, downloads, saves, and the runtime. Compatibility varies by
 game and device.
 
-The first additional runtime is the interpreter-only SameBoy core for Game Boy
-and Game Boy Color. Use **Add Game → Import Game Boy ROM** for an uncompressed
-`.gb` or `.gbc` file you are entitled to use. It appears on the same library shelf;
-Game Options identifies its platform and compatible runtime. Console games have
-their own player, touch/keyboard/controller input, audio and per-game battery
-saves. They do not need JIT. This integration is under validation; compiling or
-passing a synthetic test does not establish device or game compatibility.
+The additional runtimes are SameBoy for Game Boy/Game Boy Color and an
+experimental PPSSPP interpreter/software-renderer path for PSP. Use
+**Add Game → Import Game Boy or PSP Game** for an uncompressed `.gb`, `.gbc`,
+`.elf`, `.iso`, `.cso` or `.pbp` file you are entitled to use. It appears on the
+same library shelf; Game Options identifies its platform and runtime. Console
+games have their own player, touch/keyboard/controller input and audio. SameBoy
+battery/RTC saves and PSP memory sticks are isolated per game. Neither path
+requires JIT in this build. PSP hardware rendering and native JIT are not yet
+enabled; performance and compatibility remain experimental. Compilation and
+synthetic tests do not establish physical-device or commercial-game compatibility.
 
 Windows games still use Madeira's original backend, options, saves and JIT flow.
 After a Windows session has run, restart Iridium before switching to another
-runtime. Experimental console, PSP and Android candidates are not advertised as
-available until their implementations and redistribution requirements are ready.
+runtime. Other console and Android candidates remain unavailable pending
+implementation, validation and redistribution review.
 See [runtime architecture and validation](docs/multi-runtime.md).
 
 Use **Add Game → Steam Library** for Madeira's Steam features. For local files,
@@ -38,6 +41,7 @@ in place. A conflicting save stops import instead of overwriting either copy.
 | `iridium/apps/ios/MadeiraFrontend/` | Iridium presentation and data import |
 | `iridium/apps/ios/RuntimeSupport/`, `RuntimeBridge/` | Runtime contracts, isolated library and native core bridge |
 | `vendor/SameBoy/` | Pinned interpreter core and its permissive support sources |
+| `vendor/PPSSPP/` | Pinned PSP component; unchanged upstream source and selected dependencies |
 | `ci/madeira-frontend.py`, `ci/madeira_presentation.py` | Reviewed presentation overlay and native build preparation |
 | Other runtime and application directories | Retained migration and recovery source; excluded from the frontend target |
 

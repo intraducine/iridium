@@ -33,6 +33,7 @@ def binary_component(name):
         return 'Madeira JIT helper'
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
+    if name == 'Frameworks/ppsspp_libretro.dylib': return 'PPSSPP and its selected native dependencies'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
         if p.name in {'xtajit.dll', 'xtajit64.dll'}: return 'FEX'
         if p.name == 'dockhost.exe': return 'Madeira Dock and LLVM-MinGW runtime'
@@ -115,7 +116,10 @@ def collect(app, output, maps):
         shutil.copytree(app / 'licenses', notices / 'licenses')
         shutil.copytree(app / 'legal', notices / 'legal')
         shutil.copytree(app / 'd3d12', notices / 'd3d12', ignore=shutil.ignore_patterns('*.dylib', '*.dxil'))
-        manifest = {'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
+        psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
+        (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
+        manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
+                    'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

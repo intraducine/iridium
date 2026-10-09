@@ -147,6 +147,20 @@
       "version": "1.0.3",
       "adaptation": "Generated private symbol namespace and Libretro adapter 48 kHz public-API setting; upstream Core untouched",
       "bootROMs": "ci/sameboy-bootroms.json; regenerate with ci/sameboy_bootroms.py and pinned RGBDS 0.9.4"
+    },
+    {
+      "id": "ppsspp",
+      "path": "vendor/PPSSPP",
+      "upstream": "https://github.com/hrydgard/ppsspp",
+      "revision": "35e27933ff28bffcf1eadce0574569958d14c9b9",
+      "platforms": [
+        "psp"
+      ],
+      "license": "GPL family and dependency-specific terms; see LICENSING.md",
+      "build": "ci/build-ppsspp.py",
+      "execution": "IR interpreter with software rendering; native JIT unavailable in this adapter",
+      "adaptation": "Separately compiled read-only pending-boot query, private C ABI bridge and Apple bundle orchestration; upstream source unchanged",
+      "assets": "34 explicitly selected upstream support assets; build manifest hashes every delivered file"
     }
   ]
 }

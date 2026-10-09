@@ -7,13 +7,23 @@ struct IridiumAddGameView: View {
     @State private var guided = false
     @FocusState private var keyboardFocus: Bool
     var choose: (Int) -> Void
-    private let titles = ["Steam Library", "Choose Executable", "Import Existing Iridium Games", "Windows Desktop", "Import Game Boy ROM"]
+    private var titles: [String] {
+        ["Steam Library", "Choose Executable", "Import Existing Iridium Games", "Windows Desktop",
+         IridiumConsoleLibrary.supportsPSP ? "Import Game Boy or PSP Game" : "Import Game Boy ROM"]
+    }
 
     var body: some View {
         NavigationStack {
             List(titles.indices, id: \.self) { index in
-                Button(titles[index]) { choose(index) }
-                    .foregroundStyle(.primary)
+                Button { choose(index) } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(titles[index])
+                        if index == 4 {
+                            Text(IridiumConsoleLibrary.supportsPSP ? "GB, GBC, ELF, ISO, CSO, or PBP" : "GB or GBC")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }.foregroundStyle(.primary)
                     .listRowBackground(guided && selected == index ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
             }
             .iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)
