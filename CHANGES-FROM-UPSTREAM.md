@@ -58,6 +58,14 @@ intrinsic. The installed iPhoneOS Metal tool can compile the original macOS AIR
 command target when the macOS tool lookup is absent. These are build adapters;
 the pinned source trees remain unchanged.
 
+The frontend orchestration stages rebuilt GnuTLS, Hogweed, Nettle and GMP
+archives at the app's existing link paths and records both prefix and app
+hashes. Its ntdll adapter stops on any failed compilation before archiving or
+installation. Its i386 adapter preserves serial retries, but retries every
+selected target after bulk failure, including existing DLLs. Failed retries
+prevent installation and a new completion record. These checks adapt the pinned
+recipes in memory without changing vendored source.
+
 Native build completion is saved before packaging, with a 14-day reuse limit
 and checks for matching inputs and output archives. The local frontend builder
 also builds Madeira's untracked i386 farm with its original Wine/DXMT recipe

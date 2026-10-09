@@ -49,8 +49,7 @@ struct IridiumArtworkEditor: View {
                 Section("Display name") {
                     TextField("Game name", text: $title).focused($field, equals: "name").id("name")
                     row("saveName", "Save Name", icon: "checkmark") {
-                        perform { try artwork.update(game.id) { $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String(title.prefix(128)) } }
-                        field = nil; keyboard = true
+                        saveName()
                     }
                 }
                 Section {
@@ -166,6 +165,11 @@ struct IridiumArtworkEditor: View {
         Button(action: action) { Label(title, systemImage: icon) }.id(id)
             .listRowBackground(guided && focus == id ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
     }
+    private func saveName() {
+        perform { try artwork.update(game.id) { $0.title = IridiumArtworkAppearance.titleOverride(title) } }
+        field = nil; keyboard = true
+    }
+
     private func perform(_ action: () throws -> Void) {
         do { try action(); failure = nil } catch { failure = error.localizedDescription }
     }
@@ -216,7 +220,7 @@ struct IridiumArtworkEditor: View {
         } else if value == "accept" {
             switch focus {
             case "name", "query": field = focus
-            case "saveName": perform { try artwork.update(game.id) { $0.title = title.isEmpty ? nil : String(title.prefix(128)) } }
+            case "saveName": saveName()
             case "image": background.toggle()
             case "photos": photos = true
             case "files": files = true

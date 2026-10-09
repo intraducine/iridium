@@ -40,7 +40,7 @@ struct IridiumPlayerLayout {
         let dpadCenter = CGPoint(x: left + 76, y: bottom - (landscape ? 132 : 166))
         dpad = Self.frame(center: dpadCenter, size: CGSize(width: 132, height: 132))
         stick = profile == .psp ? Self.frame(
-            center: CGPoint(x: left + (landscape ? 176 : 76), y: bottom - 54),
+            center: CGPoint(x: landscape ? dpad.maxX + 8 + 44 : left + 76, y: bottom - 54),
             size: CGSize(width: 88, height: 88)) : nil
         var result: [IridiumPlayerButton] = []
         func add(_ id: String, _ symbol: String? = nil, bit: UInt16, x: CGFloat, y: CGFloat, width: CGFloat = 48) {

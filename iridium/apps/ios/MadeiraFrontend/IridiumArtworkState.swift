@@ -25,6 +25,10 @@ struct IridiumArtworkCandidate: Identifiable, Equatable, Sendable {
 }
 
 struct IridiumArtworkAppearance: Codable, Equatable, Sendable {
+    static func titleOverride(_ value: String) -> String? {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : String(value.prefix(128))
+    }
+
     var title: String?
     var match: IridiumArtworkMatch?
     var automaticLookup = true

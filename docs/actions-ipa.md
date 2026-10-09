@@ -58,6 +58,12 @@ or expired output triggers a rebuild. Reusing an artifact does not upload anothe
 copy or extend its lifetime. Set `reuse_assets=false` for a fresh hosted build.
 Local completion records use the same 14-day limit.
 
+The native stage copies rebuilt GnuTLS, Hogweed, Nettle and GMP archives from
+their toolchain prefix into the app's linked paths. Its completion record checks
+both copies. Failed ntdll compilation stops before archiving or installing old
+objects. A failed bulk i386 build retries every selected target, including
+existing DLLs; a failed retry stops installation and completion recording.
+
 App code and docs do not invalidate compiler outputs. Changes to
 `ci/madeira-frontend.py` currently invalidate both components because that file
 owns both recipes. Packaging fixes alone do not require another native build.
@@ -68,8 +74,12 @@ The workflow records the final app's Mach-O, PE and ELF files and its static
 link inputs. It collects the exact repository and initialized dependency
 snapshots, FreeType source, locked LLVM and runtime source archives, pairing
 crate sources, generators, build instructions and notices into
-`Iridium-corresponding-source.tar.gz`. `COMPONENT-MANIFEST.json` maps packaged
-binaries to their components and records source revisions and release hashes.
+`Iridium-corresponding-source.tar.gz`. Source collection fetches and verifies the
+pinned FreeType revision when a reused native build leaves its source checkout
+absent. Existing checkouts must match the pin and pass the source-change check
+before collection.
+`COMPONENT-MANIFEST.json` maps packaged binaries to their components and records
+source revisions and release hashes.
 Its `source_exclusions` receipt records the exact path, SHA-256, pinned upstream
 URL and reason for omitting PPSSPP's public Windows UWP signing fixture. The
 checkout remains unchanged, and all iOS Libretro source and build inputs remain
@@ -123,6 +133,7 @@ bash vendor/Madeira/build/wineserver/build.sh
 bash vendor/Madeira/build/ntdll-unix/build.sh
 bash vendor/Madeira/build/win32u-unix/build.sh
 bash vendor/Madeira/build/gnutls-ios/build.sh
+cp vendor/Madeira/toolchains/gnutls-ios/lib/lib{gnutls,hogweed,nettle,gmp}.a vendor/Madeira/app/Madeira/
 bash vendor/Madeira/build/ffmpeg/build.sh --reconfigure
 python3 ci/madeira-frontend.py app
 python3 ci/package-unsigned-ipa.py \

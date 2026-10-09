@@ -25,6 +25,7 @@ REVISION = '48f976429c189f8396e23d251d8a82f43c705922'
 PSP_REVISION = '35e27933ff28bffcf1eadce0574569958d14c9b9'
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPBridge.h"\n'
+CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 # Presentation hooks and explicit exclusive-runtime guards. Madeira's launch
 # sequence, native driver, network implementation and allocator remain intact.
 HOOKS = {
@@ -270,7 +271,8 @@ def windows():
     verify_pin()
     recipe = UPSTREAM / 'build/wine-i386/build.sh'
     stamp = UPSTREAM / '.build/iridium-i386.json'
-    key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode() + recipe.read_bytes()
+    key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode()
+                         + inspect.getsource(run_checked_recipe).encode() + recipe.read_bytes()
                          + compiler_identity().encode()
                          + subprocess.check_output([str(UPSTREAM / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/i686-w64-mingw32-clang'), '--version'])).hexdigest()
     def digest(path):
@@ -287,7 +289,7 @@ def windows():
     # toolchain is installed. Select the real tool without changing the recipe.
     metal = Path(subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--find', 'metal'], text=True).strip())
     env = dict(os.environ, TOOLCHAINS=str(metal.parents[2]))
-    subprocess.run(['bash', str(recipe)], env=env, cwd=UPSTREAM, check=True)
+    run_checked_recipe('wine-i386', env=env)
     outputs = sorted(path for path in (UPSTREAM / 'app/Madeira/i386-windows').glob('*')
                      if path.is_file() and not path.name.startswith('.'))
     if not outputs: raise ValueError('Madeira built no i386 runtime files')
@@ -306,6 +308,36 @@ def toolchains():
         if entry['name'] not in ('llvm', 'llvm-mingw'): continue
         entry = dict(entry, destination=entry['destination'].replace('testrepos/Madeira/', 'vendor/Madeira/', 1))
         if not (ROOT / entry['destination']).exists(): fetcher.fetch(ROOT, entry)
+
+
+def stage_crypto_libraries():
+    archives = [UPSTREAM / 'toolchains/gnutls-ios/lib' / f'lib{name}.a' for name in CRYPTO_LIBRARIES]
+    if any(not path.is_file() or not path.stat().st_size for path in archives):
+        raise ValueError('The rebuilt crypto libraries are missing or empty')
+    for path in archives: shutil.copy2(path, UPSTREAM / 'app/Madeira' / path.name)
+    return archives
+
+
+def run_checked_recipe(name, env=None):
+    """Keep upstream retries, but never install outputs after failed compilation."""
+    text = (UPSTREAM / 'build' / name / 'build.sh').read_text()
+    if name == 'ntdll-unix':
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/ntdll-unix'))),
+            ('echo "Results: $SUCCEEDED succeeded, $FAILED failed"',
+             'echo "Results: $SUCCEEDED succeeded, $FAILED failed"\n[ "$FAILED" -eq 0 ] || exit 1')]
+    elif name == 'wine-i386':
+        patches = [
+            ('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"', 'R=' + shlex.quote(str(UPSTREAM))),
+            ('make -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1\nset -e',
+             'make -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1\nBUILD_STATUS=$?\nset -e'),
+            ('    [ -f "$t" ] && continue', '    [ "$BUILD_STATUS" -eq 0 ] && [ -f "$t" ] && continue')]
+    else: raise ValueError('Unsupported checked native recipe: ' + name)
+    for old, new in patches:
+        if text.count(old) != 1: raise ValueError('Upstream build recipe changed: ' + name)
+        text = text.replace(old, new)
+    subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, env=env, check=True)
 
 
 def bootstrap():
@@ -331,7 +363,10 @@ def bootstrap():
                         '-DLLVM_TABLEGEN=' + str(host / 'bin/llvm-tblgen'), '-DLLVM_BUILD_UTILS=OFF',
                         '-DLLVM_INCLUDE_TOOLS=OFF', '-DLLVM_INCLUDE_UTILS=OFF'], check=True)
         subprocess.run(['cmake', '--build', str(ios), '--target', 'LLVMPasses', 'LLVMBitWriter', '-j6'], check=True)
-    if not (UPSTREAM / 'toolchains/gnutls-ios/include/gnutls/gnutls.h').is_file():
+    crypto = UPSTREAM / 'toolchains/gnutls-ios'
+    if (not (crypto / 'include/gnutls/gnutls.h').is_file() or any(
+            not (crypto / 'lib' / f'lib{name}.a').is_file()
+            or not (crypto / 'lib' / f'lib{name}.a').stat().st_size for name in CRYPTO_LIBRARIES)):
         subprocess.run(['shasum', '-a', '256', '-c', 'SHA256SUMS'], cwd=UPSTREAM / 'build/gnutls-ios/src', check=True)
         subprocess.run(['bash', 'build/gnutls-ios/build.sh'], cwd=UPSTREAM, check=True)
 
@@ -389,7 +424,8 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 '''
         subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
-        run('bash', f'build/{component}/build.sh')
+        if component == 'ntdll-unix': run_checked_recipe(component)
+        else: run('bash', f'build/{component}/build.sh')
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
     headers.mkdir(parents=True, exist_ok=True)
     for name in ('air_msad', 'air_samplepos', 'air_tessellation'):
@@ -422,7 +458,9 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 def native():
     verify_pin()
     stamp = UPSTREAM / '.build/iridium-native.json'
-    key = hashlib.sha256((REVISION + inspect.getsource(build_native) + inspect.getsource(bootstrap)).encode()
+    key = hashlib.sha256((REVISION + inspect.getsource(build_native) + inspect.getsource(bootstrap)
+                         + inspect.getsource(run_checked_recipe) + inspect.getsource(stage_crypto_libraries)
+                         + repr(CRYPTO_LIBRARIES)).encode()
                          + (ROOT / 'ci/runtime-inputs.json').read_bytes()
                          + compiler_identity().encode()).hexdigest()
     def digest(path):
@@ -437,7 +475,9 @@ def native():
     except (OSError, ValueError, KeyError): pass
     bootstrap()
     build_native()
+    crypto = stage_crypto_libraries()
     outputs = sorted((UPSTREAM / 'app/Madeira').glob('*.a')) + sorted((UPSTREAM / 'FEX/build-ios').rglob('*.a'))
+    outputs += crypto
     outputs += [UPSTREAM / 'app/Madeira' / name for name in (
         'arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
         'legal/LICENSES-rppairing-crates.txt')]

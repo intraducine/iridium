@@ -22,6 +22,14 @@ for profile in [IridiumPlayerProfile.psp, .gameBoy] {
             precondition(available.contains(button.frame), "\(button.id) must stay in safe bounds")
             precondition(button.frame.width >= 44 && button.frame.height >= 44, "Accessible hit target")
         }
+        let hitTargets = [touch.dpad] + (touch.stick.map { [$0] } ?? []) + touch.buttons.map(\.frame)
+        for (index, target) in hitTargets.enumerated() {
+            for other in hitTargets.dropFirst(index + 1) {
+                let overlap = target.intersection(other)
+                precondition(overlap.isNull || overlap.width == 0 || overlap.height == 0,
+                             "Independent controls must not compete for the same touch")
+            }
+        }
         if available.width > available.height {
             precondition(touch.viewport == hardware.viewport, "Landscape touch controls must not shrink the viewport")
             precondition(abs(touch.viewport.width - available.width) < 0.001 || abs(touch.viewport.height - available.height) < 0.001,

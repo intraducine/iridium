@@ -174,6 +174,8 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[
                     {'archive': 'libntdll_unix.a'}, {'archive': 'libIridiumSameBoy.a'}]), \
                 patch.object(COLLECT, 'snapshot', side_effect=snapshot), \
+                patch.object(COLLECT, 'snapshot_freetype', side_effect=lambda destination, revisions:
+                    snapshot(self.root / 'vendor/Madeira/research/freetype', destination, revisions)), \
                 patch.object(COLLECT.subprocess, 'check_output', side_effect=command):
             COLLECT.collect(app, output, maps)
 

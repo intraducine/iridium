@@ -70,6 +70,14 @@ actor CompletionGate {
         expect(!(try store.apply(candidate, coverName: "duplicate.jpg", backgroundName: nil, ticket: ticket)),
                "ticket must commit at most once")
         try store.update(id) { $0.title = "My title"; $0.coverY = 0.23; $0.backgroundY = 0.81 }
+        for blank in ["", "   ", "\t\n "] {
+            try store.update(id) { $0.title = IridiumArtworkAppearance.titleOverride(blank) }
+            expect(store.appearance(id).title == nil, "blank display name must restore the original title")
+        }
+        try store.update(id) { $0.title = IridiumArtworkAppearance.titleOverride("My title") }
+        expect(store.appearance(id).title == "My title", "nonempty title must remain available")
+        expect(IridiumArtworkAppearance.titleOverride(String(repeating: "x", count: 129))?.count == 128,
+               "display name limit must match both input routes")
         let windowsID = UUID()
         let windows = IridiumArtworkCandidate(id: "123", title: "Windows Sample", platform: .windows, source: "steam")
         expect(try store.apply(windows, coverName: nil, backgroundName: nil, ticket: store.begin(windowsID)!),

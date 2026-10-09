@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
 
 
 def load(name, filename):
@@ -70,6 +71,17 @@ def snapshot(repo, destination, revisions):
         snapshot(child, destination / name, revisions)
 
 
+def snapshot_freetype(destination, revisions):
+    repo = build.UPSTREAM / 'research/freetype'
+    # Restored native archives skip the compiler step that normally clones this source.
+    if not repo.exists():
+        subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'VER-2-13-3',
+                        'https://github.com/freetype/freetype.git', str(repo)], check=True)
+    revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+    if revision != FREETYPE_REVISION: raise ValueError('Unexpected FreeType revision')
+    snapshot(repo, destination, revisions)
+
+
 def exclude_signing_fixtures(stage):
     """Omit exact reviewed upstream fixtures and reject all other signing files."""
     fixtures = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
@@ -107,7 +119,7 @@ def collect(app, output, maps):
         revisions = {}
         snapshot(ROOT, stage, revisions)
         freetype = build.UPSTREAM / 'research/freetype'
-        snapshot(freetype, stage / freetype.relative_to(ROOT), revisions)
+        snapshot_freetype(stage / freetype.relative_to(ROOT), revisions)
         # Locked published inputs are shared with local builds, not local signing files.
         inputs = [item for item in json.loads((ROOT / 'ci/runtime-inputs.json').read_text()) if item['name'] in {
             'llvm', 'frontend-stikjit-source', 'idevice-source', 'llvm-target-runtime-source', 'mingw-runtime-source', 'mingw-build-source'}]
