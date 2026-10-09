@@ -70,6 +70,24 @@ def snapshot(repo, destination, revisions):
         snapshot(child, destination / name, revisions)
 
 
+def exclude_signing_fixtures(stage):
+    """Omit exact reviewed upstream fixtures and reject all other signing files."""
+    fixtures = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
+    exclusions = []
+    for path in sorted(stage.rglob('*')):
+        if path.suffix.lower() not in {'.p12', '.pfx', '.mobileprovision', '.provisionprofile'}:
+            continue
+        if path.is_dir() and not path.is_symlink(): continue
+        name = path.relative_to(stage).as_posix()
+        fixture = fixtures.get(name, {})
+        if (path.is_symlink() or not path.is_file()
+                or fixture.get('sha256') != hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise ValueError('Unexpected signing material in corresponding source: ' + name)
+        path.unlink()
+        exclusions.append({'path': name, **fixture})
+    return exclusions
+
+
 def collect(app, output, maps):
     build.verify_pin()
     build.check_bundle(app)
@@ -119,6 +137,7 @@ def collect(app, output, maps):
         psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
         (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
+                    'source_exclusions': exclude_signing_fixtures(stage),
                     'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',

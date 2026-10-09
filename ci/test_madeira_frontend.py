@@ -376,6 +376,8 @@ print("Migration: old sandbox path, save conflict, idempotent retry and link con
         with tempfile.TemporaryDirectory() as folder:
             root = pathlib.Path(folder)
             shutil.copy2(ROOT / 'check-public-source.py', root)
+            (root / 'ci').mkdir()
+            shutil.copy2(ROOT / 'ci/public-signing-fixtures.json', root / 'ci')
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
             (root / '.gitignore').write_text('.build/\n')
             (root / '.build').mkdir()

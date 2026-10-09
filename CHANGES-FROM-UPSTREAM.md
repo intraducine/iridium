@@ -421,3 +421,8 @@ memory-stick paths and teardown coordination. The initial adapter uses the IR
 interpreter and software renderer, with no native JIT or networking advertised.
 The Apple recipe, export audit, selected support assets and source receipt are
 maintained outside upstream. No PPSSPP emulation source is rewritten.
+
+Corresponding-source collection omits only the digest-verified public UWP
+signing fixture, which the iOS Libretro target does not use. Its pinned upstream
+URL, path, SHA-256 and exclusion reason are recorded in the component manifest.
+The upstream checkout is unchanged; unreviewed signing files stop collection.
