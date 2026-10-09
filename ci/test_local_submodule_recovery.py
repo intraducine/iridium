@@ -17,7 +17,8 @@ class RecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        # Git reports the canonical worktree path, including macOS's /private/var.
+        self.base = Path(self.temp.name).resolve()
         self.source = self.base / "upstream"
         self.root = self.base / "superproject"
         self.module = "deps/fmt"
