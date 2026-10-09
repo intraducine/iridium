@@ -57,8 +57,7 @@ class LocalStagingTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         # Check both spaces and shell glob characters in the real shell path loop.
-        # Git and the staging API return canonical paths on macOS (/private/var).
-        # Canonicalize the trusted temporary anchor, not tested payload paths.
+        # Staging resolves the trusted root; /var and /private/var alias on macOS.
         self.root = Path(self.temporary.name).resolve() / 'checkout with [spaces]'
         (self.root / 'ci').mkdir(parents=True)
         shutil.copy2(ROOT / 'ci/stage-linux-userland.py', self.root / 'ci/stage-linux-userland.py')
