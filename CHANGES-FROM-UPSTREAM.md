@@ -1,5 +1,53 @@
 # Changes from upstream
 
+## Madeira frontend target
+
+`vendor/Madeira` is pinned to `48f976429c189f8396e23d251d8a82f43c705922`.
+Its four runtime submodules keep the exact revisions selected by that commit.
+`ci/madeira-frontend.py` generates a separate app project under `.build`.
+It replaces the root library with `iridium/apps/ios/MadeiraFrontend`, selects
+that interface at startup, and adds an X-button Play command to the library
+menu publisher. `ci/madeira_presentation.py` groups the original settings and
+game options into pages, applies a shared artwork backdrop, and organizes the
+player menu. It keeps the upstream controls, bindings and action callbacks.
+Explicit navigation-bar visibility and inline titles keep page safe areas
+stable. The player uses native glass on iOS 26 and material on older systems;
+Reduce Transparency uses an opaque surface. Close Game asks for confirmation
+before calling the original graceful close action.
+The app identity, version and icon use Iridium's values. These are the declared
+app-source hooks. The original launch, JIT, game surface, input, Steam, downloads,
+media, memory, and save implementations remain upstream code.
+
+The frontend adds Favorites, a horizontal cover shelf, and links to the native
+features. Its optional import copies an existing first prefix and subsequent
+game/save files into Madeira's shared prefix. It preserves original folders,
+checks path containment and conflicting files before copying, and converts
+the old artwork, title, arguments, favorites, and touch-layout records. Different
+saves with the same name stop import. Separate Wine registries are not merged.
+
+The cold native build reconstructs the missing wineserver base archive with
+the upstream compiler flags, then runs its original replacement-object script.
+It supplies an explicit arm64/generic FEX host configuration on macOS, builds
+the original allocator-hook archive, and refreshes the app's GPL and Converter
+Exception copies from the pinned root notices. LLVM 15.0.7's two Darwin checks
+also accept iOS. Newer Metal compilers use the public relaxed threadgroup atomic
+operation in a generated tessellation shader instead of the changed private
+intrinsic. The installed iPhoneOS Metal tool can compile the original macOS AIR
+command target when the macOS tool lookup is absent. These are build adapters;
+the pinned source trees remain unchanged.
+
+Native build completion is saved before packaging, with a 14-day reuse limit
+and checks for matching inputs and output archives. The local frontend builder
+also builds Madeira's untracked i386 farm with its original Wine/DXMT recipe
+and validates all three architecture farms before packaging. The i386 outputs
+use their own 14-day completion record, so a packaging repair does not repeat
+the native build. The local frontend command
+is `bash ci/build-madeira-ipa.sh`. Hosted Actions uses the same native/i386/app
+steps, retains completed components before packaging for 14 days, and collects
+matching source and notices. The app build disables Debug's separate dylib so
+its runtime libraries appear in the final executable link map. Source archives
+retain dependency revisions and can be rebuilt without Git metadata.
+
 ## Global sync setting in the consolidated v0.2.1 app
 
 Original Iridium Swift code exposes Fastsync, Madsync and Wine standard sync in
@@ -146,7 +194,7 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 - Added CI recipes for Wine PE modules, ARM64EC FEX, DXMT, ANGLE, source-built GStreamer, source-built idevice/StikJIT, and the legacy userland bundle. No application runtime behavior was changed.
 - Madeira prefix generation now uses a marked temporary directory, fails on wineboot failure, waits for its server, and removes host links and registry identities before archiving.
 - The legacy Wine Linux builder enables Debian source repositories and includes Python for exact dependency-source collection.
-- StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision; compatibility remains untested.
+- StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision.
 - Explicit unresolved source/license items keep IPA publication blocked. No local compilation or manual IPA workflow was run.
 
 ## Corresponding-source collection (2026-09-10)

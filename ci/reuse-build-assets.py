@@ -9,7 +9,7 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = os.environ.get('GITHUB_REPOSITORY', 'nurtrino/Iridium-fork')
+REPO = os.environ.get('GITHUB_REPOSITORY', 'intraducine/iridium')
 WORKFLOW = '.github/workflows/build-unsigned-ipa.yml'
 MEDIA_INPUTS = ('ci/prepare-media-sdk.sh', 'ci/fetch-runtime-inputs.py',
                 'ci/check-media-toolchain.py',
@@ -33,6 +33,10 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
+    'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
+                       'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
+    'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
+                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
     # Both XcodeGen specs configure the later app build, not these libraries.

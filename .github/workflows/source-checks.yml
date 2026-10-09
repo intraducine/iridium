@@ -15,6 +15,8 @@ jobs:
           persist-credentials: false
           submodules: false
           lfs: false
+      - name: Check out the pinned frontend sources
+        run: git submodule update --init --depth 1 vendor/Madeira
       - name: Reject private material and oversized files
         run: python3 check-public-source.py
       - name: Check repository standards

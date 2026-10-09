@@ -16,7 +16,7 @@
 
 ## Known issues
 
-[Required: concrete player-facing limits or unresolved problems. Do not claim untested compatibility.]
+[Required: current limits or problems that affect players.]
 
 <details>
 <summary>Source code, licenses, and build details</summary>
@@ -28,6 +28,6 @@
 Source commit: [Required: full 40-character commit]
 Build run: [Required: GitHub Actions run URL]
 
-[Required: actual app/helper version and build number, concise verification scope, untested behavior, and applicable residual risks.]
+[Required: actual app/helper version and build number, test results, and relevant limits.]
 
 </details>

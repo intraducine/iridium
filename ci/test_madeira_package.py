@@ -223,7 +223,7 @@ class MadeiraPackageTests(unittest.TestCase):
 
     def test_normal_workflow_and_adapter_cannot_select_unshipped_runtime(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('IRIDIUM_RUNTIME_PROFILE: madeira', workflow)
+        self.assertIn('ci/madeira-frontend.py app', workflow)
         for old in ('linux-userland:', 'name: linux-runtime-with-source', 'run: bash ci/prepare-legacy-bundle.sh'):
             self.assertNotIn(old, workflow)
         adapter = (ROOT / 'iridium/apps/ios/MadeiraSupport/MadeiraRuntimeAdapter.swift').read_text()

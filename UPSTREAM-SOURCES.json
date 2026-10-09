@@ -1,4 +1,18 @@
 {
+  "frontend_runtime": {
+    "path": "vendor/Madeira",
+    "upstream": "https://github.com/willfaust/Madeira",
+    "revision": "48f976429c189f8396e23d251d8a82f43c705922",
+    "dependencies": {
+      "FEX": "3bec2ac498bf78156ab47c0c194b0e8cb2849756",
+      "wine": "257f271cfffed9f22f7987cac53bc00095d092fe",
+      "dxmt": "db546ee466ad50ec6463edb5fa183de11db43761",
+      "madeira-dock": "72558e416a390f3669457930f09a389e54f49556"
+    },
+    "presentation": "iridium/apps/ios/MadeiraFrontend",
+    "hooks": "ci/madeira-frontend.py",
+    "native_build": "ci/build-madeira-ipa.sh"
+  },
   "snapshots": [
     {
       "path": "testrepos/Madeira",

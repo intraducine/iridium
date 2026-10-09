@@ -100,3 +100,6 @@
 [submodule "dependency-33"]
 	path = testrepos/Madeira/research/dxmt/include/native/directx
 	url = https://github.com/misyltoad/mingw-directx-headers
+[submodule "vendor/Madeira"]
+	path = vendor/Madeira
+	url = https://github.com/willfaust/Madeira.git

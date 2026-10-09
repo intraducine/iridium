@@ -5,48 +5,57 @@
 ![Downloads](https://img.shields.io/github/downloads/intraducine/iridium/total?style=flat-square)
 ![License](https://img.shields.io/github/license/intraducine/iridium?style=flat-square)
 
-An experimental iPhone and iPad Windows-game runtime, with a native game library and touch, keyboard, mouse, and controller integration. Compatibility varies by game and device.
+Iridium is an iPhone and iPad frontend for [Madeira](https://github.com/willfaust/Madeira).
+Its library, game options, settings, Steam pages, setup, and player menus share
+Iridium's artwork and Apple-style navigation. Madeira provides game launch,
+JIT, input, Steam, downloads, saves, and the runtime. Compatibility varies by
+game and device.
 
-This monorepo contains Iridium, its runtime forks, and the Madeira runtime source used by the current integration. Import your game files or use **Add Game → Download from Steam** to sign in and download owned games directly on the device. The [Steam integration](iridium/packages/steam/README.md) has passed iOS compilation and limited simulator checks. Real-account authentication, downloads, and physical-device validation remain outstanding; game compatibility and Iridium's JIT requirements apply.
-
-The consolidated [0.2.1 preparation](docs/releases/0.2.1.md) includes opt-in Steam
-Cloud, standalone background downloads, a download Live Activity, editable
-launch arguments, controller improvements and a global sync selector under
-**Settings → Runtime**. A fresh consolidated build and device validation remain
-pending; existing Actions builds do not establish these changes work on-device.
+Use **Add Game → Steam Library** for Madeira's Steam features. For local files,
+copy the game folder into **Iridium → wine → drive_c** in Files, then use
+**Add Game → Choose Executable**. Existing Iridium libraries can be copied with
+**Add Game → Import Existing Iridium Games**. Original folders and saves stay
+in place. A conflicting save stops import instead of overwriting either copy.
 
 | Directory | Purpose |
 | --- | --- |
-| `iridium/` | iOS application, Swift packages, integration, and tests |
-| `iridium-runtime-sdk/` | Runtime host SDK |
-| `iridium-fex-ios/` | Earlier Iridium FEX fork |
-| `iridium-wine-ios/` | Earlier Iridium Wine fork |
-| `testrepos/Madeira/` | Madeira integration source and its FEX, Wine, and DXMT forks |
+| `vendor/Madeira/` | Pinned Madeira app and its dependency submodules |
+| `iridium/apps/ios/MadeiraFrontend/` | Iridium presentation and data import |
+| `ci/madeira-frontend.py`, `ci/madeira_presentation.py` | Reviewed presentation overlay and native build preparation |
+| Other runtime and application directories | Retained migration and recovery source; excluded from the frontend target |
 
 Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own licenses. Read [LICENSING.md](LICENSING.md) before redistributing. Madeira is credited for the runtime approach and implementation.
 
 ## Getting the source
 
-Clone this repository. Optional external dependencies are pinned in the root `.gitmodules` and `DEPENDENCIES.json`; use `git submodule update --init --recursive` when preparing them. Some optional upstream test dependencies contain binaries; they are not stored in this repository.
-
-The [manual IPA workflow](docs/actions-ipa.md) builds runtime dependencies and the app, with source and license checks before packaging. IPA packaging requires the final binary and source audits to pass. Start with the [product guide](iridium/docs/product-experience.md) for app navigation and the build guide for development setup.
+Clone this repository. The frontend builder initializes the required Madeira
+submodules at their committed revisions. It does not initialize FEX's large test
+repositories. The current pin is recorded in [UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json).
+Upstream updates require a pin update and review of the declared hooks.
 
 ## Build a sideloading IPA locally
 
-Install Xcode 27, Python 3.12 or newer, XcodeGen, LLVM, and .NET SDK 10.0.401. Prepare the runtime
-dependencies by following [the full IPA build guide](docs/actions-ipa.md), then
-run this command from the repository root:
+Use an Apple Silicon Mac, Xcode 27 with the Metal tools, Python 3.11 or newer,
+Homebrew, and Rust. Run this command from the repository root:
 
 ```sh
-bash ci/build-local-ipa.sh
+bash ci/build-madeira-ipa.sh
 ```
 
-The script checks the staged dependencies, builds the Release app without
-Apple signing, audits the package, and prints the path to `Iridium-unsigned.ipa`.
+The script prepares Madeira's native libraries, builds its app with the Iridium
+presentation, checks the package, and prints the path to `Iridium-unsigned.ipa`.
+The configuration is Debug, as used by Madeira's guest-runtime build. The
+package tool strips debug sections from the delivered copy. Native outputs are
+saved before packaging and reused for up to 14 days when their inputs and
+archive checks match. Xcode also keeps its incremental app build.
+
+The main app targets iOS 18 and later. The built-in JIT helper requires iOS 26
+or later; use external JIT on earlier versions. See the
+[build guide](docs/actions-ipa.md) for local and GitHub Actions commands.
+
 Packaging adds an anonymous ad-hoc signature to the main executable carrying
 only `com.apple.developer.kernel.increased-memory-limit=true`; helpers remain
 unsigned. The existing filename is retained for download compatibility.
-It keeps `.build/local-ipa`, so later builds reuse unchanged Xcode outputs.
 Re-sign the app and sign its helper extensions with a suitable sideloading tool
 before installation.
 

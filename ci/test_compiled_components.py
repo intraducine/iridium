@@ -78,6 +78,35 @@ class CompiledComponentsTests(unittest.TestCase):
                 changed[index] += '\nchanged'
                 self.assertNotEqual(components.prepared.fingerprint(changed), expected)
 
+    def test_frontend_checkpoint_restores_libraries_and_completion_records(self):
+        for component in ('madeira-native', 'madeira-windows'):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                for name in components.PATHS[component]:
+                    base = root / name
+                    if base.suffix in {'.json', '.exe', '.txt'}:
+                        base.parent.mkdir(parents=True, exist_ok=True)
+                        base.write_bytes(b'completion record')
+                    else:
+                        base.mkdir(parents=True, exist_ok=True)
+                        (base / 'output.a').write_bytes(b'archive')
+                library = root / components.FRONTEND / 'app/Madeira/libntdll_unix.a'
+                library.parent.mkdir(parents=True, exist_ok=True)
+                library.write_bytes(b'native library')
+                library.with_suffix('.o').write_bytes(b'temporary object')
+                env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
+                with patch.dict(os.environ, env), patch.object(reuse, 'git', return_value='b' * 40):
+                    components.package(root, component)
+                archive = root / '.build' / (component + '-compiled-transfer/compiled.tar.gz')
+                with tarfile.open(archive) as tar:
+                    names = [m.name for m in tar]
+                    self.assertFalse(any(name.endswith('.o') for name in names))
+                    for name in names: (root / name.removeprefix('compiled/')).unlink()
+                with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40):
+                    components.restore(root, component, '123')
+                self.assertTrue(all((root / name.removeprefix('compiled/')).is_file() for name in names))
+                if component == 'madeira-native': self.assertEqual(library.read_bytes(), b'native library')
+
     def test_round_trip_preserves_executable_and_rejects_corruption(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -153,12 +182,11 @@ class CompiledComponentsTests(unittest.TestCase):
 
     def test_uploads_precede_staging_and_only_follow_new_compilation(self):
         workflow = (components.ROOT / reuse.WORKFLOW).read_text()
-        for component in components.PATHS:
+        for component in ('madeira-native', 'madeira-windows'):
             step = workflow.split('      - name: Retain ' + component + ' compilation\n')[1].split('      - name:')[0]
-            self.assertIn(f"if: steps.compiled_{component}.outputs.run_id == ''", step)
-            self.assertIn('retention-days: 7', step)
-        self.assertLess(workflow.index('Retain wine compilation'), workflow.index('Stage Windows modules'))
-        self.assertLess(workflow.index('Retain windows compilation'), workflow.index('Stage Windows modules'))
+            self.assertIn(f"if: steps.compiled_{component.replace('-', '_')}.outputs.run_id == ''", step)
+            self.assertIn('retention-days: 14', step)
+            self.assertLess(workflow.index('Retain ' + component + ' compilation'), workflow.index('name: Build without signing'))
 
     def test_helper_edits_reuse_libraries_but_media_and_fex_edits_rebuild(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -200,10 +228,9 @@ class CompiledComponentsTests(unittest.TestCase):
 
     def test_helpers_are_always_rebuilt_after_library_cache_and_before_staging(self):
         workflow = (components.ROOT / reuse.WORKFLOW).read_text()
-        label = '      - name: Build game input and prerequisite helpers\n'
-        step = workflow.split(label)[1].split('      - name:')[0]
-        self.assertNotIn('if:', step)
-        self.assertIn('llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH', step)
-        self.assertIn('sh iridium/apps/ios/Scripts/build_controller_runtime.sh', step)
-        self.assertLess(workflow.index('Retain native compilation'), workflow.index(label))
-        self.assertLess(workflow.index(label), workflow.index('Stage Windows modules'))
+        for component, action in (('madeira-native', 'native'), ('madeira-windows', 'windows')):
+            step = workflow.split('      - name: Compile ' + component + '\n')[1].split('      - name:')[0]
+            self.assertNotIn('if:', step)
+            self.assertIn('ci/madeira-frontend.py ' + action, step)
+            self.assertLess(workflow.index('Compile ' + component), workflow.index('Check build prerequisites'))
+        self.assertNotIn('build_controller_runtime.sh', workflow)

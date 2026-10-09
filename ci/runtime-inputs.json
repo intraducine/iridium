@@ -95,5 +95,13 @@
     "sha256": "f61c5bf4eadb993430642bb32c5642b1ddf2479a97b22ac307564967a4ff69d4",
     "destination": "testrepos/Madeira/.build/metal-shader-converter.tar.gz",
     "license": "Apple Metal Shader Converter agreement (dynamic libraries); Apache-2.0 (headers); included acknowledgements"
+  },
+  {
+    "name": "frontend-stikjit-source",
+    "url": "https://codeload.github.com/StikDebug/StikJIT/tar.gz/32287268fa5824f9edce4cb359f5833ce0cf7b00",
+    "sha256": "ed38ff2e296b1de00b7b664f8ff10b2e10c843375b9422e5cef7fb1d6b42e3d0",
+    "destination": ".build/runtime-sources/StikJIT-1.9.0",
+    "archive_root": "StikJIT-32287268fa5824f9edce4cb359f5833ce0cf7b00",
+    "license": "MPL-2.0; bundled scripts and idevice retain their own notices"
   }
 ]

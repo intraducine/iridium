@@ -53,8 +53,8 @@ class ManualBuildTests(unittest.TestCase):
                 final.unlink()
                 self.assertTrue(prerequisites.blockers(root, package=True))
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertLess(workflow.index('xcodebuild -project'), workflow.index('check-ipa-prerequisites.py --package'))
-        self.assertLess(workflow.index('check-ipa-prerequisites.py --package'), workflow.index('ci/package-unsigned-ipa.py'))
+        self.assertLess(workflow.index('ci/madeira-frontend.py app'), workflow.index('check-ipa-prerequisites.py --profile madeira-frontend --package'))
+        self.assertLess(workflow.index('check-ipa-prerequisites.py --profile madeira-frontend --package'), workflow.index('ci/package-unsigned-ipa.py'))
 
     def test_app_inventory_hashes_native_files_and_propagates_tool_failure(self):
         import hashlib
@@ -141,8 +141,8 @@ class ManualBuildTests(unittest.TestCase):
         self.assertEqual(re.findall(r'^  ([a-z_]+):', trigger, re.M), ['workflow_dispatch'])
         self.assertNotIn("secrets.", text)
         self.assertNotIn("allowProvisioningUpdates", text)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", text)
-        self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("xcodebuild -project"))
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira-frontend.py').read_text())
+        self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("ci/madeira-frontend.py app"))
 
     def test_dispatch_checks_and_cancels_only_its_own_run(self):
         import json
@@ -165,7 +165,7 @@ class ManualBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 dispatch.check_commit(invalid, invalid)
         workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
-        self.assertLess(workflow.index("ci/dispatch-build.py --check"), workflow.index("ci/reuse-build-assets.py"))
+        self.assertLess(workflow.index("ci/dispatch-build.py --check"), workflow.index("ci/compiled-components.py select"))
 
     def test_pinned_graphics_tools_bootstrap_before_sync(self):
         script = (ROOT / "ci/prepare-graphics.sh").read_text()

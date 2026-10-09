@@ -46,9 +46,10 @@ class RuntimeInputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             inputs.destination(ROOT, bad)
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        stages = ['prepare-runtime-inputs.sh', 'prepare-native-runtime.sh', 'compile-wine.sh', 'compile-windows-modules.sh', 'prepare-windows-runtime.sh', 'prepare-graphics.sh', 'prepare-stikjit.sh', 'check-ipa-prerequisites.py']
-        positions = [workflow.index('ci/' + stage + '\n') for stage in stages]
-        self.assertLess(workflow.index('ci/prepare-graphics.sh --preflight'), positions[0])
+        stages = ['ci/local_build_tools.py --madeira', 'ci/madeira-frontend.py toolchains',
+                  'ci/madeira-frontend.py native', 'ci/madeira-frontend.py windows',
+                  'ci/check-ipa-prerequisites.py --profile madeira-frontend', 'ci/madeira-frontend.py app']
+        positions = [workflow.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn('/tmp/iridium-media-sdk', (ROOT / 'iridium/apps/ios/madeira.yml').read_text())
 
