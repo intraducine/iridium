@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import madeira_presentation
+import madeira_jit_lifecycle
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('madeira_frontend', ROOT / 'ci/madeira-frontend.py')
@@ -307,7 +308,15 @@ class FrontendImportTests(unittest.TestCase):
                                ('SteamGames.swift', 'struct SteamGamesSection: View')]:
             text = (folder / name).read_text()
             changed = madeira_presentation.apply(name, text)
-            self.assertEqual(text[:text.index(boundary)], changed[:changed.index(boundary)])
+            # The JIT request lifecycle is an explicit overlay. Providers,
+            # pairing storage and all other non-view code must remain exact.
+            expected = madeira_jit_lifecycle.apply(name, text)
+            self.assertEqual(expected[:expected.index(boundary)], changed[:changed.index(boundary)])
+            if name == 'JITSetup.swift':
+                start = '    private func enableResolved('
+                end = '    func prepareBuiltIn('
+                self.assertEqual(madeira_presentation.between(text, start, end),
+                                 madeira_presentation.between(changed, start, end))
         for name in ['GamepadInput.swift', 'HardwareInput.swift', 'SteamCloud.swift', 'SteamInstall.swift', 'SavesAndShortcuts.swift']:
             text = (folder / name).read_text()
             self.assertEqual(text, madeira_presentation.apply(name, text), name)
