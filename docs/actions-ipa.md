@@ -64,9 +64,13 @@ both copies. Failed ntdll compilation stops before archiving or installing old
 objects. A failed bulk i386 build retries every selected target, including
 existing DLLs; a failed retry stops installation and completion recording.
 
-App code and docs do not invalidate compiler outputs. Changes to
-`ci/madeira-frontend.py` currently invalidate both components because that file
-owns both recipes. Packaging fixes alone do not require another native build.
+App code and docs do not invalidate compiler outputs. In
+`ci/madeira-frontend.py`, reviewed app-staging and presentation function bodies
+are excluded from the compiler comparison. Compiler recipes, shared helpers,
+imports, globals, function signatures and command-line routing still invalidate
+both components. Unrecognized source layouts or dependencies use the stricter
+whole-file comparison. Existing completion records and provenance checks are
+unchanged, so matching retained builds can be reused without recompilation.
 
 ## Source and package checks
 

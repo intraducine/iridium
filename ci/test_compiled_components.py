@@ -15,6 +15,119 @@ reuse = components.reuse
 
 
 class CompiledComponentsTests(unittest.TestCase):
+    def test_frontend_app_bodies_do_not_change_compiler_source(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        original = reuse.frontend_compiler_source(source)
+        self.assertNotEqual(original, source)
+        for name in reuse.FRONTEND_APP_FUNCTIONS:
+            with self.subTest(function=name):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                changed = source.replace(header + '\n', header + '\n    print("app-only edit")\n')
+                self.assertEqual(original, reuse.frontend_compiler_source(changed))
+        # The actual diagnostics-staging edit that unnecessarily rebuilt both
+        # components changed prepare(), not either native compiler recipe.
+        before = source.replace(
+            "*RUNTIME_BRIDGE.glob('*.c'),\n                      ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift']",
+            "*RUNTIME_BRIDGE.glob('*.c')]")
+        self.assertNotEqual(before, source)
+        self.assertEqual(original, reuse.frontend_compiler_source(before))
+
+    def test_frontend_compiler_helpers_and_global_inputs_remain_exact(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        original = reuse.frontend_compiler_source(source)
+        for name in ('native', 'windows', 'build_native', 'bootstrap', 'toolchains',
+                     'stage_crypto_libraries', 'run_checked_recipe', 'verify_pin', 'compiler_identity'):
+            with self.subTest(function=name):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                changed = source.replace(header + '\n', header + '\n    # Changed compiler recipe.\n')
+                self.assertNotEqual(original, reuse.frontend_compiler_source(changed))
+        for old, new in (("CRYPTO_LIBRARIES = ('gnutls',", "CRYPTO_LIBRARIES = ('different',"),
+                         ("REVISION = '48f976", "REVISION = '000000"),
+                         ('import subprocess', 'import subprocess as another_process'),
+                         ("'native': native", "'native': windows"),
+                         ('def prepare():', 'def prepare(*args):')):
+            with self.subTest(input=old):
+                changed = source.replace(old, new)
+                self.assertNotEqual(source, changed)
+                self.assertNotEqual(original, reuse.frontend_compiler_source(changed))
+        self.assertNotEqual(original, reuse.frontend_compiler_source(source + '\ndef new_helper():\n    return 1\n'))
+
+    def test_frontend_unknown_or_shared_app_dependencies_fail_closed(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        def helper(body, arguments=''):
+            return source.replace("\nif __name__ == '__main__':",
+                                  '\ndef new_helper(' + arguments + '):\n' + body + "\nif __name__ == '__main__':")
+        variants = [
+            source + '\ndef prepare():\n    return 1\n',
+            source + '\nprepare = native\n',
+            source + '\nif True:\n    native = prepare\n',
+            helper('    prepare()\n'),
+            helper('    callback()\n', 'callback=prepare'),
+            helper('    def nested():\n        prepare()\n    nested()\n'),
+            helper('    return globals()["prepare"]\n'),
+            helper('    return sys.modules[__name__]\n'),
+            helper('    importlib.import_module(__name__).prepare()\n'),
+            helper('    from builtins import globals as namespace\n    namespace()["prepare"]()\n'),
+            helper('    return Path(__file__).read_text()\n'),
+            helper('    subprocess.run([sys.executable, str(ROOT / "ci/madeira-frontend.py"), "prepare"], check=True)\n'),
+            helper('    subprocess.run([driver, "prepare"], check=True)\n'),
+            helper('    module.prepare()\n'),
+            source.replace('import json', 'from builtins import globals as namespace\nimport json'),
+            source.replace('import json', 'import inspect as inspection\nimport json'),
+            source.replace('def native():\n', 'def native():\n    inspect.stack()\n'),
+            source.replace('def native():\n', 'def native():\n    __builtins__["globals"]()["prepare"]()\n'),
+            source.replace('def prepare():', '@decorator\ndef prepare():'),
+            source.replace('def prepare():', 'def prepare(value=bootstrap()):'),
+            source.replace('def prepare():', 'def prepare() -> bootstrap():'),
+            source.replace('def prepare():', 'async def prepare():'),
+            source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
+            source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
+            source.replace("'native': native", "'native': prepare"),
+            source + '\ninvalid python !\n',
+        ]
+        for index, changed in enumerate(variants):
+            with self.subTest(variant=index):
+                self.assertEqual(reuse.frontend_compiler_source(changed), changed)
+
+    def test_frontend_app_only_edit_reuses_existing_producer_both_components(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q'); git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            script = root / 'ci/madeira-frontend.py'
+            script.parent.mkdir()
+            source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+            script.write_text(source)
+            workflow = root / reuse.WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text((components.ROOT / reuse.WORKFLOW).read_text())
+            contract = root / 'ci/compiled-components.py'
+            contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
+            def commit():
+                git('add', '.'); git('commit', '-qm', 'fixture')
+            commit(); revision = git('rev-parse', 'HEAD')
+            script.write_text(source.replace('def prepare():\n', 'def prepare():\n    print("new app staging")\n'))
+            commit()
+            for stage in ('madeira-native', 'madeira-windows'):
+                reuse.compatible(root, revision, stage)
+            app_only = script.read_text()
+            for name in ('build_native', 'windows', 'verify_pin', 'run_checked_recipe', 'stage_crypto_libraries'):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                script.write_text(app_only.replace(header + '\n', header + '\n    print("changed recipe")\n'))
+                commit()
+                for stage in ('madeira-native', 'madeira-windows'):
+                    with self.subTest(stage=stage, helper=name), self.assertRaisesRegex(ValueError, 'Changed producer input: ci/madeira-frontend.py'):
+                        reuse.compatible(root, revision, stage)
+            script.write_text(app_only)
+            contract.write_text(contract.read_text() + '\n# Changed artifact contract.\n')
+            commit()
+            for stage in ('madeira-native', 'madeira-windows'):
+                with self.assertRaisesRegex(ValueError, 'Changed producer input: ci/compiled-components.py'):
+                    reuse.compatible(root, revision, stage)
+
     def test_uploaded_transfers_are_removed_without_touching_runtime(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
