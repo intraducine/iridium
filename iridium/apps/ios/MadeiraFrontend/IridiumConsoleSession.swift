@@ -14,15 +14,18 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var image: UIImage?
     @Published var error: String?
     @Published private(set) var presented = false
+    @Published private(set) var diagnostics = IridiumRuntimeProgress()
     var isActive: Bool { game != nil }
 
     private let queue = DispatchQueue(label: "software.iridium.console", qos: .userInteractive)
     private let lock = NSLock()
     private var digitalInput = IridiumPolledInput() // protected by lock
-    private var touchAnalog: (Int16, Int16) = (0, 0)
+    private var touchAnalogSources = IridiumAnalogSources()
+    private var touchAnalog: (Int16, Int16) { touchAnalogSources.value }
     private var keyboardAnalog: (Int16, Int16) = (0, 0)
     private var suppressController = false
     private var intent = IridiumConsoleIntent() // protected by lock
+    private var intentGeneration: UInt64 = 0 // protected by lock
     private enum Backend { case sameBoy, psp }
     private var backend = Backend.sameBoy // queue-owned below
     private var queueOwner: IridiumRuntimeLease?
@@ -44,6 +47,15 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var oldAudio: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+    private var progress = IridiumRuntimeProgress() // serial queue only
+    private var progressStarted = ProcessInfo.processInfo.systemUptime
+    private var lastFreshImage: Double?
+    private var lastChangedImage: Double?
+    private var lastProgressPublished = 0.0
+    private var lastProgressLogged = 0.0
+    private var lastProgressPhase = ""
+    private var lastSameBoyPixels: Data?
+    private var displayedImageCount: UInt64 = 0 // protected by lock
 
     func start(_ game: IridiumConsoleGame, store: IridiumConsoleStore) {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -56,13 +68,19 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             guard runtime.id == "sameboy" || runtime.id == "ppsspp" else { throw IridiumRuntimeError.unavailable }
             _ = try runtime.executionMode(jitAvailable: false)
             let owner = try ownership.acquire(runtime)
-            lock.lock(); intent = IridiumConsoleIntent(); lock.unlock()
+            lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
             releaseButtons()
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
+            diagnostics = IridiumRuntimeProgress()
+            lock.lock(); displayedImageCount = 0; lock.unlock()
             LibraryController.shared.configure(enabled: true, ownsInput: false)
             queue.async { [self] in
                 queueOwner = owner; bootComplete = false; stopRequested = false; terminalFailure = false
                 backend = runtime.id == "ppsspp" ? .psp : .sameBoy
+                progress = IridiumRuntimeProgress(); progressStarted = ProcessInfo.processInfo.systemUptime
+                lastFreshImage = nil; lastChangedImage = nil
+                lastProgressPublished = 0; lastProgressLogged = 0; lastProgressPhase = ""; lastSameBoyPixels = nil
+                RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] launch runtime=\(runtime.id) platform=\(game.platform.rawValue)")
                 do {
                     let url = try store.validateROM(game)
                     let folder = try store.saveDirectory(game)
@@ -85,6 +103,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                         fps = first.frames_per_second; rate = first.samples_per_second
                         bootComplete = true; lastSave = Date()
                         try activate(owner)
+                        recordSameBoyProgress(first, owner: owner)
                         if requested == .play { deliver(first, owner: owner) }
                     case .psp:
                         #if IRIDIUM_PPSSPP
@@ -94,6 +113,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                               let resources = Bundle.main.resourceURL else { throw IridiumRuntimeError.unavailable }
                         let component = frameworks.appendingPathComponent("ppsspp_libretro.dylib")
                         let assets = resources.appendingPathComponent("PSP", isDirectory: true)
+                        ir_psp_set_log_callback { level, message in
+                            guard let message else { return }
+                            RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP core] level=\(level) \(String(cString: message))")
+                        }
                         let opened = component.path.withCString { componentPath in
                             url.path.withCString { gamePath in
                                 assets.path.withCString { assetPath in
@@ -116,6 +139,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         } catch { self.error = error.localizedDescription }
     }
 
+    private var currentIntentGeneration: UInt64 {
+        lock.lock(); defer { lock.unlock() }; return intentGeneration
+    }
+
     private var requested: IridiumConsoleIntent.Request {
         lock.lock(); defer { lock.unlock() }; return intent.request
     }
@@ -123,13 +150,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func pause() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .running || phase == .starting else { return }
-        lock.lock(); intent.pause(); lock.unlock()
+        lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
         phase = .paused; releaseButtons()
+        diagnostics.phase = "pause requested"
         LibraryController.shared.configure(enabled: true, ownsInput: true)
         queue.async { [self] in
             guard queueOwner == owner, requested == .pause else { return }
             // Async PSP boot still needs the single pump to reach a safe state.
             if bootComplete { stopTimer() }
+            progress.phase = bootComplete ? "paused" : "booting (pause requested)"
+            publishProgress(owner, force: true)
             silenceAudio()
             do { try persistSaves() }
             catch { reportSaveError(owner) }
@@ -139,8 +169,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func resume() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .paused else { return }
-        lock.lock(); intent.resume(); lock.unlock()
+        lock.lock(); intent.resume(); intentGeneration &+= 1; lock.unlock()
         phase = .starting
+        diagnostics.phase = "resume requested"
         LibraryController.shared.configure(enabled: true, ownsInput: false)
         queue.async { [self] in
             guard queueOwner == owner, requested == .play else { return }
@@ -156,8 +187,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func stop() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase != .stopping, phase != .restartRequired else { return }
-        lock.lock(); intent.stop(); lock.unlock()
+        lock.lock(); intent.stop(); intentGeneration &+= 1; lock.unlock()
         phase = .stopping; releaseButtons()
+        diagnostics.phase = "stop requested"
         watchStop(owner)
         queue.async { [self] in
             guard queueOwner == owner, requested == .stop else { return }
@@ -170,11 +202,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             guard self.lease == owner, self.stopWatch == attempt, self.phase == .stopping else { return }
             self.phase = .restartRequired
+            self.diagnostics.phase = "stop timed out"
             self.error = "The runtime has not stopped. You can return to the library, but fully close and reopen Iridium before launching another game."
         }
     }
 
     private func beginStop(_ owner: IridiumRuntimeLease) {
+        progress.phase = "stopping"; publishProgress(owner, force: true)
         silenceAudio()
         switch backend {
         case .sameBoy:
@@ -182,7 +216,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             do { try persistSaves() }
             catch {
                 // SameBoy alone has recoverable in-memory battery/RTC data.
-                lock.lock(); intent = IridiumConsoleIntent(); intent.pause(); lock.unlock()
+                lock.lock(); intent = IridiumConsoleIntent(); intent.pause(); intentGeneration &+= 1; lock.unlock()
                 reportSaveError(owner); return
             }
             ir_core_close(); complete(owner)
@@ -198,7 +232,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     private func fail(_ message: String, owner: IridiumRuntimeLease) {
         terminalFailure = true
-        lock.lock(); intent.stop(); lock.unlock()
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] failure: \(message)")
+        progress.phase = "failed"; publishProgress(owner, force: true)
+        lock.lock(); intent.stop(); intentGeneration &+= 1; lock.unlock()
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
             self.error = message; self.releaseButtons()
@@ -210,6 +246,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     private func complete(_ owner: IridiumRuntimeLease) {
         let failed = terminalFailure
+        progress.phase = failed ? "failed" : "closed"; publishProgress(owner, force: true)
         stopTimer(); stopAudio(); runningGame = nil; saveFolder = nil; queueOwner = nil
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
@@ -224,6 +261,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
 
     private func requireRestart(_ owner: IridiumRuntimeLease) {
+        progress.phase = "restart required"; publishProgress(owner, force: true)
         stopTimer(); stopAudio()
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
@@ -250,6 +288,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             if requested == .stop { beginStop(owner) } else { stopTimer(); silenceAudio() }
             return
         }
+        progress.phase = "running"; publishProgress(owner, force: true)
         startTimer(owner: owner)
         DispatchQueue.main.async {
             guard self.lease == owner, self.phase == .starting, self.requested == .play else { return }
@@ -258,8 +297,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
 
     private func pauseAfterAudioFailure(_ owner: IridiumRuntimeLease) {
-        lock.lock(); intent.pause(); lock.unlock()
+        lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
         stopTimer(); silenceAudio()
+        progress.phase = "paused"; publishProgress(owner, force: true)
         DispatchQueue.main.async {
             guard self.lease == owner, self.requested == .pause else { return }
             self.phase = .paused; self.releaseButtons()
@@ -291,16 +331,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         digitalInput.setButtons(buttons, source: source)
     }
 
-    func setAnalog(x: Int16, y: Int16, keyboard: Bool = false) {
+    func setAnalog(x: Int16, y: Int16, keyboard: Bool = false, source: String = "touch") {
         lock.lock(); defer { lock.unlock() }
         guard intent.request == .play else { return }
-        if keyboard { keyboardAnalog = (x, y) } else { touchAnalog = (x, y) }
+        if keyboard { keyboardAnalog = (x, y) } else { touchAnalogSources.set(x: x, y: y, source: source) }
     }
 
     func releaseButtons() {
         lock.lock()
         digitalInput.cancel()
-        touchAnalog = (0, 0); keyboardAnalog = (0, 0); suppressController = true
+        touchAnalogSources.clear(); keyboardAnalog = (0, 0); suppressController = true
         lock.unlock()
     }
 
@@ -390,8 +430,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             let valid = ir_core_step(controls.digital.buttons, &frame)
             acknowledge(controls, polled: frame.input_polled)
             guard valid else {
-                lock.lock(); intent.pause(); lock.unlock()
+                lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
                 stopTimer(); silenceAudio()
+                progress.phase = "paused"; publishProgress(owner, force: true)
+                RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] invalid frame; runtime paused")
                 DispatchQueue.main.async {
                     guard self.lease == owner, self.requested == .pause else { return }
                     self.phase = .paused; self.releaseButtons()
@@ -400,6 +442,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 }
                 return
             }
+            recordSameBoyProgress(frame, owner: owner)
             deliver(frame, owner: owner)
             if Date().timeIntervalSince(lastSave) >= 5 {
                 do { try persistSaves(); lastSave = Date() }
@@ -407,10 +450,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             }
         case .psp:
             #if IRIDIUM_PPSSPP
-            if bootComplete, requested == .pause { stopTimer(); silenceAudio(); return }
+            if bootComplete, requested == .pause {
+                stopTimer(); silenceAudio()
+                progress.phase = "paused"; publishProgress(owner, force: true); return
+            }
             let controls = requested == .play ? input() : nil
             var frame = IRPSPFrame()
             let result = ir_psp_step(controls?.digital.buttons ?? 0, controls?.x ?? 0, controls?.y ?? 0, &frame)
+            recordProgress(frame, phase: result, owner: owner)
             if let controls { acknowledge(controls, polled: frame.input_polled) }
             switch result {
             case IR_PSP_CLOSED: complete(owner)
@@ -426,7 +473,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 guard requested == .play else { return }
                 // Buffers must be copied before the next bridge operation.
                 var output = IRCoreFrame()
-                output.pixels = frame.pixels; output.width = frame.width; output.height = frame.height
+                output.pixels = frame.pixels
+                // A retained bridge buffer is not a new frame. Audio can still
+                // be delivered on steps where no fresh video callback arrived.
+                lock.lock(); let needsFirstImage = displayedImageCount == 0; lock.unlock()
+                let presentImage = frame.video_refreshed || needsFirstImage
+                output.width = presentImage ? frame.width : 0
+                output.height = presentImage ? frame.height : 0
                 output.audio = frame.audio; output.audio_frames = frame.audio_frames
                 output.frames_per_second = frame.fps; output.samples_per_second = frame.sample_rate
                 deliver(output, owner: owner)
@@ -436,8 +489,83 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
+    #if IRIDIUM_PPSSPP
+    private func recordProgress(_ frame: IRPSPFrame, phase: IRPSPPhase, owner: IridiumRuntimeLease) {
+        let now = ProcessInfo.processInfo.systemUptime
+        switch phase {
+        case IR_PSP_BOOTING: progress.phase = requested == .pause ? "booting (pause requested)" : "booting"
+        case IR_PSP_RUNNING: progress.phase = requested == .pause ? "paused" : "running"
+        case IR_PSP_STOPPING: progress.phase = "stopping"
+        case IR_PSP_FAILED: progress.phase = "failed"
+        case IR_PSP_RESTART_REQUIRED: progress.phase = "restart required"
+        default: progress.phase = "closed"
+        }
+        progress.runtimeSteps = max(progress.runtimeSteps, frame.steps)
+        progress.videoCallbacks = max(progress.videoCallbacks, frame.video_callbacks)
+        progress.freshImages = max(progress.freshImages, frame.video_frames)
+        progress.changedImages = max(progress.changedImages, frame.changed_frames)
+        progress.inputPolls = max(progress.inputPolls, frame.input_polls); progress.audioFrames += UInt64(frame.audio_frames)
+        if frame.video_refreshed { lastFreshImage = now }
+        if frame.image_changed { lastChangedImage = now }
+        publishProgress(owner)
+    }
+    #endif
+
+    private func recordSameBoyProgress(_ frame: IRCoreFrame, owner: IridiumRuntimeLease) {
+        let now = ProcessInfo.processInfo.systemUptime
+        progress.phase = requested == .pause ? "paused" : "running"
+        progress.runtimeSteps += 1
+        if frame.input_polled { progress.inputPolls += 1 }
+        progress.audioFrames += UInt64(frame.audio_frames)
+        if let pixels = frame.pixels, frame.width > 0, frame.height > 0,
+           frame.width <= 1024, frame.height <= 1024 {
+            let data = Data(bytes: pixels, count: Int(frame.width) * Int(frame.height) * 4)
+            progress.videoCallbacks += 1; progress.freshImages += 1; lastFreshImage = now
+            if data != lastSameBoyPixels { progress.changedImages += 1; lastChangedImage = now }
+            lastSameBoyPixels = data
+        }
+        publishProgress(owner)
+    }
+
+    /// Queue-owned samples are throttled, but phase transitions are always kept.
+    /// Main-thread intent prevents an older completed step hiding a pending pause.
+    private func publishProgress(_ owner: IridiumRuntimeLease, force: Bool = false) {
+        lock.lock()
+        let sampledGeneration = intentGeneration
+        let sampledRequest = intent.request
+        lock.unlock()
+        if sampledRequest == .stop && !["stopping", "closed", "failed", "restart required"].contains(progress.phase) { progress.phase = "stop requested" }
+        if sampledRequest == .pause && progress.phase == "running" { progress.phase = "pause requested" }
+        if sampledRequest == .play && progress.phase == "paused" { progress.phase = "resume requested" }
+        let now = ProcessInfo.processInfo.systemUptime
+        progress.sampledUptime = now
+        progress.elapsedSeconds = now - progressStarted
+        progress.secondsSinceFreshImage = lastFreshImage.map { now - $0 }
+        progress.secondsSinceChangedImage = lastChangedImage.map { now - $0 }
+        lock.lock(); progress.displayedImages = displayedImageCount; lock.unlock()
+        let changedPhase = progress.phase != lastProgressPhase
+        lastProgressPhase = progress.phase
+        if force || changedPhase || now - lastProgressLogged >= 5 {
+            lastProgressLogged = now
+            RuntimeDiagnosticLogFiles.writeConsoleLine(progress.logLine)
+        }
+        if force || changedPhase || now - lastProgressPublished >= 1 {
+            lastProgressPublished = now
+            let snapshot = progress
+            DispatchQueue.main.async {
+                guard self.lease == owner, self.currentIntentGeneration == sampledGeneration else { return }
+                if self.phase == .restartRequired && !["closed", "failed", "restart required"].contains(snapshot.phase) {
+                    var timedOut = snapshot; timedOut.phase = "stop timed out"
+                    self.diagnostics = timedOut
+                } else { self.diagnostics = snapshot }
+            }
+        }
+    }
+
     private func reportSaveError(_ owner: IridiumRuntimeLease) {
-        lock.lock(); intent.pause(); lock.unlock()
+        lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
+        progress.phase = "paused"; publishProgress(owner, force: true)
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] save failed; paused with save retained in memory")
         DispatchQueue.main.async {
             guard self.lease == owner, self.requested == .pause else { return }
             self.phase = .paused; self.releaseButtons()
@@ -514,6 +642,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 self.lock.lock(); self.pendingFrame = false; self.lock.unlock()
                 guard self.lease == owner, self.requested == .play, self.phase == .starting || self.phase == .running, let cg else { return }
                 self.image = UIImage(cgImage: cg)
+                self.lock.lock(); self.displayedImageCount += 1; self.lock.unlock()
             }
         }
         guard let samples = frame.audio, frame.audio_frames > 0, let player,

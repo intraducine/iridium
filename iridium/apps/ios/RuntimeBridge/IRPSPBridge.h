@@ -15,7 +15,15 @@ typedef struct {
     // True only when this step reached the core's input-poll callback. A boot
     // pump, early return or stop drain is not an input acknowledgment.
     bool input_polled;
+    // Counters describe bridge observations, never game loading progress.
+    bool video_refreshed, image_changed;
+    uint64_t steps, video_callbacks, video_frames, changed_frames, input_polls;
 } IRPSPFrame;
+
+typedef void (*IRPSPLogCallback)(unsigned level, const char *message);
+// Install before open, on the serial owner. Core logging may arrive from its
+// loader thread; the callback must be thread-safe and retain no core pointers.
+void ir_psp_set_log_callback(IRPSPLogCallback callback);
 
 // Frame buffers are bridge-owned and change at the next operation. Copy them
 // before returning control to the serial owner. RUNNING can precede the first

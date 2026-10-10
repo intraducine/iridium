@@ -8,6 +8,8 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #define API_FUNCTIONS(X) \
     X(retro_api_version) X(retro_set_environment) X(retro_set_video_refresh) \
@@ -32,10 +34,21 @@ static struct {
     int16_t audio[4096 * 2];
     size_t frames;
     double fps, rate;
+    bool video_refreshed, image_changed;
+    uint64_t steps, video_callbacks, video_frames, changed_frames, input_polls;
 } core;
 
+static IRPSPLogCallback log_callback;
+void ir_psp_set_log_callback(IRPSPLogCallback callback) { log_callback = callback; }
 static void private_log(enum retro_log_level level, const char *format, ...)
-{ (void)level; (void)format; }
+{
+    if (!log_callback || !format) return;
+    char message[2048];
+    va_list arguments; va_start(arguments, format);
+    vsnprintf(message, sizeof(message), format, arguments);
+    va_end(arguments);
+    log_callback((unsigned)level, message);
+}
 
 static bool geometry(const struct retro_game_geometry *g, bool include_maximum)
 {
@@ -133,12 +146,19 @@ static bool environment(unsigned command, void *data)
 
 static void video(const void *data, unsigned width, unsigned height, size_t pitch)
 {
+    ++core.video_callbacks;
     if (core.stop || !data) return;
     if (data == RETRO_HW_FRAME_BUFFER_VALID || width != 480 || height != 272 ||
         pitch < width * 4 || pitch > 4096) { core.failure = true; return; }
-    for (unsigned y = 0; y < height; ++y)
+    bool changed = core.width != width || core.height != height;
+    for (unsigned y = 0; y < height; ++y) {
+        if (!changed && memcmp(core.pixels + y * width, (const unsigned char *)data + y * pitch, width * 4)) changed = true;
         memcpy(core.pixels + y * width, (const unsigned char *)data + y * pitch, width * 4);
+    }
     core.width = width; core.height = height;
+    core.video_refreshed = true; core.image_changed |= changed;
+    ++core.video_frames;
+    if (changed) ++core.changed_frames;
 }
 
 static size_t audio(const int16_t *data, size_t frames)
@@ -152,7 +172,7 @@ static size_t audio(const int16_t *data, size_t frames)
 }
 static void poll(void)
 {
-    if (core.input_active && !core.stop) core.input_polled = true;
+    if (core.input_active && !core.stop) { core.input_polled = true; ++core.input_polls; }
 }
 static int16_t input(unsigned port, unsigned device, unsigned index, unsigned id)
 {
@@ -249,16 +269,26 @@ IRPSPPhase ir_psp_step(uint16_t buttons, int16_t analog_x, int16_t analog_y, IRP
     // One immutable snapshot for every input_state call in this retro_run.
     // Repeated polls may observe that same held state, but acknowledge it once.
     core.input_polled = false; core.input_active = true;
+    core.video_refreshed = false; core.image_changed = false;
     api.retro_run();
+    ++core.steps;
     core.input_active = false;
-    if (frame) frame->input_polled = core.input_polled;
+    if (frame) {
+        frame->input_polled = core.input_polled;
+        frame->video_refreshed = core.video_refreshed; frame->image_changed = core.image_changed;
+        frame->steps = core.steps; frame->video_callbacks = core.video_callbacks;
+        frame->video_frames = core.video_frames; frame->changed_frames = core.changed_frames;
+        frame->input_polls = core.input_polls;
+    }
     if (core.stop) {
         if (!api.pending()) { release(); return core.phase; }
         return IR_PSP_STOPPING;
     }
     core.phase = core.failure ? IR_PSP_FAILED : api.pending() ? IR_PSP_BOOTING : IR_PSP_RUNNING;
-    if (frame && core.phase == IR_PSP_RUNNING)
-        *frame = (IRPSPFrame){core.pixels, core.width, core.height, core.audio, core.frames,
-                             core.fps, core.rate, core.input_polled};
+    if (frame && core.phase == IR_PSP_RUNNING) {
+        frame->pixels = core.pixels; frame->width = core.width; frame->height = core.height;
+        frame->audio = core.audio; frame->audio_frames = core.frames;
+        frame->fps = core.fps; frame->sample_rate = core.rate;
+    }
     return core.phase;
 }

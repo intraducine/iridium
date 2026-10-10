@@ -5,6 +5,7 @@ import AVFoundation
 struct IridiumConsolePlayer: View {
     @ObservedObject private var session = IridiumConsoleSession.shared
     @ObservedObject private var controller = IridiumPhysicalController.shared
+    @ObservedObject private var controls = TouchControlsModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var keyboardFocus: Bool
@@ -18,10 +19,11 @@ struct IridiumConsolePlayer: View {
     @State private var confirmClose = false
     @State private var closeConfirmation = IridiumCloseConfirmation()
     @State private var helpSection = 0
+    @State private var showingLogs = false
     private var isPSP: Bool { session.game?.platform == .psp }
     private var profile: IridiumPlayerProfile { isPSP ? .psp : .gameBoy }
-    private var touchVisible: Bool { touchEnabled && !controller.hidesTouchControls }
-    private var menuVisible: Bool { session.phase == .paused || session.phase == .restartRequired }
+    private var touchVisible: Bool { controls.visible && !controller.hidesTouchControls }
+    private var menuVisible: Bool { !controls.editing && (session.phase == .paused || session.phase == .restartRequired) }
     private var platform: String { session.game?.platform.title ?? "Game" }
     private var keys: [String: UInt16] {
         if isPSP {
@@ -39,10 +41,10 @@ struct IridiumConsolePlayer: View {
                 Color.black.ignoresSafeArea()
                 screen.frame(width: layout.viewport.width, height: layout.viewport.height)
                     .position(x: layout.viewport.midX, y: layout.viewport.midY)
-                if touchVisible, session.phase == .running {
-                    touchControls(layout).id(inputGeneration).opacity(controlOpacity)
+                if (touchVisible && session.phase == .running) || controls.editing {
+                    TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)
                 }
-                if !menuVisible {
+                if !menuVisible && !controls.editing {
                     Button(action: openMenu) {
                         IridiumControlFace(label: "Session", symbol: "ellipsis", shape: .pill)
                             .frame(width: 52, height: 44)
@@ -60,7 +62,16 @@ struct IridiumConsolePlayer: View {
                     ProgressView("Closing game…").padding(24).modifier(IridiumGlassSurface())
                 }
             }.foregroundStyle(.white)
-                .onChange(of: geometry.size) { _, _ in releaseInput() }
+                .onChange(of: geometry.size) { _, _ in
+                    releaseInput()
+                    controls.iridiumResizeConsole(defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds))
+                }
+                .onAppear {
+                    if let game = session.game {
+                        controls.iridiumBeginConsole(game.id,
+                            defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds), visible: touchEnabled)
+                    }
+                }
         }
         .background(.black).preferredColorScheme(.dark).interactiveDismissDisabled()
         .statusBarHidden().persistentSystemOverlays(.hidden)
@@ -77,9 +88,19 @@ struct IridiumConsolePlayer: View {
         }
         .onChange(of: controller.hidesTouchControls) { _, _ in releaseInput() }
         .onChange(of: touchEnabled) { _, _ in releaseInput() }
+        .onChange(of: controls.editing) { _, _ in releaseInput(); controls.iridiumSaveConsole() }
+        .onChange(of: controls.visible) { _, _ in releaseInput(); controls.iridiumSaveConsole() }
         .onChange(of: keyboardFocus) { _, focused in if !focused { releaseInput() } }
         .onChange(of: dynamicTypeSize) { _, _ in releaseInput() }
-        .onDisappear { releaseInput() }
+        .onDisappear { releaseInput(); controls.iridiumEndConsole() }
+        .sheet(isPresented: $showingLogs) {
+            RuntimeDiagnosticsLogView(progress: session.diagnostics,
+                playbackTitle: session.phase == .paused ? "Resume while viewing logs" : "Pause runtime",
+                togglePlayback: session.phase == .paused || session.phase == .running || session.phase == .starting ? {
+                    releaseInput()
+                    if session.phase == .paused { session.resume() } else { session.pause() }
+                } : nil)
+        }
         .alert("Runtime", isPresented: Binding(get: { session.error != nil }, set: { if !$0 { session.error = nil } })) {
             Button("OK") { session.error = nil }
         } message: { Text(session.error ?? "") }
@@ -93,35 +114,11 @@ struct IridiumConsolePlayer: View {
             } else {
                 VStack(spacing: 12) {
                     ProgressView().tint(.white)
-                    Text(session.game?.title ?? "Game").font(.headline).multilineTextAlignment(.center)
+                    Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
                     Text("Starting \(platform)…").font(.subheadline).foregroundStyle(.secondary)
                 }.padding(24)
             }
         }.clipped()
-    }
-    private func touchControls(_ layout: IridiumPlayerLayout) -> some View {
-        ZStack {
-            IridiumPlayerDPad(enabled: session.phase == .running, input: { mask in
-                session.setButtons(mask, source: "touch.dpad")
-            }, accessibilityTap: { bit in
-                session.setButtons(bit, source: "accessibility.dpad")
-                session.setButtons(0, source: "accessibility.dpad")
-            }).position(x: layout.dpad.midX, y: layout.dpad.midY)
-            if let stick = layout.stick {
-                IridiumPlayerStick(enabled: session.phase == .running) { x, y in session.setAnalog(x: x, y: y) }
-                    .frame(width: stick.width, height: stick.height).position(x: stick.midX, y: stick.midY)
-            }
-            ForEach(layout.buttons) { button in
-                IridiumPlayerTouchButton(label: button.id, symbol: button.symbol,
-                    shape: button.isPill ? .pill : .round, enabled: session.phase == .running, input: { down in
-                        session.setButton(button.bit, pressed: down, source: "touch." + button.id)
-                    }, accessibilityTap: {
-                        session.setButton(button.bit, pressed: true, source: "accessibility." + button.id)
-                        session.setButton(button.bit, pressed: false, source: "accessibility." + button.id)
-                    }).frame(width: button.frame.width, height: button.frame.height)
-                    .position(x: button.frame.midX, y: button.frame.midY)
-            }
-        }.accessibilityElement(children: .contain).accessibilityLabel("\(platform) touch controls")
     }
     private func menu(in size: CGSize) -> some View {
         ZStack {
@@ -137,18 +134,18 @@ struct IridiumConsolePlayer: View {
                                 Text("The runtime is still closing. Restart Iridium before playing another game.")
                                 IridiumPlayerMenuRow(title: "Library", symbol: "square.grid.2x2") { session.returnToLibraryAfterTimeout() }
                             } else if menuPage == "Session" {
-                                menuRow("Resume", "play.fill")
-                                menuRow("Controls", "gamecontroller")
-                                menuRow("Help", "questionmark.circle")
+                                IridiumSessionMenuActions(focused: menuGuided ? menuFocus : nil, activate: activate)
                                 menuRow("Close Game", "stop.circle")
                             } else if menuPage == "Controls" {
-                                menuRow(touchEnabled ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
+                                menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
                                 if controller.isActive {
                                     menuRow(controller.forceTouchVisible ? "Use Controller" : "Use Touch Controls", "gamecontroller")
                                     Text(controller.forceTouchVisible ? "Touch controls stay visible until the controller disconnects." : "Touch controls hide automatically with a controller. Choose Use Touch Controls to show them temporarily.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                                 HStack { Text("Opacity"); Slider(value: $controlOpacity, in: 0.35...1) }.padding(.vertical, 12)
+                                menuRow("Edit Controls", "slider.horizontal.3")
+                                IridiumControlFeedbackSettings()
                                 if controller.isActive {
                                     Text("Up/down chooses a control. A selects. Left/right changes opacity. B goes back.")
                                         .font(.footnote).foregroundStyle(.secondary)
@@ -191,18 +188,27 @@ struct IridiumConsolePlayer: View {
         switch title {
         case "Resume": resume()
         case "Close Game": closeConfirmation = IridiumCloseConfirmation(); confirmClose = true
+        case "View Log": releaseInput(); showingLogs = true
+        case "Edit Controls":
+            releaseInput(); controls.visible = true; controls.editing = true
+            controls.selected = controls.controls.first?.id
         case "Hide Touch Controls", "Show Touch Controls":
-            touchEnabled.toggle(); menuFocus = touchEnabled ? "Hide Touch Controls" : "Show Touch Controls"
+            controls.visible.toggle(); menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls"
         case "Use Touch Controls":
-            touchEnabled = true; controller.forceTouchVisible = true; menuFocus = "Use Controller"
+            controls.visible = true; controller.forceTouchVisible = true; menuFocus = "Use Controller"
         case "Use Controller": controller.forceTouchVisible = false; menuFocus = "Use Touch Controls"
         default:
             menuPage = title
-            if title == "Controls" { menuFocus = touchEnabled ? "Hide Touch Controls" : "Show Touch Controls" }
+            if title == "Controls" { menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls" }
             if title == "Help" { helpSection = 0 }
         }
     }
     private func command(_ value: String) {
+        if showingLogs { if value == "back" || value == "menu" { showingLogs = false }; return }
+        if controls.editing {
+            if value == "back" || value == "menu" { controls.editing = false; controls.selected = nil }
+            return
+        }
         if confirmClose {
             switch closeConfirmation.receive(value) {
             case .cancel: cancelClose()
@@ -219,8 +225,8 @@ struct IridiumConsolePlayer: View {
         }
         if value == "back" { if menuPage == "Session" { resume() } else { menuPage = "Session"; menuFocus = "Resume" }; return }
         if menuPage == "Controls" {
-            let order = IridiumPlayerMenuNavigation.touchControlItems(enabled: touchEnabled,
-                controller: controller.isActive, overrideEnabled: controller.forceTouchVisible)
+            let order = IridiumPlayerMenuNavigation.touchControlItems(enabled: controls.visible,
+                controller: controller.isActive, overrideEnabled: controller.forceTouchVisible) + ["Edit Controls"]
             if value == "up" || value == "down" { menuGuided = true; menuFocus = IridiumPlayerMenuNavigation.next(menuFocus, order: order, command: value) }
             if value == "accept" { activate(order.contains(menuFocus) ? menuFocus : order[0]) }
             if value == "left" { controlOpacity = max(0.35, controlOpacity - 0.1) }
@@ -233,7 +239,7 @@ struct IridiumConsolePlayer: View {
             return
         }
         guard menuPage == "Session" else { return }
-        let order = ["Resume", "Controls", "Help", "Close Game"]
+        let order = IridiumSessionMenuActions.items(windows: false).map { $0.0 } + ["Close Game"]
         if ["up", "down", "left", "right"].contains(value) {
             menuGuided = true
             menuFocus = IridiumPlayerMenuNavigation.next(menuFocus, order: order, command: value)

@@ -27,16 +27,21 @@ class PlayerPresentationTests(unittest.TestCase):
     def test_shipping_windows_adopts_shared_faces_without_replacing_input(self):
         before = (UPSTREAM / 'ContentView.swift').read_text()
         result = FRONTEND.overlay('ContentView.swift', before)
-        self.assertIn('IridiumControlFace(label: action.padFaceLabel', result)
+        self.assertIn('IridiumControlFace(label: label, symbol: console.isActive ? IridiumConsoleControlMapping.symbol', result)
+        self.assertIn('IridiumDPadFace(vector: padVector, pressed: isDown)', result)
         self.assertIn('IridiumControlFace(label: control.action.label', result)
         self.assertIn('m.visible && !(GamepadInput.enabled && iridiumController.hidesTouchControls)', result)
         self.assertIn('guard visible && !(GamepadInput.enabled && IridiumPhysicalController.shared.hidesTouchControls)', result)
         self.assertIn('onChange(of: iridiumController.hidesTouchControls)', result)
         # The real native delivery and editable saved layout stay upstream.
         start = '    /// 8-way snap. Screen y grows downward'
-        end = '\n// MARK:'
-        original_input = before[before.index(start):]
-        actual_input = result[result.index(start):]
+        end = 'struct MappingPanel: View'
+        original_input = before[before.index(start):before.index(end)]
+        actual_input = result[result.index(start):result.index(end)]
+        # Feedback now obeys the shared setting, while native key/mouse state
+        # transitions remain byte-for-byte identical.
+        original_input = original_input.replace('UIImpactFeedbackGenerator(style: .light).impactOccurred()',
+                                                'IridiumControlHaptics.press()')
         self.assertEqual(original_input, actual_input)
         self.assertIn('TouchPadSurface(control: control.id, action: action)', result)
         self.assertIn('onDisappear {\n            if let keys = control.action.stickKeys { applyStick(-1, keys) }', result)
@@ -69,14 +74,21 @@ class PlayerPresentationTests(unittest.TestCase):
         for name in ['IridiumPlayerControls.swift', 'IridiumPlayerMenu.swift', 'IridiumPlayerLayout.swift']:
             self.assertIn(name, names)
         player = (FRONTEND.FRONTEND / 'IridiumConsolePlayer.swift').read_text()
-        self.assertIn('touchControls(layout).id(inputGeneration)', player)
+        self.assertIn('TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)', player)
+        self.assertIn('controls.iridiumBeginConsole(game.id', player)
+        self.assertIn('controls.iridiumEndConsole()', player)
+        self.assertIn('controls.editing = true', player)
         self.assertIn('session.resetInput()', player)
-        self.assertIn('session.setButtons(mask, source: "touch.dpad")', player)
-        self.assertIn('session.setButtons(bit, source: "accessibility.dpad")', player)
+        console = (FRONTEND.FRONTEND / 'IridiumConsoleControls.swift').read_text()
+        self.assertIn('IridiumControlTouchSurface', console)
+        self.assertIn('source: "touch.layout." + control.uuidString', console)
+        self.assertIn('session.setButton(bit, pressed: false, source: source)', console)
         controls = (FRONTEND.FRONTEND / 'IridiumPlayerControls.swift').read_text()
-        self.assertIn('if let next = state.update(enabled ? value : 0) { input(next) }', controls)
+        self.assertIn('if let next = state.update(enabled ? value : 0) {', controls)
+        self.assertIn('if !wasEngaged && next != 0 { IridiumControlHaptics.press() }', controls)
+        self.assertIn('input(next)', controls)
         self.assertIn('onChange(of: controller.hidesTouchControls)', player)
-        self.assertIn('source: "accessibility." + button.id', player)
+        self.assertIn('let source = "accessibility.layout." + control.uuidString', console)
         self.assertNotIn('landscapePSP', player)
         self.assertNotIn('.confirmationDialog(', player)
         self.assertIn('switch closeConfirmation.receive(value)', player)

@@ -12,6 +12,73 @@ enum IridiumPlayerProfile: String, CaseIterable {
     }
 }
 
+enum IridiumTouchMouseMode: String, CaseIterable {
+    case trackpad, direct
+    static let settingsKey = "IridiumTouchMouseMode"
+    static func current(_ defaults: UserDefaults = .standard) -> Self {
+        Self(rawValue: defaults.string(forKey: settingsKey) ?? "") ?? .trackpad
+    }
+}
+
+struct IridiumTouchMouseMotion {
+    private var remainder = CGPoint.zero
+    mutating func reset() { remainder = .zero }
+    mutating func delta(_ translation: CGPoint, sensitivity: Double) -> (Int32, Int32) {
+        guard translation.x.isFinite, translation.y.isFinite else { return (0, 0) }
+        let gain = sensitivity.isFinite ? min(32, max(0.025, sensitivity)) : 1
+        let dx = min(CGFloat(30000), max(-30000, remainder.x + translation.x * CGFloat(gain)))
+        let dy = min(CGFloat(30000), max(-30000, remainder.y + translation.y * CGFloat(gain)))
+        let x = Int32(dx), y = Int32(dy)
+        remainder = CGPoint(x: dx - CGFloat(x), y: dy - CGFloat(y))
+        return (x, y)
+    }
+}
+
+enum IridiumTouchHaptics: String, CaseIterable {
+    case off, light, medium
+    static let settingsKey = "IridiumTouchHaptics"
+    static func current(_ defaults: UserDefaults = .standard) -> Self {
+        Self(rawValue: defaults.string(forKey: settingsKey) ?? "") ?? .light
+    }
+}
+
+/// The saved layout keeps Madeira's action names; only the runtime mapping differs.
+enum IridiumConsoleControlMapping {
+    static func button(_ action: String, profile: IridiumPlayerProfile) -> UInt16? {
+        let common: [String: UInt16] = ["D↑": 1 << 4, "D↓": 1 << 5, "D←": 1 << 6,
+            "D→": 1 << 7, "Menu": 1 << 3, "View": 1 << 2]
+        if let bit = common[action] { return bit }
+        switch profile {
+        case .psp: return ["A": UInt16(1), "B": 1 << 8, "X": 1 << 1,
+                          "Y": 1 << 9, "LB": 1 << 10, "RB": 1 << 11][action]
+        case .gameBoy: return ["A": UInt16(1 << 8), "B": 1][action]
+        case .windows: return nil
+        }
+    }
+    static func symbol(_ action: String, profile: IridiumPlayerProfile) -> String? {
+        if let arrow = ["D↑": "arrow.up", "D↓": "arrow.down", "D←": "arrow.left", "D→": "arrow.right"][action] { return arrow }
+        guard profile == .psp else { return nil }
+        return ["A": "xmark", "B": "circle", "X": "square", "Y": "triangle"][action]
+    }
+    static func label(_ action: String, profile: IridiumPlayerProfile) -> String {
+        if action == "DPad" { return "D-pad" }; if action == "Menu" { return "Start" }; if action == "View" { return "Select" }
+        if profile == .psp {
+            return ["A": "Cross", "B": "Circle", "X": "Square", "Y": "Triangle", "LB": "L", "RB": "R"][action] ?? action
+        }
+        return action
+    }
+}
+
+/// Feedback is tied to engagement, never repeated vector or held-button updates.
+struct IridiumControlHapticTransition {
+    private(set) var engaged = false
+    mutating func update(_ down: Bool) -> Bool {
+        guard down != engaged else { return false }
+        engaged = down
+        return down
+    }
+}
+
 struct IridiumPlayerButton: Identifiable {
     let id: String
     let symbol: String?
@@ -160,4 +227,18 @@ struct IridiumDirectionControlState {
         bits = next
         return bits
     }
+}
+
+/// Each on-screen stick owns its own value. Releasing one cannot release a
+/// different held stick; the most recently moved active stick has priority.
+struct IridiumAnalogSources {
+    private var values: [String: (Int16, Int16)] = [:]
+    private var order: [String] = []
+    mutating func set(x: Int16, y: Int16, source: String) {
+        order.removeAll { $0 == source }
+        if x == 0 && y == 0 { values.removeValue(forKey: source) }
+        else { values[source] = (x, y); order.append(source) }
+    }
+    var value: (Int16, Int16) { order.last.flatMap { values[$0] } ?? (0, 0) }
+    mutating func clear() { values.removeAll(); order.removeAll() }
 }

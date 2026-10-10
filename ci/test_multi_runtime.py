@@ -84,7 +84,8 @@ class MultiRuntimeTests(unittest.TestCase):
             self.skipTest('Pinned Madeira source not initialized')
         source = (upstream / 'ContentView.swift').read_text()
         result = overlay.overlay('ContentView.swift', source)
-        self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive'), 4)
+        self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'), 4)
+        self.assertIn('guard !IridiumConsoleSession.shared.isActive else { return nil }', result)
         # A changed entry point must fail the declared overlay rather than
         # silently removing the exclusive-runtime check.
         with self.assertRaises(ValueError):

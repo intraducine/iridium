@@ -107,6 +107,7 @@ def library(text):
                     ''' + setting('Steam Account & Dock', 'SteamSettingsSection(open: { settingsSheet = $0 })') + '''
                 }
                 ''' + setting('Windows Components', 'WineMonoSettingsSection()') + '''
+                ''' + setting('Diagnostics', 'RuntimeDiagnosticsExportSection()') + '''
                 ''' + setting('Advanced', '''Section { Toggle("Extended logging", isOn: $input.diagnostics) }.iridiumRowSurface()
                         Section { Button("All Runtime Settings") { settingsSheet = .allSettings } }.iridiumRowSurface()''') + '''
                 ''' + setting('Appearance', '''Section { Toggle("Liquid metal", isOn: $liquidMetal.on) } footer: {

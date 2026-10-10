@@ -21,7 +21,11 @@ precondition(selection.select(b) == b)
 precondition(selection.selectedID == b)
 precondition(selection.transition(to: .tracking) == nil)
 selection.observed(c)
-precondition(selection.selectedID == b) // Commit backdrop at landing, not mid-drag.
+precondition(selection.selectedID == b) // Committed focus does not fight native scrolling.
+precondition(selection.highlightedID == c) // Border/title preview moves immediately.
+selection.observed(a)
+precondition(selection.highlightedID == a)
+selection.observed(c)
 precondition(selection.transition(to: .decelerating) == nil)
 precondition(selection.select(a) == nil) // Focus cannot fight momentum.
 selection.observed(c)
@@ -58,6 +62,15 @@ precondition(selection.select(b) == b) // Controller selection still has a valid
 names[b] = "Another Name"
 precondition(selection.reconcile(filteredIDs()) == nil)
 precondition(selection.selectedID == nil)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 0, stride: 120, count: 3, previous: nil) == 0)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 61, stride: 120, count: 3, previous: 0) == 1)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 59, stride: 120, count: 3, previous: 1) == 0)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 60, stride: 120, count: 3, previous: 1) == 1)
+precondition(IridiumLibrarySelection.visibleIndex(offset: -30, stride: 120, count: 3, previous: nil) == 0)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 900, stride: 120, count: 3, previous: nil) == 2)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 900, stride: 120, count: 1, previous: nil) == 0)
+precondition(IridiumLibrarySelection.visibleIndex(offset: 0, stride: 120, count: 0, previous: nil) == nil)
+precondition(IridiumLibrarySelection.visibleIndex(offset: .nan, stride: 120, count: 3, previous: nil) == nil)
 print("Carousel arbitration passed")
 ''')
             exe = Path(folder) / 'check'

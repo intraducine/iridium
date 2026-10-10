@@ -181,7 +181,8 @@ def prepare():
     for source in (UPSTREAM / 'app/Madeira').rglob('*.swift'):
         target = app / 'Madeira' / source.relative_to(UPSTREAM / 'app/Madeira')
         target.write_text(overlay(source.name, source.read_text()))
-    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *RUNTIME_BRIDGE.glob('*.c')])
+    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *RUNTIME_BRIDGE.glob('*.c'),
+                      ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'])
     names = [path.name for path in sources]
     if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
     for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)

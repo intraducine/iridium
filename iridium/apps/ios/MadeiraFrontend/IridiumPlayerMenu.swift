@@ -14,7 +14,7 @@ struct IridiumPlayerMenuHeader: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail) }
             }
             Spacer(minLength: 8)
             Button("Done", action: done).frame(minWidth: 44, minHeight: 44)
@@ -74,5 +74,24 @@ struct IridiumPlayerCloseConfirmation: View {
             .onKeyPress(.downArrow) { command("down"); return .handled }
             .onKeyPress(.leftArrow) { command("left"); return .handled }
             .onKeyPress(.rightArrow) { command("right"); return .handled }
+    }
+}
+
+/// The session's common actions come from one definition for every runtime.
+struct IridiumSessionMenuActions: View {
+    var windows = false
+    var focused: String?
+    let activate: (String) -> Void
+    static func items(windows: Bool) -> [(String, String)] {
+        var rows = [("Resume", "play.fill"), ("Controls", "gamecontroller"), ("View Log", "doc.text")]
+        if windows {
+            rows += [("Performance", "chart.xyaxis.line"), ("Advanced", "slider.horizontal.3"), ("Show Device Keyboard", "keyboard")]
+        } else { rows += [("Help", "questionmark.circle")] }
+        return rows
+    }
+    var body: some View {
+        ForEach(Self.items(windows: windows), id: \.0) { title, icon in
+            IridiumPlayerMenuRow(title: title, symbol: icon, selected: focused == title) { activate(title) }
+        }
     }
 }

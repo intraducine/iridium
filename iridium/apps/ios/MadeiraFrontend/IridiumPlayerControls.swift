@@ -3,6 +3,20 @@ import SwiftUI
 import GameController
 import Combine
 
+@MainActor enum IridiumControlHaptics {
+    private static let light = UIImpactFeedbackGenerator(style: .light)
+    private static let medium = UIImpactFeedbackGenerator(style: .medium)
+    static func press() {
+        let generator: UIImpactFeedbackGenerator
+        switch IridiumTouchHaptics.current() {
+        case .off: return
+        case .light: generator = light
+        case .medium: generator = medium
+        }
+        generator.impactOccurred(); generator.prepare()
+    }
+}
+
 /// Observe availability only; never replace the runtime's GameController handlers.
 final class IridiumPhysicalController: ObservableObject {
     static let shared = IridiumPhysicalController()
@@ -87,7 +101,10 @@ struct IridiumPlayerTouchButton: View {
             .onDisappear { update(false) }
     }
     private func update(_ down: Bool) {
-        if state.set(down && enabled) { input(state.isDown) }
+        if state.set(down && enabled) {
+            if state.isDown { IridiumControlHaptics.press() }
+            input(state.isDown)
+        }
     }
 }
 
@@ -123,7 +140,11 @@ struct IridiumPlayerDPad: View {
     }
     private func pulse(_ bit: UInt16) { guard enabled else { return }; accessibilityTap(bit) }
     private func update(_ value: UInt16) {
-        if let next = state.update(enabled ? value : 0) { input(next) }
+        let wasEngaged = state.bits != 0
+        if let next = state.update(enabled ? value : 0) {
+            if !wasEngaged && next != 0 { IridiumControlHaptics.press() }
+            input(next)
+        }
     }
 }
 
@@ -149,6 +170,7 @@ struct IridiumPlayerStick: View {
     let enabled: Bool
     let input: (Int16, Int16) -> Void
     @State private var vector = CGPoint.zero
+    @State private var haptic = IridiumControlHapticTransition()
     var body: some View {
         IridiumStickFace(vector: vector, pressed: vector != .zero)
             .overlay {
@@ -168,13 +190,14 @@ struct IridiumPlayerStick: View {
     }
     private func update(_ value: CGPoint) {
         vector = enabled ? value : .zero
+        if haptic.update(vector != .zero) { IridiumControlHaptics.press() }
         input(Int16((vector.x * 32767).rounded()), Int16((vector.y * 32767).rounded()))
     }
 }
 
 /// Each control owns one UIKit touch, supporting simultaneous controls and cancellation.
 /// No enclosing scroll recognizer or minimum-duration gesture delays touch-down.
-private struct IridiumControlTouchSurface: UIViewRepresentable {
+struct IridiumControlTouchSurface: UIViewRepresentable {
     let enabled: Bool
     let changed: (CGPoint?, CGSize) -> Void
     func makeUIView(context: Context) -> Surface { Surface() }
@@ -210,5 +233,43 @@ private struct IridiumControlTouchSurface: UIViewRepresentable {
             guard tracking != nil else { return }
             tracking = nil; changed?(nil, bounds.size)
         }
+    }
+}
+
+struct IridiumControlFeedbackSettings: View {
+    @AppStorage(IridiumTouchHaptics.settingsKey) private var feedback = IridiumTouchHaptics.light.rawValue
+    var body: some View {
+        Picker("Touch feedback", selection: $feedback) {
+            Text("Off").tag(IridiumTouchHaptics.off.rawValue)
+            Text("Light").tag(IridiumTouchHaptics.light.rawValue)
+            Text("Medium").tag(IridiumTouchHaptics.medium.rawValue)
+        }
+        Text("A short tap when a control engages. Holding a button or moving a stick won’t repeatedly vibrate.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+}
+
+
+/// A scalable face for the editor's composite, eight-way D-pad. The touch
+/// adapter remains the same per-control surface used by all console buttons.
+struct IridiumDPadFace: View {
+    var vector: CGSize = .zero
+    var pressed = false
+    private let directions: [(String, String, CGFloat, CGFloat)] = [
+        ("Up", "arrow.up", 0, -1), ("Down", "arrow.down", 0, 1),
+        ("Left", "arrow.left", -1, 0), ("Right", "arrow.right", 1, 0)]
+    var body: some View {
+        GeometryReader { geometry in
+            let side = min(geometry.size.width, geometry.size.height) / 3
+            ZStack {
+                ForEach(directions, id: \.0) { item in
+                    let down = pressed && (item.2 == 0 ? vector.height * item.3 > 0 : vector.width * item.2 > 0)
+                    IridiumControlFace(label: item.0, symbol: item.1, shape: .shoulder,
+                                       pressed: down, compresses: false)
+                        .frame(width: side, height: side)
+                        .offset(x: item.2 * side, y: item.3 * side)
+                }
+            }.frame(width: geometry.size.width, height: geometry.size.height)
+        }.allowsHitTesting(false)
     }
 }

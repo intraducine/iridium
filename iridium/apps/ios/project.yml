@@ -22,6 +22,7 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Iridium
+      - path: RuntimeSupport/IridiumDiagnosticsView.swift
       - path: SteamActivityShared
     preBuildScripts:
       - name: Prepare Embedded Translator

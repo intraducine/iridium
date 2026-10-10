@@ -1,5 +1,25 @@
 # Changes from upstream
 
+## Shared player presentation and diagnostics
+
+Iridium's generated app adapts Madeira's existing touch control model, buttons,
+and mapping editor for console sessions, preserving its Windows input callbacks
+and storing console layouts separately. Shared menu presentation keeps runtime
+capabilities available. Touch pointer modes use viewport coordinates; configurable
+haptics trigger on press transitions. No emulator pin or native engine is changed.
+
+The existing JIT network preparation and restoration callbacks are preserved.
+The observed Shortcut start and completion calls serve separate purposes.
+
+The console bridge records runtime steps, fresh video callbacks, changed images,
+audio and input separately and forwards bounded core log messages. These are
+liveness and presentation measurements, not proof of game progress. In-game
+Diagnostics and Settings export bounded, sanitized copies of the relevant logs;
+original logs and credential stores remain untouched. The compact library keeps
+its leading focus slot, follows the nearest cover during native scrolling, and
+truncates titles to one line. Pointer modes are explicit Trackpad/Direct settings;
+control surfaces retain touch ownership and clear held inputs on cancellation.
+
 ## Multi runtime frontend boundary
 
 Original Iridium code adds an additive console library and a runtime driver
