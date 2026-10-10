@@ -1,6 +1,7 @@
 """Execute the generated shipping JIT/Shortcut methods with controlled endpoints."""
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ def upstream():
 
 class ShortcutLifecycleTests(unittest.TestCase):
     @unittest.skipUnless((upstream() / 'JITNetwork.swift').is_file(), 'Pinned Madeira source required')
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for executable JIT lifecycle checks')
     def test_single_flight_failure_cleanup_and_stale_callbacks(self):
         network = lifecycle.apply('JITNetwork.swift', (upstream() / 'JITNetwork.swift').read_text())
         setup = lifecycle.apply('JITSetup.swift', (upstream() / 'JITSetup.swift').read_text())
@@ -156,5 +158,6 @@ MainActor.assumeIsolated { runChecks() }
             source = Path(folder) / 'main.swift'
             source.write_text(swift)
             binary = Path(folder) / 'check'
-            subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', str(source), '-o', str(binary)], check=True)
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(Path(folder) / 'cache'),
+                            str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=30)
