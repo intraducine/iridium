@@ -13,8 +13,10 @@ class LibraryLayoutTests(unittest.TestCase):
     def test_measured_chrome_and_reachable_overflow_are_wired(self):
         source = SOURCE.read_text()
         # Measurement must exclude the flexible inset and fixed-height carousel.
-        self.assertIn('.modifier(IridiumLibraryMeasureHeight())\n                                    .padding(.top, layout.freeSpace)', source)
+        self.assertIn('.modifier(IridiumLibraryMeasureHeight()).id("details")', source)
         self.assertIn('chromeHeight: chromeHeight, hasSelection: selected != nil', source)
+        self.assertNotIn('.padding(.top, layout.freeSpace)', source)
+        self.assertIn('HStack(spacing: 20) { title(selected); actions(selected) }', source)
         self.assertIn('.onPreferenceChange(IridiumLibraryChromeHeight.self)', source)
         self.assertIn('ScrollView(.vertical)', source)
         self.assertIn('.scrollBounceBehavior(.basedOnSize, axes: .vertical)', source)
@@ -55,7 +57,7 @@ precondition(withSearch.coverHeight == 72 && withSearch.freeSpace == 0)
 let roomy = metrics(600, 155)
 precondition(roomy.coverHeight == 192 && roomy.freeSpace == 213)
 let portrait = metrics(852, 155, compact: false)
-precondition(portrait.coverHeight == 264 && portrait.freeSpace > 0)
+precondition(portrait.coverHeight == 420 && portrait.freeSpace > 0)
 let empty = metrics(375, 44, selected: false)
 precondition(empty.coverHeight == 0 && empty.freeSpace == 299)
 let dragging = IridiumLibraryLayoutMetrics(viewportHeight: 375, compact: true,
@@ -72,7 +74,7 @@ for height: CGFloat in [0, 240, 320, 375, 390, 667, 852, 1024] {
             for hints in [true, false] {
                 let layout = metrics(height, chrome, compact: compact, hints: hints)
                 let minimum: CGFloat = compact ? 72 : 156
-                let maximum: CGFloat = compact ? 192 : 264
+                let maximum: CGFloat = compact ? 192 : 420
                 let spacing: CGFloat = compact ? 8 : 12
                 let occupied = chrome + 24 + CGFloat(hints ? 3 : 2) * spacing
                 let total = occupied + layout.coverHeight + layout.freeSpace

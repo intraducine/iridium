@@ -24,6 +24,18 @@ def controls(text):
     text = replace(text, '            .onChange(of: m.visible) { _, _ in configureGamepad(landscape: landscape) }',
                    '''            .onChange(of: m.visible) { _, _ in configureGamepad(landscape: landscape) }
             .onChange(of: iridiumController.hidesTouchControls) { _, _ in configureGamepad(landscape: landscape) }''')
+    # Install the host before showing it; reattach on scene activation/rotation.
+    text = replace(text, '            w.isHidden = false        // deliberately never made key', '')
+    text = replace(text, '        window?.frame = scene.coordinateSpace.bounds',
+                   '        window?.frame = scene.coordinateSpace.bounds\n        window?.isHidden = false')
+    text = replace(text, '            w.windowLevel = .normal + 101\n            w.backgroundColor = .clear',
+                   '            w.windowLevel = .normal + 101\n            w.backgroundColor = .clear\n            w.overrideUserInterfaceStyle = .dark')
+    text = replace(text, '            window = w', """            window = w
+            for name in [UIDevice.orientationDidChangeNotification, UIScene.didActivateNotification] {
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { TouchControlsHost.attach() }
+                }
+            }""")
     # Hidden controls must also stop intercepting the game's pointer/touch window.
     old = between(text, '    func hitsInteractive(_ p: CGPoint, in bounds: CGRect, topBar: Bool = true)', '\n}\n\n/// Click-through')
     new = replace(old, 'guard visible else { return false }',
@@ -82,6 +94,15 @@ def controls(text):
 
 
 def menu(text):
+    # UIKit owns the visible 48-point accessibility target above native surfaces.
+    old = between(text, '                Button { touched += 1; model.showMenu() } label: {',
+                  '            } else { LibraryMetrics()')
+    text = replace(text, old, """                IridiumPlayerMenuButton(visible: !model.menu) { touched += 1; model.showMenu() }
+                    .frame(width: 48, height: 48).opacity(model.menu ? 0 : 1)
+                    .allowsHitTesting(!model.menu).accessibilityHidden(model.menu)
+""")
+    text = replace(text, '        .position(center)',
+                   '        .offset(x: center.x - measured.width / 2, y: center.y - measured.height / 2)')
     actions = between(text, '                    iridiumMenuButton("Resume", symbol: "play.fill")', '\n                }\n                if menuPage == "Log"')
     text = replace(text, actions, '                    IridiumSessionMenuActions(windows: true, focused: menuGuided ? menuFocus : nil, activate: iridiumMenuActivate)')
     text = replace(text, 'let order = ["Resume", "Controls", "Performance", "Advanced", "Show Device Keyboard", "View Log", "Close Game"]',

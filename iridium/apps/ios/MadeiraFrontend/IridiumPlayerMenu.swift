@@ -1,5 +1,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
+import UIKit
+
+/// A native target keeps its accessibility bounds at the visible button even
+/// when the surrounding HUD fills a separate window above a native renderer.
+struct IridiumPlayerMenuButton: UIViewRepresentable {
+    var visible = true
+    let action: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+    func makeUIView(context: Context) -> UIButton {
+        let button = MenuTarget(type: .custom)
+        button.setImage(UIImage(systemName: "ellipsis", withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: 20, weight: .bold)), for: .normal)
+        button.tintColor = .white
+        button.backgroundColor = .black.withAlphaComponent(0.72)
+        button.layer.cornerRadius = 24
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor.white.withAlphaComponent(0.55).cgColor
+        button.accessibilityLabel = "Game menu"
+        button.accessibilityHint = "Drag to move"
+        button.addAction(UIAction { _ in context.coordinator.action() }, for: .touchUpInside)
+        return button
+    }
+    func updateUIView(_ button: UIButton, context: Context) {
+        context.coordinator.action = action
+        button.isHidden = !visible
+        button.isUserInteractionEnabled = visible
+    }
+    final class MenuTarget: UIButton {
+        override var accessibilityFrame: CGRect {
+            get { UIAccessibility.convertToScreenCoordinates(bounds, in: self) }
+            set { }
+        }
+    }
+    final class Coordinator {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+    }
+}
 
 struct IridiumPlayerMenuHeader: View {
     let title: String

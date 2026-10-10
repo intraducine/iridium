@@ -8,8 +8,16 @@ and storing console layouts separately. Shared menu presentation keeps runtime
 capabilities available. Touch pointer modes use viewport coordinates; configurable
 haptics trigger on press transitions. No emulator pin or native engine is changed.
 
-The existing JIT network preparation and restoration callbacks are preserved.
-The observed Shortcut start and completion calls serve separate purposes.
+The generated JIT coordinator admits one enable request until its failure cleanup
+finishes. Shortcut callbacks carry a request identifier; late callbacks and open
+failures cannot finish a newer operation. Failed cleanup remains owed for later
+recovery. Start and completion cleanup remain distinct operations.
+
+The portrait shelf places title and actions beneath the header and gives covers
+available space without an empty band above them. Landscape keeps title and
+actions on one row. The Windows HUD installs its host before showing the window,
+refreshes it on activation and rotation, and uses a native 48-point menu target
+with matching accessibility bounds. That target hides while the menu is open.
 
 The console bridge records runtime steps, fresh video callbacks, changed images,
 audio and input separately and forwards bounded core log messages. These are
@@ -57,7 +65,7 @@ stable. The player uses native glass on iOS 26 and material on older systems;
 Reduce Transparency uses an opaque surface. Close Game asks for confirmation
 before calling the original graceful close action.
 The app identity, version and icon use Iridium's values. These are the declared
-app-source hooks. The original launch, JIT, game surface, input, Steam, downloads,
+app-source hooks. The original launch, JIT provider, game surface, input, Steam, downloads,
 media, memory, and save implementations remain upstream code.
 
 The frontend adds Favorites, a horizontal cover shelf, and links to the native

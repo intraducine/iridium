@@ -3,6 +3,7 @@ import json
 import re
 import madeira_player_presentation
 import madeira_artwork_presentation
+import madeira_jit_lifecycle
 
 
 def replace(text, old, new):
@@ -360,4 +361,4 @@ def apply(name, text):
             end = match.end() + close.start()
             text = text[:end] + indent + '    }.iridiumRowSurface()\n' + text[end:]
             text = text[:match.end()] + '\n' + indent + '    Group {' + text[match.end():]
-    return madeira_artwork_presentation.apply(name, madeira_player_presentation.apply(name, text))
+    return madeira_jit_lifecycle.apply(name, madeira_artwork_presentation.apply(name, madeira_player_presentation.apply(name, text)))

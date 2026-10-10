@@ -112,14 +112,19 @@ struct IridiumLibraryView: View {
                             }.fixedSize(horizontal: false, vertical: true)
                                 .modifier(IridiumLibraryMeasureHeight()).id("header")
                             if let selected {
-                                VStack(alignment: .leading, spacing: spacing) {
-                                    title(selected)
-                                    actions(selected)
+                                Group {
+                                    if compact && !dynamicTypeSize.isAccessibilitySize {
+                                        HStack(spacing: 20) { title(selected); actions(selected) }
+                                    } else {
+                                        VStack(alignment: .leading, spacing: 16) { title(selected); actions(selected) }
+                                    }
                                 }.fixedSize(horizontal: false, vertical: true)
-                                    .modifier(IridiumLibraryMeasureHeight())
-                                    .padding(.top, layout.freeSpace).id("details")
+                                    .modifier(IridiumLibraryMeasureHeight()).id("details")
                                 carousel(height: layout.coverHeight, width: geometry.size.width, gutter: gutter)
                                     .frame(height: layout.coverHeight).id("games")
+                                if layout.freeSpace > spacing {
+                                    Color.clear.frame(height: layout.freeSpace - spacing).accessibilityHidden(true)
+                                }
                             } else {
                                 Group {
                                     if !search.isEmpty { ContentUnavailableView.search(text: search) }
@@ -315,6 +320,7 @@ struct IridiumLibraryView: View {
                 if let target { carouselPosition.scrollTo(id: target, anchor: .leading) }
             }
             .onChange(of: height) { _, _ in keepSelection() }
+            .onChange(of: width) { _, _ in touchCoverHeight = nil; keepSelection() }
     }
     private func revealFocusedSection(in page: ScrollViewProxy) {
         let section = focus == "games" ? "games" : ["play", "options"].contains(focus) ? "details" : "header"
@@ -345,11 +351,11 @@ struct IridiumLibraryView: View {
         Button { select(entry.id); focus = "games" } label: {
             IridiumGameArtwork(game: entry)
                 .frame(width: height / 1.5, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
                     if selection.highlightedID == entry.id && (!showFocus || focus == "games") {
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .strokeBorder(.white, lineWidth: 3)
                     }
                 }
@@ -506,7 +512,7 @@ struct IridiumLibraryLayoutMetrics {
         let available = max(0, viewportHeight - chromeHeight - 24 - CGFloat(gaps) * spacing)
         if hasSelection {
             let minimum: CGFloat = compact ? 72 : 156
-            let preferred: CGFloat = compact ? 192 : min(264, max(minimum, viewportHeight * 0.34))
+            let preferred: CGFloat = compact ? 192 : min(420, max(minimum, viewportHeight * 0.60))
             coverHeight = frozenCoverHeight ?? min(preferred, max(minimum, available))
         } else {
             coverHeight = 0
