@@ -3,6 +3,7 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #include <atomic>
+#include <memory>
 #include <signal.h>
 #include "ios/ViewController.h"
 #include "ios/ViewControllerMetal.h"
@@ -140,6 +141,9 @@ static void event(unsigned kind, const char *message) {
         g_Config.bSoftwareRendering = false;
     }
     // Presentation and input belong to Iridium even for older per-game settings.
+    // Upstream AutoRun=false starts in its debugger, which this frontend does
+    // not expose. Iridium's render owner already controls startup and pause.
+    g_Config.bAutoRun = true;
     g_Config.iScreenRotation = ROTATION_AUTO;
     g_Config.bShowTouchControls = false;
     g_Config.bShowImDebugger = false;
@@ -368,13 +372,28 @@ void ir_native_psp_frontend_frame(void) {
     currentResolution = g_Config.iInternalResolution;
     int request = pendingState.exchange(0);
     if (!request) return;
-    uint64_t owner = generation.load();
-    auto completion = [owner](SaveState::Status status, std::string_view message) {
-        if (!ir_native_psp_generation_current(owner)) return;
-        stateBusy = false;
-        std::string text(message);
-        if (text.empty()) text = status == SaveState::Status::SUCCESS ? "Save-state operation completed." : "Save-state operation failed.";
-        event(status == SaveState::Status::FAILURE ? 6 : 5, text.c_str());
+    struct Completion {
+        uint64_t owner;
+        std::atomic<bool> finished{false};
+        explicit Completion(uint64_t value) : owner(value) {}
+        void finish(SaveState::Status status, std::string_view message) {
+            if (finished.exchange(true) || !ir_native_psp_generation_current(owner)) return;
+            stateBusy = false;
+            std::string text(message);
+            if (text.empty()) text = status == SaveState::Status::SUCCESS ? "Save-state operation completed." : "Save-state operation failed.";
+            event(status == SaveState::Status::FAILURE ? 6 : 5, text.c_str());
+        }
+        ~Completion() {
+            finish(SaveState::Status::FAILURE,
+                "The PSP engine declined the save-state request. Multiplayer or Hardcore mode may restrict save states.");
+        }
+    };
+    // Upstream policy guards may discard a callback without invoking it. A
+    // queued operation retains this owner; only the last discarded copy fails
+    // the request. Never release an in-flight operation based on elapsed time.
+    auto result = std::make_shared<Completion>(generation.load());
+    auto completion = [result](SaveState::Status status, std::string_view message) {
+        result->finish(status, message);
     };
     std::string prefix = SaveState::GetGamePrefix(g_paramSFO);
     if (request / 10 == 2) SaveState::SaveSlot(prefix, request % 10, completion);

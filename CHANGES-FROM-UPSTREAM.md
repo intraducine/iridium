@@ -486,6 +486,11 @@ boot completion is distinct from renderer initialization. Engine failures and
 menu requests return to the shared Iridium session. Resolution changes and five
 save/load slots are requested from that menu and applied by the native render
 owner after resume; completion callbacks reject retired session generations.
+Callback ownership also completes policy-rejected save-state requests when
+upstream drops every callback copy without invoking it. Queued operations keep
+that ownership until completion; no timeout releases an operation still running.
+The frontend-owned AutoRun debugger preference is normalized after configuration
+load so preserved AutoRun=false cannot strand boot in an inaccessible debugger.
 No new save format or memory-stick migration is introduced. Settings not yet
 exposed by Iridium keep their existing per-game configuration values.
 Fresh PSP settings default to OpenGL, two-times resolution and IR interpreter.

@@ -23,6 +23,58 @@ def function(text, signature):
 
 
 class NativePSPFrontendTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('clang++'), 'C++ compiler required')
+    def test_preserved_autorun_false_boots_without_entering_removed_debugger(self):
+        source = NATIVE.read_text()
+        upstream = ROOT / 'vendor/PPSSPP/UI/EmuScreen.cpp'
+        if not upstream.exists(): self.skipTest('Pinned checkout required')
+        emu = overlay.apply('UI/EmuScreen.cpp', upstream.read_text())
+        # Execute the real frontend normalization and real upstream boot decision.
+        start = source.index('    // Presentation and input belong to Iridium')
+        end = source.index('    currentResolution = ', start)
+        normalization = source[start:end]
+        self.assertLess(source.index('    NativeInit(2,'), start)
+        self.assertLess(end, source.index('    self.player = requestedBackend'))
+        start_break = next(line for line in emu.splitlines() if 'coreParam.startBreak =' in line)
+        boot_start = emu.index('if (PSP_CoreParameter().startBreak)')
+        boot_end = emu.index('\n\n\t\tAchievements::Initialize();', boot_start)
+        completion = emu[boot_start:boot_end]
+        harness = r'''#include <cassert>
+struct Config {
+ bool bAutoRun=false, bShowTouchControls=true, bShowImDebugger=true, bShowDeveloperMenu=true;
+ int iScreenRotation=99, iCpuCore=0, iInternalResolution=4;
+ bool bSoftwareRendering=true;
+} g_Config;
+constexpr int ROTATION_AUTO=0;
+enum CoreState { CORE_RUNNING_CPU, CORE_STEPPING_CPU };
+CoreState coreState;
+enum class SystemNotification { DEBUG_MODE_CHANGE };
+static unsigned debugNotifications;
+void System_Notify(SystemNotification) { ++debugNotifications; }
+struct CoreParameter { bool startBreak; } coreParam;
+CoreParameter &PSP_CoreParameter() { return coreParam; }
+int main() {
+ for(bool savedAutoRun:{false,true}) {
+  g_Config.bAutoRun=savedAutoRun;
+  NORMALIZATION
+  START_BREAK
+  coreState=CORE_STEPPING_CPU;
+  BOOT_COMPLETION
+  assert(g_Config.bAutoRun && !coreParam.startBreak);
+  assert(coreState==CORE_RUNNING_CPU && debugNotifications==0);
+  // Engine compatibility selections survive the frontend-only normalization.
+  assert(g_Config.iCpuCore==0 && g_Config.iInternalResolution==4 && g_Config.bSoftwareRendering);
+ }
+}
+'''.replace('NORMALIZATION', normalization).replace('START_BREAK', start_break).replace('BOOT_COMPLETION', completion)
+        with tempfile.TemporaryDirectory() as folder:
+            code = Path(folder) / 'boot.cpp'; code.write_text('#include <initializer_list>\n'+harness)
+            binary = Path(folder) / 'boot'
+            result = subprocess.run(['clang++', '-std=c++17', str(code), '-o', str(binary)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            subprocess.run([str(binary)], check=True, capture_output=True, timeout=10)
+
     def test_composed_frontend_has_no_secondary_widgets_or_input_targets(self):
         upstream = ROOT / 'vendor/PPSSPP'
         if not (upstream / 'UI/EmuScreen.cpp').exists(): self.skipTest('Pinned checkout required')
@@ -97,6 +149,7 @@ int main() {
 #include <atomic>
 #include <cassert>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 @interface Owner : NSObject
