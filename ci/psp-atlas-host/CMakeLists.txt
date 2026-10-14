@@ -1,0 +1,55 @@
+cmake_minimum_required(VERSION 3.16)
+project(IridiumAtlasHost LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.8)
+if(NOT PPSSPP_SOURCE)
+  message(FATAL_ERROR "Pass the release-pinned PPSSPP source directory")
+endif()
+find_package(ZLIB REQUIRED)
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+add_subdirectory("${PPSSPP_SOURCE}/ext/freetype" freetype)
+add_subdirectory("${PPSSPP_SOURCE}/ext/zstd/build/cmake" zstd)
+add_subdirectory("${PPSSPP_SOURCE}/ext/libpng17" png17)
+target_link_libraries(png17 PUBLIC ZLIB::ZLIB)
+set(HOST_COMMON
+  "${PPSSPP_SOURCE}/Common/Data/Format/PNGLoad.cpp"
+  "${PPSSPP_SOURCE}/Common/Data/Format/ZIMSave.cpp"
+  "${PPSSPP_SOURCE}/Common/Data/Format/ZIMLoad.cpp"
+  "${PPSSPP_SOURCE}/Common/Render/TextureAtlas.cpp"
+  "${PPSSPP_SOURCE}/Common/Data/Encoding/Utf8.cpp")
+add_library(atlas_host_common STATIC ${HOST_COMMON})
+target_include_directories(atlas_host_common PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/io" "${PPSSPP_SOURCE}"
+  "${PPSSPP_SOURCE}/ext/libpng17" "${PPSSPP_SOURCE}/ext/zstd/lib")
+target_link_libraries(atlas_host_common PUBLIC png17 libzstd_static ZLIB::ZLIB)
+target_compile_options(atlas_host_common PRIVATE -O2 -fno-strict-aliasing)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_source_files_properties("${PPSSPP_SOURCE}/Common/Data/Format/ZIMSave.cpp"
+    PROPERTIES COMPILE_OPTIONS "-fno-vectorize;-fno-slp-vectorize")
+endif()
+if(NOT ATLAS_TOOL_SOURCE)
+  set(ATLAS_TOOL_SOURCE "${PPSSPP_SOURCE}/ext/native/tools/atlastool.cpp")
+endif()
+add_executable(atlastool
+  "${ATLAS_TOOL_SOURCE}"
+  "${PPSSPP_SOURCE}/Common/Render/AtlasGen.cpp")
+target_include_directories(atlastool PRIVATE "${PPSSPP_SOURCE}/ext/native/tools")
+target_link_libraries(atlastool PRIVATE atlas_host_common freetype)
+target_compile_options(atlastool PRIVATE -O2 -fno-strict-aliasing)
+if(APPLE)
+  target_link_options(atlastool PRIVATE -Wl,-dead_strip)
+else()
+  target_compile_options(atlastool PRIVATE -ffunction-sections)
+  target_link_options(atlastool PRIVATE -Wl,--gc-sections)
+endif()
+add_executable(atlas-validate validate.cpp)
+target_link_libraries(atlas-validate PRIVATE atlas_host_common)

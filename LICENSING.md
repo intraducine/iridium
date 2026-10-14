@@ -87,16 +87,25 @@ name records. Their original copyright/author/license records, checksums and
 full pinned upstream OFL texts are preserved beside the PGF notices. The
 Roboto-only asciifont atlas has an identified OFL input.
 
-The separate UI font_atlas and PSP ppge_atlas resources remain unresolved.
-Their pinned generators reference Arial Unicode and Kozuka Gothic font files
-absent from the snapshot. Microsoft's redistribution FAQ explicitly excludes
-converting Windows fonts to bitmap fonts for game/app redistribution. An upstream
-comment saying bitmap conversion is sufficient does not supply those rights.
-See https://learn.microsoft.com/en-us/typography/fonts/font-faq . Obtain an
-applicable grant or regenerate both atlases and metrics from pinned licensed
-open fonts; keep required resources and language coverage. PGF/TTF grants do not
-cover those other font inputs. User-game font extraction, if invoked by upstream,
-stays in that game's writable memory-stick directory.
+New native component builds replace the separate UI font_atlas and PSP ppge_atlas
+resources with the owned assets in RuntimeSupport/PPSSPPAtlases. The replacement
+recipe uses the pinned release's upstream host rasterizer with locked, unmodified
+OFL inputs: Roboto Condensed, Source Han Sans 2.005R, and six Noto families. Full
+terms and embedded copyright/author records are in the PPSSPPFonts notices;
+ci/psp-atlas-inputs.json records exact downloads and checksums. The resource receipt
+records generation inputs, actual production-loader checks, preserved glyphs,
+icon texels and reviewed metrics. Glyph shaping/BiDi and device layout acceptance
+are not established by those checks.
+
+The original upstream atlas generators reference Arial Unicode and Kozuka Gothic
+files absent from the snapshot. Their original assets are retained in the local
+upstream checkout, excluded from new corresponding-source deliveries by exact
+checksums, and replaced when the native resources are packaged. Older personal
+builds and their corresponding source remain intact and do not gain these
+replacement resources retroactively. Microsoft's font FAQ does not supply an
+applicable bitmap-conversion grant: https://learn.microsoft.com/en-us/typography/fonts/font-faq .
+User-game font extraction, if invoked by upstream, stays in that game's writable
+memory-stick directory.
 
 Before public binary distribution, review the combined component terms,
 including PPSSPP dependencies and the proprietary Metal Shader Converter.

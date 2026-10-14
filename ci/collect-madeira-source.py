@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import ppsspp_atlas_resources as atlas
 
 ROOT = Path(__file__).resolve().parents[1]
 FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
@@ -153,6 +154,7 @@ def collect(app, output, maps):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, dest)
         psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
+        psp_atlases = atlas.collect_inputs(stage, psp_receipt, ROOT)
         psp_external = json.loads((ROOT / 'ci/moltenvk-source-inputs.json').read_text())
         if not psp_external or psp_external != psp_receipt.get('moltenVK', {}).get('sourceInputs'):
             raise ValueError('Linked MoltenVK source closure differs from the source manifest')
@@ -176,8 +178,9 @@ def collect(app, output, maps):
         shutil.copytree(app / 'd3d12', notices / 'd3d12', ignore=shutil.ignore_patterns('*.dylib', '*.dxil'))
         (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
-                    'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage),
-                    'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external, 'binaries': records, 'static_archives': static,
+                    'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage) + psp_atlases['exclusions'],
+                    'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external,
+                    'psp_atlas_font_inputs': psp_atlases['inputs'], 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

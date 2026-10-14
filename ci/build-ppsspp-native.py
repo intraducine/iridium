@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import ppsspp_native_overlay as overlay
+import ppsspp_atlas_resources as atlases
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = overlay.REVISION
@@ -166,6 +167,7 @@ def ffmpeg(source, destination, sdk, jobs):
 
 def assets(source, destination):
     origin = source / 'assets'
+    replacements = atlases.replacement_plan(origin, ROOT)
     hashes = {}
     sources = []
     for path in sorted(origin.rglob('*')):
@@ -175,8 +177,13 @@ def assets(source, destination):
             raise ValueError('Review a symbolic runtime asset before packaging: ' + str(path))
         if not path.is_file(): continue
         relative = path.relative_to(origin).as_posix()
+        path = replacements.get(relative, path)
         hashes[relative] = digest(path)
         sources.append((relative, path))
+    for relative, path in replacements.items():
+        if relative not in hashes:
+            hashes[relative] = digest(path)
+            sources.append((relative, path))
     if destination.is_symlink():
         raise ValueError('Generated assets cannot use a symbolic-link directory')
     existing = {p.relative_to(destination).as_posix() for p in destination.rglob('*') if p.is_file()}
@@ -219,6 +226,9 @@ def build(source, destination, sdk, jobs):
     if destination == source or source in destination.parents:
         raise ValueError('Native build outputs must stay outside upstream source')
     before = revisions(source)
+    atlas_spec = importlib.util.spec_from_file_location('native_atlas_inputs', ROOT / 'ci/build-ppsspp-atlases.py')
+    atlas_inputs = importlib.util.module_from_spec(atlas_spec); atlas_spec.loader.exec_module(atlas_inputs)
+    atlas_inputs.fetch_inputs(source)
     destination.mkdir(parents=True, exist_ok=True)
     codecs = ffmpeg(source / 'ffmpeg', destination, sdk, jobs)
     mvk_spec = importlib.util.spec_from_file_location('native_moltenvk', ROOT / 'ci/build-ppsspp-moltenvk.py')
@@ -250,6 +260,7 @@ def build(source, destination, sdk, jobs):
         componentType='native-ios-player', binary=delivered.name, sha256=digest(delivered),
         compiledInputSHA256=compiled_inputs(source, destination), assetSHA256=hashes, codecs=codecs,
         moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination),
+        licensedAtlases=json.loads(atlases.MANIFEST.read_text()),
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),

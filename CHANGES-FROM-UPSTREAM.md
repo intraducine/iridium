@@ -507,11 +507,26 @@ link inventory proves which static archives were used. Corresponding source
 includes all nine locked MoltenVK source archives and the build/replacement
 recipe. The binary receipt retains compiled-source, dependency, resource and
 archive hashes. Full TTF and identified PGF family grants are included. The separate UI/PSP
-atlas inputs and combined proprietary converter terms remain explicit
-distribution-review limits in LICENSING.md.
+atlas resource replacements are described below; combined proprietary converter
+terms remain an explicit distribution-review limit in LICENSING.md.
 
 Host regression tests exercise actual lifecycle, renderer-drain, camera,
 presentation, orientation and gamepad callback methods with platform stubs.
 They do not establish God of War loading, audio, graphics, saves or input on a
 physical iPhone. Private build success must not be described as fixing the
 reported white screen until a matching device run reaches gameplay.
+
+The separate licensed native PSP resource patch replaces only font_atlas.meta,
+font_atlas.zim, ppge_atlas.meta and ppge_atlas.zim at packaging time. It preserves
+all 4,427 UI and 4,568 unique PSP glyph lookups, historical range order, the
+UBUNTU24 font ID and four PSP image IDs/sizes/texels. Other resources and runtime
+pins/backends are unchanged. The out-of-tree host recipe compiles the upstream
+rasterizer and actual metadata/ZIM readers, adapts historical input ranges,
+initializes undefined missing records, and checks serialization against actual
+rasterizer pixels. It pads GE textures, retains icon pixels and fits two vertical
+repeat glyphs to horizontal cells. Scalar host RGBA4444 conversion avoids observed
+Clang vectorization errors. Full font input notices and a generation receipt
+accompany the resources. New corresponding source includes the locked inputs and
+omits only exact superseded upstream atlas bytes. Previously delivered personal
+IPAs and source packages remain intact. See ci/psp-atlas-host/README.md for the
+specific host adaptations, metric deltas and remaining device acceptance limits.

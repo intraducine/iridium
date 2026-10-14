@@ -24,3 +24,26 @@ Gothic files absent from the selected snapshot. Those atlases require their own
 redistribution grant or regeneration from licensed open fonts before public
 binary distribution. The Roboto-only asciifont atlas has an identified OFL input.
 No user or commercial game assets are added.
+
+## Owned UI/PSP atlas replacements
+
+The generated font_atlas and ppge_atlas resources use the unmodified font inputs
+locked in `ci/psp-atlas-inputs.json`. `ATLAS-FONT-NOTICES.json` preserves each
+input's embedded copyright, family, author, manufacturer and license records.
+The six Noto inputs come from noto-fonts commit
+`ffebf8c1ee449e544955a7e813c54f9b73848eac` (hinted/ttf family directories):
+Noto Sans, Noto Sans Hebrew, Noto Sans Thai, Noto Sans Coptic, Noto Sans Symbols,
+and Noto Sans Math. Their full OFL 1.1 text is `Noto-OFL.txt`, from
+https://github.com/notofonts/noto-fonts/blob/ffebf8c1ee449e544955a7e813c54f9b73848eac/LICENSE .
+
+Source Han Sans Regular is the full Japanese OTF from Adobe's 2.005R release:
+https://github.com/adobe-fonts/source-han-sans/releases/tag/2.005R . The lock
+records both the archive and extracted input digests. Its embedded notice names
+Adobe and the Reserved Font Name Source; the existing full Source Han OFL text
+is retained. Roboto Condensed Regular is the exact pinned PPSSPP TTF already
+covered by FONT-NOTICES.json and Roboto-OFL.txt.
+
+The four PSP button icons retain the exact upstream atlas texels, image IDs and
+sizes. Their extraction provenance and PNG/pixel digests are recorded in
+`ci/psp-atlas-host/icons.json`. No proprietary font bitmap is used by these new
+resources. Older delivered personal builds remain unchanged.

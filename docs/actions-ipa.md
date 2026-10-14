@@ -211,4 +211,27 @@ FFmpeg is built from its included source with the selected LGPL codec recipe.
 The receipt records those codec configuration arguments and rebuilt archive
 hashes. Preserve all applicable GPL/LGPL/OFL/Apache and other upstream notices.
 The public-distribution review limits in LICENSING.md still apply to the combined
-app and upstream PGF/dialog atlas; the recipe is not a determination of rights.
+app and proprietary converter interpretation; the recipe is not a determination
+of combined-work classification.
+
+Native PSP resources use the four owned atlas files identified by
+`ci/psp-atlas-resources.json`. Other upstream assets retain their exact bytes.
+The component receipt includes the atlas receipt; corresponding source includes
+all eight font inputs, full notices and the generation recipe, and omits the
+four exact superseded upstream atlas files. The source checkout remains intact.
+Generation is separate from an iOS build and requires Python 3.14, CMake, Ninja
+and a host C++ compiler:
+
+```sh
+python3 ci/build-ppsspp-atlases.py --fetch --output .build/psp-atlas-review
+```
+
+Use a fresh output directory. Review its receipt, parser checks, metrics and
+actual-size multilingual PNG proofs before copying the four outputs into
+RuntimeSupport/PPSSPPAtlases and the receipt into ci/psp-atlas-resources.json.
+Both atlas textures remain 2048x2048 with their original pixel formats. The
+replacement keeps all existing glyph lookups and image IDs/sizes/texels.
+The horizontal line heights are 51.5 UI pixels (previously 49) and 37.5 PSP
+pixels (previously 37.4375); verify actual UI wrapping and game dialogs on device.
+The resource patch does not alter runtime pins, backends, saves, input or media.
+It does not replace an already delivered personal IPA or establish GOW loading.
