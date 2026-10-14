@@ -25,13 +25,16 @@ struct IridiumLibraryBackdrop: View {
 }
 
 struct IridiumBackdropScrim: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
-        LinearGradient(stops: [.init(color: .black.opacity(0.7), location: 0),
-                               .init(color: .black.opacity(0.55), location: 0.3),
-                               .init(color: .black.opacity(0.12), location: 0.65),
-                               .init(color: .black.opacity(0.55), location: 1)],
+        LinearGradient(stops: [.init(color: .black.opacity(0.40), location: 0),
+                               .init(color: .black.opacity(0.04), location: 0.3),
+                               .init(color: .black.opacity(0.12), location: 0.55),
+                               .init(color: .black.opacity(0.90), location: 1)],
                        startPoint: .top, endPoint: .bottom)
-            .overlay { LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .leading, endPoint: .trailing) }
+            .overlay { LinearGradient(colors: [.black.opacity(0.16), .clear], startPoint: .leading, endPoint: .trailing) }
+            .overlay { Color.black.opacity(contrast == .increased ? 0.65 : dynamicTypeSize.isAccessibilitySize ? 0.55 : 0) }
             .allowsHitTesting(false)
     }
 }

@@ -14,6 +14,40 @@ struct IridiumLibrarySelection {
     /// Preview moves with native touch scrolling, without issuing a scroll request.
     var highlightedID: UUID? { userIsScrolling ? (visibleID ?? selectedID) : selectedID }
 
+    static func verticalFocus(_ current: String, down: Bool, wide: Bool) -> String {
+        let actions = ["play", "options"]
+        let rows = [["filters"], ["search", "add", "settings"],
+                    wide ? ["games"] : actions, wide ? actions : ["games"]]
+        let index = rows.firstIndex { $0.contains(current) } ?? 2
+        let next = min(rows.count - 1, max(0, index + (down ? 1 : -1)))
+        return next == index ? current : rows[next][0]
+    }
+
+    /// Variable-width cards share a fixed leading focus area. Comparing actual
+    /// overlap keeps the featured wide card and narrow covers on the same model.
+    /// This observes native geometry; it never snaps the scroll position.
+    static func visibleIndex(offset: Double, widths: [Double], spacing: Double,
+                             focusWidth: Double, previous: Int?) -> Int? {
+        guard offset.isFinite, spacing.isFinite, spacing >= 0,
+              focusWidth.isFinite, focusWidth > 0, !widths.isEmpty,
+              widths.allSatisfy({ $0.isFinite && $0 > 0 }) else { return nil }
+        let start = max(0, offset)
+        var origin = 0.0, bestOverlap = -1.0, bestDistance = Double.infinity
+        var best: Int?
+        for (index, width) in widths.enumerated() {
+            let overlap = max(0, min(origin + width, start + focusWidth) - max(origin, start))
+            let distance = abs(origin + width / 2 - start - focusWidth / 2)
+            if overlap > bestOverlap + 0.000001 ||
+                (abs(overlap - bestOverlap) < 0.000001 &&
+                 (overlap <= 0.000001 ? distance < bestDistance :
+                    (index == previous || (best != previous && distance < bestDistance)))) {
+                best = index; bestOverlap = overlap; bestDistance = distance
+            }
+            origin += width + spacing
+        }
+        return best
+    }
+
     /// The cover with greatest overlap in the leading selection slot wins.
     /// Keeping exact ties stable avoids flicker when a drag pauses at a midpoint.
     static func visibleIndex(offset: Double, stride: Double, count: Int, previous: Int?) -> Int? {

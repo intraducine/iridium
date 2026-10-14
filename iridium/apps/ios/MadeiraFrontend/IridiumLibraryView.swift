@@ -40,6 +40,7 @@ struct IridiumLibraryView: View {
     @State private var showFocus = false
     @State private var focus = "games"
     @State private var chromeHeight: CGFloat = 0
+    @State private var wideLayout = false
     @State private var touchCoverHeight: CGFloat?
     @FocusState private var searchFocus: Bool
     @FocusState private var keyboardFocus: Bool
@@ -87,7 +88,7 @@ struct IridiumLibraryView: View {
             let gutter: CGFloat = geometry.size.width > 1000 ? 32 : 20
             let compact = geometry.size.width > geometry.size.height
             let spacing: CGFloat = compact ? 8 : 12
-            let layout = IridiumLibraryLayoutMetrics(viewportHeight: geometry.size.height,
+            let layout = IridiumLibraryLayoutMetrics(viewportHeight: geometry.size.height, viewportWidth: geometry.size.width,
                 compact: compact, chromeHeight: chromeHeight, hasSelection: selected != nil,
                 showsHints: showHints, frozenCoverHeight: touchCoverHeight)
             ZStack {
@@ -112,19 +113,13 @@ struct IridiumLibraryView: View {
                             }.fixedSize(horizontal: false, vertical: true)
                                 .modifier(IridiumLibraryMeasureHeight()).id("header")
                             if let selected {
-                                Group {
-                                    if compact && !dynamicTypeSize.isAccessibilitySize {
-                                        HStack(spacing: 20) { title(selected); actions(selected) }
-                                    } else {
-                                        VStack(alignment: .leading, spacing: 16) { title(selected); actions(selected) }
-                                    }
-                                }.fixedSize(horizontal: false, vertical: true)
-                                    .modifier(IridiumLibraryMeasureHeight()).id("details")
+                                if layout.freeSpace > 0 {
+                                    Color.clear.frame(height: layout.freeSpace).accessibilityHidden(true)
+                                }
+                                if !compact { details(selected, compact: compact) }
                                 carousel(height: layout.coverHeight, width: geometry.size.width, gutter: gutter)
                                     .frame(height: layout.coverHeight).id("games")
-                                if layout.freeSpace > spacing {
-                                    Color.clear.frame(height: layout.freeSpace - spacing).accessibilityHidden(true)
-                                }
+                                if compact { details(selected, compact: compact) }
                             } else {
                                 Group {
                                     if !search.isEmpty { ContentUnavailableView.search(text: search) }
@@ -149,9 +144,9 @@ struct IridiumLibraryView: View {
                         .onChange(of: focus) { _, _ in revealFocusedSection(in: page) }
                         .onChange(of: showFocus) { _, shown in if shown { revealFocusedSection(in: page) } }
                         .onChange(of: chromeHeight) { _, _ in if showFocus { revealFocusedSection(in: page) } }
-                        .onChange(of: searching) { _, active in if active { page.scrollTo("header", anchor: .top) } }
+                        .onChange(of: searching) { _, active in touchCoverHeight = nil; if active { page.scrollTo("header", anchor: .top) } }
                 }
-            }
+            }.onChange(of: compact, initial: true) { _, value in wideLayout = value }
         }.preferredColorScheme(.dark).navigationBarHidden(true)
             .focusable().focusEffectDisabled().focused($keyboardFocus)
             .simultaneousGesture(TapGesture().onEnded { showHints = false; showFocus = false })
@@ -276,17 +271,28 @@ struct IridiumLibraryView: View {
             }
         }
     }
+    private func details(_ game: IridiumGame, compact: Bool) -> some View {
+        Group {
+            if compact && !dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: 20) { title(game); actions(game) }
+            } else {
+                VStack(alignment: .leading, spacing: 12) { title(game); actions(game) }
+            }
+        }.fixedSize(horizontal: false, vertical: true)
+            .modifier(IridiumLibraryMeasureHeight()).id("details")
+    }
     private func carousel(height: CGFloat, width: CGFloat, gutter: CGFloat) -> some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 20) {
+        let featuredWidth = min(height * 460 / 215, width - 2 * gutter)
+        return ScrollView(.horizontal) {
+            HStack(spacing: 10) {
                 ForEach(games) { entry in
-                    cover(entry, height: height)
+                    cover(entry, height: height, width: entry.id == games.first?.id ? featuredWidth : height / 1.5, featured: entry.id == games.first?.id)
                 }
                 // Real content space lets even the last cover reach
                 // the leading edge when every cover fits on screen.
-                Color.clear.frame(width: max(0, width - height / 1.5 - 2 * gutter - 20), height: 1)
+                Color.clear.frame(width: max(0, width - (games.count == 1 ? featuredWidth : height / 1.5) - 2 * gutter - 10), height: 1)
             }.scrollTargetLayout()
-        }.scrollIndicators(.hidden).scrollTargetBehavior(.viewAligned)
+        }.scrollIndicators(.hidden).accessibilityIdentifier("libraryCarousel")
             .scrollPosition($carouselPosition, anchor: .leading)
             .contentMargins(.horizontal, gutter, for: .scrollContent)
             .padding(.horizontal, -gutter)
@@ -294,7 +300,8 @@ struct IridiumLibraryView: View {
                 Double(scroll.contentOffset.x + scroll.contentInsets.leading)
             } action: { _, offset in
                 guard let index = IridiumLibrarySelection.visibleIndex(offset: offset,
-                    stride: Double(height / 1.5 + 20), count: games.count,
+                    widths: games.indices.map { Double($0 == 0 ? featuredWidth : height / 1.5) },
+                    spacing: 10, focusWidth: Double(height / 1.5),
                     previous: games.firstIndex(where: { $0.id == selection.highlightedID })) else { return }
                 selection.observed(games[index].id)
             }
@@ -316,9 +323,12 @@ struct IridiumLibraryView: View {
                 if next == .tracking || next == .interacting { showFocus = false; showHints = false }
                 let target = selection.transition(to: next)
                 selectedID = selection.selectedID
-                if next == .idle { touchCoverHeight = nil }
+                // Keep this stride after release too. Restoring a larger cover
+                // when controller hints disappear would snap an idle touch scroll.
+                // A real viewport, text-size or search change can reflow it.
                 if let target { carouselPosition.scrollTo(id: target, anchor: .leading) }
             }
+            .onChange(of: dynamicTypeSize) { _, _ in touchCoverHeight = nil }
             .onChange(of: height) { _, _ in keepSelection() }
             .onChange(of: width) { _, _ in touchCoverHeight = nil; keepSelection() }
     }
@@ -347,19 +357,20 @@ struct IridiumLibraryView: View {
             Text("LB / RB: Library")
         }
     }
-    private func cover(_ entry: IridiumGame, height: CGFloat) -> some View {
+    private func cover(_ entry: IridiumGame, height: CGFloat, width: CGFloat, featured: Bool) -> some View {
         Button { select(entry.id); focus = "games" } label: {
-            IridiumGameArtwork(game: entry)
-                .frame(width: height / 1.5, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            IridiumGameArtwork(game: entry, backdrop: featured)
+                .frame(width: width, height: height)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     if selection.highlightedID == entry.id && (!showFocus || focus == "games") {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(.white, lineWidth: 3)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(.white, lineWidth: 2)
                     }
                 }
         }.buttonStyle(.plain).id(entry.id)
+            .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
             .accessibilityLabel(artwork.title(entry))
             .accessibilityHint("Select game. Use Play to launch.")
             .contextMenu {
@@ -387,7 +398,7 @@ struct IridiumLibraryView: View {
     private func title(_ entry: IridiumGame) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(artwork.title(entry)).font(.title2.weight(.semibold)).lineLimit(1).truncationMode(.tail)
-                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("libraryGameTitle").accessibilityAddTraits(.isHeader)
             Text(entry.platform.title + " · " + readiness(entry)).lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 .font(.caption).foregroundStyle(.white.opacity(0.75))
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -445,8 +456,8 @@ struct IridiumLibraryView: View {
         let toolbar = ["search", "add", "settings"], actions = ["play", "options"]
         switch value {
         case "tab": favorites.toggle(); keepSelection()
-        case "up": focus = actions.contains(focus) ? "search" : toolbar.contains(focus) ? "filters" : "play"
-        case "down": focus = focus == "filters" ? "search" : toolbar.contains(focus) ? "play" : "games"
+        case "up", "down":
+            focus = IridiumLibrarySelection.verticalFocus(focus, down: value == "down", wide: wideLayout)
         case "left", "right":
             let step = value == "left" ? -1 : 1
             if focus == "filters" {
@@ -467,7 +478,8 @@ struct IridiumLibraryView: View {
             case "search": searching = true; searchFocus = true
             case "add": choosingAdd = true
             case "settings": features = 1
-            case "options", "games": if let selected { options(selected) }
+            case "games": focus = "play"
+            case "options": if let selected { options(selected) }
             default: if let selected { launch(selected) }
             }
         case "back": if searching { endSearch() } else { focus = "games" }
@@ -505,14 +517,15 @@ struct IridiumLibraryLayoutMetrics {
     let coverHeight: CGFloat
     let freeSpace: CGFloat
 
-    init(viewportHeight: CGFloat, compact: Bool, chromeHeight: CGFloat,
+    init(viewportHeight: CGFloat, viewportWidth: CGFloat = 844, compact: Bool, chromeHeight: CGFloat,
          hasSelection: Bool, showsHints: Bool, frozenCoverHeight: CGFloat? = nil) {
         let spacing: CGFloat = compact ? 8 : 12
-        let gaps = (hasSelection ? 2 : 1) + (showsHints ? 1 : 0)
+        let gaps = (hasSelection ? 3 : 1) + (showsHints ? 1 : 0)
         let available = max(0, viewportHeight - chromeHeight - 24 - CGFloat(gaps) * spacing)
         if hasSelection {
-            let minimum: CGFloat = compact ? 72 : 156
-            let preferred: CGFloat = compact ? 192 : min(420, max(minimum, viewportHeight * 0.60))
+            let minimum: CGFloat = 72
+            let preferred: CGFloat = compact ? min(220, max(96, viewportHeight * 0.28)) :
+                min(180, max(96, (viewportWidth - 40) * 0.44))
             coverHeight = frozenCoverHeight ?? min(preferred, max(minimum, available))
         } else {
             coverHeight = 0

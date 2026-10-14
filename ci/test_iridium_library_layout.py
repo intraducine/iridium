@@ -15,8 +15,10 @@ class LibraryLayoutTests(unittest.TestCase):
         # Measurement must exclude the flexible inset and fixed-height carousel.
         self.assertIn('.modifier(IridiumLibraryMeasureHeight()).id("details")', source)
         self.assertIn('chromeHeight: chromeHeight, hasSelection: selected != nil', source)
-        self.assertNotIn('.padding(.top, layout.freeSpace)', source)
-        self.assertIn('HStack(spacing: 20) { title(selected); actions(selected) }', source)
+        self.assertNotIn('.scrollTargetBehavior(.viewAligned)', source)
+        self.assertLess(source.index('Color.clear.frame(height: layout.freeSpace)'), source.index('carousel(height: layout.coverHeight'))
+        self.assertIn('entry.id == games.first?.id ? featuredWidth : height / 1.5', source)
+        self.assertIn('HStack(spacing: 20) { title(game); actions(game) }', source)
         self.assertIn('.onPreferenceChange(IridiumLibraryChromeHeight.self)', source)
         self.assertIn('ScrollView(.vertical)', source)
         self.assertIn('.scrollBounceBehavior(.basedOnSize, axes: .vertical)', source)
@@ -30,7 +32,7 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertIn('showsHints: showHints, frozenCoverHeight: touchCoverHeight', source)
         self.assertIn('if [.tracking, .interacting, .decelerating].contains(next), touchCoverHeight == nil', source)
         self.assertLess(source.index('touchCoverHeight = height'), source.index('showHints = false }', source.index('touchCoverHeight = height')))
-        self.assertLess(source.index('let target = selection.transition(to: next)'), source.index('if next == .idle { touchCoverHeight = nil }'))
+        self.assertNotIn('if next == .idle { touchCoverHeight = nil }', source)
         self.assertIn('.onChange(of: height) { _, _ in keepSelection() }', source)
         self.assertNotIn('showHints ? 240 : 212', source)
 
@@ -47,36 +49,36 @@ func metrics(_ height: CGFloat, _ chrome: CGFloat, compact: Bool = true,
 }
 let normal = metrics(375, 155)
 let scaled = metrics(375, 235)
-precondition(normal.coverHeight == 180)
-precondition(scaled.coverHeight == 100) // Actual text growth reduces the cover.
+precondition(abs(normal.coverHeight - 105) < 0.001)
+precondition(scaled.coverHeight == 92) // Actual text growth reduces the cover.
 precondition(scaled.freeSpace == 0)
 let withHints = metrics(375, 260, hints: true)
 precondition(withHints.coverHeight == 72) // The full minimum cover remains scrollable.
 let withSearch = metrics(375, 350)
 precondition(withSearch.coverHeight == 72 && withSearch.freeSpace == 0)
 let roomy = metrics(600, 155)
-precondition(roomy.coverHeight == 192 && roomy.freeSpace == 213)
+precondition(abs(roomy.coverHeight - 168) < 0.001 && abs(roomy.freeSpace - 229) < 0.001)
 let portrait = metrics(852, 155, compact: false)
-precondition(portrait.coverHeight == 420 && portrait.freeSpace > 0)
+precondition(portrait.coverHeight == 180 && portrait.freeSpace > 0)
 let empty = metrics(375, 44, selected: false)
 precondition(empty.coverHeight == 0 && empty.freeSpace == 299)
 let dragging = IridiumLibraryLayoutMetrics(viewportHeight: 375, compact: true,
     chromeHeight: 155, hasSelection: true, showsHints: false, frozenCoverHeight: 100)
-precondition(dragging.coverHeight == 100 && dragging.freeSpace == 80)
+precondition(dragging.coverHeight == 100 && dragging.freeSpace == 72)
 let changedStatusDuringSnap = IridiumLibraryLayoutMetrics(viewportHeight: 375, compact: true,
     chromeHeight: 350, hasSelection: true, showsHints: false, frozenCoverHeight: 100)
 precondition(changedStatusDuringSnap.coverHeight == 100 && changedStatusDuringSnap.freeSpace == 0)
-precondition(metrics(375, 155).coverHeight == 180) // Adapt again only after idle.
+precondition(abs(metrics(375, 155).coverHeight - 105) < 0.001) // A new layout without frozen touch geometry adapts.
 
 for height: CGFloat in [0, 240, 320, 375, 390, 667, 852, 1024] {
     for chrome: CGFloat in [0, 100, 155, 235, 340, 600] {
         for compact in [true, false] {
             for hints in [true, false] {
                 let layout = metrics(height, chrome, compact: compact, hints: hints)
-                let minimum: CGFloat = compact ? 72 : 156
-                let maximum: CGFloat = compact ? 192 : 420
+                let minimum: CGFloat = 72
+                let maximum: CGFloat = compact ? 220 : 180
                 let spacing: CGFloat = compact ? 8 : 12
-                let occupied = chrome + 24 + CGFloat(hints ? 3 : 2) * spacing
+                let occupied = chrome + 24 + CGFloat(hints ? 4 : 3) * spacing
                 let total = occupied + layout.coverHeight + layout.freeSpace
                 precondition(layout.coverHeight >= minimum && layout.coverHeight <= maximum)
                 precondition(layout.freeSpace >= 0)

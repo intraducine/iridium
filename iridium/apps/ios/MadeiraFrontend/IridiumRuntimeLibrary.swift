@@ -156,10 +156,10 @@ struct IridiumGameArtwork: View {
                 position: backdrop ? artwork.appearance(game.id).backgroundY : artwork.appearance(game.id).coverY,
                 fit: !backdrop && !artwork.appearance(game.id).customCover &&
                     (game.coverFile == nil || artwork.appearance(game.id).ignoreLegacyCover == true))
-            if image == nil, !backdrop {
+            if image == nil {
                 VStack(spacing: 12) {
                     Image(systemName: "gamecontroller").font(.largeTitle)
-                    Text(artwork.title(game)).font(.headline).multilineTextAlignment(.center).lineLimit(3)
+                    Text(artwork.title(game)).font(.headline).lineLimit(1).truncationMode(.tail)
                     Text(game.platform.title).font(.caption).foregroundStyle(.secondary)
                 }.padding().foregroundStyle(.white)
             }
