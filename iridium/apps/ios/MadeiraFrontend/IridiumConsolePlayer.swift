@@ -163,7 +163,7 @@ struct IridiumConsolePlayer: View {
                                 }
                             } else if menuPage == "PSP Settings" {
                                 Text("PPSSPP 1.20.4 · Native graphics and media").font(.subheadline)
-                                Text("CPU: IR interpreter · JIT unavailable").font(.footnote).foregroundStyle(.secondary)
+                                Text("CPU: \(session.pspCPUMode) · JIT unavailable").font(.footnote).foregroundStyle(.secondary)
                                 ForEach(1...4, id: \.self) { scale in
                                     menuRow("Resolution \(scale)×", session.pspResolution == scale ? "checkmark.circle.fill" : "circle")
                                 }

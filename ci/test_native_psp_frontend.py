@@ -24,6 +24,53 @@ def function(text, signature):
 
 class NativePSPFrontendTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('clang++'), 'C++ compiler required')
+    def test_boot_status_reports_effective_cpu_without_changing_configuration(self):
+        native = NATIVE.read_text()
+        values = ROOT / 'vendor/PPSSPP/Core/ConfigValues.h'
+        if not values.exists(): self.skipTest('Pinned checkout required')
+        harness = r'''#include <atomic>
+#include <cassert>
+#include <string>
+#include <utility>
+#include <vector>
+CPU_ENUM;
+struct Config { int iInternalResolution=3; CPUCore iCpuCore=CPUCore::IR_INTERPRETER; } g_Config;
+struct CoreParameter { CPUCore cpuCore; } active;
+CoreParameter &PSP_CoreParameter() { return active; }
+static std::atomic<int> currentResolution;
+static std::vector<std::pair<unsigned,std::string>> events;
+void event(unsigned kind,const char *message) { events.emplace_back(kind,message); }
+ADAPTER
+int main() {
+ const std::pair<CPUCore,const char *> modes[] = {
+  {CPUCore::INTERPRETER,"Interpreter"}, {CPUCore::IR_INTERPRETER,"IR interpreter"},
+  {CPUCore::JIT,"JIT"}, {CPUCore::JIT_IR,"JIT using IR"}, {static_cast<CPUCore>(99),"Unknown"}
+ };
+ for(auto [core,name]:modes) {
+  active.cpuCore=core;events.clear();
+  // The effective core deliberately differs from the saved preference.
+  g_Config.iCpuCore=core==CPUCore::IR_INTERPRETER ? CPUCore::INTERPRETER : CPUCore::IR_INTERPRETER;
+  auto saved=g_Config.iCpuCore;
+  ir_native_psp_frontend_event(4,"boot complete");
+  assert(events.size()==2 && events[0].first==8 && events[0].second==name);
+  assert(events[1].first==4 && events[1].second=="boot complete");
+  assert(active.cpuCore==core && g_Config.iCpuCore==saved && g_Config.iInternalResolution==3);
+  assert(currentResolution==3);
+ }
+ events.clear();ir_native_psp_frontend_event(7,"pause");
+ assert(events.size()==1 && events[0].first==7);
+}
+'''.replace('CPU_ENUM', function(values.read_text(), 'enum class CPUCore'))
+        harness = harness.replace('ADAPTER', function(native, 'void ir_native_psp_frontend_event('))
+        with tempfile.TemporaryDirectory() as folder:
+            code = Path(folder) / 'cpu.cpp'; code.write_text(harness)
+            binary = Path(folder) / 'cpu'
+            result = subprocess.run(['clang++', '-std=c++17', str(code), '-o', str(binary)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            subprocess.run([str(binary)], check=True, capture_output=True, timeout=10)
+
+    @unittest.skipUnless(shutil.which('clang++'), 'C++ compiler required')
     def test_preserved_autorun_false_boots_without_entering_removed_debugger(self):
         source = NATIVE.read_text()
         upstream = ROOT / 'vendor/PPSSPP/UI/EmuScreen.cpp'

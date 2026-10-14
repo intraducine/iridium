@@ -15,6 +15,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var nativePSPController: UIViewController?
     @Published private(set) var pspReady = false
     @Published private(set) var pspResolution = 2
+    @Published private(set) var pspCPUMode = "Not reported"
     @Published var pspStateSlot = 0
     @Published private(set) var pspStateStatus: String?
     @Published var error: String?
@@ -77,7 +78,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             releaseButtons()
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             diagnostics = IridiumRuntimeProgress()
-            pspReady = false; pspStateStatus = nil
+            pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
             lock.lock(); displayedImageCount = 0; lock.unlock()
             LibraryController.shared.configure(enabled: true, ownsInput: false)
             queue.async { [self] in
@@ -192,6 +193,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             pspStateStatus = text
             if kind == 6 { error = text }
         case 7: pause()
+        case 8: pspCPUMode = text
         default: break
         }
     }

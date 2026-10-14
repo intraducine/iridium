@@ -14,6 +14,7 @@ typedef void (*IRNativePSPInput)(uint16_t *buttons, int16_t *x, int16_t *y);
 // Main-thread entry points. Returned UIViewController has one retained reference.
 // Input runs only on the emulation sampling thread. Events other than log (0)
 // arrive on the main thread. Requests: 1 resolution (1–4), 2 save / 3 load (slot 0–4).
+// Event 8 reports the effective CPU mode when game boot completes.
 IR_NATIVE_EXPORT uint32_t ir_native_psp_abi(void);
 IR_NATIVE_EXPORT void *ir_native_psp_create(const char *game, const char *memory_stick, const char *assets,
                           bool jit_verified, IRNativePSPEvent event, IRNativePSPInput input);

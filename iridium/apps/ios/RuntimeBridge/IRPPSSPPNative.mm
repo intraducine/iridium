@@ -335,7 +335,18 @@ bool ir_native_psp_request(unsigned operation, int value) {
 }
 int ir_native_psp_resolution(void) { return currentResolution.load(); }
 void ir_native_psp_frontend_event(unsigned kind, const char *message) {
-    if (kind == 4) currentResolution = g_Config.iInternalResolution;
+    if (kind == 4) {
+        currentResolution = g_Config.iInternalResolution;
+        const char *cpu = "Unknown";
+        switch (PSP_CoreParameter().cpuCore) {
+        case CPUCore::INTERPRETER: cpu = "Interpreter"; break;
+        case CPUCore::IR_INTERPRETER: cpu = "IR interpreter"; break;
+        case CPUCore::JIT: cpu = "JIT"; break;
+        case CPUCore::JIT_IR: cpu = "JIT using IR"; break;
+        default: break;
+        }
+        event(8, cpu);
+    }
     event(kind, message);
 }
 

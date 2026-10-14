@@ -491,6 +491,8 @@ upstream drops every callback copy without invoking it. Queued operations keep
 that ownership until completion; no timeout releases an operation still running.
 The frontend-owned AutoRun debugger preference is normalized after configuration
 load so preserved AutoRun=false cannot strand boot in an inaccessible debugger.
+Boot status reports the effective core's CPU mode through the existing event
+bridge; the shared menu does not assume the default or alter the selected mode.
 No new save format or memory-stick migration is introduced. Settings not yet
 exposed by Iridium keep their existing per-game configuration values.
 Fresh PSP settings default to OpenGL, two-times resolution and IR interpreter.
