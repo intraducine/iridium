@@ -34,3 +34,10 @@ Public UI snapshot inspected: SteamTracking/SteamTracking
 redistributable frontend dependency. The local Steam UI changelist `10971728`
 does not contain Big Art identifiers. Dynamic live Big Art behavior on this Mac
 has therefore not been verified.
+
+Review correction: keep the complete selected background visible in portrait over
+an ambient fill of that same image. Preserve source precedence, custom backgrounds,
+vertical position and landscape framing. Invalidate the touch cover size when the
+actual viewport height changes, while keeping idle touch geometry stable. Validate
+centered and off-center artwork, the largest text size, launch callback counts and
+controller routing in both orientations using the simulator harness.

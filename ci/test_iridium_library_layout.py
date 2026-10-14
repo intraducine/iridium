@@ -34,6 +34,7 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertLess(source.index('touchCoverHeight = height'), source.index('showHints = false }', source.index('touchCoverHeight = height')))
         self.assertNotIn('if next == .idle { touchCoverHeight = nil }', source)
         self.assertIn('.onChange(of: height) { _, _ in keepSelection() }', source)
+        self.assertIn('.onChange(of: geometry.size.height) { _, _ in touchCoverHeight = nil }', source)
         self.assertNotIn('showHints ? 240 : 212', source)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for executable library geometry checks')
@@ -58,6 +59,13 @@ let withSearch = metrics(375, 350)
 precondition(withSearch.coverHeight == 72 && withSearch.freeSpace == 0)
 let roomy = metrics(600, 155)
 precondition(abs(roomy.coverHeight - 168) < 0.001 && abs(roomy.freeSpace - 229) < 0.001)
+// A height-only resize must invalidate the frozen stride. An unchanged
+// viewport (including release to idle) keeps its existing touch geometry.
+let afterHeightResize = metrics(320, 155)
+precondition(abs(afterHeightResize.coverHeight - 96) < 0.001)
+let idleBeforeResize = IridiumLibraryLayoutMetrics(viewportHeight: 600, compact: true,
+    chromeHeight: 155, hasSelection: true, showsHints: false, frozenCoverHeight: roomy.coverHeight)
+precondition(idleBeforeResize.coverHeight == roomy.coverHeight)
 let portrait = metrics(852, 155, compact: false)
 precondition(portrait.coverHeight == 180 && portrait.freeSpace > 0)
 let empty = metrics(375, 44, selected: false)

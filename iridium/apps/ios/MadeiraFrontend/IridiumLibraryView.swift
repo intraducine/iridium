@@ -147,6 +147,7 @@ struct IridiumLibraryView: View {
                         .onChange(of: searching) { _, active in touchCoverHeight = nil; if active { page.scrollTo("header", anchor: .top) } }
                 }
             }.onChange(of: compact, initial: true) { _, value in wideLayout = value }
+                .onChange(of: geometry.size.height) { _, _ in touchCoverHeight = nil }
         }.preferredColorScheme(.dark).navigationBarHidden(true)
             .focusable().focusEffectDisabled().focused($keyboardFocus)
             .simultaneousGesture(TapGesture().onEnded { showHints = false; showFocus = false })

@@ -52,17 +52,17 @@ struct IridiumBackdropCanvas: UIViewRepresentable {
         view.show(image, position: position, animated: !reduceMotion)
     }
     final class Canvas: UIView {
-        private var target: CroppedImage?
+        private var target: ArtworkLayer?
         override init(frame: CGRect) { super.init(frame: frame); backgroundColor = .black; clipsToBounds = true }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         func show(_ image: UIImage?, position: Double, animated: Bool) {
             guard target != nil || image != nil else { return }
             guard target?.image !== image || target?.position != position else { return }
             let hadImage = target != nil
-            let layers = subviews.compactMap { $0 as? CroppedImage }
+            let layers = subviews.compactMap { $0 as? ArtworkLayer }
             var next = layers.first { $0.image === image && $0.position == position }
             if next == nil, let image {
-                let layer = CroppedImage(image: image); layer.position = position; layer.alpha = 0
+                let layer = ArtworkLayer(image: image, position: position); layer.alpha = 0
                 addSubview(layer); next = layer
             }
             target = next; setNeedsLayout(); layoutIfNeeded()
@@ -76,14 +76,53 @@ struct IridiumBackdropCanvas: UIViewRepresentable {
         }
         override func layoutSubviews() {
             super.layoutSubviews()
-            for case let layer as CroppedImage in subviews {
-                guard let image = layer.image else { continue }
-                let scale = max(bounds.width / max(1, image.size.width), bounds.height / max(1, image.size.height))
-                let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-                layer.frame = CGRect(x: (bounds.width - size.width) / 2,
-                    y: (bounds.height - size.height) * layer.position, width: size.width, height: size.height)
+            for case let layer as ArtworkLayer in subviews { layer.frame = bounds }
+        }
+        private final class ArtworkLayer: UIView {
+            let image: UIImage
+            let position: Double
+            private let artwork: UIImageView
+            private let ambient: UIImageView
+            private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+
+            init(image: UIImage, position: Double) {
+                self.image = image; self.position = position
+                artwork = UIImageView(image: image); ambient = UIImageView(image: image)
+                super.init(frame: .zero)
+                clipsToBounds = true
+                addSubview(ambient); addSubview(blur); addSubview(artwork)
+            }
+            required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+            override func layoutSubviews() {
+                super.layoutSubviews()
+                let layout = IridiumBackdropLayout(imageSize: image.size, viewport: bounds.size, position: position)
+                artwork.frame = layout.artworkFrame
+                ambient.frame = layout.fillFrame; blur.frame = bounds
+                ambient.isHidden = !layout.showsAmbient; blur.isHidden = !layout.showsAmbient
             }
         }
-        private final class CroppedImage: UIImageView { var position = 0.5 }
+    }
+}
+
+/// Portrait retains the entire chosen background, without guessing its subject's
+/// horizontal position. The same image fills the spare space behind a material.
+/// The existing vertical position also places a fitted image within that space.
+struct IridiumBackdropLayout {
+    let artworkFrame: CGRect
+    let fillFrame: CGRect
+    let showsAmbient: Bool
+
+    init(imageSize: CGSize, viewport: CGSize, position: Double) {
+        showsAmbient = viewport.height > viewport.width
+        func frame(scale: CGFloat) -> CGRect {
+            let size = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
+            return CGRect(x: (viewport.width - size.width) / 2,
+                          y: (viewport.height - size.height) * position,
+                          width: size.width, height: size.height)
+        }
+        let horizontal = viewport.width / max(1, imageSize.width)
+        let vertical = viewport.height / max(1, imageSize.height)
+        fillFrame = frame(scale: max(horizontal, vertical))
+        artworkFrame = showsAmbient ? frame(scale: min(horizontal, vertical)) : fillFrame
     }
 }
