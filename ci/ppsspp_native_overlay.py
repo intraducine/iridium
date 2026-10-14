@@ -3,6 +3,7 @@ from pathlib import Path
 import ppsspp_sensor_overlay as sensors
 import ppsspp_picker_overlay as picker
 import ppsspp_callback_overlay as callbacks
+import ppsspp_frontend_overlay as frontend
 
 REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 
@@ -197,17 +198,17 @@ def apply(name, text):
                           '- (void)PushCameraImageIOS:(long long)len buffer:(unsigned char*)data {',
                           '- (void)SetGpsDataIOS:(CLLocation *)newLocation {'):
             text = replace(text, signature, signature + '\n\tif (iridiumSensorsClosed || !ir_native_psp_generation_current(iridiumOwnerGeneration)) return;')
-    return callbacks.apply(name, text)
+    return frontend.apply(name, callbacks.apply(name, text))
 
 
-PATCHED = ('CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME)
+PATCHED = ('CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED)
 
 
 def stage(source, destination):
     """Mirror immutable source; only declared platform/ownership hooks are copied."""
     source = source.resolve(strict=True)
     destination.mkdir(parents=True, exist_ok=True)
-    mirrored_directories = ('ios', 'UI', 'Core', 'Core/Util')
+    mirrored_directories = ('ios', 'UI', 'Core', 'Core/Util', 'Core/HLE')
     for relative in ('', *mirrored_directories):
         target = destination / relative
         target.mkdir(exist_ok=True)

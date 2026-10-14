@@ -9,18 +9,25 @@
 extern "C" {
 #endif
 typedef void (*IRNativePSPEvent)(unsigned event, const char *message);
+typedef void (*IRNativePSPInput)(uint16_t *buttons, int16_t *x, int16_t *y);
 #define IR_NATIVE_EXPORT __attribute__((visibility("default")))
 // Main-thread entry points. Returned UIViewController has one retained reference.
+// Input runs only on the emulation sampling thread. Events other than log (0)
+// arrive on the main thread. Requests: 1 resolution (1–4), 2 save / 3 load (slot 0–4).
 IR_NATIVE_EXPORT uint32_t ir_native_psp_abi(void);
 IR_NATIVE_EXPORT void *ir_native_psp_create(const char *game, const char *memory_stick, const char *assets,
-                          bool jit_verified, IRNativePSPEvent event);
+                          bool jit_verified, IRNativePSPEvent event, IRNativePSPInput input);
 IR_NATIVE_EXPORT void ir_native_psp_pause(void);
 IR_NATIVE_EXPORT void ir_native_psp_resume(void);
-IR_NATIVE_EXPORT void ir_native_psp_menu(void);
+IR_NATIVE_EXPORT bool ir_native_psp_request(unsigned operation, int value);
+IR_NATIVE_EXPORT int ir_native_psp_resolution(void);
 IR_NATIVE_EXPORT void ir_native_psp_stop(void);
 IR_NATIVE_EXPORT void ir_native_psp_restart(void);
 bool ir_native_psp_jit_available(void);
 IR_NATIVE_EXPORT uint64_t ir_native_psp_frames(void);
+void ir_native_psp_poll_input(void);
+void ir_native_psp_frontend_frame(void);
+void ir_native_psp_frontend_event(unsigned kind, const char *message);
 // Platform hooks are internal; engine code and serialized state are unchanged.
 void ir_native_psp_platform_init(void);
 void ir_native_psp_frame(void);

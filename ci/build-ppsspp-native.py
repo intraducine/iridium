@@ -19,7 +19,7 @@ RELEASE = 'v1.20.4'
 EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 'ext/freetype', 'assets/debugger')
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
-EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'create', 'pause', 'resume', 'menu', 'stop', 'restart', 'frames')}
+EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames')}
 
 
 def run(*args, **kwargs):
@@ -264,7 +264,7 @@ def build(source, destination, sdk, jobs):
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
-        mode='native iOS; upstream media, graphics, UI and configuration')
+        mode='native iOS engine; upstream media/graphics; shared Iridium frontend')
     (destination / 'component.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
     print('Built release-pinned native PSP player:', delivered)
 

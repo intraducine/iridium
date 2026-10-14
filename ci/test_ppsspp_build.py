@@ -32,7 +32,8 @@ class PSPBuildTests(unittest.TestCase):
             with patch.object(psp, 'output', side_effect=output):
                 audit = psp.audit(binary, 'iphoneos')
                 self.assertEqual(audit['minimumOS'], '18.0')
-                self.assertEqual(len(audit['exports']), 8)
+                self.assertEqual(set(audit['exports']), {'_ir_native_psp_' + name for name in
+                    ('abi', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames')})
                 for key, value in [
                     ('nm', records['nm'] + '\n_cpp_internal'), ('lipo', 'arm64 x86_64'),
                     ('otool-D', 'component:\n/private/build/component.dylib'),

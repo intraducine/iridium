@@ -470,9 +470,24 @@ The PSP source moves to published PPSSPP v1.20.4,
 `fa50bb1976065c4f8b1b47af227d367fe9771555`, with its exact selected dependency
 pins. Madeira remains `48f976429c189f8396e23d251d8a82f43c705922` and its nested
 pins. The previous Libretro/software-rendering PSP adapter is replaced in this
-frontend by upstream's iOS player, touch/gamepad/keyboard input, advanced screens,
-FFmpeg media, OpenGL and Vulkan graphics, and the complete release resource tree.
-A narrow exported C boundary embeds the player as a child of Iridium's session.
+frontend by the native iOS engine with FFmpeg media, OpenGL and Vulkan graphics,
+and the complete release resource tree (with the licensed atlas replacements
+below). IridiumConsolePlayer supplies the shared menu, loading presentation,
+touch controls/editor, feedback, keyboard/controller routing and diagnostic UI.
+The embedded controller is a display-only child. Its upstream touch widgets,
+loading widgets, pause screens, controller registration and keyboard ownership
+are removed by ci/ppsspp_frontend_overlay.py; this is not a hidden second UI.
+PSP firmware utility dialogs remain in the emulated game/PPGe renderer.
+
+The ABI 2 boundary samples Iridium's source-aware input queue immediately before
+sceCtrl's existing controller latch sample; no sample or emulation algorithm is
+replaced. Resizes use the same asynchronous render drain as pause/close. Native
+boot completion is distinct from renderer initialization. Engine failures and
+menu requests return to the shared Iridium session. Resolution changes and five
+save/load slots are requested from that menu and applied by the native render
+owner after resume; completion callbacks reject retired session generations.
+No new save format or memory-stick migration is introduced. Settings not yet
+exposed by Iridium keep their existing per-game configuration values.
 Fresh PSP settings default to OpenGL, two-times resolution and IR interpreter.
 Existing per-game settings and writable memory sticks are retained. JIT remains
 unavailable until the native PSP code allocation path is independently verified.
@@ -480,8 +495,9 @@ No emulation Core, HLE or GPU algorithm is changed.
 
 The out-of-tree overlay adapts app entry/lifecycle, scene screen lookup, rotation,
 file/photo presentation, per-game memory-stick ownership and optional IAP guards.
-The memory-stick relocation setting explains Iridium ownership and is disabled;
-other upstream settings retain their storage behavior. App-active/interruption
+The embedded session cannot relocate its managed memory stick. Upstream
+configuration storage remains intact; interface-owned touch, debugger and
+rotation flags are overridden for the shared player. App-active/interruption
 state and user play intent jointly control resuming after asynchronous render
 drain. Explicit stop cancels a pending backend restart. Render-owner and loop
 identities reject delayed callbacks from retired or restarted controllers.

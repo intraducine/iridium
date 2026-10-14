@@ -186,7 +186,13 @@ when the complete source and build material provide a usable relink path.
 
 ## Replace the native PSP component
 
-The PSP frontend uses the exact PPSSPP v1.20.4 source/dependency pins in its build
+The app and native component must both use ABI 2. Rebuild/relink both when changing
+the boundary; the loader rejects ABI 1 components. The shared Iridium player owns
+all frontend controls and menus. Its resolution and save-state requests apply on
+resume in the native render owner. The phone UI and God of War acceptance still
+require separate device tests; a component/app build does not establish them.
+
+The PSP engine uses the exact PPSSPP v1.20.4 source/dependency pins in its build
 receipt, upstream FFmpeg codec sources and the source-built MoltenVK closure in
 `ci/moltenvk-source-inputs.json`. Required source downloads are included under
 `.build/runtime-downloads/` in the corresponding-source archive. Apple SDKs and

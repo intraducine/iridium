@@ -13,6 +13,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var phase = Phase.idle
     @Published private(set) var image: UIImage?
     @Published private(set) var nativePSPController: UIViewController?
+    @Published private(set) var pspReady = false
+    @Published private(set) var pspResolution = 2
+    @Published var pspStateSlot = 0
+    @Published private(set) var pspStateStatus: String?
     @Published var error: String?
     @Published private(set) var presented = false
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
@@ -73,6 +77,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             releaseButtons()
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             diagnostics = IridiumRuntimeProgress()
+            pspReady = false; pspStateStatus = nil
             lock.lock(); displayedImageCount = 0; lock.unlock()
             LibraryController.shared.configure(enabled: true, ownsInput: false)
             queue.async { [self] in
@@ -135,14 +140,21 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             game.path.withCString { gamePath in
                 memoryStick.path.withCString { savePath in
                     assets.path.withCString { assetPath in
-                        ir_psp_native_open(binary, gamePath, savePath, assetPath, false) { kind, message in
+                        ir_psp_native_open(binary, gamePath, savePath, assetPath, false, { kind, message in
                             let text = message.map { String(cString: $0) } ?? ""
                             if kind == 0 {
                                 RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)")
                             } else {
-                                DispatchQueue.main.async { IridiumConsoleSession.shared.nativePSPEvent(kind, text: text) }
+                                IridiumConsoleSession.shared.nativePSPEvent(kind, text: text)
                             }
-                        }
+                        }, { buttons, x, y in
+                            let session = IridiumConsoleSession.shared
+                            let sample = session.input()
+                            buttons?.pointee = sample.digital.buttons
+                            x?.pointee = sample.x
+                            y?.pointee = sample.y
+                            session.acknowledge(sample, polled: true)
+                        })
                     }
                 }
             }
@@ -155,7 +167,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if requested == .pause { ir_psp_native_pause() }
         diagnostics.phase = "native graphics starting"
         RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] release=v1.20.4 jit_verified=false; renderer pending; game_progress=unknown")
-        LibraryController.shared.configure(enabled: false, ownsInput: false)
+        LibraryController.shared.configure(enabled: true, ownsInput: requested == .pause)
     }
 
     private func nativePSPEvent(_ kind: UInt32, text: String) {
@@ -171,10 +183,34 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             queue.async { self.terminalFailure = true }
             stop()
         case 3:
+            diagnostics.phase = pspReady ? "native renderer initialized" : "native renderer initialized; game boot pending"
+        case 4:
+            pspReady = true; pspResolution = Int(ir_psp_native_resolution())
             if phase == .starting { phase = .running }
-            diagnostics.phase = "native renderer initialized"
+            diagnostics.phase = "native game boot complete"
+        case 5, 6:
+            pspStateStatus = text
+            if kind == 6 { error = text }
+        case 7: pause()
         default: break
         }
+    }
+
+    func setPSPResolution(_ scale: Int) {
+        guard game?.platform == .psp, (1...4).contains(scale), phase == .paused,
+              ir_psp_native_request(1, Int32(scale)) else { return }
+        pspResolution = scale
+    }
+
+    func requestPSPState(load: Bool) {
+        guard game?.platform == .psp, pspReady, phase == .paused else {
+            error = "Wait for this game to finish starting before using save states."; return
+        }
+        guard ir_psp_native_request(load ? 3 : 2, Int32(pspStateSlot)) else {
+            error = "A save-state operation is already pending. Resume the game and try again."; return
+        }
+        pspStateStatus = load ? "Loading state…" : "Saving state…"
+        resume()
     }
 
     private var currentIntentGeneration: UInt64 {
@@ -191,8 +227,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
         phase = .paused; releaseButtons()
         diagnostics.phase = "pause requested"
-        if nativePSPController != nil { ir_psp_native_pause(); return }
         LibraryController.shared.configure(enabled: true, ownsInput: true)
+        if nativePSPController != nil { ir_psp_native_pause(); return }
         queue.async { [self] in
             guard queueOwner == owner, requested == .pause else { return }
             // Async PSP boot still needs the single pump to reach a safe state.
@@ -211,10 +247,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock(); intent.resume(); intentGeneration &+= 1; lock.unlock()
         phase = .starting
         diagnostics.phase = "resume requested"
-        if nativePSPController != nil {
-            ir_psp_native_resume(); phase = .running; return
-        }
         LibraryController.shared.configure(enabled: true, ownsInput: false)
+        if nativePSPController != nil {
+            ir_psp_native_resume(); phase = pspReady ? .running : .starting; return
+        }
         queue.async { [self] in
             guard queueOwner == owner, requested == .play else { return }
             do {

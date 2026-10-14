@@ -33,11 +33,7 @@ struct IridiumConsolePlayer: View {
         return ["z": 1 << 8, "x": 1, " ": 1 << 2, "\r": 1 << 3]
     }
 
-    @ViewBuilder var body: some View {
-        if isPSP { IridiumNativePSPPlayer(session: session) }
-        else { interpreterBody }
-    }
-    private var interpreterBody: some View {
+    var body: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
             let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: touchVisible)
@@ -113,16 +109,23 @@ struct IridiumConsolePlayer: View {
     private var screen: some View {
         ZStack {
             Color.black
-            if let image = session.image {
+            if isPSP, let controller = session.nativePSPController {
+                IridiumNativePSPSurface(controller: controller).allowsHitTesting(false)
+                    .accessibilityLabel("Game display")
+                    .overlay { if !session.pspReady { starting.background(.black) } }
+            } else if let image = session.image {
                 Image(uiImage: image).resizable().interpolation(.none).scaledToFit().accessibilityLabel("Game display")
             } else {
-                VStack(spacing: 12) {
-                    ProgressView().tint(.white)
-                    Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
-                    Text("Starting \(platform)…").font(.subheadline).foregroundStyle(.secondary)
-                }.padding(24)
+                starting
             }
         }.clipped()
+    }
+    private var starting: some View {
+        VStack(spacing: 12) {
+            ProgressView().tint(.white)
+            Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
+            Text("Starting \(platform)…").font(.subheadline).foregroundStyle(.secondary)
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func menu(in size: CGSize) -> some View {
         ZStack {
@@ -139,6 +142,10 @@ struct IridiumConsolePlayer: View {
                                 IridiumPlayerMenuRow(title: "Library", symbol: "square.grid.2x2") { session.returnToLibraryAfterTimeout() }
                             } else if menuPage == "Session" {
                                 IridiumSessionMenuActions(focused: menuGuided ? menuFocus : nil, activate: activate)
+                                if isPSP {
+                                    menuRow("PSP Settings", "slider.horizontal.3")
+                                    menuRow("Save States", "square.and.arrow.down")
+                                }
                                 menuRow("Close Game", "stop.circle")
                             } else if menuPage == "Controls" {
                                 menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
@@ -154,6 +161,21 @@ struct IridiumConsolePlayer: View {
                                     Text("Up/down chooses a control. A selects. Left/right changes opacity. B goes back.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
+                            } else if menuPage == "PSP Settings" {
+                                Text("PPSSPP 1.20.4 · Native graphics and media").font(.subheadline)
+                                Text("CPU: IR interpreter · JIT unavailable").font(.footnote).foregroundStyle(.secondary)
+                                ForEach(1...4, id: \.self) { scale in
+                                    menuRow("Resolution \(scale)×", session.pspResolution == scale ? "checkmark.circle.fill" : "circle")
+                                }
+                                Text("Resolution changes apply when you resume. Lower values reduce graphics work.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            } else if menuPage == "Save States" {
+                                menuRow("Slot \(session.pspStateSlot + 1)", "number.square")
+                                menuRow("Save State and Resume", "square.and.arrow.down")
+                                menuRow("Load State and Resume", "square.and.arrow.up")
+                                Text("Five slots per game. Saving replaces the selected slot. Loading replaces current unsaved progress. In-game memory-stick saves stay separate.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                if let status = session.pspStateStatus { Text(status).font(.footnote) }
                             } else { help }
                         }
                     }.onChange(of: menuFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
@@ -191,6 +213,12 @@ struct IridiumConsolePlayer: View {
     private func activate(_ title: String) {
         switch title {
         case "Resume": resume()
+        case "Slot \(session.pspStateSlot + 1)": session.pspStateSlot = (session.pspStateSlot + 1) % 5; menuFocus = "Slot \(session.pspStateSlot + 1)"
+        case "Save State and Resume", "Load State and Resume":
+            releaseInput()
+            session.requestPSPState(load: title == "Load State and Resume")
+        case let value where value.hasPrefix("Resolution "):
+            if let scale = Int(value.dropFirst(11).prefix(1)) { session.setPSPResolution(scale) }
         case "Close Game": closeConfirmation = IridiumCloseConfirmation(); confirmClose = true
         case "View Log": releaseInput(); showingLogs = true
         case "Edit Controls":
@@ -205,6 +233,8 @@ struct IridiumConsolePlayer: View {
             menuPage = title
             if title == "Controls" { menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls" }
             if title == "Help" { helpSection = 0 }
+            if title == "PSP Settings" { menuFocus = "Resolution \(session.pspResolution)×" }
+            if title == "Save States" { menuFocus = "Slot \(session.pspStateSlot + 1)" }
         }
     }
     private func command(_ value: String) {
@@ -242,8 +272,14 @@ struct IridiumConsolePlayer: View {
             if value == "down" { helpSection = min(2, helpSection + 1) }
             return
         }
-        guard menuPage == "Session" else { return }
-        let order = IridiumSessionMenuActions.items(windows: false).map { $0.0 } + ["Close Game"]
+        let order: [String]
+        switch menuPage {
+        case "Session": order = IridiumSessionMenuActions.items(windows: false).map { $0.0 }
+            + (isPSP ? ["PSP Settings", "Save States"] : []) + ["Close Game"]
+        case "PSP Settings": order = (1...4).map { "Resolution \($0)×" }
+        case "Save States": order = ["Slot \(session.pspStateSlot + 1)", "Save State and Resume", "Load State and Resume"]
+        default: return
+        }
         if ["up", "down", "left", "right"].contains(value) {
             menuGuided = true
             menuFocus = IridiumPlayerMenuNavigation.next(menuFocus, order: order, command: value)

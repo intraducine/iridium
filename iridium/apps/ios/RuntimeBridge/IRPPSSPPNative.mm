@@ -13,6 +13,12 @@
 #include "Common/Log/LogManager.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/Core.h"
+#include "Core/System.h"
+#include "Core/SaveState.h"
+#include "Core/ELF/ParamSFO.h"
+#include "Core/HLE/sceCtrl.h"
+#include "Core/Reporting.h"
 #include "Core/Util/DarwinFileSystemServices.h"
 #ifndef USE_FFMPEG
 #error The native PSP player requires its upstream media decoders
@@ -49,6 +55,7 @@
 @property NSMutableSet *capturedControllers;
 @property NSMutableDictionary *presentationCancels;
 @property UIInterfaceOrientationMask rotationMask;
+@property CGSize surfaceSize;
 - (void)beginPlayer;
 - (void)observeEnvironment;
 - (void)setPlaying:(BOOL)playing;
@@ -66,6 +73,13 @@ static std::atomic<uint64_t> frames;
 static std::atomic<uint64_t> generation;
 static std::atomic<IRNativePSPEvent> eventSink;
 static std::atomic<bool> acceptingCallbacks;
+static std::atomic<IRNativePSPInput> inputSource;
+static std::atomic<int> pendingResolution;
+static std::atomic<int> currentResolution{2};
+static std::atomic<int> pendingState;
+static std::atomic<bool> stateBusy;
+static bool reportedCoreError; // native render thread, reset before starting it
+
 
 static void event(unsigned kind, const char *message) {
     auto sink = eventSink.load();
@@ -86,19 +100,7 @@ static void event(unsigned kind, const char *message) {
 }
 
 @implementation IRPPSSPPContainer
-- (BOOL)canBecomeFirstResponder { return YES; }
-- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    if (self.active && !self.closing) [self.player pressesBegan:presses withEvent:event];
-    else [super pressesBegan:presses withEvent:event];
-}
-- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    if (self.initialized && !self.closing) [self.player pressesEnded:presses withEvent:event];
-    else [super pressesEnded:presses withEvent:event];
-}
-- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
-    if (self.initialized && !self.closing) [self.player pressesCancelled:presses withEvent:event];
-    else [super pressesCancelled:presses withEvent:event];
-}
+- (BOOL)canBecomeFirstResponder { return NO; }
 - (UIViewController *)childViewControllerForHomeIndicatorAutoHidden { return self.player; }
 - (UIViewController *)childViewControllerForScreenEdgesDeferringSystemGestures { return self.player; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
@@ -119,6 +121,7 @@ static void event(unsigned kind, const char *message) {
     acceptingCallbacks = true;
     self.previousIdleTimerDisabled = UIApplication.sharedApplication.idleTimerDisabled;
     frames = 0; rendererFailed = false;
+    pendingResolution = 0; pendingState = 0; stateBusy = false; reportedCoreError = false;
     ir_native_psp_platform_init();
     struct sigaction ignored{};
     ignored.sa_handler = SIG_IGN;
@@ -136,6 +139,12 @@ static void event(unsigned kind, const char *message) {
         g_Config.iInternalResolution = 2;
         g_Config.bSoftwareRendering = false;
     }
+    // Presentation and input belong to Iridium even for older per-game settings.
+    g_Config.iScreenRotation = ROTATION_AUTO;
+    g_Config.bShowTouchControls = false;
+    g_Config.bShowImDebugger = false;
+    g_Config.bShowDeveloperMenu = false;
+    currentResolution = g_Config.iInternalResolution;
     ir_native_psp_rotation_changed(g_Config.iScreenRotation);
     g_logManager.SetExternalLogCallback([](const LogMessage &message, void *) {
         std::string text = std::string(message.log) + ": " + message.msg;
@@ -151,6 +160,7 @@ static void event(unsigned kind, const char *message) {
         : (PPSSPPBaseViewController *)[[PPSSPPViewControllerGL alloc] init];
     [self addChildViewController:self.player];
     self.player.view.frame = self.view.bounds;
+    self.player.view.userInteractionEnabled = NO;
     self.player.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.player.view];
     [self.player didMoveToParentViewController:self];
@@ -159,6 +169,15 @@ static void event(unsigned kind, const char *message) {
         [self closePlayer];
         return;
     }
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGSize size = self.view.bounds.size;
+    if (CGSizeEqualToSize(self.surfaceSize, size)) return;
+    self.surfaceSize = size;
+    // Use the same asynchronous drain as pause, then refresh viewport dimensions
+    // in didBecomeActive. Covers rotation, touch visibility and split-view resize.
+    if (self.active) [self setPlaying:NO];
 }
 - (void)observeEnvironment {
     if (self.observers.count) return;
@@ -190,7 +209,7 @@ static void event(unsigned kind, const char *message) {
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    [self becomeFirstResponder];
+
     [self setPlaying:self.wantsActive && !self.closing && !self.interrupted && UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
 }
 - (void)setPlaying:(BOOL)playing {
@@ -274,10 +293,10 @@ static void event(unsigned kind, const char *message) {
 }
 @end
 
-uint32_t ir_native_psp_abi(void) { return 1; }
+uint32_t ir_native_psp_abi(void) { return 2; }
 void *ir_native_psp_create(const char *game, const char *memoryStick, const char *assets,
-                          bool jit, IRNativePSPEvent callback) {
-    if (!NSThread.isMainThread || container || !game || !memoryStick || !assets || !callback) return nullptr;
+                          bool jit, IRNativePSPEvent callback, IRNativePSPInput input) {
+    if (!NSThread.isMainThread || container || !game || !memoryStick || !assets || !callback || !input) return nullptr;
     if (!ir_native_psp_codec_check()) return nullptr;
     IRPPSSPPContainer *owner = [[IRPPSSPPContainer alloc] init];
     owner.inputRestorers = [NSMutableArray array]; owner.capturedControllers = [NSMutableSet set];
@@ -287,7 +306,7 @@ void *ir_native_psp_create(const char *game, const char *memoryStick, const char
     owner.audioCategory = audio.category; owner.audioMode = audio.mode; owner.audioOptions = audio.categoryOptions;
     owner.wantsActive = YES;
     owner.appActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
-    eventSink = callback; jitVerified = jit; generation.fetch_add(1); container = owner;
+    eventSink = callback; inputSource = input; jitVerified = jit; generation.fetch_add(1); container = owner;
     return (__bridge_retained void *)owner;
 }
 void ir_native_psp_pause(void) { container.wantsActive = NO; [container setPlaying:NO]; }
@@ -295,11 +314,73 @@ void ir_native_psp_resume(void) {
     container.wantsActive = YES;
     [container setPlaying:!container.interrupted && UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
 }
-void ir_native_psp_menu(void) {
-    if (!container || container.closing) return;
-    KeyInput key{}; key.deviceId = DEVICE_ID_TOUCH; key.keyCode = NKCODE_BACK;
-    key.flags = KeyInputFlags::DOWN | KeyInputFlags::UP; NativeKey(key);
+// Requests are accepted on the UI thread and applied by the existing render
+// owner after resume. No UI thread reads or mutates live emulation/config state.
+bool ir_native_psp_request(unsigned operation, int value) {
+    if (!NSThread.isMainThread || !container || !container.initialized || container.closing) return false;
+    if (operation == 1 && value >= 1 && value <= 4) {
+        pendingResolution = value; return true;
+    }
+    if ((operation == 2 || operation == 3) && value >= 0 && value < 5) {
+        bool idle = false;
+        if (!stateBusy.compare_exchange_strong(idle, true)) return false;
+        pendingState = (int)operation * 10 + value;
+        return true;
+    }
+    return false;
 }
+int ir_native_psp_resolution(void) { return currentResolution.load(); }
+void ir_native_psp_frontend_event(unsigned kind, const char *message) {
+    if (kind == 4) currentResolution = g_Config.iInternalResolution;
+    event(kind, message);
+}
+
+void ir_native_psp_poll_input(void) {
+    uint16_t buttons = 0; int16_t x = 0, y = 0;
+    if (acceptingCallbacks) {
+        if (auto poll = inputSource.load()) poll(&buttons, &x, &y);
+    }
+    const uint32_t mapping[] = {CTRL_CROSS, CTRL_SQUARE, CTRL_SELECT, CTRL_START,
+        CTRL_UP, CTRL_DOWN, CTRL_LEFT, CTRL_RIGHT, CTRL_CIRCLE, CTRL_TRIANGLE,
+        CTRL_LTRIGGER, CTRL_RTRIGGER};
+    uint32_t pspButtons = 0;
+    for (unsigned bit = 0; bit < 12; ++bit)
+        if (buttons & (1u << bit)) pspButtons |= mapping[bit];
+    __CtrlUpdateButtons(pspButtons, CTRL_MASK_USER);
+    // Shared console samples use down-positive Y; PPSSPP expects up-positive.
+    __CtrlSetAnalogXY(0, x / 32768.0f, -y / 32768.0f);
+}
+
+void ir_native_psp_frontend_frame(void) {
+    if (!acceptingCallbacks || !PSP_IsInited()) return;
+    if (coreState == CORE_RUNTIME_ERROR && !reportedCoreError) {
+        reportedCoreError = true;
+        event(2, "The PSP engine reported a runtime error. Details are available in View Log.");
+        return;
+    }
+    int resolution = pendingResolution.exchange(0);
+    if (resolution) {
+        g_Config.iInternalResolution = resolution;
+        Reporting::UpdateConfig();
+        System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
+        g_Config.Save("Iridium resolution");
+    }
+    currentResolution = g_Config.iInternalResolution;
+    int request = pendingState.exchange(0);
+    if (!request) return;
+    uint64_t owner = generation.load();
+    auto completion = [owner](SaveState::Status status, std::string_view message) {
+        if (!ir_native_psp_generation_current(owner)) return;
+        stateBusy = false;
+        std::string text(message);
+        if (text.empty()) text = status == SaveState::Status::SUCCESS ? "Save-state operation completed." : "Save-state operation failed.";
+        event(status == SaveState::Status::FAILURE ? 6 : 5, text.c_str());
+    };
+    std::string prefix = SaveState::GetGamePrefix(g_paramSFO);
+    if (request / 10 == 2) SaveState::SaveSlot(prefix, request % 10, completion);
+    else SaveState::LoadSlot(prefix, request % 10, completion);
+}
+
 void ir_native_psp_stop(void) {
     IRPPSSPPContainer *owner = container;
     void (^stop)(void) = ^{

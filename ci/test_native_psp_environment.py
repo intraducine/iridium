@@ -31,7 +31,9 @@ enum{UIApplicationStateActive,UIApplicationStateInactive,AVAudioSessionInterrupt
 + (instancetype)sharedApplication{static UIApplication *o;if(!o)o=[self new];return o;}
 @end
 static std::atomic<uint64_t> generation,frames;
-static std::atomic<bool> rendererFailed,acceptingCallbacks;
+static std::atomic<bool> rendererFailed,acceptingCallbacks,stateBusy;
+static std::atomic<int> pendingResolution,pendingState;
+static bool reportedCoreError;
 static struct{bool bEnableSound;}g_Config={true};
 static unsigned audioStarts;
 static NSMutableArray *pending;
