@@ -11,8 +11,11 @@ struct IridiumLibraryBackdrop: View {
     @State private var position = 0.5
     @State private var loading = false
     var body: some View {
-        IridiumBackdropCanvas(image: opaque ? nil : image, isLoading: loading && !opaque,
-                              position: position, portrait: portrait, reduceMotion: reduceMotion)
+        ZStack {
+            IridiumBackdropCanvas(image: opaque ? nil : image, isLoading: loading && !opaque,
+                                  position: position, portrait: portrait, reduceMotion: reduceMotion)
+            if !opaque { IridiumBackdropReadability() }
+        }
             .task(id: (game.map { artwork.key($0) } ?? "empty") + (portrait ? ":portrait" : ":landscape")) {
                 guard let game else { image = nil; loading = false; return }
                 loading = true
@@ -22,6 +25,61 @@ struct IridiumLibraryBackdrop: View {
                 image = next.0; position = next.1; loading = false
             }
             .accessibilityHidden(true)
+    }
+}
+
+/// Feathered system blur, not variable-radius blur. These stationary views sit
+/// above the artwork canvas, outside its alpha-animated image layers.
+private struct IridiumBackdropReadability: UIViewRepresentable {
+    func makeUIView(context: Context) -> Edges { Edges() }
+    func updateUIView(_ view: Edges, context: Context) {}
+
+    final class Edges: UIView {
+        private let top = FeatheredBlur(top: true)
+        private let bottom = FeatheredBlur(top: false)
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            addSubview(top); addSubview(bottom)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            // Bound work to the navigation/control edges of this artwork canvas;
+            // even the shortest landscape viewport keeps its middle 28% sharp.
+            let topHeight = min(200, bounds.height * 0.30)
+            let bottomHeight = min(360, bounds.height * 0.42)
+            top.frame = CGRect(x: 0, y: 0, width: bounds.width, height: topHeight)
+            bottom.frame = CGRect(x: 0, y: bounds.height - bottomHeight,
+                                  width: bounds.width, height: bottomHeight)
+        }
+    }
+
+    private final class FeatheredBlur: UIVisualEffectView {
+        private let feather = GradientMask()
+        init(top: Bool) {
+            super.init(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+            let colors = [UIColor.black.withAlphaComponent(0.85).cgColor,
+                          UIColor.black.withAlphaComponent(0.4).cgColor, UIColor.clear.cgColor]
+            feather.gradient.colors = top ? colors : Array(colors.reversed())
+            feather.gradient.locations = top ? [0, 0.35, 1] : [0, 0.65, 1]
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard feather.frame != bounds else { return }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            feather.frame = bounds
+            // UIKit copies an effect view's mask. Reassign after resizing, and
+            // mask the effect itself, never a superview containing the effect.
+            mask = nil; mask = feather
+            CATransaction.commit()
+        }
+    }
+
+    private final class GradientMask: UIView {
+        override class var layerClass: AnyClass { CAGradientLayer.self }
+        var gradient: CAGradientLayer { layer as! CAGradientLayer }
     }
 }
 
