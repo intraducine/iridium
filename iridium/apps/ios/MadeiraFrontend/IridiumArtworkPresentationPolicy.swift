@@ -35,6 +35,12 @@ enum IridiumArtworkSourcePolicy {
         return result
     }
 
+    /// The portrait cover may stand in for automatic background art, but a
+    /// deliberately selected (or removed) background keeps precedence.
+    static func prefersPortraitCover(_ item: IridiumArtworkAppearance, legacyBackground: String?) -> Bool {
+        !item.customBackground && (item.ignoreLegacyBackground == true || legacyBackground == nil)
+    }
+
     static func needsAutomaticCover(_ item: IridiumArtworkAppearance, legacyCover: String?) -> Bool {
         !item.customCover && (item.ignoreLegacyCover == true || legacyCover == nil)
     }

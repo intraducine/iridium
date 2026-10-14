@@ -93,7 +93,7 @@ struct IridiumLibraryView: View {
                 showsHints: showHints, frozenCoverHeight: touchCoverHeight)
             ZStack {
                 Color.black.ignoresSafeArea()
-                IridiumLibraryBackdrop(game: selected)
+                IridiumLibraryBackdrop(game: selected, portrait: !compact)
                     .overlay { IridiumBackdropScrim() }
                     .ignoresSafeArea().allowsHitTesting(false)
                 ScrollViewReader { page in

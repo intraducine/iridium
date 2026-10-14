@@ -35,9 +35,11 @@ redistributable frontend dependency. The local Steam UI changelist `10971728`
 does not contain Big Art identifiers. Dynamic live Big Art behavior on this Mac
 has therefore not been verified.
 
-Review correction: keep the complete selected background visible in portrait over
-an ambient fill of that same image. Preserve source precedence, custom backgrounds,
-vertical position and landscape framing. Invalidate the touch cover size when the
-actual viewport height changes, while keeping idle touch geometry stable. Validate
-centered and off-center artwork, the largest text size, launch callback counts and
+Review correction: invalidate the touch cover size when the actual viewport
+height changes, while keeping idle touch geometry stable. Portrait uses the
+existing cover for automatic artwork, respects explicit and legacy background
+choices, and fills a substantial hero region with a gradual fade into controls.
+Landscape framing remains unchanged. Judge composition from native Hades,
+Celeste and Hollow Knight captures and inspect transition frames as well as
+settled screens. Validate the largest text size, launch callback counts and
 controller routing in both orientations using the simulator harness.

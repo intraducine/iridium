@@ -42,6 +42,20 @@ import Foundation
         item.automaticLookup = false; item.cover = nil; item.background = nil
         precondition(sources(false).isEmpty && sources(true).isEmpty)
 
+        // Portrait can use the existing cover only when there is no explicit
+        // background choice, including deliberate removal and legacy imports.
+        var portrait = IridiumArtworkAppearance()
+        precondition(IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: nil))
+        precondition(!IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: "chosen.jpg"))
+        portrait.ignoreLegacyBackground = true
+        precondition(IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: "chosen.jpg"))
+        portrait.customBackground = true; portrait.background = "manual.jpg"
+        precondition(!IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: nil))
+        portrait.background = nil
+        precondition(!IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: nil))
+        portrait.customBackground = false; portrait.customCover = true
+        precondition(IridiumArtworkSourcePolicy.prefersPortraitCover(portrait, legacyBackground: nil))
+
         // Older shared records lack the newly optional per-slot opt-out flags.
         let data = try JSONEncoder().encode(IridiumArtworkAppearance())
         var json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
