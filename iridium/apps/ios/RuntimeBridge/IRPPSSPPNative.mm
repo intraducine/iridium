@@ -50,6 +50,7 @@
 @property NSMutableDictionary *presentationCancels;
 @property UIInterfaceOrientationMask rotationMask;
 - (void)beginPlayer;
+- (void)observeEnvironment;
 - (void)setPlaying:(BOOL)playing;
 - (BOOL)canPlay;
 - (void)closePlayer;
@@ -71,9 +72,11 @@ static void event(unsigned kind, const char *message) {
     if (!sink) return;
     if (kind == 0) { sink(kind, message); return; }
     uint64_t owner = generation.load();
+    IRPPSSPPContainer *origin = container;
     std::string copy(message);
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (owner == generation.load() && container) {
+        if (origin && origin == container &&
+            (owner == generation.load() || (kind == 2 && origin.closing))) {
             if (auto callback = eventSink.load()) callback(kind, copy.c_str());
         }
     });
@@ -107,6 +110,9 @@ static void event(unsigned kind, const char *message) {
 - (void)beginPlayer {
     NSAssert(NSThread.isMainThread, @"Native initialization belongs to the UI thread");
     if (self.closing) return;
+    generation.fetch_add(1);
+    self.appActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+    [self observeEnvironment];
     acceptingCallbacks = true;
     self.previousIdleTimerDisabled = UIApplication.sharedApplication.idleTimerDisabled;
     frames = 0; rendererFailed = false;
@@ -150,29 +156,31 @@ static void event(unsigned kind, const char *message) {
         [self closePlayer];
         return;
     }
+}
+- (void)observeEnvironment {
+    if (self.observers.count) return;
     __weak IRPPSSPPContainer *weakSelf = self;
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     NSMutableArray *tokens = [NSMutableArray array];
     for (NSString *name in @[UIApplicationWillResignActiveNotification, UIApplicationDidBecomeActiveNotification,
                              AVAudioSessionInterruptionNotification, AVAudioSessionMediaServicesWereResetNotification]) {
-        [tokens addObject:[center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notice) {
+        [tokens addObject:[center addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *notice) {
             IRPPSSPPContainer *owner = weakSelf;
-            if (!owner || owner.closing) return;
-            if ([notice.name isEqualToString:UIApplicationWillResignActiveNotification]) {
-                owner.appActive = NO;
-                [owner setPlaying:NO];
-            } else if ([notice.name isEqualToString:UIApplicationDidBecomeActiveNotification]) {
-                owner.appActive = YES;
-                [owner setPlaying:YES];
-            }
-            else if ([notice.name isEqualToString:AVAudioSessionInterruptionNotification]) {
-                BOOL ended = [notice.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeEnded;
-                owner.interrupted = !ended;
-                [owner setPlaying:ended && owner.wantsActive && UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
-            } else {
-                iOSCoreAudioShutdown();
-                if ([owner canPlay] && owner.active && g_Config.bEnableSound) iOSCoreAudioInit();
-            }
+            if (!owner) return;
+            if ([notice.name isEqualToString:UIApplicationWillResignActiveNotification]) owner.appActive = NO;
+            else if ([notice.name isEqualToString:UIApplicationDidBecomeActiveNotification]) owner.appActive = YES;
+            else if ([notice.name isEqualToString:AVAudioSessionInterruptionNotification])
+                owner.interrupted = [notice.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] != AVAudioSessionInterruptionTypeEnded;
+            // The atomic environment properties stay current while closing,
+            // including an AV interruption posted from a non-UI thread.
+            void (^apply)(void) = ^{
+                if (owner.closing) return;
+                if ([notice.name isEqualToString:AVAudioSessionMediaServicesWereResetNotification]) {
+                    iOSCoreAudioShutdown();
+                    if ([owner canPlay] && owner.active && g_Config.bEnableSound) iOSCoreAudioInit();
+                } else [owner setPlaying:[owner canPlay]];
+            };
+            if (NSThread.isMainThread) apply(); else dispatch_async(dispatch_get_main_queue(), apply);
         }]];
     }
     self.observers = tokens;
@@ -216,8 +224,6 @@ static void event(unsigned kind, const char *message) {
 - (void)finishClose {
     if (self.finishing) return;
     self.finishing = YES;
-    for (id token in self.observers) [NSNotificationCenter.defaultCenter removeObserver:token];
-    self.observers = nil;
     iOSCoreAudioShutdown();
     for (void (^cancel)(void) in [self.presentationCancels.allValues copy]) cancel();
     [self.presentationCancels removeAllObjects];
@@ -226,6 +232,7 @@ static void event(unsigned kind, const char *message) {
     else [self finishNativeClose];
 }
 - (void)finishNativeClose {
+    NSAssert(NSThread.isMainThread, @"Native shutdown follows the upstream main-thread contract");
     [self.player willMoveToParentViewController:nil];
     [self.player shutdown];
     [self.player.view removeFromSuperview];
@@ -235,13 +242,10 @@ static void event(unsigned kind, const char *message) {
     [self.inputRestorers removeAllObjects];
     [self.capturedControllers removeAllObjects];
     [self resignFirstResponder];
-    // All UIKit, input and render owners are stopped. Serialize the remaining
-    // native cleanup off the UI thread; worker joins and config I/O can block.
-    // No frontend API is called again until its main-thread completion.
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        if (self.initialized) NativeShutdown();
-        dispatch_async(dispatch_get_main_queue(), ^{ [self completeClose]; });
-    });
+    // Follow the release-pinned iOS lifecycle contract after asynchronous
+    // renderer/sensor drains. Upstream native cleanup itself is synchronous.
+    if (self.initialized) NativeShutdown();
+    [self completeClose];
 }
 - (void)completeClose {
     DarwinFileSystemServices::terminate();
@@ -258,6 +262,8 @@ static void event(unsigned kind, const char *message) {
         self.restarting = NO; self.closing = NO; self.finishing = NO;
         [self beginPlayer]; [self setPlaying:self.wantsActive && !self.interrupted && UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
     } else {
+        for (id token in self.observers) [NSNotificationCenter.defaultCenter removeObserver:token];
+        self.observers = nil;
         generation.fetch_add(1);
         container = nil;
         if (auto callback = eventSink.load()) callback(1, "Native PSP session closed; memory-stick files retained.");

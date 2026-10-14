@@ -51,8 +51,12 @@ def apply(name, text):
             text, count = re.subn(pattern, lambda m: m[0] + '\n\t' + guard, text, count=1)
             if count != 1: raise ValueError('Callback owner hook changed: ' + name_)
         # The provider can return after the modal and its owning session closed.
-        text = text.replace('dispatch_async(dispatch_get_main_queue(), ^{',
-                            'dispatch_async(dispatch_get_main_queue(), ^{\n\t\t' + guard)
+        for callback in ('picker:', 'shareText:', 'showKeyboard {', 'hideKeyboard {'):
+            start = text.index('- (void)' + callback)
+            end = text.index('\n}', start) + 2
+            region = text[start:end].replace('dispatch_async(dispatch_get_main_queue(), ^{',
+                'dispatch_async(dispatch_get_main_queue(), ^{\n\t\t' + guard)
+            text = text[:start] + region + text[end:]
         # Register pending photo requests with the owning host so close cancels them
         # before NativeShutdown destroys the request manager. Late results are gated.
         text = text.replace('[self presentViewController:picker animated:YES completion:nil];',

@@ -73,18 +73,30 @@ the upstream selected-codec recipe. The generated `licenses/PPSSPP` directory co
 GPLv3/LGPLv2.1 texts and source attribution; the build receipt records selected
 source pins and actual compiled units. It is not a blanket relicense.
 
-The bundled PGF fonts are described by PPSSPP as replacement fonts. The selected
-snapshot does not provide a separate generation recipe/license beside every
-PGF. Its PSP dialog atlas is distributed upstream; the atlas generator names
-font inputs not included in the snapshot. Preserve that provenance distinction:
-this repository does not claim a newly established font redistribution grant.
+The eighteen bundled PGF replacement fonts retain the selected release's bytes.
+Their historical headers before upstream name camouflage identify Source Han
+Sans (Japanese/Korean), Ume Hy Gothic and Ume P Mincho (Latin). Full SIL OFL 1.1
+and Ume unrestricted grants, license-source checksums, historical blob IDs and
+release-file checksums are preserved in
+`iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts/PGF-PROVENANCE.json`. That
+records family provenance and redistribution terms; it does not assert exact
+original TTF versions or reproduce all manual glyph/metric adjustments.
+
 The five bundled TTF assets identify SIL Open Font License 1.1 in their embedded
 name records. Their original copyright/author/license records, checksums and
-full pinned upstream OFL texts are preserved in
-`iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts/`. This establishes the
-identified TTF grants; it does not resolve the separate PGF and atlas provenance
-review before public binary distribution. User-game font extraction, if invoked
-by upstream, stays in that game's writable memory-stick directory.
+full pinned upstream OFL texts are preserved beside the PGF notices. The
+Roboto-only asciifont atlas has an identified OFL input.
+
+The separate UI font_atlas and PSP ppge_atlas resources remain unresolved.
+Their pinned generators reference Arial Unicode and Kozuka Gothic font files
+absent from the snapshot. Microsoft's redistribution FAQ explicitly excludes
+converting Windows fonts to bitmap fonts for game/app redistribution. An upstream
+comment saying bitmap conversion is sufficient does not supply those rights.
+See https://learn.microsoft.com/en-us/typography/fonts/font-faq . Obtain an
+applicable grant or regenerate both atlases and metrics from pinned licensed
+open fonts; keep required resources and language coverage. PGF/TTF grants do not
+cover those other font inputs. User-game font extraction, if invoked by upstream,
+stays in that game's writable memory-stick directory.
 
 Before public binary distribution, review the combined component terms,
 including PPSSPP dependencies and the proprietary Metal Shader Converter.
@@ -92,6 +104,18 @@ Madeira's Converter Exception does not automatically extend to PPSSPP or other
 copyright holders. Separating a dylib is an engineering boundary, not by itself
 a determination of copyright aggregation or permission. Private validation and
 successful compilation do not establish clearance for a public release.
+The pinned Madeira `docs/LICENSING.md` expressly requires review of the assembled
+app before public release. Apple's supplied converter agreement section 2.B
+permits dylib distribution solely for shader conversion, subject to its other
+terms. Madeira's adopted exception covers its author-owned components and
+specified contributions, while LGPL Wine/media retain their own relink and
+notice obligations. The native PPSSPP image does not link or reference the
+converter, but the host loads both runtimes in one process and embeds PPSSPP's
+controller via its C boundary. The reviewed engineering boundary alone does not
+establish that this is a GPL section-5 aggregate or extend the exception to
+PPSSPP, libkirk, xBRZ or other independent GPL copyright holders. That combined
+work determination remains unresolved; the build recipe is not permission to
+ignore it.
 
 An IPA release must include matching source, modifications, license texts,
 third-party notices, a component manifest, and usable build/relink instructions.

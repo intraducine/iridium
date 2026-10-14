@@ -490,13 +490,15 @@ weak sensor delegates and ARC for the base controller remove their ownership
 cycles. Queued gamepad, photo, keyboard and platform callbacks are session scoped.
 The host supplies purpose descriptions and its application orientation mask.
 
-Renderer and UIKit teardown occurs on main. After audio, renderer, input, picker
-and sensor owners are stopped, the remaining native cleanup runs on a worker to
-keep joins and configuration I/O off the UI thread. Upstream documents
-NativeShutdown as a main-thread API; this embedding uses an isolated, quiescent
-cleanup phase and gates its UIKit effects. Behavioral callback/drain tests and
-compilation establish those boundaries only. Repeated real UIKit/device teardown
-and stalled-cleanup checks remain required before asserting full runtime safety.
+Renderer and UIKit teardown occurs on main. Render and sensor drains keep the
+UI run loop available until their work has stopped. NativeShutdown then runs
+synchronously on main, matching Common/System/NativeApp.h and the pinned iOS
+SceneDelegate restart path. Environment observers remain registered through a
+backend restart, and mandatory cleanup continuations remain runnable after the
+session is retired. The host has no hard UI timeout while upstream's synchronous
+NativeShutdown joins workers and saves configuration. Real UIKit/device teardown
+latency remains an acceptance requirement; a successful build or injected worker
+stall does not establish it.
 
 The builder replaces the PPSSPP MoltenVK prebuilt link input with MoltenVK 1.2.9
 from the existing locked source closure. Original source files are verified
@@ -504,8 +506,9 @@ against their archives, upstream generated headers are prepared, and a final
 link inventory proves which static archives were used. Corresponding source
 includes all nine locked MoltenVK source archives and the build/replacement
 recipe. The binary receipt retains compiled-source, dependency, resource and
-archive hashes. Full TTF grants are included; PGF/atlas and combined proprietary
-converter terms remain explicit distribution-review limits in LICENSING.md.
+archive hashes. Full TTF and identified PGF family grants are included. The separate UI/PSP
+atlas inputs and combined proprietary converter terms remain explicit
+distribution-review limits in LICENSING.md.
 
 Host regression tests exercise actual lifecycle, renderer-drain, camera,
 presentation, orientation and gamepad callback methods with platform stubs.

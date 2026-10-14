@@ -7,12 +7,20 @@ and their exact source revisions are retained beside this record. These are
 license-text sources; they are not claims that current font releases are the
 exact old binary font inputs.
 
-PGF replacements and the PSP dialog atlas remain unchanged from the selected
-PPSSPP release. Upstream font history identifies community-generated PGFs
-(PR 13753, commit 0c243ee13909a1256de4be2b9d374aa6f7b46d38), but the selected
-snapshot does not establish every original glyph input and redistribution grant.
-Issue 13718 describes conversion and metric adjustment; it does not supply a
-license. Header font names were also camouflaged upstream and do not prove glyph
-provenance. The atlas generator references font inputs absent from the snapshot.
-Retaining these upstream assets does not resolve the outstanding distribution
-review described in LICENSING.md. No user or commercial game assets are added.
+The eighteen PGF replacements are unchanged from PPSSPP v1.20.4.
+PGF-PROVENANCE.json records their exact checksums and historical source evidence.
+Before upstream camouflaged the names in dc34bea8d4dee77629da3cbaedc83fc8c05af159,
+the merged PGF headers identify Japanese/Korean Source Han Sans, Latin Ume Hy
+Gothic and Ume P Mincho. Source Han Sans carries SIL OFL 1.1; the Ume original
+source archive supplies its unrestricted use/copy/distribution/modification
+grant. Full original notices are retained here. The font source version and
+manual glyph/metric conversion steps are not claimed to be byte reproducible.
+The historical family attribution is stronger evidence than current compatibility
+header names, which are not claims that Sony glyphs were extracted.
+
+The separate font_atlas and ppge_atlas bitmap resources are not cleared by these
+PGF grants. Their generator inputs still reference Arial Unicode and Kozuka
+Gothic files absent from the selected snapshot. Those atlases require their own
+redistribution grant or regeneration from licensed open fonts before public
+binary distribution. The Roboto-only asciifont atlas has an identified OFL input.
+No user or commercial game assets are added.
