@@ -178,7 +178,7 @@ struct IridiumConsolePlayer: View {
                                 if let status = session.pspStateStatus { Text(status).font(.footnote) }
                             } else { help }
                         }
-                    }.onChange(of: menuFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
+                    }.id(menuPage).onChange(of: menuFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
                         .onChange(of: helpSection) { _, section in proxy.scrollTo("help.\(section)", anchor: .top) }
                 }
             }
