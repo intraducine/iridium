@@ -27,8 +27,8 @@ class CompiledComponentsTests(unittest.TestCase):
         # The actual diagnostics-staging edit that unnecessarily rebuilt both
         # components changed prepare(), not either native compiler recipe.
         before = source.replace(
-            "*RUNTIME_BRIDGE.glob('*.c'),\n                      ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift']",
-            "*RUNTIME_BRIDGE.glob('*.c')]")
+            "ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'",
+            "ROOT / 'fixture-without-diagnostics.swift'")
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
 

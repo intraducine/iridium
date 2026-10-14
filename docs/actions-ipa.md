@@ -85,11 +85,14 @@ before collection.
 `COMPONENT-MANIFEST.json` maps packaged binaries to their components and records
 source revisions and release hashes.
 Its `source_exclusions` receipt records the exact path, SHA-256, pinned upstream
-URL and reason for omitting PPSSPP's public Windows UWP signing fixture. The
-checkout remains unchanged, and all iOS Libretro source and build inputs remain
+URL and reason for omitting PPSSPP's public Windows UWP signing fixture and
+unused prebuilt FFmpeg archives. The codec source is included and the native
+builder compiles it; none of those omitted archives are link inputs. The
+checkout remains unchanged, and native iOS source and required build inputs remain
 in the archive. The privacy scan accepts only the reviewed path and bytes in
 `ci/public-signing-fixtures.json`; changed or additional signing files fail both
-the scan and source collection. Other private-data checks remain in force.
+the scan and source collection. The unused archive manifest also requires exact
+paths and hashes; changed bytes fail exclusion. Other private-data checks remain in force.
 An unknown binary, absent runtime link map, missing source input or unresolved
 entry in the repository's build/package blocker records stops IPA upload.
 

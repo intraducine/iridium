@@ -42,3 +42,30 @@ failure. These checks do not certify those behaviors.
 Source files in this directory are original Iridium fixtures/tests under
 AGPL-3.0-only. Supplied PPSSPP components, API headers, and assets retain their
 own licenses; this runner does not replace their notice/provenance obligations.
+
+## Native iOS player
+
+The active PSP path now stages the upstream v1.20.4 iOS player, not this legacy
+Libretro fixture host. Native validation is separate from the fixtures above.
+The native component checks its linked H.264 decoder using an original red frame
+before a session can open. Regenerate that source fixture with an installed FFmpeg:
+
+```sh
+ffmpeg -f lavfi -i color=c=red:s=16x16:r=1 -frames:v 1 -c:v libx264 -profile:v baseline -x264-params keyint=1:bframes=0 -bsf:v filter_units=remove_types=6 -f h264 red-frame.h264
+```
+
+The output is represented as the byte array in IRPPSSPPCodecCheck.c; game files
+and proprietary firmware are not fixture inputs. A passed fixture establishes
+one linked H.264 decode, not God of War compatibility. Native GPU operation,
+audio output, settings/save persistence, lifecycle and the actual subtitle
+transition still require an Apple build and device evidence.
+
+Run a source-built codec check explicitly on an Apple Silicon Mac:
+
+```sh
+python3 ci/check-ppsspp-native-codec.py --output .build/ppsspp/host-codec-check
+```
+
+This uses the exact selected FFmpeg revision and upstream codec options, builds
+out of tree and executes the same check used at native session startup. It does
+not certify iPhone decoding, graphics or game compatibility.

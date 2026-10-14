@@ -108,8 +108,8 @@ class MultiRuntimeTests(unittest.TestCase):
         # model and explicit native/device tests.
         session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         self.assertIn('Bundle.main.privateFrameworksURL', session)
-        self.assertIn('appendingPathComponent("ppsspp_libretro.dylib")', session)
-        self.assertIn('appendingPathComponent("PSP", isDirectory: true)', session)
+        self.assertIn('appendingPathComponent("libIridiumPPSSPPNative.dylib")', session)
+        self.assertIn('appendingPathComponent("PSP/PPSSPP", isDirectory: true)', session)
         self.assertIn('try store.validateROM(game)', session)
         self.assertIn('case IR_PSP_CLOSED: complete(owner)', session)
         self.assertIn('case IR_PSP_RESTART_REQUIRED: requireRestart(owner)', session)

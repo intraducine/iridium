@@ -63,8 +63,9 @@ approved merely because it appears in the candidate research.
 The PSP component uses pinned PPSSPP and its selected dependencies, with original
 per-file grants preserved. This includes GPL-family PPSSPP code, GPLv3 libkirk
 and xBRZ material, LGPL-2.1-or-later at3_standalone, and permissive dependencies.
-FFmpeg, Discord and optional upstream frontend packages are disabled in this
-component. The generated `licenses/PPSSPP` directory contains upstream terms,
+The native iOS player includes upstream FFmpeg media decoders, graphics and
+frontend resources. FFmpeg is rebuilt from its release dependency source using
+the upstream selected-codec recipe. The generated `licenses/PPSSPP` directory contains upstream terms,
 GPLv3/LGPLv2.1 texts and source attribution; the build receipt records selected
 source pins and actual compiled units. It is not a blanket relicense.
 
@@ -73,7 +74,8 @@ snapshot does not provide a separate generation recipe/license beside every
 PGF. Its PSP dialog atlas is distributed upstream; the atlas generator names
 font inputs not included in the snapshot. Preserve that provenance distinction:
 this repository does not claim a newly established font redistribution grant.
-Optional OFL TTF assets are not included. User-game font extraction, if invoked
+Upstream TTF assets are retained with the native resource tree; their notices
+and precise provenance need review before public binary distribution. User-game font extraction, if invoked
 by upstream, stays in that game's writable memory-stick directory.
 
 Before public binary distribution, review the combined component terms,
@@ -89,7 +91,7 @@ Keep them available with that release. A changing branch or an expiring Actions
 artifact is not permanent source delivery.
 
 The frontend source collector includes the repository, required dependency
-sources, tracked crypto and FFmpeg archives, pairing crates, generated build
+sources, tracked Madeira crypto and FFmpeg archives, pairing crates, generated build
 inputs and instructions. The component manifest records source revisions,
 packaged binaries and final static link inputs. See
 [build and replacement instructions](docs/actions-ipa.md) and

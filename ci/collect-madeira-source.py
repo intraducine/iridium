@@ -34,7 +34,7 @@ def binary_component(name):
         return 'Madeira JIT helper'
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
-    if name == 'Frameworks/ppsspp_libretro.dylib': return 'PPSSPP and its selected native dependencies'
+    if name == 'Frameworks/libIridiumPPSSPPNative.dylib': return 'PPSSPP and its selected native dependencies'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
         if p.name in {'xtajit.dll', 'xtajit64.dll'}: return 'FEX'
         if p.name == 'dockhost.exe': return 'Madeira Dock and LLVM-MinGW runtime'
@@ -100,6 +100,23 @@ def exclude_signing_fixtures(stage):
     return exclusions
 
 
+def exclude_unused_archives(stage):
+    """Leave upstream source intact and omit exact unused binary inputs from delivery."""
+    manifest = ROOT / 'ci/public-unused-archives.json'
+    records = json.loads(manifest.read_text()) if manifest.exists() else {}
+    validated = []
+    for name, record in sorted(records.items()):
+        path = stage / name
+        if not path.exists() and not path.is_symlink(): continue
+        if (not name.startswith('vendor/PPSSPP/ffmpeg/') or Path(name).suffix not in {'.a', '.lib', '.dll'}
+                or '..' in Path(name).parts or path.is_symlink() or not path.is_file()
+                or record.get('sha256') != hashlib.sha256(path.read_bytes()).hexdigest()):
+            raise ValueError('Unreviewed unused archive: ' + name)
+        validated.append((path, {'path': name, **record}))
+    for path, record in validated: path.unlink()
+    return [record for path, record in validated]
+
+
 def collect(app, output, maps):
     build.verify_pin()
     build.check_bundle(app)
@@ -149,7 +166,7 @@ def collect(app, output, maps):
         psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
         (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
-                    'source_exclusions': exclude_signing_fixtures(stage),
+                    'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage),
                     'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',

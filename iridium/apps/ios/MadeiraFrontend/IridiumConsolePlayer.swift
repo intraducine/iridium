@@ -33,7 +33,11 @@ struct IridiumConsolePlayer: View {
         return ["z": 1 << 8, "x": 1, " ": 1 << 2, "\r": 1 << 3]
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if isPSP { IridiumNativePSPPlayer(session: session) }
+        else { interpreterBody }
+    }
+    private var interpreterBody: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
             let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: touchVisible)

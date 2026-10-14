@@ -13,14 +13,15 @@ JIT, input, Steam, downloads, saves, and the runtime. Compatibility varies by
 game and device.
 
 The additional runtimes are SameBoy for Game Boy/Game Boy Color and an
-experimental PPSSPP interpreter/software-renderer path for PSP. Use
+experimental embedded PPSSPP v1.20.4 native iOS player for PSP. Use
 **Add Game → Import Game Boy or PSP Game** for an uncompressed `.gb`, `.gbc`,
 `.elf`, `.iso`, `.cso` or `.pbp` file you are entitled to use. It appears on the
 same library shelf; Game Options identifies its platform and runtime. Console
 games have their own player, touch/keyboard/controller input and audio. SameBoy
-battery/RTC saves and PSP memory sticks are isolated per game. Neither path
-requires JIT in this build. PSP hardware rendering and native JIT are not yet
-enabled; performance and compatibility remain experimental. Compilation and
+battery/RTC saves and PSP memory sticks are isolated per game. The native PSP player retains upstream settings, media decoding, touch controls
+and graphics backends, with OpenGL and the IR interpreter as initial defaults.
+Native JIT remains unavailable until its allocator is verified for this host.
+Performance and compatibility remain experimental. Compilation and
 synthetic tests do not establish physical-device or commercial-game compatibility.
 
 Windows games still use Madeira's original backend, options, saves and JIT flow.

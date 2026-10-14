@@ -155,8 +155,8 @@ recovery, LiveContainer operation and performance are separate evidence gates.
 
 ## Extending the registry
 
-The PSP software/interpreter integration is described below. Native JIT and
-hardware rendering remain separate work. Advanced engines must also isolate
+The embedded native PSP integration is described below. JIT allocator
+verification and physical-device acceptance remain separate work. Advanced engines must also isolate
 C++ dependencies, graphics loaders and process-lifetime global state.
 
 Husk is a separate Android candidate. Its native Android engine launchers may
@@ -172,55 +172,56 @@ claim GameCube, Wii, 3DS, PS2, Dreamcast, Switch, Vita, Xbox or Android support.
 
 ## PSP component
 
-PPSSPP is pinned at `35e27933ff28bffcf1eadce0574569958d14c9b9` and built as a
-separate dylib from its unchanged upstream Libretro target. Iridium adds one
-read-only pending-boot query in a separate translation unit. Only the 25 Libretro
-functions and that query are exported; internal C++ symbols are not exported.
-The adapter selects the IR interpreter and 480×272 software renderer. It does
-not advertise native JIT, hardware rendering, networking or achievements.
-This is an initial experimental execution path, not PPSSPP feature parity or a
-claim that commercial games run at full speed.
+PPSSPP is pinned to published v1.20.4 at
+`fa50bb1976065c4f8b1b47af227d367fe9771555`. Iridium embeds upstream's native iOS
+player in a separate dylib with eight C exports. Its UI, codecs, graphics,
+configuration and full resource tree remain available. Generated platform hooks
+replace app/window ownership, route restart/exit through Iridium, choose each
+game's existing memory stick and drain render threads while the main run loop
+can service graphics callbacks. Emulator HLE, CPU, GPU and serialization source
+are unchanged. Madeira remains at its existing exact pin and dependencies.
 
-Imports accept bounded PSP ELF, ISO, CSO v0/v1 and PBP headers. Each game gets a
-separate memory-stick folder under its UUID. Upstream performs game save I/O
-inside that folder; there is no save-state or cross-core save conversion UI.
-Pause freezes stepping and audio, while Quit drains asynchronous boot before
-unloading. If shutdown cannot finish safely, the app retains the component and
-requires a restart rather than unloading running native code. On POSIX hosts,
-the bridge restores the teardown thread's pre-existing alternate signal stack.
-This does not claim to fix upstream's separate sanitizer thread-destruction
-failure or make an in-process emulator a sandbox for hostile games.
+Imports accept bounded PSP ELF, ISO, CSO v0/v1 and PBP headers. Each game retains
+its UUID memory-stick directory. Upstream manages its configuration, saves and
+advanced settings in that directory. New memory sticks start with OpenGL,
+2× resolution and the IR interpreter. Native JIT is reported unavailable until
+the embedded allocator has been verified; capability is not inferred from a
+Madeira JIT lease. Existing settings remain subject to upstream's capability
+fallbacks, and the selected CPU/graphics configuration is logged.
 
-Touch controls include the PSP face buttons, shoulders, D-pad and analog stick.
-Keyboard mappings are shown in Player Menu > Help. A controller's ordinary Start goes
-to the game; Back + Start opens Iridium's pause controls. Backgrounding pauses
-console emulation. Madeira keeps its existing Windows input and JIT behavior.
+PPSSPP owns its native touch, keyboard and controller input. Iridium provides
+the menu and return-to-library actions. Backgrounding and audio interruptions
+pause the player without changing the user's pause intent. Return waits for
+render/audio teardown before releasing the runtime lease; a timeout retains
+ownership and requires an application restart. Controller handlers and the
+prior audio category are restored. No source or settings are fetched after
+installation. Windows input and JIT continue to use Madeira.
 
-The Apple builder initializes only the selected source dependencies, records
-actual compiled inputs, verifies the exact export and system-library boundary,
-and copies 34 support assets. The assets include upstream compatibility data,
-replacement PGF fonts, PSP dialog atlas and the twelve PSP language resources.
-Optional frontend themes, TTF fonts, shaders and unrelated assets are omitted.
-The atlas and replacement fonts are upstream-distributed assets, not files
-extracted from a user's device. Their available provenance and limitations are
-recorded in LICENSING.md.
+The native builder compiles the pinned FFmpeg dependency with upstream's selected
+H.264, MPEG, AAC, ATRAC and related codec recipe. It checks an original H.264
+frame before opening a session, audits exported symbols and dynamic dependencies,
+records compiled inputs and copies the full upstream assets. Required resources
+are hashed in the build receipt. Matching source includes selected dependencies,
+generated embedding hooks, the recipe and build receipt. The source collector
+omits only exact reviewed unused FFmpeg binaries, which are never linked.
 
 ```sh
-python3 ci/build-ppsspp.py --initialize
-python3 ci/build-ppsspp.py --sdk iphoneos --output .build/ppsspp/iphoneos
-python3 ci/build-ppsspp.py --sdk iphonesimulator --output .build/ppsspp/iphonesimulator
+python3 ci/build-ppsspp-native.py --initialize
+python3 ci/build-ppsspp-native.py --sdk iphoneos --output .build/ppsspp/iphoneos
 ```
 
-These commands require existing Xcode, CMake and Ninja. Outputs stay outside
-upstream source. The actual minimum OS encoded by the upstream component recipe
-is recorded rather than rewritten; the enclosing app still requires iOS 18.
-The app loads the embedded component from its fixed Frameworks location. No
-engine code is downloaded after installation. Matching source includes all
-selected initialized submodules and a PPSSPP build receipt; its binary hash is
-from before final package signature removal. The final package audit supplies
-the delivered binary identity. A source-package recipient can change the
-component source, rebuild it and rebuild/re-sign the enclosing app using the
-same scripts; Apple tools and the recipient's installation setup are separate.
+These commands need Xcode, CMake, Ninja and make. Outputs stay outside upstream
+source and the enclosing app requires iOS 18. The selected upstream MoltenVK
+package currently contains only a device slice; simulator graphics validation
+needs an audited compatible MoltenVK build, rather than dropping that backend.
+A source recipient can rebuild and replace the component with the same recipe,
+then rebuild/re-sign the enclosing app using their own Apple installation setup.
+
+Compilation, the codec fixture and preparation checks do not establish native
+GPU presentation, audio output, settings/save round trips, repeated sessions or
+God of War's subtitle transition. Those require simulator/device evidence. The
+legacy Libretro fixture host below remains useful only for historical comparison
+and is not the active player or its acceptance test.
 
 Host guest-execution checks cover original synthetic CPU, video, audio, input,
 per-game save and repeated launch/quit fixtures. Apple component compilation and

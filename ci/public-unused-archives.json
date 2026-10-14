@@ -1,0 +1,707 @@
+{
+  "vendor/PPSSPP/ffmpeg/Windows/aarch64/lib/avcodec.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "60b01cdc7a4262e54015928d9689111ca35a0c3461ad2a5dc497c63ecc109ccc",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/aarch64/lib/avcodec.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/aarch64/lib/avformat.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "71a9882dfc7ca82ea9460b0d154915dcbfbcdb19bf6a95340b72c405f8cf9a61",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/aarch64/lib/avformat.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/aarch64/lib/avutil.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "9a77a44cc34343cb7772a49446479f595fb2a65149b0962a26a30c353504ee28",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/aarch64/lib/avutil.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/aarch64/lib/swresample.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "04c06232dae3a9313e05fbedcfcf63607d58e9e3c392a69386fff92495670794",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/aarch64/lib/swresample.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/aarch64/lib/swscale.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "472a677ae6458045afc5dde9efff530ab3701b4136f80f63d2b0734dab13e4de",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/aarch64/lib/swscale.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/arm/lib/avcodec.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "2842e09473e3213f65a1d39c1d34eaf3441ef70208f87f36f04ffc08f31a47b8",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/arm/lib/avcodec.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/arm/lib/avformat.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "ed077134e4f121eb6aed69ea5a23721e531f483e3c686a2f069f77b636909e7b",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/arm/lib/avformat.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/arm/lib/avutil.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "2c354616b2b79657e95b2087bdf835820835b3f51b914782e5e59c469fafaaff",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/arm/lib/avutil.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/arm/lib/swresample.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "7f40b10c157d5ded3e463425a47bd3fe8d0e1b2e271c5ffc8e466359a870dee3",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/arm/lib/swresample.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/arm/lib/swscale.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "c8670de57d1d5fed059ff46072bb4433b26207b208939883d368248b03846d30",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/arm/lib/swscale.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86/lib/avcodec.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "b9bed96c3707d0db7c5546eb34c8fde7055d28fc8fbfdaa5a8f1bcdeebe67447",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86/lib/avcodec.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86/lib/avformat.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "696d496fd4f124c91a8b9eef1216f9189890cf40fec853c454262f317fc052c9",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86/lib/avformat.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86/lib/avutil.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "900c96c96f00fc18e72b83f21f1158036688857fcd15337b4a18c22cae2bc1eb",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86/lib/avutil.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86/lib/swresample.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d7091e31e1a56a3331c0bbaced3c24a26bf4c9e384ef55995609de0485fe298c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86/lib/swresample.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86/lib/swscale.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "88c2b2caa78f73e02e5165b554877f35d3c74e06084da58d452cdf883d199dc5",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86/lib/swscale.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86_64/lib/avcodec.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "f6fb3381c4eca8c8687abbabbfad853d3ae8baebc93ad0d9a4a449f507334beb",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86_64/lib/avcodec.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86_64/lib/avformat.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a256245bdbaa7702040ac80d8be2857969d070381b1fa54729fdb1324d9da76f",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86_64/lib/avformat.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86_64/lib/avutil.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "40224dec0dff22013c4126a9aaa0b9635838e58f02604a57d54ad04dccb65263",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86_64/lib/avutil.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86_64/lib/swresample.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8f7e5aebd991435a6c8bdf33939eb43a114e2dea0e4287999b7c408096b11633",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86_64/lib/swresample.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows/x86_64/lib/swscale.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a8858aada87fbeb15240945842618d7a3641bd7849c1f72930d86f9061008df7",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows/x86_64/lib/swscale.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "fd02332a4ae0813de03ed05f8e7dbb2dcd3080162d512f1b110030a2daf95c1e",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1ce6cd232f0945ed9097a04996fa46e8a9b80ba0675e5ab8eb1dd09f5cb571bf",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libavfilter.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "dd7226bf37751497b0499954130d6b67e2a7227dfe1e22824b6db07b89bcb92d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libavfilter.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "874ce5e1b88718c063781bbaeb64449d675e30d940829d6429d8522e879ba305",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "173bd2c02317a4ca01639fba9fc0204dcbcf2835d8a06b3bec1bde283fc8c0f5",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e7c466f4e310a6027386aeb7787537f0ff0723c1869dfc1402effaf0c48e6094",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0901df69dfa3d0e450bf222243d28d90694846e85bc0d177a1b314598469b083",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "54d95b6074dbd7e127e22713514884bf5268727168d8cce4668798a3d531893a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "9e4255fca30d58eddbd04bca0e2f408b07e2bdbe60b5c4af80ea38023e876da7",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libavfilter.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "4fd7c9b1c2831028e7c4c74a402dc76b7db1175e6747b85b0a0450654a8a48da",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libavfilter.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "883b823f8a229ad2ede67d8c49053d43ed15b48c39f5f0221db18fbcc8546f98",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "549664db7f46cbcf216ba3f1ebc98d06e7dab7bc170effa30f28c43ea4cea4d8",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8eb173bd25cef91ac8c40f82f76d1463b734b838c4d2efb369d12f78f35a88c6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/ARM64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "fea3dea058ee7b1ac22f0b94b276d188be2f19df5426fb4b58af0e1e502b199e",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/ARM64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "bb9e12d35c58e3088cb570d3ecd733d649234c57372e7c71081ed38d0a076fb1",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "9caefed2c1166564c410e802e369f1500e96800d6d0d8121b0e78b67c0f9525e",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libavfilter.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "ea7b21042450c55ae27ad3b62973146da10ac63060d4a2b2a787ed1ddf68a10d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libavfilter.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "501300c21a3ce044fff27d4fceaac0ef4054dc2b6b10691a712e628ac008fa80",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "59332785b8128f63e7e339803b988b74df41d2c72b6f6f9ee75bc7e731de548b",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "48274f8d4a93b12c376e8d024ab720d2adaec9083b11adc3756af541ac7add2a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "3bf8e3b07c91c92e228efe6ddac4c0e45204dd35a3f4d18c117334d8c35167ae",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "dbe5fceac915e5b7e9018dc4d0cf8d8848f5f8e68f850bcdf611d2f5f802cce6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "9619b6c0d6f07e675ad267a0f687a24abdf835f2e27f79117eca4535d30e72d0",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libavfilter.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "96191dff52cc2677780a152444a955ab7fc1fc27e7f3d35e2e76743791877514",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libavfilter.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "860c02bdd0445a195a8b22fe3d6049e560d6e8c1808d1d575e66cf5a693565a8",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "5f831667038b7bf4767a9748db97b59001660b2be266b43ef46080954352e308",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "aa091914f5a61ff152df9a280b6077f82f0d5eff03b40d949d3ad11699d2edda",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/Windows10/x86/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "c6d6b708b9835c65f298eb9a4bc349b4b7c50cc0fddfca35dcff86bbf8835abd",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/Windows10/x86/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/arm64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "12932e1719efb45ce1298841b3f65b7e99fff07cad8f7403efba4a7fdcf1948d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/arm64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/arm64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d00ec5483c7049032c86a3d293dc23d3440b454eb93c8e7e6662481821ba5b60",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/arm64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/arm64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "876e4c820646f5de1de63fcc6f362c57049de9837bc00d05b12dc6a57954ccca",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/arm64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/arm64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d5480c4b18b4fc1aeb537af8934ddae52e167e5b8b6bdec8f67176beebced162",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/arm64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/arm64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "7cfc492242f0ddccdc7a9cd60fe5809070a41b719c7c0d98132e15d31d07e03c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/arm64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/armv7/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "bc33fef9a7b521b4b96b2e0cd132cb2b915d146c3fa843b81e4a22dde609a23f",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/armv7/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/armv7/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "44fecd9149d9b1ce7a35a5e37b78dcb649b790dedb201530c1aabe88566832fd",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/armv7/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/armv7/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0a3ae0247ba5ec852690859665aad7dc80875851392805b60038a2d88a18ffb4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/armv7/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/armv7/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e93c89a25ebd2b6be319f8b009e8ca4f9acc780dfd1d270f80f6c0a0f0160d8a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/armv7/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/armv7/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "c0d9a6667c9cbd0ecddb3ae1b6aa25df561481fdf7d0c10d74441983b4b49516",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/armv7/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e9395340c81c3ffdac87c97b0a109264bbe9330776c30d7d789584a437423e8c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "c270e8cdd68baef3e2457a1aa3b9ed4e0cc9dd482f8debcea4d4c55353e5e715",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "240e9e59fb9f5e65459c50324b71032771fbd1969718be29c01d4fe65f2eedca",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d945b8bd3c62b0dda99774773460eb6949232b00f5f9df45e41c2cc9a995ab0c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "f83b26a9eeb7f57a031d94e0da043d8affdba1ead0c2cd17ebe8a52270366378",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86_64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d819c416bf35e8a2b29e66ac78dcbec9c944dfd7fd0f870bd17d7e0409f0ca60",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86_64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86_64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "06c6a77a7d7f087e0b82e6e79c16f5e7977207e82c63b67f89d2b9a132105ae7",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86_64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86_64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "903903b618628f36be6df3b06be6aa9da096af0914fbd0c827810273f917e2fa",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86_64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86_64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d341e10301a9afe6a12656791532b8427a6a1cf95b99d37e294eb5649357a0bc",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86_64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/android/x86_64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a4b34fcab2ff244b38a46807b0aadaa27a6f1ed8c7cedf596ba06092d7a5c32f",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/android/x86_64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/blackberry/armv7/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "2c7b948b8cfc1e61285bb8e2347bba3162329b5bce71db0abbdd649d04e3d117",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/blackberry/armv7/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/blackberry/armv7/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "fed1c7bdf4733a24875fd58357298fc8831a7c3ba8d06849b44ab7c7e8f77eef",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/blackberry/armv7/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/blackberry/armv7/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "37a030841a77b7bc98f46ae34d30a3f59c59224f25e19eaf4d7ecf6becd9fdde",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/blackberry/armv7/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/blackberry/armv7/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8adc470a3338777fbba83f3288f5ce5d6f70a29dd9db8f404a5354d7656e1c58",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/blackberry/armv7/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/blackberry/armv7/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "415d933c982b48ab56854ee529b72d9b20078e3fae59ea52b208968673c0bbf4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/blackberry/armv7/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "c5a73a0a56c43e72b47ab5ca901dc654f685c359cf6ba929cad7397f66f15fc0",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "91680cc1305c711dd03cceee9f3af0599510a6637e429a389cab089456a980c6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "9c1cd783576c8869b2ef55b8a5c0543955445c12257afcc1f5b77853a87c91b4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "67055e349e5a799fd8d13c240631e71ba461523de1d9cdc06f248a7692ed691a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e7d950fe932a6caed52de03e96fa8b44c73fbdfecedeca3e985f48cb4e057749",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/ios/universal/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "f1f25e57647450234822e2fdbba2a23b038a623f1d9e317be781b2584360b361",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/ios/universal/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/aarch64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1340e86c8a5606937ca79db23058bb081373c7fb04bd262ea5cdeca85b267746",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/aarch64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/aarch64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "4ba790a77ed37db6f1799b690f6545990ef6de25cfa69bb9a4ef717287f457ab",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/aarch64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/aarch64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "2b1f0845fc744831dba4bd357a0e8ead9d5fdcabd92ea59e7eabf893e9e305f7",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/aarch64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/aarch64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "6502026eab9a3971b4f29ee6f61f90a52ffc025d1290013320a95e3214ddae0f",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/aarch64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/aarch64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1116625f8d869d4498a1d469b4da88412c79cd8b6f44da829a67faaad1301582",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/aarch64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/armv7/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "14851b81a218384972c43b8acdfe558ab08f26bdbcd69d58db89bdfbb6ac27d4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/armv7/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/armv7/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "7a25453d9a1d257a341a34d7af8e4e73b18c2386b3b26858269aaad5cd335562",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/armv7/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/armv7/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "29ef7b2df60c7d538f1d8d6092bb0be879df56c43104e974c5deb16dc49b7606",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/armv7/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/armv7/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "226b3a90871c572cd3473d68eb94640b92be0814f70d897c4688a266121d14e6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/armv7/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/armv7/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "690b059671bc454ac29f2cb17423663859aa14f43e00a7be0b471c2e711ca461",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/armv7/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/loongarch64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a064f0e03b51a998ac736d215b4d0e923fd2136fe60aae9e6f2cc6bf7b26b18c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/loongarch64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/loongarch64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "268003de2a0b91cd1715f244a67bf49a289808c5487137822d2f4afbf702349b",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/loongarch64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/loongarch64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "6daad83e909015a865543b9dcc300ff4b4946024f7e58c0b3a523f27d1bbd611",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/loongarch64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/loongarch64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d6c02ac39243fe1c7929e681a539749e7c04cf097142992518736a604134794f",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/loongarch64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/loongarch64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "b7a7d3a08968e8b0e173605aaf045c1c4bcd97c57e8bb319fc7899664ae4a9c6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/loongarch64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/mips32/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1eb7e447c6c000d853a66b5f9351d46766dfdcf23fddb0b16d60818ed0e7d07a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/mips32/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/mips32/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "5e50d49fc317cd660142074896fe0a8267a8dd6b801da7a2649cacbcd7c60842",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/mips32/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/mips32/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "93ead9c2f4045bf423e6e50236c93d3c5b1997ac814c606c80e6ac5904779b6b",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/mips32/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/mips32/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "65d1cf81cb5c073a5e02b1925a25f01376424ef381be0aeaabf3a28c69b3e4a0",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/mips32/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/mips32/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "df90cf4753d08015d497fa5a24d57db00bb21304bd6e4612036d77b1bdd18169",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/mips32/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/riscv64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "04082a3d4b7002e45c448e2a27045c84cce2705e111de6a561f36e4adc7a0fde",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/riscv64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/riscv64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0abe55ae7576195dfb8a9619c47a38a4e2c7f59eb5ad72def730bcad3ba1cfa0",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/riscv64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/riscv64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "b11d7fddb3d53988c2a1827b22a566f2f94634656d96d7d75818c376e4691861",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/riscv64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/riscv64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "88426afebab7ff2247561d07a07bbc51f64d63f16fd02348d5c62d172eb64f01",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/riscv64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/riscv64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "cfea84eb62f7428dcd5c11728ba1fbc9fc90401af551945640ff31ce8b92a935",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/riscv64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/webos/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "16c1b78b3a824119a15acddb2e3c3bb488993c220811c6b805aadb7ffe00b70c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/webos/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/webos/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "880f02e661e88e37a222e1978771c13020c587805fd0396b9bc9ee23a2eda031",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/webos/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/webos/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0b18fae94a1a6fabaaec6cedb02d08f79c8d89ea39cc72fc07d1c90426a96116",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/webos/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/webos/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "307fd6248dc437388d569b3913833a0e06dde12194e8f2ab278fddb8b1286647",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/webos/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/webos/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "aec2c51b670113e162eb50547062e5504ab3312a98d1c5ae6cb56e746df9529c",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/webos/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "2a5eb350881c67781d3cf4abf44fc805efedee329097966f4c9711e5d442c309",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "349588a6def61ef71085a65f50560c256080961e4d86abe88e9734d3708a896b",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "34d739314f9d6658ce92695b4b13377938f43954da71f9c07d536f7e817aaa8a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a4c447a2462471051e2de5b58f96a24f882da9d8aa58e10f131da8bff20552ad",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "fc8eecead683ebaaa5714032bff08eac847aae5d37e6eb8dd3f1c3c3783ba738",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86_64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e777f2cc6a22ab42baee117534788b8695ab338c491436d4fa7f4ed033eddeb6",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86_64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86_64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8ab345bc56844c18f0348df80ce6fa00937f72a448d360d709f2073ce4f6435d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86_64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86_64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8d03d54c0a280cdce177cbf76611a954f05beaab2b6e56389b0fa001d33ab331",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86_64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86_64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "27342f68346ba4970f2fd68700a77c162a3746ea4248e1b0b7002b8ad60fb9e4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86_64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/linux/x86_64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1166cebff89cbe46196d5ab61a930c8e57be2ea9a9d2d34e16098c20c8dcd844",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/linux/x86_64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "139d8ddac8c49046cb06804e565c89de84446a809d0b811adb6ec2eef5ecd1f0",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "7f836301c1c91f5f694400490b4e2c9d48bb9c32799b71e16960523344c85672",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "fa6a22ff1d38f43d6f630e4d92110bc18f57a3d3ed4850dbfd429e37aea048e9",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "be6e168ca97d4301effd8596b3be243785ada83b91b9d5355bc6aabf8264ccb3",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "1e6e1361da37e125207b2332e4f160e8290592335903fce33a8644d0bdacc8fc",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/macosx/universal/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d863bbd17a0c24cd95c426417fc416f7b40cdeb63b3679c9580e15383475fd99",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/macosx/universal/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/symbian/armv6/lib/avcodec.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "338b5d9a87b6c2a65cde3ed9c1269f2c876de9967688fa8296f340826807ccb4",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/symbian/armv6/lib/avcodec.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/symbian/armv6/lib/avformat.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e04c60109d3f05764f4e036aa8cc82e00d661b07265e0d514f102cc40c96ce13",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/symbian/armv6/lib/avformat.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/symbian/armv6/lib/avutil.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0408f2aad8ed0bce1e169d25068724dacf6ab865ec5df834dddbd5a5ae847030",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/symbian/armv6/lib/avutil.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/symbian/armv6/lib/swresample.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "a400501e928762aad6e6d36b2516b20ab4b3a10776ede0b905e36a804781de6a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/symbian/armv6/lib/swresample.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/symbian/armv6/lib/swscale.lib": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d9f6a6e3bc7367b5d9e45bf07211b9aafa3eb832d19875fc075f4e3882a75260",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/symbian/armv6/lib/swscale.lib"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "3b71e5bb2efb6d9abe7c404bee1b0fd04b3987de607bb3f5f321aca11f7088a3",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libavdevice.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "bcb537c681862e9eb6b885f5e084c73d2feea1b6bfa112dab7e32146a651bc6d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libavdevice.a"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "8b9a40a39ca6789f49dc38a1fd3b67a2769006fcd181b99dc4a295a858deb088",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "762633486a2b39208b0e1950b8d6b24a94a12802e7e5137684ae3b95986e21bf",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "0b0603f165bacdde2d5653c941bbc50759c68b14424fe019d288d5e3dc270512",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/tvos/arm64/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "e535879241a8611e48122829302a3e008dc832c6f6d54b519ce85cc8fc1d4315",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/tvos/arm64/lib/libswscale.a"
+  },
+  "vendor/PPSSPP/ffmpeg/wiiu/lib/libavcodec.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "62058d678007968dbd4246f28ba94bf01c7f93e0882bc857302831984f02727d",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/wiiu/lib/libavcodec.a"
+  },
+  "vendor/PPSSPP/ffmpeg/wiiu/lib/libavformat.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "d00ebb7dc399a126e97dfd6140495c6fda91947038e5eee5774b04f7a24b00c7",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/wiiu/lib/libavformat.a"
+  },
+  "vendor/PPSSPP/ffmpeg/wiiu/lib/libavutil.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "dfb3b82df1e704eca6afd03420a692802443e9eeaa35f564a2dce15c67ad7d92",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/wiiu/lib/libavutil.a"
+  },
+  "vendor/PPSSPP/ffmpeg/wiiu/lib/libswresample.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "5612ba4e6ad86dfd274da7437d1019be34961fed34ebed31774b46b7abf0e662",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/wiiu/lib/libswresample.a"
+  },
+  "vendor/PPSSPP/ffmpeg/wiiu/lib/libswscale.a": {
+    "reason": "Unused upstream prebuilt archive. Native iOS codecs are compiled from this same dependency source; this binary is excluded from corresponding source.",
+    "sha256": "289e28db09e0df39fe4d56c03629d4b82ce47ddb435eb492618996a7bda9fc7a",
+    "source": "https://github.com/hrydgard/ppsspp-ffmpeg/blob/1e3b4965632f60b1d85360261d1b9dd45444bc71/wiiu/lib/libswscale.a"
+  }
+}

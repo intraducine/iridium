@@ -22,9 +22,9 @@ RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
 RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
 REVISION = '48f976429c189f8396e23d251d8a82f43c705922'
-PSP_REVISION = '35e27933ff28bffcf1eadce0574569958d14c9b9'
+PSP_REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
-RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPBridge.h"\n'
+RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 # Presentation hooks and explicit exclusive-runtime guards. Madeira's launch
 # sequence, native driver, network implementation and allocator remain intact.
@@ -113,7 +113,7 @@ def project(source, names):
     # flatten emulator C++ archives into Madeira's native executable.
     component_ref, component_build, embed = 'F20000000000000000000001', 'F20000000000000000000002', 'F20000000000000000000003'
     objects[component_ref] = dict(isa='PBXFileReference', lastKnownFileType='compiled.mach-o.dylib',
-        path='../../ppsspp/$(PLATFORM_NAME)/ppsspp_libretro.dylib', sourceTree='SOURCE_ROOT')
+        path='../../ppsspp/$(PLATFORM_NAME)/libIridiumPPSSPPNative.dylib', sourceTree='SOURCE_ROOT')
     objects[component_build] = dict(isa='PBXBuildFile', fileRef=component_ref)
     objects[embed] = dict(isa='PBXCopyFilesBuildPhase', buildActionMask=2147483647, dstPath='',
         dstSubfolderSpec=10, files=[component_build], name='Embed PSP component', runOnlyForDeploymentPostprocessing=0)
@@ -181,18 +181,18 @@ def prepare():
     for source in (UPSTREAM / 'app/Madeira').rglob('*.swift'):
         target = app / 'Madeira' / source.relative_to(UPSTREAM / 'app/Madeira')
         target.write_text(overlay(source.name, source.read_text()))
-    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *RUNTIME_BRIDGE.glob('*.c'),
+    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *(p for p in RUNTIME_BRIDGE.glob('*.c') if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c')),
                       ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'])
     names = [path.name for path in sources]
     if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
     for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPBridge.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
     header.write_text(header.read_text() + RUNTIME_HEADERS)
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
-    component = PSP_OUTPUT / 'ppsspp_libretro.dylib'
-    if psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
+    component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
+    if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
         raise ValueError('Build and audit the pinned PSP component before preparing the app')
     refresh_generated_tree(PSP_OUTPUT / 'assets', app / 'Madeira/PSP/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'licenses', app / 'Madeira/licenses/PPSSPP')
@@ -233,7 +233,7 @@ def check_bundle(app):
         raise ValueError('Unexpected Madeira source pin in the app')
     if info.get('IridiumPPSSPPRevision') != PSP_REVISION:
         raise ValueError('Unexpected PSP source pin in the app')
-    component = app / 'Frameworks/ppsspp_libretro.dylib'
+    component = app / 'Frameworks/libIridiumPPSSPPNative.dylib'
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     if not component.is_file() or component.is_symlink() or hashlib.sha256(component.read_bytes()).hexdigest() != psp['sha256']:
         raise ValueError('The app does not contain the audited PSP component')
@@ -492,7 +492,7 @@ def app():
     subprocess.run([sys.executable, str(ROOT / 'ci/build-sameboy.py'),
                     '--output', str(ROOT / '.build/sameboy/iphoneos'),
                     '--sdk', 'iphoneos', '--target', 'arm64-apple-ios18.0'], check=True)
-    subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp.py'),
+    subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp-native.py'),
                     '--output', str(PSP_OUTPUT), '--sdk', 'iphoneos'], check=True)
     prepare()
     command = ['xcodebuild', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),

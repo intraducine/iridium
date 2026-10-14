@@ -100,13 +100,13 @@ class FrontendImportTests(unittest.TestCase):
             app.mkdir()
             (app / 'Info.plist').write_bytes(plistlib.dumps({
                 'IridiumMadeiraRevision': BUILD.REVISION, 'IridiumPPSSPPRevision': BUILD.PSP_REVISION}))
-            component = app / 'Frameworks/ppsspp_libretro.dylib'
+            component = app / 'Frameworks/libIridiumPPSSPPNative.dylib'
             component.parent.mkdir(); component.write_bytes(b'PSP component fixture')
             asset = app / 'PSP/PPSSPP/compat.ini'
             asset.parent.mkdir(parents=True); asset.write_bytes(b'PSP asset fixture')
             psp_output = root / 'psp-output'; psp_output.mkdir()
             (psp_output / 'component.json').write_text(json.dumps({
-                'revision': BUILD.PSP_REVISION,
+                'revision': BUILD.PSP_REVISION, 'componentType': 'native-ios-player',
                 'sha256': hashlib.sha256(component.read_bytes()).hexdigest(),
                 'assetSHA256': {'compat.ini': hashlib.sha256(asset.read_bytes()).hexdigest()},
             }))
@@ -185,10 +185,10 @@ class FrontendImportTests(unittest.TestCase):
         component = result[component_ref]
         self.assertEqual(component['sourceTree'], 'SOURCE_ROOT')
         self.assertEqual(component['lastKnownFileType'], 'compiled.mach-o.dylib')
-        self.assertEqual(component['path'], '../../ppsspp/$(PLATFORM_NAME)/ppsspp_libretro.dylib')
+        self.assertEqual(component['path'], '../../ppsspp/$(PLATFORM_NAME)/libIridiumPPSSPPNative.dylib')
         for sdk in ('iphoneos', 'iphonesimulator'):
             resolved = (BUILD.OUTPUT / 'app' / component['path'].replace('$(PLATFORM_NAME)', sdk)).resolve()
-            self.assertEqual(resolved, (BUILD.ROOT / '.build/ppsspp' / sdk / 'ppsspp_libretro.dylib').resolve())
+            self.assertEqual(resolved, (BUILD.ROOT / '.build/ppsspp' / sdk / 'libIridiumPPSSPPNative.dylib').resolve())
         self.assertEqual(result['frameworks']['files'], ['existing-link'])
         self.assertIn(component_ref, result['group']['children'])
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']

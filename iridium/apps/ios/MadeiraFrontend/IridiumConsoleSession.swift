@@ -12,6 +12,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var game: IridiumConsoleGame?
     @Published private(set) var phase = Phase.idle
     @Published private(set) var image: UIImage?
+    @Published private(set) var nativePSPController: UIViewController?
     @Published var error: String?
     @Published private(set) var presented = false
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
@@ -106,37 +107,74 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                         recordSameBoyProgress(first, owner: owner)
                         if requested == .play { deliver(first, owner: owner) }
                     case .psp:
-                        #if IRIDIUM_PPSSPP
-                        // Native code and assets have fixed signed-bundle locations.
-                        // Never resolve an executable path from a library record.
-                        guard let frameworks = Bundle.main.privateFrameworksURL,
-                              let resources = Bundle.main.resourceURL else { throw IridiumRuntimeError.unavailable }
-                        let component = frameworks.appendingPathComponent("ppsspp_libretro.dylib")
-                        let assets = resources.appendingPathComponent("PSP", isDirectory: true)
-                        ir_psp_set_log_callback { level, message in
-                            guard let message else { return }
-                            RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP core] level=\(level) \(String(cString: message))")
-                        }
-                        let opened = component.path.withCString { componentPath in
-                            url.path.withCString { gamePath in
-                                assets.path.withCString { assetPath in
-                                    folder.path.withCString { ir_psp_open(componentPath, gamePath, assetPath, $0) }
-                                }
+                        DispatchQueue.main.async {
+                            guard self.lease == owner else { return }
+                            guard self.requested != .stop else {
+                                self.queue.async { self.complete(owner) }; return
                             }
+                            self.openNativePSP(game: url, memoryStick: folder, owner: owner)
                         }
-                        guard opened else { throw IridiumRuntimeError.unavailable }
-                        // True means accepted ownership, even if async boot fails.
-                        saveFolder = folder; runningGame = game; fps = 60
-                        startTimer(owner: owner)
-                        #else
-                        throw IridiumRuntimeError.unavailable
-                        #endif
                     }
                 } catch {
                     fail(error.localizedDescription, owner: owner)
                 }
             }
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func openNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let frameworks = Bundle.main.privateFrameworksURL,
+              let resources = Bundle.main.resourceURL else {
+            error = IridiumRuntimeError.unavailable.localizedDescription
+            queue.async { self.terminalFailure = true; self.complete(owner) }; return
+        }
+        let component = frameworks.appendingPathComponent("libIridiumPPSSPPNative.dylib")
+        let assets = resources.appendingPathComponent("PSP/PPSSPP", isDirectory: true)
+        let controller = component.path.withCString { binary in
+            game.path.withCString { gamePath in
+                memoryStick.path.withCString { savePath in
+                    assets.path.withCString { assetPath in
+                        ir_psp_native_open(binary, gamePath, savePath, assetPath, false) { kind, message in
+                            let text = message.map { String(cString: $0) } ?? ""
+                            if kind == 0 {
+                                RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)")
+                            } else {
+                                DispatchQueue.main.async { IridiumConsoleSession.shared.nativePSPEvent(kind, text: text) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        guard let controller else {
+            error = "The full native PPSSPP component could not initialize. Its saves have been retained."
+            queue.async { self.terminalFailure = true; self.complete(owner) }; return
+        }
+        nativePSPController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
+        if requested == .pause { ir_psp_native_pause() }
+        diagnostics.phase = "native graphics starting"
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] release=v1.20.4 jit_verified=false; renderer pending; game_progress=unknown")
+        LibraryController.shared.configure(enabled: false, ownsInput: false)
+    }
+
+    private func nativePSPEvent(_ kind: UInt32, text: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let owner = lease, game?.platform == .psp else { return }
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)")
+        switch kind {
+        case 1:
+            nativePSPController = nil
+            queue.async { self.complete(owner) }
+        case 2:
+            error = text
+            queue.async { self.terminalFailure = true }
+            stop()
+        case 3:
+            if phase == .starting { phase = .running }
+            diagnostics.phase = "native renderer initialized"
+        default: break
+        }
     }
 
     private var currentIntentGeneration: UInt64 {
@@ -153,6 +191,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
         phase = .paused; releaseButtons()
         diagnostics.phase = "pause requested"
+        if nativePSPController != nil { ir_psp_native_pause(); return }
         LibraryController.shared.configure(enabled: true, ownsInput: true)
         queue.async { [self] in
             guard queueOwner == owner, requested == .pause else { return }
@@ -172,6 +211,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock(); intent.resume(); intentGeneration &+= 1; lock.unlock()
         phase = .starting
         diagnostics.phase = "resume requested"
+        if nativePSPController != nil {
+            ir_psp_native_resume(); phase = .running; return
+        }
         LibraryController.shared.configure(enabled: true, ownsInput: false)
         queue.async { [self] in
             guard queueOwner == owner, requested == .play else { return }
@@ -191,6 +233,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         phase = .stopping; releaseButtons()
         diagnostics.phase = "stop requested"
         watchStop(owner)
+        if nativePSPController != nil { ir_psp_native_stop(); return }
         queue.async { [self] in
             guard queueOwner == owner, requested == .stop else { return }
             beginStop(owner)
@@ -221,7 +264,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             }
             ir_core_close(); complete(owner)
         case .psp:
-            #if IRIDIUM_PPSSPP
+            #if IRIDIUM_PPSSPP_LIBRETRO
             if !stopRequested { ir_psp_request_stop(); stopRequested = true }
             startTimer(owner: owner) // Drain, never force unload, including failed boot.
             #else
@@ -255,7 +298,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             // Preserve an unacknowledged launch/runtime failure at the library.
             if failed, let error = self.error { LibraryModel.shared.error = error }
             self.error = nil
-            self.lease = nil; self.game = nil; self.image = nil; self.phase = .idle; self.presented = false
+            self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase = .idle; self.presented = false
             LibraryModel.shared.refreshFlag()
         }
     }
@@ -449,7 +492,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 catch { stopTimer(); silenceAudio(); reportSaveError(owner) }
             }
         case .psp:
-            #if IRIDIUM_PPSSPP
+            #if IRIDIUM_PPSSPP_LIBRETRO
             if bootComplete, requested == .pause {
                 stopTimer(); silenceAudio()
                 progress.phase = "paused"; publishProgress(owner, force: true); return
@@ -489,7 +532,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    #if IRIDIUM_PPSSPP
+    #if IRIDIUM_PPSSPP_LIBRETRO
     private func recordProgress(_ frame: IRPSPFrame, phase: IRPSPPhase, owner: IridiumRuntimeLease) {
         let now = ProcessInfo.processInfo.systemUptime
         switch phase {
