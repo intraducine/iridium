@@ -25,6 +25,7 @@ typedef void(*IRNativePSPEvent)(unsigned,const char*);
 @implementation IRPPSSPPContainer @end
 static IRPPSSPPContainer *container;
 static std::atomic<uint64_t> generation;
+static std::atomic<bool> acceptingCallbacks;
 static std::atomic<IRNativePSPEvent> eventSink;
 static NSMutableArray *pending;
 static unsigned errors,ready;
@@ -34,11 +35,13 @@ BODY
 static void require(bool ok){if(!ok)exit(1);}
 static void drain(){while(pending.count){void(^b)(void)=pending.firstObject;[pending removeObjectAtIndex:0];b();}}
 int main(){@autoreleasepool {
- pending=[NSMutableArray array];eventSink=sink;generation=1;container=[IRPPSSPPContainer new];
+ pending=[NSMutableArray array];eventSink=sink;acceptingCallbacks=true;generation=1;container=[IRPPSSPPContainer new];
  event(2,"renderer failed");container.closing=YES;generation++;drain();require(errors==1);
  container.closing=NO;generation++;event(3,"ready");container.closing=YES;generation++;drain();require(ready==0);
  event(2,"retired error");container=[IRPPSSPPContainer new];generation++;drain();require(errors==1);
  event(2,"prior renderer");container.closing=YES;generation++;container.closing=NO;generation++;drain();require(errors==1);
+ event(2,"old error through another close");container.closing=YES;generation++;container.closing=NO;generation++;container.closing=YES;generation++;drain();require(errors==1);
+ acceptingCallbacks=false;event(3,"ready during retirement");drain();require(ready==0);
  event(2,"closed error");container=nil;generation++;drain();require(errors==1);
  puts("PASS terminal renderer failure survives close and rejects replaced/restarted owners");
 }}

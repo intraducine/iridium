@@ -75,8 +75,11 @@ static void event(unsigned kind, const char *message) {
     IRPPSSPPContainer *origin = container;
     std::string copy(message);
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (origin && origin == container &&
-            (owner == generation.load() || (kind == 2 && origin.closing))) {
+        uint64_t current = generation.load();
+        bool live = owner == current && acceptingCallbacks && origin && !origin.closing;
+        bool retiringError = kind == 2 && origin && origin.closing &&
+            (owner == current || owner + 1 == current);
+        if (origin && origin == container && (live || retiringError)) {
             if (auto callback = eventSink.load()) callback(kind, copy.c_str());
         }
     });
