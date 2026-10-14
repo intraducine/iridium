@@ -26,6 +26,14 @@ PSP_REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
+PSP_PRIVACY_DESCRIPTIONS = {
+    'NSCameraUsageDescription': 'A PSP game can use your camera to emulate the Go!Cam accessory.',
+    'NSMicrophoneUsageDescription': 'A PSP game can request microphone input for the Go!Cam or Talkman accessory.',
+    'NSMotionUsageDescription': 'PSP tilt controls use device motion while you play.',
+    'NSLocationWhenInUseUsageDescription': 'A PSP game can use your location to emulate the Go!Explore GPS accessory while playing.',
+    'NSPhotoLibraryUsageDescription': 'Choose a photo for the PPSSPP background when you request it.',
+    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP multiplayer and on-device JIT pairing.',
+}
 # Presentation hooks and explicit exclusive-runtime guards. Madeira's launch
 # sequence, native driver, network implementation and allocator remain intact.
 HOOKS = {
@@ -51,6 +59,8 @@ HOOKS = {
         ('(0x10, "menu"), (0x100, "tab")', '(0x10, "menu"), (0x4000, "play"), (0x100, "tab")'),
     ],
     'MadeiraApp.swift': [
+        ('struct MadeiraApp: App {',
+         'struct MadeiraApp: App {\n    @UIApplicationDelegateAdaptor(IridiumApplicationDelegate.self) private var iridiumDelegate'),
         ('_ = ResolutionChoices.screen',
          '_ = ResolutionChoices.screen\n        UserDefaults.standard.set("new", forKey: FrontendChoice.key)'),
     ],
@@ -208,6 +218,7 @@ def prepare():
     data['CFBundleDisplayName'] = 'Iridium'
     data['IridiumMadeiraRevision'] = REVISION
     data['IridiumPPSSPPRevision'] = PSP_REVISION
+    data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
     icon = ROOT / 'iridium/apps/ios/Iridium/Assets.xcassets/AppIcon.appiconset'
     shutil.copytree(icon, app / 'Madeira/Assets.xcassets/AppIcon.appiconset', dirs_exist_ok=True)
@@ -229,6 +240,8 @@ def verify():
 
 def check_bundle(app):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
+    if any(info.get(name) != value for name, value in PSP_PRIVACY_DESCRIPTIONS.items()):
+        raise ValueError('The native PSP platform permission descriptions are missing or changed')
     if info.get('IridiumMadeiraRevision') != REVISION:
         raise ValueError('Unexpected Madeira source pin in the app')
     if info.get('IridiumPPSSPPRevision') != PSP_REVISION:
@@ -488,12 +501,13 @@ def native():
     print('Saved the completed native build before app compilation and packaging.')
 
 
-def app():
+def app(reuse_psp):
     subprocess.run([sys.executable, str(ROOT / 'ci/build-sameboy.py'),
                     '--output', str(ROOT / '.build/sameboy/iphoneos'),
                     '--sdk', 'iphoneos', '--target', 'arm64-apple-ios18.0'], check=True)
-    subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp-native.py'),
-                    '--output', str(PSP_OUTPUT), '--sdk', 'iphoneos'], check=True)
+    if not reuse_psp:
+        subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp-native.py'),
+                        '--output', str(PSP_OUTPUT), '--sdk', 'iphoneos'], check=True)
     prepare()
     command = ['xcodebuild', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',
@@ -513,11 +527,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('prepare', 'verify', 'app', 'native', 'windows', 'toolchains', 'check-bundle'))
     parser.add_argument('app', nargs='?', type=Path)
+    parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
     args = parser.parse_args()
+    if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': app, 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()

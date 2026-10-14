@@ -2,6 +2,9 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#ifdef __OBJC__
+@class UIViewController;
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +29,14 @@ void ir_native_psp_renderer_failed(void);
 bool ir_native_psp_codec_check(void);
 void ir_native_psp_capture_controller(void *controller);
 bool ir_native_psp_should_render(void);
+bool ir_native_psp_is_current_player(void *player);
+uint64_t ir_native_psp_generation(void);
+bool ir_native_psp_generation_current(uint64_t owner);
+#ifdef __OBJC__
+void ir_native_psp_present(UIViewController *controller, void (^cancel)(void));
+void ir_native_psp_presentation_finished(UIViewController *controller);
+void ir_native_psp_rotation_changed(int rotation);
+#endif
 #ifdef __cplusplus
 }
 #endif

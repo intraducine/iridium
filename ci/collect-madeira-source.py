@@ -152,6 +152,17 @@ def collect(app, output, maps):
             dest = stage / '.build/runtime-downloads' / archive.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, dest)
+        psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
+        psp_external = json.loads((ROOT / 'ci/moltenvk-source-inputs.json').read_text())
+        if not psp_external or psp_external != psp_receipt.get('moltenVK', {}).get('sourceInputs'):
+            raise ValueError('Linked MoltenVK source closure differs from the source manifest')
+        for item in psp_external:
+            archive = ROOT / '.build/runtime-downloads' / (item['sha256'] + '.tar')
+            if not archive.is_file() or fetch.digest(archive) != item['sha256']:
+                raise ValueError('Missing linked PSP external source: ' + item['name'])
+            dest = stage / '.build/runtime-downloads' / archive.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(archive, dest)
         pairing = build.UPSTREAM / 'build/rppairing-ios'
         vendor = stage / 'vendor/Madeira/build/rppairing-ios/vendor'
         config = subprocess.check_output(['cargo', 'vendor', '--locked', '--manifest-path', str(pairing / 'Cargo.toml'), str(vendor)], text=True)
@@ -163,11 +174,10 @@ def collect(app, output, maps):
         shutil.copytree(app / 'licenses', notices / 'licenses')
         shutil.copytree(app / 'legal', notices / 'legal')
         shutil.copytree(app / 'd3d12', notices / 'd3d12', ignore=shutil.ignore_patterns('*.dylib', '*.dxil'))
-        psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
         (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
                     'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage),
-                    'revisions': revisions, 'inputs': inputs, 'binaries': records, 'static_archives': static,
+                    'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external, 'binaries': records, 'static_archives': static,
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

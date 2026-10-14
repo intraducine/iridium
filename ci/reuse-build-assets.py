@@ -96,14 +96,16 @@ FRONTEND_MAIN = """if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('prepare', 'verify', 'app', 'native', 'windows', 'toolchains', 'check-bundle'))
     parser.add_argument('app', nargs='?', type=Path)
+    parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
     args = parser.parse_args()
+    if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': app, 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()
 """
 
 

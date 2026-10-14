@@ -19,6 +19,16 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_bundle_rejects_missing_platform_purpose_descriptions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app = pathlib.Path(folder)
+            for key in BUILD.PSP_PRIVACY_DESCRIPTIONS:
+                info = dict(BUILD.PSP_PRIVACY_DESCRIPTIONS)
+                info.pop(key)
+                (app / 'Info.plist').write_bytes(plistlib.dumps(info))
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'permission descriptions'):
+                    BUILD.check_bundle(app)
+
     def test_compiler_identity_ignores_only_metal_mount(self):
         def identity(version, mount):
             def output(command, **kwargs):
@@ -99,7 +109,8 @@ class FrontendImportTests(unittest.TestCase):
             app, upstream = root / 'Iridium.app', root / 'upstream'
             app.mkdir()
             (app / 'Info.plist').write_bytes(plistlib.dumps({
-                'IridiumMadeiraRevision': BUILD.REVISION, 'IridiumPPSSPPRevision': BUILD.PSP_REVISION}))
+                'IridiumMadeiraRevision': BUILD.REVISION, 'IridiumPPSSPPRevision': BUILD.PSP_REVISION,
+                **BUILD.PSP_PRIVACY_DESCRIPTIONS}))
             component = app / 'Frameworks/libIridiumPPSSPPNative.dylib'
             component.parent.mkdir(); component.write_bytes(b'PSP component fixture')
             asset = app / 'PSP/PPSSPP/compat.ini'

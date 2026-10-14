@@ -13,12 +13,14 @@
 #include "Common/Log/LogManager.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
+#include "Core/Util/DarwinFileSystemServices.h"
 #ifndef USE_FFMPEG
 #error The native PSP player requires its upstream media decoders
 #endif
 
 @interface PPSSPPBaseViewController (IridiumLifecycle)
 - (void)iridiumStopRenderLoop:(void (^)(void))completion;
+- (void)iridiumCloseSensors:(void (^)(void))completion;
 @end
 
 @interface IRPPSSPPContainer : UIViewController {
@@ -38,15 +40,21 @@
 @property BOOL initialized;
 @property BOOL finishing;
 @property BOOL interrupted;
+@property BOOL appActive;
+@property BOOL previousIdleTimerDisabled;
 @property NSString *audioCategory;
 @property NSString *audioMode;
 @property AVAudioSessionCategoryOptions audioOptions;
 @property NSMutableArray *inputRestorers;
 @property NSMutableSet *capturedControllers;
+@property NSMutableDictionary *presentationCancels;
+@property UIInterfaceOrientationMask rotationMask;
 - (void)beginPlayer;
 - (void)setPlaying:(BOOL)playing;
+- (BOOL)canPlay;
 - (void)closePlayer;
 - (void)finishClose;
+- (void)finishNativeClose;
 - (void)completeClose;
 @end
 
@@ -56,6 +64,7 @@ static std::atomic<bool> rendererFailed;
 static std::atomic<uint64_t> frames;
 static std::atomic<uint64_t> generation;
 static std::atomic<IRNativePSPEvent> eventSink;
+static std::atomic<bool> acceptingCallbacks;
 
 static void event(unsigned kind, const char *message) {
     auto sink = eventSink.load();
@@ -87,7 +96,7 @@ static void event(unsigned kind, const char *message) {
 - (UIViewController *)childViewControllerForHomeIndicatorAutoHidden { return self.player; }
 - (UIViewController *)childViewControllerForScreenEdgesDeferringSystemGestures { return self.player; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    return self.player ? self.player.supportedInterfaceOrientations : UIInterfaceOrientationMaskAll;
+    return self.rotationMask;
 }
 - (BOOL)shouldAutorotate { return self.player ? self.player.shouldAutorotate : YES; }
 - (void)viewDidLoad {
@@ -98,6 +107,8 @@ static void event(unsigned kind, const char *message) {
 - (void)beginPlayer {
     NSAssert(NSThread.isMainThread, @"Native initialization belongs to the UI thread");
     if (self.closing) return;
+    acceptingCallbacks = true;
+    self.previousIdleTimerDisabled = UIApplication.sharedApplication.idleTimerDisabled;
     frames = 0; rendererFailed = false;
     ir_native_psp_platform_init();
     struct sigaction ignored{};
@@ -116,6 +127,7 @@ static void event(unsigned kind, const char *message) {
         g_Config.iInternalResolution = 2;
         g_Config.bSoftwareRendering = false;
     }
+    ir_native_psp_rotation_changed(g_Config.iScreenRotation);
     g_logManager.SetExternalLogCallback([](const LogMessage &message, void *) {
         std::string text = std::string(message.log) + ": " + message.msg;
         event(0, text.c_str());
@@ -146,15 +158,20 @@ static void event(unsigned kind, const char *message) {
         [tokens addObject:[center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notice) {
             IRPPSSPPContainer *owner = weakSelf;
             if (!owner || owner.closing) return;
-            if ([notice.name isEqualToString:UIApplicationWillResignActiveNotification]) [owner setPlaying:NO];
-            else if ([notice.name isEqualToString:UIApplicationDidBecomeActiveNotification]) [owner setPlaying:owner.wantsActive && !owner.interrupted];
+            if ([notice.name isEqualToString:UIApplicationWillResignActiveNotification]) {
+                owner.appActive = NO;
+                [owner setPlaying:NO];
+            } else if ([notice.name isEqualToString:UIApplicationDidBecomeActiveNotification]) {
+                owner.appActive = YES;
+                [owner setPlaying:YES];
+            }
             else if ([notice.name isEqualToString:AVAudioSessionInterruptionNotification]) {
                 BOOL ended = [notice.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue] == AVAudioSessionInterruptionTypeEnded;
                 owner.interrupted = !ended;
                 [owner setPlaying:ended && owner.wantsActive && UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
             } else {
                 iOSCoreAudioShutdown();
-                if (owner.active && g_Config.bEnableSound) iOSCoreAudioInit();
+                if ([owner canPlay] && owner.active && g_Config.bEnableSound) iOSCoreAudioInit();
             }
         }]];
     }
@@ -167,6 +184,7 @@ static void event(unsigned kind, const char *message) {
 }
 - (void)setPlaying:(BOOL)playing {
     NSAssert(NSThread.isMainThread, @"Player lifecycle belongs to the main thread");
+    playing = playing && [self canPlay];
     if (self.pausing || (self.closing && playing)) return;
     if (playing && !self.active) {
         self.active = YES;
@@ -178,13 +196,20 @@ static void event(unsigned kind, const char *message) {
         [self.player iridiumStopRenderLoop:^{
             self.pausing = NO;
             if (self.closing) [self finishClose];
-            else if (self.wantsActive) [self setPlaying:YES];
+            else [self setPlaying:YES];  // Reevaluate intent and environment after the delayed drain.
         }];
     }
+}
+- (BOOL)canPlay {
+    return self.wantsActive && self.appActive && !self.interrupted && !self.closing &&
+        self.initialized && self.player && !rendererFailed &&
+        UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
 }
 - (void)closePlayer {
     if (self.closing) return;
     self.closing = YES;
+    acceptingCallbacks = false;
+    generation.fetch_add(1);
     [self setPlaying:NO];
     if (!self.pausing) [self finishClose];
 }
@@ -194,6 +219,13 @@ static void event(unsigned kind, const char *message) {
     for (id token in self.observers) [NSNotificationCenter.defaultCenter removeObserver:token];
     self.observers = nil;
     iOSCoreAudioShutdown();
+    for (void (^cancel)(void) in [self.presentationCancels.allValues copy]) cancel();
+    [self.presentationCancels removeAllObjects];
+    [self dismissViewControllerAnimated:NO completion:nil];
+    if (self.player) [self.player iridiumCloseSensors:^{ [self finishNativeClose]; }];
+    else [self finishNativeClose];
+}
+- (void)finishNativeClose {
     [self.player willMoveToParentViewController:nil];
     [self.player shutdown];
     [self.player.view removeFromSuperview];
@@ -212,7 +244,9 @@ static void event(unsigned kind, const char *message) {
     });
 }
 - (void)completeClose {
+    DarwinFileSystemServices::terminate();
     self.initialized = NO;
+    UIApplication.sharedApplication.idleTimerDisabled = self.previousIdleTimerDisabled;
     struct sigaction current{};
     if (ownsPipe && sigaction(SIGPIPE, nullptr, &current) == 0 && current.sa_handler == SIG_IGN)
         sigaction(SIGPIPE, &previousPipe, nullptr);
@@ -238,10 +272,13 @@ void *ir_native_psp_create(const char *game, const char *memoryStick, const char
     if (!ir_native_psp_codec_check()) return nullptr;
     IRPPSSPPContainer *owner = [[IRPPSSPPContainer alloc] init];
     owner.inputRestorers = [NSMutableArray array]; owner.capturedControllers = [NSMutableSet set];
+    owner.presentationCancels = [NSMutableDictionary dictionary]; owner.rotationMask = UIInterfaceOrientationMaskAll;
     owner.gamePath = @(game); owner.memoryStick = @(memoryStick); owner.assets = @(assets);
     AVAudioSession *audio = AVAudioSession.sharedInstance;
     owner.audioCategory = audio.category; owner.audioMode = audio.mode; owner.audioOptions = audio.categoryOptions;
-    owner.wantsActive = YES; eventSink = callback; jitVerified = jit; generation.fetch_add(1); container = owner;
+    owner.wantsActive = YES;
+    owner.appActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+    eventSink = callback; jitVerified = jit; generation.fetch_add(1); container = owner;
     return (__bridge_retained void *)owner;
 }
 void ir_native_psp_pause(void) { container.wantsActive = NO; [container setPlaying:NO]; }
@@ -255,16 +292,67 @@ void ir_native_psp_menu(void) {
     key.flags = KeyInputFlags::DOWN | KeyInputFlags::UP; NativeKey(key);
 }
 void ir_native_psp_stop(void) {
-    dispatch_async(dispatch_get_main_queue(), ^{ [container closePlayer]; });
+    IRPPSSPPContainer *owner = container;
+    void (^stop)(void) = ^{
+        if (container != owner) return;
+        owner.restarting = NO;
+        owner.wantsActive = NO;
+        [owner closePlayer];
+    };
+    if (NSThread.isMainThread) stop();
+    else dispatch_async(dispatch_get_main_queue(), stop);
 }
 void ir_native_psp_restart(void) {
+    uint64_t owner = generation.load();
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!container || container.closing) return;
+        if (!ir_native_psp_generation_current(owner) || !container || container.closing) return;
         container.restarting = YES; [container closePlayer];
     });
 }
 bool ir_native_psp_jit_available(void) { return jitVerified.load(); }
-bool ir_native_psp_should_render(void) { return container.active && !container.closing && !container.pausing; }
+bool ir_native_psp_should_render(void) { return container.active && !container.pausing && [container canPlay]; }
+bool ir_native_psp_is_current_player(void *player) { return player && container.player == (__bridge id)player; }
+uint64_t ir_native_psp_generation(void) { return generation.load(); }
+bool ir_native_psp_generation_current(uint64_t owner) { return acceptingCallbacks.load() && owner == generation.load(); }
+void ir_native_psp_present(UIViewController *controller, void (^cancel)(void)) {
+    NSCAssert(NSThread.isMainThread, @"Native presentation belongs to the main thread");
+    IRPPSSPPContainer *owner = container;
+    if (!owner || owner.closing || owner.presentedViewController || !owner.view.window) { cancel(); return; }
+    owner.presentationCancels[[NSValue valueWithNonretainedObject:controller]] = [cancel copy];
+    [owner presentViewController:controller animated:YES completion:nil];
+}
+void ir_native_psp_presentation_finished(UIViewController *controller) {
+    [container.presentationCancels removeObjectForKey:[NSValue valueWithNonretainedObject:controller]];
+}
+void ir_native_psp_rotation_changed(int rotation) {
+    uint64_t owner = generation.load();
+    void (^apply)(void) = ^{
+        if (!ir_native_psp_generation_current(owner)) return;
+        UIInterfaceOrientationMask mask;
+        switch (rotation) {
+            case ROTATION_LOCKED_HORIZONTAL: mask = UIInterfaceOrientationMaskLandscapeRight; break;
+            case ROTATION_LOCKED_HORIZONTAL180: mask = UIInterfaceOrientationMaskLandscapeLeft; break;
+            case ROTATION_LOCKED_VERTICAL:
+            case ROTATION_LOCKED_VERTICAL180:
+                mask = UIInterfaceOrientationMaskPortrait;
+                if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) mask |= UIInterfaceOrientationMaskPortraitUpsideDown;
+                break;
+            case ROTATION_AUTO_HORIZONTAL: mask = UIInterfaceOrientationMaskLandscape; break;
+            default: mask = UIInterfaceOrientationMaskAll; break;
+        }
+        container.rotationMask = mask;
+        [container setNeedsUpdateOfSupportedInterfaceOrientations];
+        [container.parentViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+        UIWindowScene *scene = container.view.window.windowScene;
+        if (@available(iOS 16.0, *)) {
+            UIWindowSceneGeometryPreferencesIOS *preferences = [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+            [scene requestGeometryUpdateWithPreferences:preferences errorHandler:^(NSError *error) {
+                event(0, "The scene could not apply the requested PSP orientation.");
+            }];
+        }
+    };
+    if (NSThread.isMainThread) apply(); else dispatch_async(dispatch_get_main_queue(), apply);
+}
 uint64_t ir_native_psp_frames(void) { return frames.load(); }
 void ir_native_psp_frame(void) { frames.fetch_add(1); }
 void ir_native_psp_renderer_ready(void) {

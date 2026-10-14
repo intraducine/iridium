@@ -150,7 +150,14 @@ class PublicSigningFixtureTests(unittest.TestCase):
         (maps / 'app-LinkMap.txt').touch()
         psp = self.root / 'psp'
         psp.mkdir()
-        (psp / 'component.json').write_text('{}')
+        external_data = b'locked external source fixture'
+        external_hash = hashlib.sha256(external_data).hexdigest()
+        external = [{'name': 'MoltenVK', 'sha256': external_hash}]
+        (self.root / 'ci/moltenvk-source-inputs.json').write_text(json.dumps(external))
+        downloads = self.root / '.build/runtime-downloads'
+        downloads.mkdir()
+        (downloads / (external_hash + '.tar')).write_bytes(external_data)
+        (psp / 'component.json').write_text(json.dumps({'moltenVK': {'sourceInputs': external}}))
         output = self.root / 'output'
 
         def snapshot(repo, destination, revisions):
@@ -181,8 +188,10 @@ class PublicSigningFixtureTests(unittest.TestCase):
 
         manifest = json.loads((output / 'COMPONENT-MANIFEST.json').read_text())
         self.assertEqual(manifest['source_exclusions'], [{'path': NAME, **self.fixture}])
+        self.assertEqual(manifest['psp_external_source_inputs'], external)
         with tarfile.open(output / 'Iridium-corresponding-source.tar.gz') as archive:
             self.assertNotIn('iridium/' + NAME, archive.getnames())
+            self.assertEqual(archive.extractfile('iridium/.build/runtime-downloads/' + external_hash + '.tar').read(), external_data)
             self.assertEqual(archive.extractfile(
                 'iridium/vendor/PPSSPP/libretro/libretro.cpp').read(), b'upstream core')
             self.assertEqual(json.load(archive.extractfile('iridium/COMPONENT-MANIFEST.json')),

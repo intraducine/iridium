@@ -462,3 +462,53 @@ Corresponding-source collection omits only the digest-verified public UWP
 signing fixture, which the iOS Libretro target does not use. Its pinned upstream
 URL, path, SHA-256 and exclusion reason are recorded in the component manifest.
 The upstream checkout is unchanged; unreviewed signing files stop collection.
+
+
+## Native PSP frontend integration
+
+The PSP source moves to published PPSSPP v1.20.4,
+`fa50bb1976065c4f8b1b47af227d367fe9771555`, with its exact selected dependency
+pins. Madeira remains `48f976429c189f8396e23d251d8a82f43c705922` and its nested
+pins. The previous Libretro/software-rendering PSP adapter is replaced in this
+frontend by upstream's iOS player, touch/gamepad/keyboard input, advanced screens,
+FFmpeg media, OpenGL and Vulkan graphics, and the complete release resource tree.
+A narrow exported C boundary embeds the player as a child of Iridium's session.
+Fresh PSP settings default to OpenGL, two-times resolution and IR interpreter.
+Existing per-game settings and writable memory sticks are retained. JIT remains
+unavailable until the native PSP code allocation path is independently verified.
+No emulation Core, HLE or GPU algorithm is changed.
+
+The out-of-tree overlay adapts app entry/lifecycle, scene screen lookup, rotation,
+file/photo presentation, per-game memory-stick ownership and optional IAP guards.
+The memory-stick relocation setting explains Iridium ownership and is disabled;
+other upstream settings retain their storage behavior. App-active/interruption
+state and user play intent jointly control resuming after asynchronous render
+drain. Explicit stop cancels a pending backend restart. Render-owner and loop
+identities reject delayed callbacks from retired or restarted controllers.
+Camera, GPS, motion and picker owners are canceled and drained before teardown;
+weak sensor delegates and ARC for the base controller remove their ownership
+cycles. Queued gamepad, photo, keyboard and platform callbacks are session scoped.
+The host supplies purpose descriptions and its application orientation mask.
+
+Renderer and UIKit teardown occurs on main. After audio, renderer, input, picker
+and sensor owners are stopped, the remaining native cleanup runs on a worker to
+keep joins and configuration I/O off the UI thread. Upstream documents
+NativeShutdown as a main-thread API; this embedding uses an isolated, quiescent
+cleanup phase and gates its UIKit effects. Behavioral callback/drain tests and
+compilation establish those boundaries only. Repeated real UIKit/device teardown
+and stalled-cleanup checks remain required before asserting full runtime safety.
+
+The builder replaces the PPSSPP MoltenVK prebuilt link input with MoltenVK 1.2.9
+from the existing locked source closure. Original source files are verified
+against their archives, upstream generated headers are prepared, and a final
+link inventory proves which static archives were used. Corresponding source
+includes all nine locked MoltenVK source archives and the build/replacement
+recipe. The binary receipt retains compiled-source, dependency, resource and
+archive hashes. Full TTF grants are included; PGF/atlas and combined proprietary
+converter terms remain explicit distribution-review limits in LICENSING.md.
+
+Host regression tests exercise actual lifecycle, renderer-drain, camera,
+presentation, orientation and gamepad callback methods with platform stubs.
+They do not establish God of War loading, audio, graphics, saves or input on a
+physical iPhone. Private build success must not be described as fixing the
+reported white screen until a matching device run reaches gameplay.

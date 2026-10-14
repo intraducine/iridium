@@ -63,6 +63,10 @@ approved merely because it appears in the candidate research.
 The PSP component uses pinned PPSSPP and its selected dependencies, with original
 per-file grants preserved. This includes GPL-family PPSSPP code, GPLv3 libkirk
 and xBRZ material, LGPL-2.1-or-later at3_standalone, and permissive dependencies.
+The native iOS player links MoltenVK 1.2.9 built from the digest-locked source
+closure in `ci/moltenvk-source-inputs.json`, with original Apache-2.0 and dependency
+notices. It does not link the release submodule's opaque prebuilt archive. Its
+receipt records the verified expanded source and actual linked archive hashes.
 The native iOS player includes upstream FFmpeg media decoders, graphics and
 frontend resources. FFmpeg is rebuilt from its release dependency source using
 the upstream selected-codec recipe. The generated `licenses/PPSSPP` directory contains upstream terms,
@@ -74,8 +78,12 @@ snapshot does not provide a separate generation recipe/license beside every
 PGF. Its PSP dialog atlas is distributed upstream; the atlas generator names
 font inputs not included in the snapshot. Preserve that provenance distinction:
 this repository does not claim a newly established font redistribution grant.
-Upstream TTF assets are retained with the native resource tree; their notices
-and precise provenance need review before public binary distribution. User-game font extraction, if invoked
+The five bundled TTF assets identify SIL Open Font License 1.1 in their embedded
+name records. Their original copyright/author/license records, checksums and
+full pinned upstream OFL texts are preserved in
+`iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts/`. This establishes the
+identified TTF grants; it does not resolve the separate PGF and atlas provenance
+review before public binary distribution. User-game font extraction, if invoked
 by upstream, stays in that game's writable memory-stick directory.
 
 Before public binary distribution, review the combined component terms,

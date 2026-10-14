@@ -182,3 +182,33 @@ Then run the app and package steps above. Preserve the applicable notices.
 Replacement binaries can have different checksums. Byte-identical builds,
 per-library marker tests and a separate application object kit are not required
 when the complete source and build material provide a usable relink path.
+
+
+## Replace the native PSP component
+
+The PSP frontend uses the exact PPSSPP v1.20.4 source/dependency pins in its build
+receipt, upstream FFmpeg codec sources and the source-built MoltenVK closure in
+`ci/moltenvk-source-inputs.json`. Required source downloads are included under
+`.build/runtime-downloads/` in the corresponding-source archive. Apple SDKs and
+Xcode remain external prerequisites.
+
+Edit the supplied sources or the declared embedding hooks, rebuild the component,
+then run the app and package steps. With `--reuse-psp-component`, the app step validates the component receipt
+and copies it; it does not rebuild and overwrite a replacement PSP library.
+
+```sh
+python3 ci/build-ppsspp-native.py --output .build/ppsspp/iphoneos --sdk iphoneos
+python3 ci/madeira-frontend.py app --reuse-psp-component
+python3 ci/package-unsigned-ipa.py \
+  .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app \
+  .build/relinked-native-psp-ipa
+```
+
+The builder verifies expanded MoltenVK sources against the locked archives and
+records its exact final link inputs. MoltenVK source edits require updating the
+source-input manifest and hashes with the intended replacement source closure.
+FFmpeg is built from its included source with the selected LGPL codec recipe.
+The receipt records those codec configuration arguments and rebuilt archive
+hashes. Preserve all applicable GPL/LGPL/OFL/Apache and other upstream notices.
+The public-distribution review limits in LICENSING.md still apply to the combined
+app and upstream PGF/dialog atlas; the recipe is not a determination of rights.

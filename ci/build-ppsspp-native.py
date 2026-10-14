@@ -79,6 +79,26 @@ def compiled_inputs(source, destination):
     return hashes
 
 
+def linked_archives(destination):
+    commands = output('ninja', '-C', destination / 'build', '-t', 'commands', 'IridiumPPSSPPNative')
+    link = [line for line in commands.splitlines() if '-dynamiclib' in line]
+    if len(link) != 1: raise ValueError('Native PSP final link command is ambiguous')
+    archives = {}
+    for arg in shlex.split(link[0]):
+        if not arg.endswith('.a'): continue
+        file = Path(arg)
+        if not file.is_absolute(): file = destination / 'build' / file
+        file = file.resolve(strict=True)
+        if not file.is_relative_to(ROOT): raise ValueError('Unreviewed PSP archive outside the source/build tree')
+        name = file.relative_to(ROOT).as_posix()
+        if name.startswith('vendor/PPSSPP/ios/MoltenVK/'):
+            raise ValueError('Unproven prebuilt MoltenVK is still linked')
+        archives[name] = digest(file)
+    if not any('/moltenvk-derived/' in name for name in archives):
+        raise ValueError('The audited source-built MoltenVK archive is not in the final link')
+    return archives
+
+
 def initialize(source):
     if output('git', '-C', source, 'rev-parse', 'HEAD') != REVISION:
         raise ValueError('Native PSP source must match the reviewed published release')
@@ -178,7 +198,7 @@ def assets(source, destination):
     return hashes
 
 
-def configure(source, destination, sdk):
+def configure(source, destination, sdk, moltenvk=None):
     return ['cmake', '-S', str(destination / 'source'), '-B', str(destination / 'build'), '-G', 'Ninja',
         '-DCMAKE_TOOLCHAIN_FILE=' + str(source / 'cmake/Toolchains/ios.cmake'),
         '-DIOS_PLATFORM=' + ('OS' if sdk == 'iphoneos' else 'SIMULATOR'),
@@ -190,7 +210,8 @@ def configure(source, destination, sdk):
         '-DCMAKE_PROJECT_PPSSPP_INCLUDE=' + str(ROOT / 'ci/ppsspp-native.cmake'),
         '-DIRIDIUM_NATIVE_ADAPTER=' + str(NATIVE / 'IRPPSSPPNative.mm'),
         '-DIRIDIUM_NATIVE_HEADERS=' + str(NATIVE),
-        '-DIRIDIUM_NATIVE_EXPORTS=' + str(destination / 'native.exports')]
+        '-DIRIDIUM_NATIVE_EXPORTS=' + str(destination / 'native.exports'),
+        '-DIRIDIUM_MOLTENVK_ARCHIVE=' + str(moltenvk or ROOT / '.build/ppsspp/moltenvk-derived' / ('package-' + sdk) / 'Build/Products' / ('Release-' + sdk) / 'libMoltenVK.a')]
 
 
 def build(source, destination, sdk, jobs):
@@ -200,9 +221,12 @@ def build(source, destination, sdk, jobs):
     before = revisions(source)
     destination.mkdir(parents=True, exist_ok=True)
     codecs = ffmpeg(source / 'ffmpeg', destination, sdk, jobs)
+    mvk_spec = importlib.util.spec_from_file_location('native_moltenvk', ROOT / 'ci/build-ppsspp-moltenvk.py')
+    mvk = importlib.util.module_from_spec(mvk_spec); mvk_spec.loader.exec_module(mvk)
+    mvk_archive, mvk_receipt = mvk.build(sdk, min(jobs, 4))
     overlay.stage(source, destination / 'source')
     (destination / 'native.exports').write_text('\n'.join(sorted(EXPORTS)) + '\n')
-    command = configure(source, destination, sdk)
+    command = configure(source, destination, sdk, mvk_archive)
     run(*command)
     run('cmake', '--build', destination / 'build', '--target', 'IridiumPPSSPPNative', '--parallel', jobs)
     binary = destination / 'build/lib/libIridiumPPSSPPNative.dylib'
@@ -212,6 +236,8 @@ def build(source, destination, sdk, jobs):
     hashes = assets(source, destination / 'assets')
     support.notices(source, destination / 'licenses')
     shutil.copy2(source / 'ffmpeg/LICENSE.md', destination / 'licenses/LICENSE-PSP-FFMPEG.md')
+    shutil.copytree(ROOT / 'iridium/apps/ios/MadeiraSupport/Notices/MoltenVK', destination / 'licenses/MoltenVK', dirs_exist_ok=True)
+    shutil.copytree(ROOT / 'iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts', destination / 'licenses/Fonts', dirs_exist_ok=True)
     if before != revisions(source):
         raise ValueError('Source pin changed during native compilation')
     def portable(arg):
@@ -223,6 +249,7 @@ def build(source, destination, sdk, jobs):
     record = dict(**boundary, revision=REVISION, release=RELEASE, sourceRevisions=before, sdk=sdk,
         componentType='native-ios-player', binary=delivered.name, sha256=digest(delivered),
         compiledInputSHA256=compiled_inputs(source, destination), assetSHA256=hashes, codecs=codecs,
+        moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination),
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
