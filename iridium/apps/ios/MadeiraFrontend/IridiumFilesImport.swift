@@ -4,6 +4,12 @@ import Foundation
 /// Copy-only import from an explicitly selected Files document or folder.
 /// The caller owns security-scoped access and runs this work off the UI thread.
 enum IridiumFilesImport {
+    /// Stable diagnostics contain neither source names nor provider paths.
+    static func diagnosticCode(_ error: Error) -> String {
+        if let failure = error as? Failure { return "files." + String(describing: failure) }
+        let code = error as NSError
+        return (code.domain == NSCocoaErrorDomain ? "cocoa." : "system.") + String(code.code)
+    }
     /// Disk publication can outlive its sheet. Only the initiating presentation
     /// may update selection or dismiss itself when that publication finishes.
     static func shouldPresentCompletion(of sourceID: UUID, currentSourceID: UUID?) -> Bool {

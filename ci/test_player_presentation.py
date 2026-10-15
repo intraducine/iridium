@@ -54,6 +54,10 @@ class PlayerPresentationTests(unittest.TestCase):
         for component in ['IridiumPlayerMenuHeader', 'IridiumPlayerMenuRow', 'IridiumPlayerMenuNavigation.next']:
             self.assertIn(component, result)
         self.assertIn('model.requestQuit()', result)
+        self.assertIn('LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets)', result)
+        self.assertNotIn('if !model.launching { LibraryFloatingItem(isMenu: true', result)
+        self.assertIn('Text("Off").tag(IridiumTouchMouseMode.off.rawValue)', result)
+
         self.assertNotIn('.confirmationDialog("Close this game?"', result)
         self.assertIn('IridiumPlayerCloseConfirmation(selection:', result)
         self.assertIn('switch closeConfirmation.receive(command)', result)

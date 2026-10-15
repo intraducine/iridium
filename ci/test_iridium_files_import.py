@@ -71,6 +71,10 @@ actor PublicationSignal {
     }
 
     static func main() async throws {
+        require(Importer.diagnosticCode(Importer.Failure.sourceChanged) == "files.sourceChanged", "Stable failure code")
+        require(Importer.diagnosticCode(NSError(domain: NSCocoaErrorDomain, code: 257, userInfo: [NSFilePathErrorKey: "/private/example"])) == "cocoa.257", "No private path in diagnostics")
+        require(Importer.diagnosticCode(NSError(domain: "/private/provider", code: 7)) == "system.7", "No private provider in diagnostics")
+
         let fm = FileManager.default
         let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("iridium-files-check-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)

@@ -21,6 +21,10 @@ struct IridiumLibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("iridium.favoriteGames") private var favoriteIDs = ""
     @AppStorage("iridium.selectedGame") private var pageArtwork = ""
+    @AppStorage(IridiumLibraryOrder.settingsKey) private var savedOrder = ""
+    @State private var dragToken: String?
+    @State private var draggedID: UUID?
+    @State private var lastSelectionFeedback = Date.distantPast
     @State private var favorites = false
     @State private var search = ""
     @State private var searching = false
@@ -45,10 +49,14 @@ struct IridiumLibraryView: View {
     @FocusState private var searchFocus: Bool
     @FocusState private var keyboardFocus: Bool
 
-    private var games: [IridiumGame] {
+    private var allGames: [IridiumGame] {
         let all = library.entries.filter { $0.desktop != true }.map { IridiumGame(windows: $0) }
             + consoles.games.map { IridiumGame(console: $0) }
-        return all.filter {
+        let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return IridiumLibraryOrder.ordered(all.map(\.id), saved: savedOrder).compactMap { byID[$0] }
+    }
+    private var games: [IridiumGame] {
+        allGames.filter {
             (!favorites || isFavorite($0)) && (search.isEmpty || artwork.title($0).localizedCaseInsensitiveContains(search))
         }
     }
@@ -101,15 +109,6 @@ struct IridiumLibraryView: View {
                         VStack(alignment: .leading, spacing: spacing) {
                             VStack(alignment: .leading, spacing: spacing) {
                                 header
-                                if searching {
-                                    HStack {
-                                        TextField("Search games", text: $search, prompt: Text("Search games").foregroundStyle(.white.opacity(0.7)))
-                                            .focused($searchFocus).textInputAutocapitalization(.never)
-                                            .autocorrectionDisabled().submitLabel(.search)
-                                            .padding(12).modifier(IridiumSearchSurface()).tint(.white)
-                                        Button("Done", action: endSearch).buttonStyle(.bordered).tint(.white)
-                                    }
-                                }
                             }.fixedSize(horizontal: false, vertical: true)
                                 .modifier(IridiumLibraryMeasureHeight()).id("header")
                             if let selected {
@@ -185,7 +184,15 @@ struct IridiumLibraryView: View {
                 library.showDetail = nil; features = nil; fileSource = nil
                 detail = library.entries.first { $0.id == id }
             }
-            .onChange(of: selection.highlightedID) { _, _ in pageArtwork = selected?.id.uuidString ?? "" }
+            .onChange(of: selection.highlightedID) { old, value in
+                pageArtwork = selected?.id.uuidString ?? ""
+                if old != nil, value != nil, (selection.userIsScrolling || showFocus),
+                   IridiumTouchHaptics.current() != .off,
+                   Date.now.timeIntervalSince(lastSelectionFeedback) >= 0.12 {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    lastSelectionFeedback = .now
+                }
+            }
             // Display-name edits can change search membership without changing
             // either runtime's records. Reconcile only the effective identities.
             .onChange(of: games.map(\.id)) { _, _ in keepSelection() }
@@ -264,11 +271,13 @@ struct IridiumLibraryView: View {
     }
 
     private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { filters; toolbar }
-            VStack(alignment: .leading, spacing: 8) {
-                toolbar
-                filters
+        Group {
+            if searching { toolbar }
+            else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { filters; toolbar }
+                    VStack(alignment: .leading, spacing: 8) { toolbar; filters }
+                }
             }
         }
     }
@@ -292,8 +301,25 @@ struct IridiumLibraryView: View {
                 // Real content space lets even the last cover reach
                 // the leading edge when every cover fits on screen.
                 Color.clear.frame(width: max(0, width - (games.count == 1 ? featuredWidth : height / 1.5) - 2 * gutter - 10), height: 1)
-            }.scrollTargetLayout()
+            }
+                .overlayPreferenceValue(IridiumLibraryCardBounds.self) { anchors in
+                    GeometryReader { proxy in
+                        if let id = selection.highlightedID, let anchor = anchors[id],
+                           !showFocus || focus == "games" {
+                            let rect = proxy[anchor]
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(.white, lineWidth: 2)
+                                .frame(width: rect.width, height: rect.height)
+                                .offset(x: rect.minX, y: rect.minY)
+                                .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: id)
+                                .accessibilityIdentifier("librarySelectionBorder")
+                        }
+                    }.allowsHitTesting(false).accessibilityHidden(true)
+                }.scrollTargetLayout()
         }.scrollIndicators(.hidden).accessibilityIdentifier("libraryCarousel")
+            .scrollTargetBehavior(IridiumLibrarySnapBehavior(
+                widths: games.indices.map { Double($0 == 0 ? featuredWidth : height / 1.5) },
+                focusWidth: Double(height / 1.5), leadingInset: Double(gutter), enabled: selection.userIsScrolling))
             .scrollPosition($carouselPosition, anchor: .leading)
             .contentMargins(.horizontal, gutter, for: .scrollContent)
             .padding(.horizontal, -gutter)
@@ -360,16 +386,11 @@ struct IridiumLibraryView: View {
     }
     private func cover(_ entry: IridiumGame, height: CGFloat, width: CGFloat, featured: Bool) -> some View {
         Button { select(entry.id); focus = "games" } label: {
-            IridiumGameArtwork(game: entry, backdrop: featured)
+            IridiumGameArtwork(game: entry, featured: featured)
                 .frame(width: width, height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    if selection.highlightedID == entry.id && (!showFocus || focus == "games") {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(.white, lineWidth: 2)
-                    }
-                }
+                .anchorPreference(key: IridiumLibraryCardBounds.self, value: .bounds) { [entry.id: $0] }
         }.buttonStyle(.plain).id(entry.id)
             .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
             .accessibilityLabel(artwork.title(entry))
@@ -377,6 +398,30 @@ struct IridiumLibraryView: View {
             .contextMenu {
                 Button("Game Options", systemImage: "slider.horizontal.3") { options(entry) }
                 Button("Edit Artwork", systemImage: "photo") { artworkDetail = entry }
+            }
+            .onDrag {
+                let provider = NSItemProvider()
+                let token = draggedID == entry.id ? (dragToken ?? UUID().uuidString) : UUID().uuidString
+                provider.registerDataRepresentation(forTypeIdentifier: IridiumLibraryDrop.type.identifier, visibility: .ownProcess) { completion in
+                    completion(Data(token.utf8), nil); return nil
+                }
+                draggedID = entry.id; dragToken = token
+                LogStore.shared.log("[Library Drag] phase=begin")
+                return provider
+            }
+            .onDrop(of: [IridiumLibraryDrop.type], delegate: IridiumLibraryDrop(
+                target: entry.id, width: width, moving: $draggedID, token: $dragToken,
+                commit: { id, target, after, token in
+                    guard dragToken == token else { return }
+                    let order = IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id))
+                    savedOrder = IridiumLibraryOrder.encoded(order)
+                    draggedID = nil; dragToken = nil
+                    select(id)
+                }))
+            .accessibilityAction(named: "Move to beginning") {
+                if let first = allGames.first {
+                    savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(entry.id, relativeTo: first.id, after: false, in: allGames.map(\.id)))
+                }
             }
             .accessibilityAddTraits(selection.highlightedID == entry.id ? .isSelected : [])
     }
@@ -387,7 +432,23 @@ struct IridiumLibraryView: View {
     }
     private var toolbar: some View {
         HStack(spacing: 4) {
-            tool("Search", icon: "magnifyingglass", id: "search") { searching = true; searchFocus = true }
+            if searching {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").accessibilityHidden(true)
+                    TextField("Search games", text: $search, prompt: Text("Search games").foregroundStyle(.white.opacity(0.7)))
+                        .accessibilityIdentifier("libraryInlineSearch")
+                        .focused($searchFocus).textInputAutocapitalization(.never)
+                        .autocorrectionDisabled().submitLabel(.search)
+                    Button(action: endSearch) { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
+                        .accessibilityLabel("Done searching")
+                }.padding(.leading, 12).modifier(IridiumSearchSurface()).tint(.white)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                tool("Search", icon: "magnifyingglass", id: "search") {
+                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { searching = true }
+                    searchFocus = true
+                }
+            }
             tool("Add Game", icon: "plus", id: "add") { choosingAdd = true }
             tool("Settings", icon: "gearshape", id: "settings") { features = 1 }
         }.frame(maxWidth: .infinity, alignment: .trailing)
@@ -514,6 +575,62 @@ private struct IridiumLibraryMeasureHeight: ViewModifier {
 }
 
 // Kept independent of SwiftUI layout callbacks for executable geometry checks.
+
+private struct IridiumLibraryCardBounds: PreferenceKey {
+    static var defaultValue: [UUID: Anchor<CGRect>] { [:] }
+    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
+    let widths: [Double]
+    let focusWidth: Double
+    let leadingInset: Double
+    let enabled: Bool
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard enabled, let x = IridiumLibrarySelection.restingOffset(Double(target.rect.minX) + leadingInset,
+            widths: widths, spacing: 10, focusWidth: focusWidth) else { return }
+        target.rect.origin.x = x
+        target.anchor = .leading
+    }
+}
+
+/// Native drag/context-menu arbitration keeps a stationary long press as a
+/// menu. Only a completed local drop commits order; cancellation changes none.
+private struct IridiumLibraryDrop: DropDelegate {
+    static let type = UTType.utf8PlainText
+    let target: UUID
+    let width: CGFloat
+    @Binding var moving: UUID?
+    @Binding var token: String?
+    let commit: (UUID, UUID, Bool, String) -> Void
+    func validateDrop(info: DropInfo) -> Bool {
+        let valid = moving != nil && token != nil && info.hasItemsConforming(to: [Self.type])
+        LogStore.shared.log("[Library Drag] phase=validate valid=\(valid)")
+        return valid
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+    func performDrop(info: DropInfo) -> Bool {
+        guard validateDrop(info: info), let moving, let token,
+              let provider = info.itemProviders(for: [Self.type]).first else { return false }
+        let after = info.location.x > width / 2
+        LogStore.shared.log("[Library Drag] phase=drop")
+        // UIKit may copy its item provider. Verify the private session payload,
+        // rather than relying on provider object identity. A stale or external
+        // drop cannot match a freshly created local drag token.
+        provider.loadDataRepresentation(forTypeIdentifier: Self.type.identifier) { data, _ in
+            let matches = data == Data(token.utf8)
+            DispatchQueue.main.async {
+                LogStore.shared.log("[Library Drag] phase=payload matches=\(matches) bytes=\(data?.count ?? 0)")
+                if matches { commit(moving, target, after, token) }
+            }
+        }
+        return true
+    }
+}
+
+
 struct IridiumLibraryLayoutMetrics {
     let coverHeight: CGFloat
     let freeSpace: CGFloat

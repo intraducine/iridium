@@ -15,6 +15,21 @@ class LibrarySelectionTests(unittest.TestCase):
             main = Path(folder) / 'main.swift'
             main.write_text('''import Foundation
 let a = UUID(), b = UUID(), c = UUID()
+let stale = UUID()
+let stored = IridiumLibraryOrder.encoded([c,c,stale,a])
+precondition(IridiumLibraryOrder.ordered([a,b,c], saved: stored) == [c,a,b])
+let reordered = IridiumLibraryOrder.moving(c, relativeTo: a, after: false, in: [a,b,c])
+precondition(reordered == [c,a,b])
+precondition(IridiumLibraryOrder.ordered([a,b,c], saved: IridiumLibraryOrder.encoded(reordered)) == reordered)
+precondition(IridiumLibraryOrder.moving(a, relativeTo: c, after: true, in: reordered) == [c,a,b])
+precondition(IridiumLibraryOrder.moving(stale, relativeTo: b, after: false, in: reordered) == reordered)
+// Filtered reorder retains identities outside the visible filter.
+precondition(IridiumLibraryOrder.moving(c, relativeTo: a, after: true, in: [a,b,c]) == [a,c,b])
+precondition(IridiumLibrarySelection.restingOffset(190, widths: [210,66,66], spacing: 10, focusWidth: 66) == 220)
+precondition(IridiumLibrarySelection.restingOffset(-20, widths: [210,66,66], spacing: 10, focusWidth: 66) == 0)
+precondition(IridiumLibrarySelection.restingOffset(9999, widths: [210,66,66], spacing: 10, focusWidth: 66) == 296)
+precondition(IridiumLibrarySelection.restingOffset(.nan, widths: [210,66], spacing: 10, focusWidth: 66) == nil)
+
 var selection = IridiumLibrarySelection()
 precondition(selection.reconcile([a,b,c]) == a)
 precondition(selection.select(b) == b)

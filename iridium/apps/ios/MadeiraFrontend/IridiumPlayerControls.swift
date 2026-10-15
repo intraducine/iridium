@@ -7,6 +7,7 @@ import Combine
     private static let light = UIImpactFeedbackGenerator(style: .light)
     private static let medium = UIImpactFeedbackGenerator(style: .medium)
     static func press() {
+        IridiumPlayerMenuActivity.interact()
         let generator: UIImpactFeedbackGenerator
         switch IridiumTouchHaptics.current() {
         case .off: return

@@ -25,7 +25,7 @@ struct IridiumLibrarySelection {
 
     /// Variable-width cards share a fixed leading focus area. Comparing actual
     /// overlap keeps the featured wide card and narrow covers on the same model.
-    /// This observes native geometry; it never snaps the scroll position.
+    /// This observes native geometry; the native target behavior settles only after release.
     static func visibleIndex(offset: Double, widths: [Double], spacing: Double,
                              focusWidth: Double, previous: Int?) -> Int? {
         guard offset.isFinite, spacing.isFinite, spacing >= 0,
@@ -61,6 +61,15 @@ struct IridiumLibrarySelection {
         return min(count - 1, lower + (fraction > 0.5 ? 1 : 0))
     }
 
+    /// Native scrolling calls this once for its proposed resting position.
+    /// Observing geometry still never sends a competing scroll request.
+    static func restingOffset(_ offset: Double, widths: [Double], spacing: Double,
+                              focusWidth: Double) -> Double? {
+        guard let index = visibleIndex(offset: offset, widths: widths, spacing: spacing,
+                                       focusWidth: focusWidth, previous: nil) else { return nil }
+        return widths.prefix(index).reduce(0) { $0 + $1 + spacing }
+    }
+
     mutating func reconcile(_ ids: [UUID]) -> UUID? {
         if !ids.contains(where: { $0 == selectedID }) { selectedID = ids.first }
         if !ids.contains(where: { $0 == visibleID }) { visibleID = selectedID }
@@ -91,4 +100,22 @@ struct IridiumLibrarySelection {
         if wasUserDriven { selectedID = visibleID }
         return nil
     }
+}
+
+/// Presentation order spans both runtime libraries without rewriting either one.
+enum IridiumLibraryOrder {
+    static let settingsKey = "iridium.libraryOrder"
+    static func ordered(_ ids: [UUID], saved: String) -> [UUID] {
+        var remaining = Set(ids)
+        let stored = saved.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+        return (stored + ids).filter { remaining.remove($0) != nil }
+    }
+    static func moving(_ id: UUID, relativeTo target: UUID, after: Bool, in ids: [UUID]) -> [UUID] {
+        guard id != target, ids.contains(id), ids.contains(target) else { return ids }
+        var result = ids.filter { $0 != id }
+        let index = result.firstIndex(of: target)!
+        result.insert(id, at: index + (after ? 1 : 0))
+        return result
+    }
+    static func encoded(_ ids: [UUID]) -> String { ids.map(\.uuidString).joined(separator: ",") }
 }

@@ -48,6 +48,7 @@ struct IridiumFilesImportView: View {
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel).disabled(finishing) } }
                 .interactiveDismissDisabled(working)
                 .task {
+                    LogStore.shared.log("[Files Import] phase=scan outcome=started")
                     do {
                         let url = source.url
                         let worker = Task.detached(priority: .userInitiated) {
@@ -68,7 +69,9 @@ struct IridiumFilesImportView: View {
                         folder = result.0
                         candidates = result.1.map { $0.isEmpty ? url : url.appendingPathComponent($0) }
                         working = false
+                        LogStore.shared.log("[Files Import] phase=scan outcome=ready candidates=\(candidates.count) folder=\(folder)")
                     } catch {
+                        LogStore.shared.log("[Files Import] phase=scan outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
                         if !cancelled, !Task.isCancelled { failure = error.localizedDescription; working = false }
                     }
                 }
@@ -81,12 +84,14 @@ struct IridiumFilesImportView: View {
     private func begin(_ file: URL) {
         guard !working else { return }
         working = true; failure = nil
+        LogStore.shared.log("[Files Import] phase=copy outcome=started folder=\(folder)")
         let root = folder ? source.url : nil
         let drive = LibraryModel.drive.resolvingSymlinksInPath()
         let relative = root.map { String(file.path.dropFirst($0.path.count + 1)) }
         let publication = IridiumFilesImport.Publication()
         self.publication = publication
         operation = Task { @MainActor in
+            var phase = "copy"
             do {
                 let worker = Task.detached(priority: .userInitiated) {
                     try IridiumFilesAccess.read(root ?? file) { coordinated in
@@ -99,6 +104,8 @@ struct IridiumFilesImportView: View {
                 let result = try await withTaskCancellationHandler {
                     try await worker.value
                 } onCancel: { if publication.cancel() { worker.cancel() } }
+                LogStore.shared.log("[Files Import] phase=copy outcome=published")
+                phase = "register"
                 // A successful result has won the publication gate. Do not
                 // discard it because cancellation arrived after the move.
                 let model = LibraryModel.shared
@@ -114,8 +121,12 @@ struct IridiumFilesImportView: View {
                     throw LibraryError.message(model.error ?? "The library entry could not be saved. The copied files have been kept.")
                 }
                 imported(entry)
-            } catch is CancellationError { }
+                LogStore.shared.log("[Files Import] phase=register outcome=saved")
+            } catch is CancellationError {
+                LogStore.shared.log("[Files Import] phase=copy outcome=cancelled")
+            }
             catch {
+                LogStore.shared.log("[Files Import] phase=\(phase) outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
                 self.publication = nil
                 finishing = false
                 failure = error.localizedDescription; working = false

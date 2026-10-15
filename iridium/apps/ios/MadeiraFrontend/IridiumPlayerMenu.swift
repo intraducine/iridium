@@ -2,6 +2,20 @@
 import SwiftUI
 import UIKit
 
+@MainActor enum IridiumPlayerMenuActivity {
+    private static var lastActivity: CFTimeInterval = 0
+    static let notification = Notification.Name("IridiumPlayerMenuActivity")
+    static func interact() {
+        let now = CACurrentMediaTime()
+        guard now - lastActivity >= 0.12 else { return }
+        lastActivity = now
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+    nonisolated static func hardwareInteract() {
+        DispatchQueue.main.async { interact() }
+    }
+}
+
 /// A native target keeps its accessibility bounds at the visible button even
 /// when the surrounding HUD fills a separate window above a native renderer.
 struct IridiumPlayerMenuButton: UIViewRepresentable {
@@ -28,6 +42,39 @@ struct IridiumPlayerMenuButton: UIViewRepresentable {
         button.isUserInteractionEnabled = visible
     }
     final class MenuTarget: UIButton {
+        private var activityObserver: NSObjectProtocol?
+        private var dimming: DispatchWorkItem?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            dimming?.cancel()
+            if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
+            activityObserver = nil
+            guard window != nil else { return }
+            activityObserver = NotificationCenter.default.addObserver(forName: IridiumPlayerMenuActivity.notification,
+                object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.restoreVisibility() }
+                }
+            restoreVisibility()
+        }
+        override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+            restoreVisibility()
+            return super.beginTracking(touch, with: event)
+        }
+        private func restoreVisibility() {
+            dimming?.cancel()
+            layer.removeAllAnimations()
+            alpha = 1
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.window != nil else { return }
+                UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.35) { self.alpha = 0.55 }
+            }
+            dimming = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        }
+        deinit {
+            dimming?.cancel()
+            if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
+        }
         override var accessibilityFrame: CGRect {
             get { UIAccessibility.convertToScreenCoordinates(bounds, in: self) }
             set { }

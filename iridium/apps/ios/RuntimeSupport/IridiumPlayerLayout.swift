@@ -13,7 +13,7 @@ enum IridiumPlayerProfile: String, CaseIterable {
 }
 
 enum IridiumTouchMouseMode: String, CaseIterable {
-    case trackpad, direct
+    case off, trackpad, direct
     static let settingsKey = "IridiumTouchMouseMode"
     static func current(_ defaults: UserDefaults = .standard) -> Self {
         Self(rawValue: defaults.string(forKey: settingsKey) ?? "") ?? .trackpad

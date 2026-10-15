@@ -39,6 +39,12 @@ class TouchMouseOwnershipTests(unittest.TestCase):
         self.assertIn('iridiumPointerContacts.values.filter', body)
         self.assertNotIn('event?.allTouches', body)
 
+    def test_saved_off_mode_stops_admission_before_contact_ownership(self):
+        body = self.method('touchesBegan', '    override func touchesMoved')
+        self.assertIn('IridiumTouchMouseMode.current() != .off', body)
+        self.assertLess(body.index('IridiumTouchMouseMode.current() != .off'), body.index('iridiumPointerContacts[ObjectIdentifier(touch)] = touch'))
+        self.assertIn('if iridiumTouchMode == nil { iridiumTouchMode = IridiumTouchMouseMode.current() }', body)
+
     def test_explicit_disabled_override_remains_honored(self):
         self.assertIn('guard TouchMouseGate.mode == .off || LibraryModel.shared.blocksGameplayTouch', self.text)
 

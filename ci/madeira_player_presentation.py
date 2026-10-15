@@ -101,6 +101,8 @@ def menu(text):
                     .frame(width: 48, height: 48).opacity(model.menu ? 0 : 1)
                     .allowsHitTesting(!model.menu).accessibilityHidden(model.menu)
 """)
+    text = replace(text, 'if !model.launching { LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets) }',
+                   'LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets)')
     text = replace(text, '        .position(center)',
                    '        .offset(x: center.x - measured.width / 2, y: center.y - measured.height / 2)')
     actions = between(text, '                    iridiumMenuButton("Resume", symbol: "play.fill")', '\n                }\n                if menuPage == "Log"')
@@ -223,6 +225,15 @@ def apply(name, text):
         text = shared_console(controls(text))
         text = touch_mouse(text)
     if name == 'Library.swift': text = pointer_settings(menu(text))
+    if name == 'GamepadInput.swift':
+        text = replace(text, 'profile.valueChangedHandler = { [weak self] _, _ in',
+                       'profile.valueChangedHandler = { [weak self] _, _ in\n                    IridiumPlayerMenuActivity.hardwareInteract()')
+    if name == 'HardwareInput.swift':
+        for callback in ('input.keyChangedHandler = { [weak self] _, _, code, pressed in',
+                         'm.mouseMovedHandler = { [weak self] _, dx, dy in',
+                         'm.scroll.valueChangedHandler = { [weak self] _, x, y in'):
+            text = replace(text, callback, callback + '\n            IridiumPlayerMenuActivity.hardwareInteract()')
+
     return text
 
 
@@ -450,13 +461,17 @@ def touch_mouse(text):
     start = text.index('    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {', text.index('private var tmgSwallowed'))
     end = text.index('\n}\n\n/// Arrow-key button', start)
     pointer = text[start:end]
-    pointer = replace(pointer, '        if touchPointerMode { touchModeBegan(touches); return }', '''        guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing else { return }
+    pointer = replace(pointer, '        if touchPointerMode { touchModeBegan(touches); return }', '''        IridiumPlayerMenuActivity.interact()
+        guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing,
+              IridiumTouchMouseMode.current() != .off else { return }
         let eligibleTouches = Set(touches.filter { $0.view === self && $0.type != .indirectPointer && gameRect().contains($0.location(in: self)) })
         for touch in touches.subtracting(eligibleTouches) { tmgSwallowed.insert(ObjectIdentifier(touch)) }
         for touch in eligibleTouches { iridiumPointerContacts[ObjectIdentifier(touch)] = touch }
         guard !eligibleTouches.isEmpty else { return }
         if iridiumTouchMode == nil { iridiumTouchMode = IridiumTouchMouseMode.current() }
         if touchPointerMode { touchModeBegan(eligibleTouches); return }''')
+    pointer = replace(pointer, '    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {',
+                      '    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {\n        IridiumPlayerMenuActivity.interact()')
     pointer = replace(pointer, '        if touchPointerMode { touchModeMoved(touches, event); return }', '''        let touches = Set(filteredTouches.filter { iridiumPointerContacts[ObjectIdentifier($0)] != nil })
         guard !touches.isEmpty else { return }
         guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing else { iridiumReleasePointer(); return }
@@ -556,11 +571,12 @@ def pointer_settings(text):
                 .font(.caption).foregroundStyle(.secondary)
         }
         Picker("Touch mouse", selection: $mode) {
+            Text("Off").tag(IridiumTouchMouseMode.off.rawValue)
             Text("Trackpad").tag(IridiumTouchMouseMode.trackpad.rawValue)
             Text("Direct").tag(IridiumTouchMouseMode.direct.rawValue)
         }.pickerStyle(.segmented)
             .onChange(of: mode) { _, _ in MetalBackedView.keyboardTarget?.iridiumReleasePointer() }
-        Text(mode == IridiumTouchMouseMode.direct.rawValue
+        Text(mode == IridiumTouchMouseMode.off.rawValue ? "Touch gestures do not send mouse input. Controller and hardware pointer input remain available." : mode == IridiumTouchMouseMode.direct.rawValue
             ? "Tap where you want to click. Hold and move to drag. Two fingers right-click or scroll."
             : "Drag anywhere between controls to move the pointer. Tap to click; hold to drag. Two fingers right-click or scroll.")
             .font(.caption).foregroundStyle(.secondary)

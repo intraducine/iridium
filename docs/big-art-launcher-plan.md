@@ -14,7 +14,7 @@ is included in Iridium.
    page, with the first featured game wide and subsequent covers portrait. Steam's
    inspected renderer features index zero; it does not widen every focused card.
 3. Use one selection model for title, backdrop, border, controller and touch.
-   Native touch scrolling never snaps or issues corrective scroll requests.
+   Native touch scrolling settles magnetically onto a title after release; observing geometry never issues corrective scroll requests.
    Selection tracks overlap with the leading focus area; only explicit navigation
    requests reposition the rail. Tapping a card selects; Play launches.
 4. Use measured text/control heights, safe areas, single-line titles and 44-point
@@ -43,3 +43,12 @@ Landscape framing remains unchanged. Judge composition from native Hades,
 Celeste and Hollow Knight captures and inspect transition frames as well as
 settled screens. Validate the largest text size, launch callback counts and
 controller routing in both orientations using the simulator harness.
+
+Approved interaction refinement: use one moving selection border and restrained
+selection haptics, inline search, persistent local drag ordering, and native
+long-press context menus. Interrupted drags must leave saved order unchanged.
+Keep touch and controller ownership serialized. Share Off/Trackpad/Direct mouse
+settings with the existing Madeira pointer routes. Keep the session menu above
+the game surface through startup, with a nonzero dimmed opacity after inactivity.
+Verify these interactions with actual simulator gestures and focused state/input
+regressions before the next personal IPA is packaged for review.

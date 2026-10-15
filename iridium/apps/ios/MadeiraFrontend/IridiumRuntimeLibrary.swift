@@ -148,13 +148,14 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
 struct IridiumGameArtwork: View {
     let game: IridiumGame
     var backdrop = false
+    var featured = false
     @ObservedObject private var artwork = IridiumArtworkModel.shared
     @State private var image: UIImage?
     var body: some View {
         ZStack {
             IridiumArtworkImage(image: image,
                 position: backdrop ? artwork.appearance(game.id).backgroundY : artwork.appearance(game.id).coverY,
-                fit: !backdrop && !artwork.appearance(game.id).customCover &&
+                fit: !backdrop && !featured && !artwork.appearance(game.id).customCover &&
                     (game.coverFile == nil || artwork.appearance(game.id).ignoreLegacyCover == true))
             if image == nil {
                 VStack(spacing: 12) {
