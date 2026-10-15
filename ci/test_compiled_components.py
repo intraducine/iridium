@@ -41,8 +41,9 @@ class CompiledComponentsTests(unittest.TestCase):
                 header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
                 changed = source.replace(header + '\n', header + '\n    # Changed compiler recipe.\n')
                 self.assertNotEqual(original, reuse.frontend_compiler_source(changed))
+        revision = next(line for line in source.splitlines() if line.startswith('REVISION = '))
         for old, new in (("CRYPTO_LIBRARIES = ('gnutls',", "CRYPTO_LIBRARIES = ('different',"),
-                         ("REVISION = '48f976", "REVISION = '000000"),
+                         (revision, "REVISION = '0000000000000000000000000000000000000000'"),
                          ('import subprocess', 'import subprocess as another_process'),
                          ("'native': native", "'native': windows"),
                          ('def prepare():', 'def prepare(*args):')):

@@ -176,7 +176,8 @@ struct IridiumConsoleOptions: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var library = IridiumConsoleLibrary.shared
     let game: IridiumConsoleGame
-    var play: (IridiumConsoleGame) -> Void
+    var play: ((IridiumConsoleGame) -> Void)? = nil
+    var embedded = false
     @State private var removing = false
     @State private var editingArtwork = false
     @ObservedObject private var artwork = IridiumArtworkModel.shared
@@ -204,7 +205,9 @@ struct IridiumConsoleOptions: View {
         return "Battery saves are stored separately for each game. Removing this entry keeps the ROM and saves in Files → Iridium → IridiumRuntimes."
     }
     var body: some View {
-        NavigationStack {
+        if embedded { content } else { NavigationStack { content } }
+    }
+    private var content: some View {
             Form {
                 Section("Runtime") {
                     LabeledContent("Platform", value: game.platform.title)
@@ -223,8 +226,10 @@ struct IridiumConsoleOptions: View {
                 }
                 Section {
                     Button("Rename & Artwork", systemImage: "photo") { editingArtwork = true }
-                    Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
-                        .disabled(library.working || resolvedRuntime == nil)
+                    if let play {
+                        Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
+                            .disabled(library.working || resolvedRuntime == nil)
+                    }
                     Button(isFavorite ? "Remove from Favorites" : "Add to Favorites",
                            systemImage: isFavorite ? "heart.fill" : "heart") {
                         var ids = Set(favorites.split(separator: ",").map(String.init))
@@ -239,6 +244,5 @@ struct IridiumConsoleOptions: View {
                 .confirmationDialog("Remove this library entry? Its files and saves will stay on this device.", isPresented: $removing) {
                     Button("Remove Entry", role: .destructive) { library.remove(game); dismiss() }
                 }
-        }
     }
 }

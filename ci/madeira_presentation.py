@@ -91,31 +91,29 @@ def library(text):
     # The settings hub reuses the complete upstream sections, including callbacks.
     original = between(text, '    private var settings: some View {', '        .alert("Restart Madeira"')
     credits = between(original, '                Section {\n                    MadeiraCredit', '\n            }\n        }')
+    madeira_links = [
+        setting('Launch Support', 'JITSettingsSection()'),
+        setting('Pointer', 'Section { LibraryPointerSettings() }.iridiumRowSurface()'),
+        setting('Display & Runtime', 'DisplayRateSettings()\nif MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh) }'),
+        setting('Files & Saves', 'SavesSection()'),
+        setting('Steam Account & Dock', 'SteamSettingsSection(open: { settingsSheet = $0 })'),
+        setting('Windows Components', 'WineMonoSettingsSection()'),
+        setting('Advanced', 'Section { Toggle("Extended logging", isOn: $input.diagnostics) }.iridiumRowSurface()\nSection { Button("All Runtime Settings") { settingsSheet = .allSettings } }.iridiumRowSurface()'),
+        setting('Appearance', 'Section { Toggle("Liquid metal", isOn: $liquidMetal.on) } footer: { Text("Adds moving reflections to Madeira’s desktop controls.") }.iridiumRowSurface()')]
+    madeira_order = list(settings_pages)
+    controls_link = setting('Controls', 'Section { IridiumControlFeedbackSettings() }')
+    madeira_link = setting('Madeira', 'Section { ' + '\n'.join(madeira_links) + ' }')
+    psp_link = setting('PPSSPP', 'IridiumSystemGameSettings(platform: .psp, focus: iridiumGuided ? iridiumFocus : nil)')
+    gb_link = setting('Game Boy', 'IridiumSystemGameSettings(platform: .gameBoy, focus: iridiumGuided ? iridiumFocus : nil)')
+    diagnostics_link = setting('Diagnostics', 'RuntimeDiagnosticsExportSection()')
+    credits_link = setting('Credits', credits)
+    root_order = ['Controls', 'Madeira', 'PPSSPP', 'Game Boy', 'Diagnostics', 'Credits']
     settings = '''    private var settings: some View {
         Form {
             Section { LibraryStatus() }.iridiumRowSurface()
-            Section {
-                ''' + setting('Launch Support', 'JITSettingsSection()') + '''
-                ''' + setting('Pointer', 'Section { LibraryPointerSettings() }.iridiumRowSurface()') + '''
-                ''' + setting('Display & Runtime', '''DisplayRateSettings()
-                        if MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") {
-                            RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh)
-                        }''') + '''
-                ''' + setting('Files & Saves', 'SavesSection()') + '''
-            }.iridiumRowSurface()
-            Section {
-                if SteamSettingsSection.shown {
-                    ''' + setting('Steam Account & Dock', 'SteamSettingsSection(open: { settingsSheet = $0 })') + '''
-                }
-                ''' + setting('Windows Components', 'WineMonoSettingsSection()') + '''
-                ''' + setting('Diagnostics', 'RuntimeDiagnosticsExportSection()') + '''
-                ''' + setting('Advanced', '''Section { Toggle("Extended logging", isOn: $input.diagnostics) }.iridiumRowSurface()
-                        Section { Button("All Runtime Settings") { settingsSheet = .allSettings } }.iridiumRowSurface()''') + '''
-                ''' + setting('Appearance', '''Section { Toggle("Liquid metal", isOn: $liquidMetal.on) } footer: {
-                            Text("Adds moving reflections to Madeira's desktop controls.")
-                        }.iridiumRowSurface()''') + '''
-                ''' + setting('Credits', credits) + '''
-            }.iridiumRowSurface()
+            Section { ''' + controls_link + ''' }.iridiumRowSurface()
+            Section("Systems") { ''' + madeira_link + '\n' + psp_link + '\n' + gb_link + ''' }.iridiumRowSurface()
+            Section { ''' + diagnostics_link + '\n' + credits_link + ''' }.iridiumRowSurface()
         }
 '''
     text = replace(text, original, settings)
@@ -124,16 +122,39 @@ def library(text):
             settings
             .iridiumPageSurface().navigationTitle("Settings")
             .toolbar { settingsToolbar }
-            ''' + destination_pages(settings_pages) + '''
-            ''' + keyboard_navigation() + '''
+            ''' + destination_pages(settings_pages).replace('.navigationBarBackButtonHidden()', '.toolbar { settingsToolbar }.navigationBarBackButtonHidden()').replace('default: EmptyView()', '''default:
+                    if let game = IridiumSystemGameSettings.game(for: page) {
+                        IridiumConsoleOptions(game: game, embedded: true)
+                    } else { EmptyView() }''') + '''
+            .onChange(of: iridiumPages) { _, _ in
+                if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
+            }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
           }
         }
+        ''' + keyboard_navigation().replace('guard iridiumPages.isEmpty', 'guard !iridiumSettingsOrder.isEmpty').replace('if pages.isEmpty', 'if !iridiumSettingsOrder.isEmpty') + '''
 ''')
-    text = replace(text, 'struct LibraryView: View {', 'struct LibraryView: View {\n    @Environment(\\.dismiss) private var iridiumDismiss\n' + navigation_state('Launch Support'))
-    text = replace(text, '    @ToolbarContentBuilder private var libraryToolbar:', hub_navigation(settings_pages, 'iridiumDismiss()') + '    @ToolbarContentBuilder private var libraryToolbar:')
+    text = replace(text, 'struct LibraryView: View {', 'struct LibraryView: View {\n    @Environment(\\.dismiss) private var iridiumDismiss\n' + navigation_state('Controls'))
+    settings_navigation = hub_navigation(root_order, 'iridiumDismiss()').replace('guard iridiumPages.isEmpty else { return }', 'guard !iridiumSettingsOrder.isEmpty else { return }')
+    settings_navigation = settings_navigation.replace('let order = ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
+    settings_navigation += '''
+    private var iridiumSettingsOrder: [String] {
+        switch iridiumPages.last {
+        case nil: return ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]
+        case "Madeira": return ''' + json.dumps(madeira_order) + '''
+        case "PPSSPP": return IridiumSystemGameSettings.routes(for: .psp)
+        case "Game Boy": return IridiumSystemGameSettings.routes(for: .gameBoy)
+        default: return []
+        }
+    }
+'''
+    text = replace(text, '    @ToolbarContentBuilder private var libraryToolbar:', settings_navigation + '    @ToolbarContentBuilder private var libraryToolbar:')
     text = replace(text, '    @ToolbarContentBuilder private var settingsToolbar: some ToolbarContent {', '''    @ToolbarContentBuilder private var settingsToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("Done") { iridiumDismiss() } }''')
+    toolbar = between(text, '    @ToolbarContentBuilder private var settingsToolbar:', '    private func switchTab(')
+    grouped_toolbar = toolbar.replace('        ToolbarItem(placement: .topBarTrailing) {', '        if iridiumPages.first == "Madeira" { ToolbarItem(placement: .topBarTrailing) {', 1)
+    grouped_toolbar = grouped_toolbar.replace('        }\n    }\n', '        } }\n    }\n', 1)
+    text = replace(text, toolbar, grouped_toolbar)
     text = replace(text, 'if selected == nil, !browser, !onboarding.presented, command == "tab" { switchTab(to: 1 - tab) }', 'guard selected == nil, !browser, !onboarding.presented, settingsSheet == nil else { return }\n            iridiumNavigate(command)')
     text = replace(text, '.onAppear { GlassSkin.shared.start() }\n        .onDisappear', '.onAppear {}\n        .onDisappear')
     text = replace(text, '''            .foregroundStyle(.white)

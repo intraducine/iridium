@@ -333,7 +333,8 @@ class FrontendImportTests(unittest.TestCase):
         for name in ['GamepadInput.swift', 'HardwareInput.swift', 'SteamCloud.swift', 'SteamInstall.swift', 'SavesAndShortcuts.swift']:
             text = (folder / name).read_text()
             actual = madeira_presentation.apply(name, text)
-            self.assertEqual(text, actual, name)
+            expected = madeira_presentation.madeira_player_presentation.hardware_cursor(text) if name == 'HardwareInput.swift' else text
+            self.assertEqual(expected, actual, name)
         self.assertIn('if command == "play" { start() }', rendered)
         self.assertNotIn('if command == "accept" { start() }', rendered)
         self.assertIn('IridiumPlayerCloseConfirmation(selection: closeConfirmation.selection', rendered)
@@ -368,6 +369,17 @@ class FrontendImportTests(unittest.TestCase):
         pointer = BUILD.overlay('ContentView.swift', (folder / 'ContentView.swift').read_text())
         self.assertIn('static func suppressing(touchpad: Bool, desktop: Bool)', pointer)
         self.assertIn('case .auto: return padOverlay && !touchpad && !desktop', pointer)
+        self.assertIn('Section("Systems")', rendered)
+        self.assertIn('case "Madeira": return ["Launch Support"', rendered)
+        self.assertIn('case "PPSSPP": return IridiumSystemGameSettings.routes', rendered)
+        self.assertIn('IridiumConsoleOptions(game: game, embedded: true)', rendered)
+        self.assertIn('.toolbar { settingsToolbar }.navigationBarBackButtonHidden()', rendered)
+        self.assertIn('if iridiumPages.first == "Madeira" { ToolbarItem', rendered)
+        hardware = BUILD.overlay('HardwareInput.swift', (folder / 'HardwareInput.swift').read_text())
+        self.assertIn('iridiumTrackpadActive && baseFocused', hardware)
+        self.assertIn('&& cursorState.shown != 0', hardware)
+        self.assertIn('iridiumTrackpadActive ? (x: cursorState.x, y: cursorState.y)', hardware)
+        self.assertIn('winios_direct_cursor_track(on ? 1 : 0)', hardware)
 
     def test_import_preserves_originals_and_rejects_conflicts(self):
         source = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryImport.swift'

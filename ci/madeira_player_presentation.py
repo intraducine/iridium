@@ -237,7 +237,27 @@ def apply(name, text):
         text = shared_console(controls(text))
         text = touch_mouse(text)
     if name == 'Library.swift': text = pointer_settings(menu(text))
+    if name == 'HardwareInput.swift': text = hardware_cursor(text)
 
+    return text
+
+
+def hardware_cursor(text):
+    # Use Wine's clipped position and program-owned image/visibility reports.
+    # Trackpad never invents an independent cursor from accumulated deltas.
+    text = replace(text, '    private var mouseInUse = false', '''    private var mouseInUse = false
+    private var iridiumTrackpadActive: Bool {
+        IridiumTouchMouseMode.current() == .trackpad && TouchMouseGate.mode != .off &&
+            LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch &&
+            !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive
+    }
+    func iridiumUpdateTouchPointer() { refreshFocus("touch pointer mode") }''')
+    text = replace(text, 'let on = mouseInUse && (currentRoute == .relative || lastAbsolute == nil)',
+                   'let on = (mouseInUse && (currentRoute == .relative || lastAbsolute == nil)) || (iridiumTrackpadActive && baseFocused)')
+    text = replace(text, 'let visible = mouseInUse && mouseFocused && cursorState.shown != 0',
+                   'let visible = ((mouseInUse && mouseFocused) || (iridiumTrackpadActive && baseFocused)) && cursorState.shown != 0')
+    text = replace(text, 'let pos = lastAbsolute ?? (x: cursorState.x, y: cursorState.y)',
+                   'let pos = iridiumTrackpadActive ? (x: cursorState.x, y: cursorState.y) : (lastAbsolute ?? (x: cursorState.x, y: cursorState.y))')
     return text
 
 
@@ -459,6 +479,7 @@ def touch_mouse(text):
         if dragActive { postPointer(F_LUP) }
         dragActive = false; dragTouch = nil; twoFingerActive = false
         iridiumMotion.reset(); iridiumTouchMode = nil; iridiumTrackpadHadDrag = false
+        HardwareInput.shared.iridiumUpdateTouchPointer()
     }''')
     text = replace(text, '(event?.allTouches ?? []).filter { $0.phase != .ended && $0.phase != .cancelled }',
                    'iridiumPointerContacts.values.filter { $0.phase != .ended && $0.phase != .cancelled }')
@@ -547,15 +568,19 @@ def touch_mouse(text):
     text = replace(text, '            .onChange(of: library.blocksGameplayTouch) { _, _ in configureGamepad(landscape: landscape) }',
                    '''            .onChange(of: library.blocksGameplayTouch) { _, blocked in
                 if blocked { MetalBackedView.keyboardTarget?.iridiumReleasePointer() }
+                HardwareInput.shared.iridiumUpdateTouchPointer()
                 configureGamepad(landscape: landscape)
             }''')
     text = replace(text, '            .onChange(of: m.editing) { _, _ in configureGamepad(landscape: landscape) }',
                    '''            .onChange(of: m.editing) { _, editing in
                 if editing { MetalBackedView.keyboardTarget?.iridiumReleasePointer() }
+                HardwareInput.shared.iridiumUpdateTouchPointer()
                 configureGamepad(landscape: landscape)
             }''')
     text = replace(text, '        super.didMoveToWindow()',
-                   '        super.didMoveToWindow()\n        if window == nil { iridiumReleasePointer() }')
+                   '        super.didMoveToWindow()\n        if window == nil { iridiumReleasePointer() }\n        HardwareInput.shared.iridiumUpdateTouchPointer()')
+    text = replace(text, '            .onChange(of: library.blocksGameplayTouch)',
+                   '            .onChange(of: library.current) { _, _ in HardwareInput.shared.iridiumUpdateTouchPointer() }\n            .onChange(of: library.blocksGameplayTouch)')
     return text
 
 
@@ -566,7 +591,6 @@ def pointer_settings(text):
     @AppStorage(IridiumTouchMouseMode.settingsKey) private var mode = IridiumTouchMouseMode.trackpad.rawValue
     @AppStorage("IridiumMouseSensitivity") private var sensitivity = 1.0
     var body: some View {
-        IridiumControlFeedbackSettings()
         if TouchMouseGate.mode == .off {
             Text("Touch mouse is disabled by MADEIRA_TOUCH_MOUSE=0. Remove that override and restart Iridium to use these modes.")
                 .font(.caption).foregroundStyle(.secondary)

@@ -4,13 +4,6 @@
 def apply(name, text):
     if name != 'Library.swift':
         return text
-    start = 'case "Rename & Artwork": Form {'
-    end = 'case "Controls": Form {'
-    if text.count(start) != 1 or text.count(end) != 1:
-        raise ValueError('Madeira artwork destination changed')
-    a, b = text.index(start), text.index(end)
-    if b <= a:
-        raise ValueError('Madeira artwork destination order changed')
     replacement = '''case "Rename & Artwork":
                     IridiumArtworkEditor(game: IridiumGame(windows: entry), embedded: true,
                                          onBack: {
@@ -18,7 +11,6 @@ def apply(name, text):
                                          })
                         .navigationBarBackButtonHidden()
                     '''
-    text = text[:a] + replacement + text[b:]
     start, end = 'struct LibraryArtwork: View {', '\n/// A pseudo-random sequence'
     if text.count(start) != 1 or text.count(end) != 1:
         raise ValueError('Madeira artwork view changed')
@@ -29,14 +21,22 @@ def apply(name, text):
     var body: some View { IridiumGameArtwork(game: IridiumGame(windows: entry), backdrop: backdrop) }
 }
 """ + text[b:]
-    old = 'Text(entry.title).font(.title2.bold()).lineLimit(2)'
-    new = 'Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))).font(.title2.bold()).lineLimit(2)'
-    if text.count(old) != 1:
-        raise ValueError('Madeira artwork detail title changed')
-    text = text.replace(old, new)
-    start, end = 'struct LibraryDetail: View {', '\n/// Game details'
+    start, end = 'struct LibraryDetail: View {', '\n}\n\n/// madeira-bcd: a game'
     a, b = text.index(start), text.index(end, text.index(start))
     detail = text[a:b]
+    start = 'case "Rename & Artwork": Form {'
+    end = 'case "Controls": Form {'
+    if detail.count(start) != 1 or detail.count(end) != 1:
+        raise ValueError('Madeira artwork destination changed')
+    first, last = detail.index(start), detail.index(end)
+    if last <= first:
+        raise ValueError('Madeira artwork destination order changed')
+    detail = detail[:first] + replacement + detail[last:]
+    old = 'Text(entry.title).font(.title2.bold()).lineLimit(2)'
+    new = 'Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))).font(.title2.bold()).lineLimit(2)'
+    if detail.count(old) != 1:
+        raise ValueError('Madeira artwork detail title changed')
+    detail = detail.replace(old, new)
     old = '''    @ViewBuilder private func artwork(backdrop: Bool) -> some View {
         if let appID = entry.steamAppID, entry.coverFile == nil {
             SteamGameArtwork(appID: appID)
