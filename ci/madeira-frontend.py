@@ -168,6 +168,7 @@ def refresh_generated_tree(source, destination):
 
 
 def prepare():
+    import ppsspp_gl_sync_overlay as psp_gl_sync
     verify_pin()
     app = OUTPUT / 'app'
     # Only generated presentation files are replaced. Native build outputs are
@@ -205,6 +206,7 @@ def prepare():
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
         raise ValueError('Build and audit the pinned PSP component before preparing the app')
+    psp_gl_sync.validate_component(psp, ROOT / 'vendor/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'assets', app / 'Madeira/PSP/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'licenses', app / 'Madeira/licenses/PPSSPP')
     shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')

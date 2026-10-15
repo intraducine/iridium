@@ -80,6 +80,21 @@ def compiled_inputs(source, destination):
     return hashes
 
 
+def gl_sync_headers(destination):
+    """All GL users must share the adapted class layout, including header users."""
+    expected = destination / 'source' / overlay.gl_sync.PATCHED[0]
+    if expected.is_symlink(): raise ValueError('The adapted GL header must be a real staged file')
+    dependencies = output('ninja', '-C', destination / 'build', '-t', 'deps')
+    headers = [line.strip() for line in dependencies.splitlines() if line.strip().endswith('/GLRenderManager.h')]
+    if not headers: raise ValueError('No compiler dependencies reference the adapted GL header')
+    for name in headers:
+        path = Path(name)
+        if not path.is_absolute(): path = destination / 'build' / path
+        if path.resolve(strict=True) != expected.resolve(strict=True):
+            raise ValueError('A GL translation unit used the unadapted upstream class layout')
+    return {'headerSHA256': digest(expected), 'references': len(headers)}
+
+
 def linked_archives(destination):
     commands = output('ninja', '-C', destination / 'build', '-t', 'commands', 'IridiumPPSSPPNative')
     link = [line for line in commands.splitlines() if '-dynamiclib' in line]
@@ -239,6 +254,7 @@ def build(source, destination, sdk, jobs):
     command = configure(source, destination, sdk, mvk_archive)
     run(*command)
     run('cmake', '--build', destination / 'build', '--target', 'IridiumPPSSPPNative', '--parallel', jobs)
+    header_audit = gl_sync_headers(destination)
     binary = destination / 'build/lib/libIridiumPPSSPPNative.dylib'
     boundary = audit(binary, sdk)
     delivered = destination / binary.name
@@ -259,12 +275,13 @@ def build(source, destination, sdk, jobs):
     record = dict(**boundary, revision=REVISION, release=RELEASE, sourceRevisions=before, sdk=sdk,
         componentType='native-ios-player', binary=delivered.name, sha256=digest(delivered),
         compiledInputSHA256=compiled_inputs(source, destination), assetSHA256=hashes, codecs=codecs,
-        moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination),
+        moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination), glSyncHeaderAudit=header_audit,
         licensedAtlases=json.loads(atlases.MANIFEST.read_text()),
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
         mode='native iOS engine; upstream media/graphics; shared Iridium frontend')
+    overlay.gl_sync.validate_component(record, source)
     (destination / 'component.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
     print('Built release-pinned native PSP player:', delivered)
 

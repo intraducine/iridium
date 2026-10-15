@@ -9,6 +9,7 @@ import ImageIO
     @Published private(set) var revision = 0
     @Published private(set) var statuses: [UUID: String] = [:]
     @Published private(set) var error: String?
+    @Published private(set) var suggestions: [UUID: [IridiumArtworkCandidate]] = [:]
     private let root: URL
     private var store: IridiumArtworkStore?
     private var attempted = Set<UUID>()
@@ -17,6 +18,7 @@ import ImageIO
     private var imageRequests: [URL: Task<UIImage?, Never>] = [:]
     private var legacyBackgrounds: [UUID: String]?
     private var legacyBackgroundRequest: Task<[UUID: String], Never>?
+    private var identities: [UUID: (key: String, value: IridiumGameIdentity)] = [:]
 
     init(root: URL = LibraryModel.documents.resolvingSymlinksInPath().appendingPathComponent("iridium-artwork")) {
         self.root = root
@@ -43,8 +45,23 @@ import ImageIO
     func search(_ query: String, platform: IridiumPlatform) async throws -> [IridiumArtworkCandidate] {
         try await IridiumArtworkCatalog.search(query, platform: platform)
     }
+    func identificationQueries(_ game: IridiumGame) -> [String] {
+        identities[game.id]?.value.queries ?? IridiumArtworkMatcher.identificationQueries(title: game.title, executableRelativePath: game.windows?.relativePath)
+    }
+    func identify(_ game: IridiumGame) async -> IridiumGameIdentity? {
+        guard let entry = game.windows else { return nil }
+        let title = game.title, path = entry.relativePath, drive = LibraryModel.drive
+        let key = title + "\n" + path
+        if let cached = identities[game.id], cached.key == key { return cached.value }
+        let identity = await Task.detached(priority: .utility) {
+            IridiumGameIdentity.inspect(title: title, relativePath: path, drive: drive)
+        }.value
+        guard !Task.isCancelled else { return nil }
+        identities[game.id] = (key, identity)
+        return identity
+    }
     func prepare(_ game: IridiumGame, retry: Bool = false) async {
-        if retry { attempted.remove(game.id); IridiumArtworkCatalog.retry(platform: game.platform) }
+        if retry { attempted.remove(game.id); identities[game.id] = nil; IridiumArtworkCatalog.retry(platform: game.platform) }
         let legacyBackground = await legacyBackground(for: game.id)
         let item = appearance(game.id)
         guard let store, item.automaticLookup, item.match == nil,
@@ -55,12 +72,26 @@ import ImageIO
         attempted.insert(game.id); lookupRequests[game.id] = ticket; statuses[game.id] = "Finding artwork…"
         defer { if lookupRequests[game.id] == ticket { lookupRequests[game.id] = nil } }
         do {
-            let candidate: IridiumArtworkCandidate?
+            var candidate: IridiumArtworkCandidate?
             if let id = game.steamID ?? game.steamAppID, game.platform == .windows {
                 candidate = IridiumArtworkCatalog.steam(id: id, title: game.title)
             } else {
-                let matches = try await search(game.title, platform: game.platform)
-                candidate = IridiumArtworkMatcher.exactMatch(game.title, platform: game.platform, candidates: matches)
+                let identity = await identify(game)
+                try Task.checkCancellation()
+                if let identity, !identity.conflict, let id = identity.manifestSteamID {
+                    candidate = IridiumArtworkCatalog.steam(id: id, title: identity.metadataNames.first ?? game.title)
+                }
+                var choices: [IridiumArtworkCandidate] = []
+                for query in identificationQueries(game) {
+                    if candidate != nil { break }
+                    let matches = try await search(query, platform: game.platform)
+                    for match in matches where !choices.contains(where: { $0.id == match.id && $0.source == match.source }) && choices.count < 12 {
+                        choices.append(match)
+                    }
+                    if let exact = IridiumArtworkMatcher.exactMatch(query, platform: game.platform, candidates: matches),
+                       game.platform != .windows || identity?.mayAutomaticallyMatch(exact) == true { candidate = exact }
+                }
+                if lookupRequests[game.id] == ticket { suggestions[game.id] = candidate == nil ? choices : [] }
             }
             try Task.checkCancellation()
             guard let candidate else {
@@ -111,7 +142,7 @@ import ImageIO
         }
         try Task.checkCancellation()
         if try store.apply(candidate, coverName: cover, backgroundName: background, ticket: ticket) {
-            statuses[gameID] = nil; revision += 1
+            statuses[gameID] = nil; suggestions[gameID] = nil; revision += 1
         }
         // Unreferenced downloaded images are harmless recovery data. Never
         // delete an image that a newer manual operation might have retained.

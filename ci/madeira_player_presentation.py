@@ -247,7 +247,7 @@ def hardware_cursor(text):
     # Trackpad never invents an independent cursor from accumulated deltas.
     text = replace(text, '    private var mouseInUse = false', '''    private var mouseInUse = false
     private var iridiumTrackpadActive: Bool {
-        IridiumTouchMouseMode.current() == .trackpad && TouchMouseGate.mode != .off &&
+        appActive && !mouseInUse && IridiumTouchMouseMode.current() == .trackpad && TouchMouseGate.mode != .off &&
             LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch &&
             !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive
     }
@@ -255,9 +255,44 @@ def hardware_cursor(text):
     text = replace(text, 'let on = mouseInUse && (currentRoute == .relative || lastAbsolute == nil)',
                    'let on = (mouseInUse && (currentRoute == .relative || lastAbsolute == nil)) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let visible = mouseInUse && mouseFocused && cursorState.shown != 0',
-                   'let visible = ((mouseInUse && mouseFocused) || (iridiumTrackpadActive && baseFocused)) && cursorState.shown != 0')
+                   'let visible = (mouseInUse && mouseFocused && cursorState.shown != 0) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let pos = lastAbsolute ?? (x: cursorState.x, y: cursorState.y)',
                    'let pos = iridiumTrackpadActive ? (x: cursorState.x, y: cursorState.y) : (lastAbsolute ?? (x: cursorState.x, y: cursorState.y))')
+    text = replace(text, 'DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y)',
+                   'DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y, fallback: iridiumTrackpadActive && cursorState.shown == 0)')
+    text = replace(text, '(keyboardConnected || mouseConnected || PadStickMouse.shared.controllerConnected)',
+                   '(keyboardConnected || mouseConnected || PadStickMouse.shared.controllerConnected || iridiumTrackpadActive)')
+    text = replace(text, '    private var serial: UInt32 = 0',
+                   '    private var serial: UInt32 = 0\n    private var programImage: CGImage?\n    private static let arrowImage = arrow()')
+    text = replace(text, '        serial = s\n        let w = Int(image.w), h = Int(image.h)',
+                   '        let w = Int(image.w), h = Int(image.h)\n        guard w > 0, h > 0, w <= Int(WINIOS_CURSOR_MAX), h <= Int(WINIOS_CURSOR_MAX) else { return }')
+    text = replace(text, '        ensureLayer().contents = cg',
+                   '        serial = s\n        programImage = cg\n        ensureLayer().contents = cg')
+    start = text.index('    func render(visible: Bool, x: Int32, y: Int32) {', text.index('final class DirectCursorOverlay'))
+    end = text.index('\n    private func ensureLayer()', start)
+    text = text[:start] + '''    func render(visible: Bool, x: Int32, y: Int32, fallback: Bool = false) {
+        guard visible || layer != nil else { return }
+        let l = ensureLayer()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        l.isHidden = !visible
+        if visible {
+            var width: Int32 = 0, height: Int32 = 0
+            winios_screen_size(&width, &height)
+            let useProgram = !fallback && programImage != nil
+            let size = useProgram ? CGSize(width: Int(image.w), height: Int(image.h)) : CGSize(width: Self.arrowSize.w, height: Self.arrowSize.h)
+            let hotspot = useProgram ? CGPoint(x: Int(image.hot_x), y: Int(image.hot_y)) : .zero
+            let frame = IridiumPointerProjection.frame(point: CGPoint(x: Int(x), y: Int(y)),
+                guest: CGSize(width: width > 0 ? Int(width) : Self.screenW, height: height > 0 ? Int(height) : Self.screenH),
+                host: MetalHostView.shared.bounds, image: size, hotspot: hotspot)
+            l.contents = useProgram ? programImage : Self.arrowImage
+            l.bounds = CGRect(origin: .zero, size: frame.size)
+            l.position = frame.origin
+        }
+        CATransaction.commit()
+    }
+''' + text[end:]
+    text = replace(text, '        l.contents = Self.arrow()', '        l.contents = Self.arrowImage')
     return text
 
 

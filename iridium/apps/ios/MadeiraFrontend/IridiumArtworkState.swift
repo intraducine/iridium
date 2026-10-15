@@ -258,6 +258,28 @@ final class IridiumArtworkStore {
 /// ROM extensions and trailing region/revision/language metadata are removed;
 /// subtitle, disc, hack, demo, and unknown parenthesized words remain significant.
 enum IridiumArtworkMatcher {
+    /// Folder imports initially use the executable stem as their display name.
+    /// Prefer descriptive folder metadata for artwork without renaming the game
+    /// or treating abbreviations as aliases for unrelated catalog titles.
+    static func identificationQueries(title: String, executableRelativePath: String?) -> [String] {
+        guard let path = executableRelativePath else { return [title] }
+        let parts = path.replacingOccurrences(of: "\\", with: "/").split(separator: "/").map(String.init)
+        guard let executable = parts.last,
+              normalized(title, platform: .windows) == normalized(executable, platform: .windows) else { return [title] }
+        let generic: Set<String> = ["bin", "binaries", "win32", "win64", "x64", "x86", "game", "games",
+            "imported", "drive c", "data", "windows", "steamapps", "common", "release", "debug"]
+        for folder in parts.dropLast().reversed().prefix(3) {
+            guard folder != ".", folder != "..", UUID(uuidString: folder) == nil else { continue }
+            let candidate = folder.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: ".", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = normalized(candidate, platform: .windows)
+            guard !key.isEmpty, !generic.contains(key), candidate.count <= 200 else { continue }
+            if key == normalized(title, platform: .windows) { return [title] }
+            return [candidate, title]
+        }
+        return [title]
+    }
+
     private static let tagExpression = try! NSRegularExpression(pattern: #"\([^()]*\)|\[[^\[\]]*\]"#)
     private static let knownTags: Set<String> = [
         "world", "usa", "us", "u", "europe", "eur", "eu", "e", "japan", "jp", "j", "uk", "australia",

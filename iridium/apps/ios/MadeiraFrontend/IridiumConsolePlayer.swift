@@ -44,10 +44,6 @@ struct IridiumConsolePlayer: View {
                 if (touchVisible && session.phase == .running) || controls.editing {
                     TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)
                 }
-                if !menuVisible && !controls.editing {
-                    IridiumMovablePlayerMenu(action: openMenu)
-                        .disabled(session.phase != .running && session.phase != .starting)
-                }
                 if menuVisible { menu(in: geometry.size).allowsHitTesting(!confirmClose).accessibilityHidden(confirmClose) }
                 if confirmClose {
                     IridiumPlayerCloseConfirmation(selection: closeConfirmation.selection,
@@ -55,6 +51,16 @@ struct IridiumConsolePlayer: View {
                 }
                 if session.phase == .stopping {
                     ProgressView("Closing game…").padding(24).modifier(IridiumGlassSurface())
+                }
+            }.overlay(alignment: .topLeading) {
+                if !menuVisible && !controls.editing {
+                    // The renderer uses safe content bounds. Menu coordinates
+                    // cover the complete window and clamp its safe insets once.
+                    IridiumMovablePlayerMenu(action: openMenu, safeAreaInsets: geometry.safeAreaInsets)
+                        .frame(width: geometry.size.width + geometry.safeAreaInsets.leading + geometry.safeAreaInsets.trailing,
+                               height: geometry.size.height + geometry.safeAreaInsets.top + geometry.safeAreaInsets.bottom)
+                        .offset(x: -geometry.safeAreaInsets.leading, y: -geometry.safeAreaInsets.top)
+                        .disabled(session.phase != .running && session.phase != .starting)
                 }
             }.foregroundStyle(.white)
                 .onChange(of: geometry.size) { _, _ in

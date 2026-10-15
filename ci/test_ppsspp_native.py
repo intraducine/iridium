@@ -15,6 +15,16 @@ spec.loader.exec_module(native)
 
 
 class NativePSPPreparationTests(unittest.TestCase):
+    def test_every_gl_compiler_dependency_uses_the_adapted_header(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);header=root/'source/Common/GPU/OpenGL/GLRenderManager.h'
+            header.parent.mkdir(parents=True);header.write_text('adapted class layout')
+            old=root/'upstream/GLRenderManager.h';old.parent.mkdir();old.write_text('old class layout')
+            with patch.object(native,'output',return_value='    '+str(header)+'\n'):
+                self.assertEqual(native.gl_sync_headers(root)['references'],1)
+            with patch.object(native,'output',return_value='    '+str(header)+'\n    '+str(old)+'\n'):
+                with self.assertRaisesRegex(ValueError,'unadapted upstream'):native.gl_sync_headers(root)
+
     def test_native_target_requires_media_and_keeps_native_frontend(self):
         with patch.object(native, 'output', return_value='/SDK'):
             command = native.configure(Path('/source'), Path('/output'), 'iphoneos')

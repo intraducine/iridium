@@ -4,6 +4,7 @@ import UIKit
 
 struct IridiumMovablePlayerMenu: View {
     let action: () -> Void
+    var safeAreaInsets: EdgeInsets? = nil
     @AppStorage("madeiraLibraryMenuX") private var x = 0.92
     @AppStorage("madeiraLibraryMenuY") private var y = 0.12
     @GestureState private var translation = CGSize.zero
@@ -25,10 +26,11 @@ struct IridiumMovablePlayerMenu: View {
     }
     private func position(in geometry: GeometryProxy, translation: CGSize) -> CGPoint {
         let size = geometry.size
+        let insets = safeAreaInsets ?? geometry.safeAreaInsets
         return IridiumMenuPlacement.center(normalized: CGPoint(x: x + translation.width / max(1, size.width),
             y: y + translation.height / max(1, size.height)), size: size,
-            leading: geometry.safeAreaInsets.leading, trailing: geometry.safeAreaInsets.trailing,
-            top: geometry.safeAreaInsets.top, bottom: geometry.safeAreaInsets.bottom)
+            leading: insets.leading, trailing: insets.trailing,
+            top: insets.top, bottom: insets.bottom)
     }
 }
 

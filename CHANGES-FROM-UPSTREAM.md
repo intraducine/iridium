@@ -553,3 +553,24 @@ accompany the resources. New corresponding source includes the locked inputs and
 omits only exact superseded upstream atlas bytes. Previously delivered personal
 IPAs and source packages remain intact. See ci/psp-atlas-host/README.md for the
 specific host adaptations, metric deltas and remaining device acceptance limits.
+
+### Native OpenGL synchronization correction
+
+The release pin remains `fa50bb1976065c4f8b1b47af227d367fe9771555`.
+`ci/ppsspp_gl_sync_overlay.py` adapts only GLRenderManager's completion protocol
+in the generated native source. An empty host drain acknowledges no GPU work.
+Each synchronous readback waits for its own completed SYNC request; publication
+and waiting share a mutex so immediate completion cannot lose its notification.
+Shutdown and skipped GL work cancel readbacks without copying GPU memory.
+Monotonic request IDs prevent an old completion from releasing a later request.
+The iOS embedding drain also waits for both the joined producer and the empty
+render queue, matching upstream's shutdown contract before pausing display.
+
+The native build audits compiler dependencies to ensure every GL translation
+unit uses the adapted class layout. Component receipts include the compiled
+translation unit, header audit and both generated source hashes. App preparation
+rejects a component built before this correction. Corresponding source retains
+the immutable upstream tree, the transformation and its deterministic race
+tests. No game-specific emulation workaround or backend switch is introduced.
+Host protocol tests do not establish that Ghost of Sparta is fixed on a phone;
+that requires a new run of the delivered patched native component.

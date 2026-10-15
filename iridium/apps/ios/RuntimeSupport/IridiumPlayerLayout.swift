@@ -34,6 +34,19 @@ enum IridiumMenuPlacement {
     }
 }
 
+enum IridiumPointerProjection {
+    static func frame(point: CGPoint, guest: CGSize, host: CGRect, image: CGSize, hotspot: CGPoint) -> CGRect {
+        let width = max(1, guest.width), height = max(1, guest.height)
+        let sx = host.width / width, sy = host.height / height
+        let imageScale = max(1, min(sx, sy))
+        let x = point.x.isFinite ? min(width - 1, max(0, point.x)) : 0
+        let y = point.y.isFinite ? min(height - 1, max(0, point.y)) : 0
+        return CGRect(x: host.minX + x * sx - hotspot.x * imageScale,
+                      y: host.minY + y * sy - hotspot.y * imageScale,
+                      width: image.width * imageScale, height: image.height * imageScale)
+    }
+}
+
 struct IridiumTouchMouseMotion {
     private var remainder = CGPoint.zero
     mutating func reset() { remainder = .zero }

@@ -1,9 +1,10 @@
-"""Embed the pinned upstream iOS frontend without changing emulator internals."""
+"""Embed the pinned iOS frontend with declared ownership and GL sync fixes."""
 from pathlib import Path
 import ppsspp_sensor_overlay as sensors
 import ppsspp_picker_overlay as picker
 import ppsspp_callback_overlay as callbacks
 import ppsspp_frontend_overlay as frontend
+import ppsspp_gl_sync_overlay as gl_sync
 
 REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 
@@ -15,6 +16,7 @@ def replace(text, old, new):
 
 
 def apply(name, text):
+    if name in gl_sync.PATCHED: return gl_sync.apply(name, text)
     if name in sensors.PATCHED: return sensors.apply(name, text)
     if name == picker.NAME: return picker.apply(text)
     if name == 'CMakeLists.txt':
@@ -119,6 +121,7 @@ def apply(name, text):
         text = replace(text, 'UIScreen* screen = [(AppDelegate*)[UIApplication sharedApplication].delegate screen];',
                        'UIScreen* screen = self.view.window.windowScene.screen ?: UIScreen.mainScreen;')
         pause_display = 'self.displayLink.paused = YES;' if name.endswith('/ViewController.mm') else ''
+        drain_completed = '[self iridiumDrainCompletedRenderLoop];' if name.endswith('/ViewController.mm') else ''
         stop_method = '''- (void)iridiumStopRenderLoop:(void (^)(void))completion {
     NSAssert(NSThread.isMainThread, @"Renderer lifecycle belongs to the main thread");
     if (!ir_native_psp_is_current_player((__bridge void *)self)) return;
@@ -132,6 +135,7 @@ def apply(name, text):
     if (!ir_native_psp_is_current_player((__bridge void *)self) || owner != self.iridiumRenderGeneration) return;
     if (!g_renderLoopThread.joinable() || (iridiumLoopStarted && !renderLoopRunning)) {
         if (g_renderLoopThread.joinable()) g_renderLoopThread.join();
+        DRAIN_COMPLETED
         exitRenderLoop = false;
         PAUSE_DISPLAY
         completion();
@@ -143,7 +147,17 @@ def apply(name, text):
     });
 }
 
-'''.replace('PAUSE_DISPLAY', pause_display)
+'''.replace('PAUSE_DISPLAY', pause_display).replace('DRAIN_COMPLETED', drain_completed)
+        if name.endswith('/ViewController.mm'):
+            stop_method += '''- (void)iridiumDrainCompletedRenderLoop {
+    // Match upstream's stopped-producer AND empty-queue shutdown contract.
+    // The producer has joined, so this finite drain cannot wait for new work.
+    if (!graphicsContext || !self.glContext) return;
+    [EAGLContext setCurrentContext:self.glContext];
+    while (graphicsContext->ThreadFrame(false)) {}
+}
+
+'''
         text = text.replace('forMode:NSDefaultRunLoopMode', 'forMode:NSRunLoopCommonModes')
         text = replace(text, '- (void)willResignActive {', stop_method + '- (void)willResignActive {')
         if name.endswith('/ViewController.mm'):
@@ -201,14 +215,14 @@ def apply(name, text):
     return frontend.apply(name, callbacks.apply(name, text))
 
 
-PATCHED = ('CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED)
+PATCHED = ('CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED)
 
 
 def stage(source, destination):
     """Mirror immutable source; only declared platform/ownership hooks are copied."""
     source = source.resolve(strict=True)
     destination.mkdir(parents=True, exist_ok=True)
-    mirrored_directories = ('ios', 'UI', 'Core', 'Core/Util', 'Core/HLE')
+    mirrored_directories = ('ios', 'UI', 'Core', 'Core/Util', 'Core/HLE', 'Common', 'Common/GPU', 'Common/GPU/OpenGL')
     for relative in ('', *mirrored_directories):
         target = destination / relative
         target.mkdir(exist_ok=True)

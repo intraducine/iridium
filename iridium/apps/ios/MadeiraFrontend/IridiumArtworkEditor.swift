@@ -11,6 +11,7 @@ struct IridiumArtworkEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var query = ""
+    @State private var suggestedQuery: String?
     @State private var background = false
     @State private var matches: [IridiumArtworkCandidate] = []
     @State private var busy = false
@@ -40,7 +41,15 @@ struct IridiumArtworkEditor: View {
                 }
             }
         }
-        .onAppear { backPending = false; title = artwork.title(game); query = game.title; keyboard = true }
+        .onAppear { backPending = false; title = artwork.title(game); query = artwork.identificationQueries(game).first ?? game.title; keyboard = true }
+        .task {
+            let initial = query
+            _ = await artwork.identify(game)
+            guard !Task.isCancelled, query == initial else { return }
+            let proposed = artwork.identificationQueries(game).first ?? game.title
+            if query != proposed { suggestedQuery = proposed; query = proposed }
+            matches = artwork.suggestions[game.id] ?? []; searched = !matches.isEmpty
+        }
         .onDisappear { operation?.cancel(); request = UUID() }
     }
     private var content: some View {
@@ -106,7 +115,7 @@ struct IridiumArtworkEditor: View {
                     }
                 } header: { Text("Game match") } footer: {
                     Text(game.platform == .windows ?
-                        "Title searches use Steam's public catalog. A match changes appearance only; game files, saves and runtime settings are unchanged." :
+                        "Game names and public IDs from local metadata help find Steam artwork. Uncertain matches need your choice. Only title searches reach Steam; executable files stay on this device. A match changes appearance only." :
                         "Matches come from Libretro's public artwork catalog for \(game.platform.title). Ambiguous titles need your choice. Artwork is optional and games remain playable offline.")
                 }
                 if let failure = failure ?? artwork.error { Section { Text(failure).foregroundStyle(.red) } }
@@ -122,7 +131,13 @@ struct IridiumArtworkEditor: View {
             .focusable().focusEffectDisabled().focused($keyboard)
             .onChange(of: focus) { _, id in proxy.scrollTo(id, anchor: .center) }
             .onChange(of: query) { _, _ in
+                if query == suggestedQuery { suggestedQuery = nil; return }
                 operation?.cancel(); request = UUID(); busy = false; matches = []; searched = false
+            }
+            .onChange(of: artwork.suggestions[game.id]) { _, choices in
+                if !busy && !searched && query == artwork.identificationQueries(game).first {
+                    matches = choices ?? []; searched = !matches.isEmpty
+                }
             }
             .onReceive(LibraryController.shared.commands) { command($0) }
             .onKeyPress(.upArrow) { guard field == nil else { return .ignored }; command("up"); return .handled }
