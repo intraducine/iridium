@@ -138,3 +138,13 @@ precondition(IridiumConsoleControlMapping.symbol("B", profile: .psp) == "circle"
 precondition(IridiumConsoleControlMapping.symbol("A", profile: .gameBoy) == nil)
 precondition(IridiumConsoleControlMapping.button("A", profile: .psp) == 1)
 precondition(IridiumConsoleControlMapping.button("A", profile: .gameBoy) == 1 << 8)
+
+// A saved menu position remains reachable after rotation and safe-area changes.
+for size in [CGSize(width: 320, height: 568), CGSize(width: 568, height: 320), CGSize(width: 1024, height: 768)] {
+    for point in [CGPoint(x: -1, y: 2), CGPoint(x: 0.92, y: 0.12), CGPoint(x: CGFloat.nan, y: CGFloat.infinity)] {
+        let menu = IridiumMenuPlacement.center(normalized: point, size: size, leading: 59, trailing: 59, top: 24, bottom: 34)
+        precondition(menu.x.isFinite && menu.y.isFinite)
+        precondition(menu.x >= 91 && menu.x <= size.width - 91)
+        precondition(menu.y >= 56 && menu.y <= size.height - 66)
+    }
+}

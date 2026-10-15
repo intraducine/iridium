@@ -45,14 +45,8 @@ struct IridiumConsolePlayer: View {
                     TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)
                 }
                 if !menuVisible && !controls.editing {
-                    IridiumPlayerMenuButton(action: openMenu)
-                        .frame(width: 48, height: 48).accessibilityLabel("Player Menu")
-                        .accessibilityHint("Pause the game and open Iridium controls")
+                    IridiumMovablePlayerMenu(action: openMenu)
                         .disabled(session.phase != .running && session.phase != .starting)
-                        .position(x: min(max(geometry.safeAreaInsets.leading + 32, layout.menu.x),
-                                         geometry.size.width - geometry.safeAreaInsets.trailing - 32),
-                                  y: min(max(geometry.safeAreaInsets.top + 32, layout.menu.y),
-                                         geometry.size.height - geometry.safeAreaInsets.bottom - 32))
                 }
                 if menuVisible { menu(in: geometry.size).allowsHitTesting(!confirmClose).accessibilityHidden(confirmClose) }
                 if confirmClose {
@@ -241,7 +235,6 @@ struct IridiumConsolePlayer: View {
         }
     }
     private func command(_ value: String) {
-        IridiumPlayerMenuActivity.interact()
         if showingLogs { if value == "back" || value == "menu" { showingLogs = false }; return }
         if controls.editing {
             if value == "back" || value == "menu" { controls.editing = false; controls.selected = nil }

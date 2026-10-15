@@ -191,20 +191,23 @@ enum IridiumFilesImport {
 
     /// Only supported PE executables are offered. Folder traversal and total
     /// bytes are bounded even when the folder contains no executable at all.
-    static func executableCandidates(in folder: URL, limits: Limits = .init(),
-                                     isCancelled: () -> Bool = { false }) throws -> [URL] {
+    static func executablePaths(in folder: URL, limits: Limits = .init(),
+                                isCancelled: () -> Bool = { false }) throws -> [String] {
         try checkCancellation(isCancelled)
         let folder = try checkedPath(folder)
         let entries = try contents(in: folder, limits: limits, isCancelled: isCancelled)
         let executables = entries.filter { !$0.isDirectory && ($0.relativePath as NSString).pathExtension.lowercased() == "exe" }
         guard executables.count <= limits.maximumExecutables else { throw Failure.tooManyExecutables }
-        var result: [URL] = []
+        var result: [String] = []
         for entry in executables.sorted(by: { $0.relativePath < $1.relativePath }) {
             try checkCancellation(isCancelled)
             let url = folder.appendingPathComponent(entry.relativePath)
             do {
                 _ = try executableBits(url)
-                result.append(url)
+                // Keep the validated relative path. A coordinated or normalized
+                // root may differ from the picker's URL; slicing one URL using
+                // another root's character count corrupts the chosen path.
+                result.append(entry.relativePath)
             } catch Failure.invalidExecutable {
                 continue
             } catch Failure.unsupportedArchitecture {

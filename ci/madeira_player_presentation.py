@@ -90,6 +90,18 @@ def controls(text):
             else if isDown && !control.action.isPad { press(false) }
             padVector = .zero; isDown = false
         }''')
+    text = replace(text, """            ScrollView {
+                (tab == 0 ? AnyView(keyboardTab) : AnyView(controllerTab))""", """            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledContent("Button size", value: "\\(Int((m.controls.first { $0.id == control.id }?.scale ?? control.scale) * 100))%")
+                    Slider(value: Binding(get: {
+                        m.controls.first { $0.id == control.id }?.scale ?? control.scale
+                    }, set: { value in
+                        guard let i = m.index(of: control.id) else { return }
+                        m.controls[i].scale = min(3, max(0.5, value))
+                    }), in: 0.5...3).accessibilityIdentifier("controlSizeSlider")
+                    (tab == 0 ? AnyView(keyboardTab) : AnyView(controllerTab))
+                }""")
     return text
 
 
@@ -225,14 +237,6 @@ def apply(name, text):
         text = shared_console(controls(text))
         text = touch_mouse(text)
     if name == 'Library.swift': text = pointer_settings(menu(text))
-    if name == 'GamepadInput.swift':
-        text = replace(text, 'profile.valueChangedHandler = { [weak self] _, _ in',
-                       'profile.valueChangedHandler = { [weak self] _, _ in\n                    IridiumPlayerMenuActivity.hardwareInteract()')
-    if name == 'HardwareInput.swift':
-        for callback in ('input.keyChangedHandler = { [weak self] _, _, code, pressed in',
-                         'm.mouseMovedHandler = { [weak self] _, dx, dy in',
-                         'm.scroll.valueChangedHandler = { [weak self] _, x, y in'):
-            text = replace(text, callback, callback + '\n            IridiumPlayerMenuActivity.hardwareInteract()')
 
     return text
 
@@ -422,7 +426,7 @@ def shared_console(text):
         if IridiumConsoleSession.shared.isActive {
             let psp = IridiumConsoleSession.shared.game?.platform == .psp
             VStack(alignment: .leading, spacing: 12) {
-                Text("Controls are saved for this game. Drag to move, pinch the selected control to resize.")
+                Text("Controls are saved for this game. Drag to move. Use Button size or pinch to resize.")
                     .font(.caption).foregroundStyle(.secondary)
                 section("Face", psp ? [("Cross", .pad("A")), ("Circle", .pad("B")), ("Square", .pad("X")), ("Triangle", .pad("Y"))] : [("A", .pad("A")), ("B", .pad("B"))])
                 section("D-pad", [("D-pad", .pad("DPad")), ("Up", .pad("D↑")), ("Down", .pad("D↓")), ("Left", .pad("D←")), ("Right", .pad("D→"))])
@@ -461,8 +465,7 @@ def touch_mouse(text):
     start = text.index('    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {', text.index('private var tmgSwallowed'))
     end = text.index('\n}\n\n/// Arrow-key button', start)
     pointer = text[start:end]
-    pointer = replace(pointer, '        if touchPointerMode { touchModeBegan(touches); return }', '''        IridiumPlayerMenuActivity.interact()
-        guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing,
+    pointer = replace(pointer, '        if touchPointerMode { touchModeBegan(touches); return }', '''        guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing,
               IridiumTouchMouseMode.current() != .off else { return }
         let eligibleTouches = Set(touches.filter { $0.view === self && $0.type != .indirectPointer && gameRect().contains($0.location(in: self)) })
         for touch in touches.subtracting(eligibleTouches) { tmgSwallowed.insert(ObjectIdentifier(touch)) }
@@ -470,8 +473,6 @@ def touch_mouse(text):
         guard !eligibleTouches.isEmpty else { return }
         if iridiumTouchMode == nil { iridiumTouchMode = IridiumTouchMouseMode.current() }
         if touchPointerMode { touchModeBegan(eligibleTouches); return }''')
-    pointer = replace(pointer, '    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {',
-                      '    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {\n        IridiumPlayerMenuActivity.interact()')
     pointer = replace(pointer, '        if touchPointerMode { touchModeMoved(touches, event); return }', '''        let touches = Set(filteredTouches.filter { iridiumPointerContacts[ObjectIdentifier($0)] != nil })
         guard !touches.isEmpty else { return }
         guard !LibraryModel.shared.blocksGameplayTouch, !TouchControlsModel.shared.editing else { iridiumReleasePointer(); return }

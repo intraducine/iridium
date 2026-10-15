@@ -152,15 +152,22 @@ actor PublicationSignal {
             require(try Data(contentsOf: executable) == pe(), "In-drive file changed")
 
         case "candidates":
-            let a = try put("a.exe", pe(32))
-            let b = try put("bin/z.EXE", pe())
+            _ = try put("a.exe", pe(32))
+            _ = try put("bin/z.EXE", pe())
             _ = try put("not-pe.exe", Data("not PE".utf8))
             _ = try put("arm.exe", pe(machine: 0xaa64))
             _ = try put("unrelated.rom")
-            let found = try Importer.executableCandidates(in: source)
-            require(found == [a, b], "Only supported PE files, sorted by relative path")
-            require(!fm.fileExists(atPath: drive.path), "Candidate enumeration does not create library files")
-            try cancelled { _ = try Importer.executableCandidates(in: source, isCancelled: { true }) }
+            let found = try Importer.executablePaths(in: source)
+            require(found == ["a.exe", "bin/z.EXE"], "Only supported PE files, sorted by relative path")
+            // Pickers/coordinators can supply a nonstandardized local root.
+            // Never derive this relative identity by slicing a normalized URL
+            // with the original root's length.
+            let selectedRoot = source.appendingPathComponent("unused/..", isDirectory: true)
+            let selectedPaths = try Importer.executablePaths(in: selectedRoot)
+            require(selectedPaths == found, "Normalization must preserve candidate identity")
+            let imported = try Importer.importExecutable(at: selectedRoot.appendingPathComponent(selectedPaths[1]), drive: drive, sourceRoot: selectedRoot)
+            require(try Data(contentsOf: drive.appendingPathComponent(imported.relativePath)) == pe(), "Normalized folder selection must open the real executable")
+            try cancelled { _ = try Importer.executablePaths(in: source, isCancelled: { true }) }
 
         case "invalid":
             let executable = try put("game.exe", Data("not PE".utf8))
@@ -200,7 +207,7 @@ actor PublicationSignal {
             let ancestor = source.appendingPathComponent("linked-folder")
             try fm.createSymbolicLink(at: ancestor, withDestinationURL: executable.deletingLastPathComponent())
             try rejects(.symbolicLink) { _ = try Importer.importExecutable(at: ancestor.appendingPathComponent("game.exe"), drive: drive) }
-            try rejects(.symbolicLink) { _ = try Importer.executableCandidates(in: source) }
+            try rejects(.symbolicLink) { _ = try Importer.executablePaths(in: source) }
             try rejects(.symbolicLink) { _ = try Importer.importExecutable(at: executable, drive: drive, sourceRoot: source) }
             let dangling = source.appendingPathComponent("missing.exe")
             try fm.createSymbolicLink(at: dangling, withDestinationURL: root.appendingPathComponent("missing"))
@@ -227,9 +234,9 @@ actor PublicationSignal {
             try rejects(.tooManyFiles) { _ = try Importer.importExecutable(at: executable, drive: drive, sourceRoot: source, limits: limits) }
             limits = .init(); limits.maximumBytes = 511
             try rejects(.tooLarge) { _ = try Importer.importExecutable(at: executable, drive: drive, limits: limits) }
-            try rejects(.tooLarge) { _ = try Importer.executableCandidates(in: source, limits: limits) }
+            try rejects(.tooLarge) { _ = try Importer.executablePaths(in: source, limits: limits) }
             limits = .init(); limits.maximumExecutables = 0
-            try rejects(.tooManyExecutables) { _ = try Importer.executableCandidates(in: source, limits: limits) }
+            try rejects(.tooManyExecutables) { _ = try Importer.executablePaths(in: source, limits: limits) }
             limits = .init(); limits.maximumEntries = 0
             try rejects(.tooManyFiles) { _ = try Importer.importExecutable(at: executable, drive: drive, limits: limits) }
             require(!fm.fileExists(atPath: drive.path), "Limits are checked before writing")

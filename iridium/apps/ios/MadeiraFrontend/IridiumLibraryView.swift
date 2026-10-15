@@ -23,7 +23,7 @@ struct IridiumLibraryView: View {
     @AppStorage("iridium.selectedGame") private var pageArtwork = ""
     @AppStorage(IridiumLibraryOrder.settingsKey) private var savedOrder = ""
     @State private var reorderSession = IridiumLibraryDragSession()
-    @State private var lastSelectionFeedback = Date.distantPast
+    @State private var selectionFeedback = UISelectionFeedbackGenerator()
     @State private var favorites = false
     @State private var search = ""
     @State private var searching = false
@@ -186,10 +186,12 @@ struct IridiumLibraryView: View {
             .onChange(of: selection.highlightedID) { old, value in
                 pageArtwork = selected?.id.uuidString ?? ""
                 if old != nil, value != nil, (selection.userIsScrolling || showFocus),
-                   IridiumTouchHaptics.current() != .off,
-                   Date.now.timeIntervalSince(lastSelectionFeedback) >= 0.12 {
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    lastSelectionFeedback = .now
+                   IridiumTouchHaptics.current() != .off {
+                    let ids = games.map(\.id)
+                    let boundaries = IridiumLibrarySelection.boundaries(from: old, to: value, in: ids)
+                    // Emit now; no timer, throttle or queued work outlives this scroll update.
+                    for _ in 0..<boundaries { selectionFeedback.selectionChanged() }
+                    selectionFeedback.prepare()
                 }
             }
             // Display-name edits can change search membership without changing

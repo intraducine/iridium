@@ -2,17 +2,33 @@
 import SwiftUI
 import UIKit
 
-@MainActor enum IridiumPlayerMenuActivity {
-    private static var lastActivity: CFTimeInterval = 0
-    static let notification = Notification.Name("IridiumPlayerMenuActivity")
-    static func interact() {
-        let now = CACurrentMediaTime()
-        guard now - lastActivity >= 0.12 else { return }
-        lastActivity = now
-        NotificationCenter.default.post(name: notification, object: nil)
+struct IridiumMovablePlayerMenu: View {
+    let action: () -> Void
+    @AppStorage("madeiraLibraryMenuX") private var x = 0.92
+    @AppStorage("madeiraLibraryMenuY") private var y = 0.12
+    @GestureState private var translation = CGSize.zero
+    var body: some View {
+        GeometryReader { geometry in
+            let center = position(in: geometry, translation: translation)
+            IridiumPlayerMenuButton(action: action)
+                .frame(width: 48, height: 48)
+                .highPriorityGesture(DragGesture(minimumDistance: 6, coordinateSpace: .global).updating($translation) { value, state, transaction in
+                    transaction.animation = nil
+                    state = value.translation
+                }.onEnded { value in
+                    let end = position(in: geometry, translation: value.translation)
+                    x = end.x / max(1, geometry.size.width)
+                    y = end.y / max(1, geometry.size.height)
+                })
+                .position(center)
+        }
     }
-    nonisolated static func hardwareInteract() {
-        DispatchQueue.main.async { interact() }
+    private func position(in geometry: GeometryProxy, translation: CGSize) -> CGPoint {
+        let size = geometry.size
+        return IridiumMenuPlacement.center(normalized: CGPoint(x: x + translation.width / max(1, size.width),
+            y: y + translation.height / max(1, size.height)), size: size,
+            leading: geometry.safeAreaInsets.leading, trailing: geometry.safeAreaInsets.trailing,
+            top: geometry.safeAreaInsets.top, bottom: geometry.safeAreaInsets.bottom)
     }
 }
 
@@ -42,18 +58,11 @@ struct IridiumPlayerMenuButton: UIViewRepresentable {
         button.isUserInteractionEnabled = visible
     }
     final class MenuTarget: UIButton {
-        private var activityObserver: NSObjectProtocol?
         private var dimming: DispatchWorkItem?
         override func didMoveToWindow() {
             super.didMoveToWindow()
             dimming?.cancel()
-            if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
-            activityObserver = nil
             guard window != nil else { return }
-            activityObserver = NotificationCenter.default.addObserver(forName: IridiumPlayerMenuActivity.notification,
-                object: nil, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.restoreVisibility() }
-                }
             restoreVisibility()
         }
         override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
@@ -73,7 +82,6 @@ struct IridiumPlayerMenuButton: UIViewRepresentable {
         }
         deinit {
             dimming?.cancel()
-            if let activityObserver { NotificationCenter.default.removeObserver(activityObserver) }
         }
         override var accessibilityFrame: CGRect {
             get { UIAccessibility.convertToScreenCoordinates(bounds, in: self) }

@@ -331,13 +331,6 @@ class FrontendImportTests(unittest.TestCase):
         for name in ['GamepadInput.swift', 'HardwareInput.swift', 'SteamCloud.swift', 'SteamInstall.swift', 'SavesAndShortcuts.swift']:
             text = (folder / name).read_text()
             actual = madeira_presentation.apply(name, text)
-            if name in ('GamepadInput.swift', 'HardwareInput.swift'):
-                # Passive UI activity is explicitly required for the dimmed menu.
-                # Every original runtime/input/save byte remains identical after
-                # removing only those exact notification statements.
-                activity = 'IridiumPlayerMenuActivity.hardwareInteract()'
-                self.assertEqual(actual.count(activity), 1 if name == 'GamepadInput.swift' else 3)
-                actual = ''.join(line for line in actual.splitlines(keepends=True) if line.strip() != activity)
             self.assertEqual(text, actual, name)
         self.assertIn('if command == "play" { start() }', rendered)
         self.assertNotIn('if command == "accept" { start() }', rendered)

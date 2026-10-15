@@ -14,6 +14,11 @@ struct IridiumLibrarySelection {
     /// Preview moves with native touch scrolling, without issuing a scroll request.
     var highlightedID: UUID? { userIsScrolling ? (visibleID ?? selectedID) : selectedID }
 
+    static func boundaries(from old: UUID?, to next: UUID?, in ids: [UUID]) -> Int {
+        guard let old, let next, let a = ids.firstIndex(of: old), let b = ids.firstIndex(of: next) else { return 0 }
+        return abs(a - b)
+    }
+
     static func verticalFocus(_ current: String, down: Bool, wide: Bool) -> String {
         let actions = ["play", "options"]
         let rows = [["filters"], ["search", "add", "settings"],

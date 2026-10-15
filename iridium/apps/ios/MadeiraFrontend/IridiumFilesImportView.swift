@@ -17,7 +17,7 @@ struct IridiumFilesImportView: View {
     let source: IridiumImportSource
     var imported: (LibraryEntry) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var candidates: [URL] = []
+    @State private var candidates: [String] = []
     @State private var folder = false
     @State private var working = true
     @State private var failure: String?
@@ -33,9 +33,9 @@ struct IridiumFilesImportView: View {
                 if let failure { Text(failure).foregroundStyle(.red) }
                 if !working {
                     Section(folder ? "Choose the game's executable" : "Windows game") {
-                        ForEach(candidates, id: \.path) { file in
-                            Button { begin(file) } label: {
-                                Label(relative(file), systemImage: "app.dashed")
+                        ForEach(candidates, id: \.self) { path in
+                            Button { begin(path) } label: {
+                                Label(folder ? path : source.url.lastPathComponent, systemImage: "app.dashed")
                             }
                         }
                     }
@@ -48,17 +48,16 @@ struct IridiumFilesImportView: View {
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel).disabled(finishing) } }
                 .interactiveDismissDisabled(working)
                 .task {
-                    LogStore.shared.log("[Files Import] phase=scan outcome=started")
+                    recordImport("[Files Import] phase=scan outcome=started")
                     do {
                         let url = source.url
                         let worker = Task.detached(priority: .userInitiated) {
                             try IridiumFilesAccess.read(url) { coordinated in
                                 try Task.checkCancellation()
                                 let isFolder = try coordinated.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
-                                let files = isFolder ? try IridiumFilesImport.executableCandidates(in: coordinated,
-                                    isCancelled: { Task.isCancelled }) : [coordinated]
+                                let paths = isFolder ? try IridiumFilesImport.executablePaths(in: coordinated,
+                                    isCancelled: { Task.isCancelled }) : [""]
                                 // Provider-coordinated URLs need not outlive the accessor.
-                                let paths = files.map { isFolder ? String($0.path.dropFirst(coordinated.path.count + 1)) : "" }
                                 return (isFolder, paths)
                             }
                         }
@@ -66,45 +65,46 @@ struct IridiumFilesImportView: View {
                             try await worker.value
                         } onCancel: { worker.cancel() }
                         guard !cancelled, !Task.isCancelled else {
-                            LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
+                            recordImport("[Files Import] phase=scan outcome=cancelled")
                             return
                         }
                         folder = result.0
-                        candidates = result.1.map { $0.isEmpty ? url : url.appendingPathComponent($0) }
+                        candidates = result.1
                         working = false
-                        LogStore.shared.log("[Files Import] phase=scan outcome=ready candidates=\(candidates.count) folder=\(folder)")
+                        recordImport("[Files Import] phase=scan outcome=ready candidates=\(candidates.count) folder=\(folder)")
                     } catch is CancellationError {
-                        LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
+                        recordImport("[Files Import] phase=scan outcome=cancelled")
                     } catch {
                         guard !cancelled, !Task.isCancelled else {
-                            LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
+                            recordImport("[Files Import] phase=scan outcome=cancelled")
                             return
                         }
-                        LogStore.shared.log("[Files Import] phase=scan outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
+                        recordImport("[Files Import] phase=scan outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
                         if !cancelled, !Task.isCancelled { failure = error.localizedDescription; working = false }
                     }
                 }
                 .onDisappear { _ = cancelOperation() }
         }
     }
-    private func relative(_ file: URL) -> String {
-        folder ? String(file.path.dropFirst(source.url.path.count + 1)) : file.lastPathComponent
+    private func recordImport(_ line: String) {
+        LogStore.shared.log(line)
+        RuntimeDiagnosticLogFiles.writeConsoleLine(line)
     }
-    private func begin(_ file: URL) {
+    private func begin(_ path: String) {
         guard !working else { return }
         working = true; failure = nil
-        LogStore.shared.log("[Files Import] phase=copy outcome=started folder=\(folder)")
+        recordImport("[Files Import] phase=copy outcome=started folder=\(folder)")
+        let sourceURL = source.url
         let root = folder ? source.url : nil
         let drive = LibraryModel.drive.resolvingSymlinksInPath()
-        let relative = root.map { String(file.path.dropFirst($0.path.count + 1)) }
         let publication = IridiumFilesImport.Publication()
         self.publication = publication
         operation = Task { @MainActor in
             var phase = "copy"
             do {
                 let worker = Task.detached(priority: .userInitiated) {
-                    try IridiumFilesAccess.read(root ?? file) { coordinated in
-                        let executable = relative.map { coordinated.appendingPathComponent($0) } ?? coordinated
+                    try IridiumFilesAccess.read(sourceURL) { coordinated in
+                        let executable = root == nil ? coordinated : coordinated.appendingPathComponent(path)
                         return try IridiumFilesImport.importExecutable(at: executable, drive: drive,
                             sourceRoot: root == nil ? nil : coordinated, publication: publication,
                             isCancelled: { Task.isCancelled })
@@ -113,7 +113,7 @@ struct IridiumFilesImportView: View {
                 let result = try await withTaskCancellationHandler {
                     try await worker.value
                 } onCancel: { if publication.cancel() { worker.cancel() } }
-                LogStore.shared.log("[Files Import] phase=copy outcome=published")
+                recordImport("[Files Import] phase=copy outcome=published")
                 phase = "register"
                 // A successful result has won the publication gate. Do not
                 // discard it because cancellation arrived after the move.
@@ -121,7 +121,7 @@ struct IridiumFilesImportView: View {
                 // Selecting an already imported executable retains every setting,
                 // artwork key, favorite and save identity rather than duplicating it.
                 if let existing = model.entries.first(where: { $0.relativePath == result.relativePath && $0.steamAppID == nil }) {
-                    LogStore.shared.log("[Files Import] phase=register outcome=reused")
+                    recordImport("[Files Import] phase=register outcome=reused")
                     imported(existing); return
                 }
                 let entry = LibraryEntry(id: result.importID ?? UUID(), title: result.title,
@@ -131,12 +131,12 @@ struct IridiumFilesImportView: View {
                     throw LibraryError.message(model.error ?? "The library entry could not be saved. The copied files have been kept.")
                 }
                 imported(entry)
-                LogStore.shared.log("[Files Import] phase=register outcome=saved")
+                recordImport("[Files Import] phase=register outcome=saved")
             } catch is CancellationError {
-                LogStore.shared.log("[Files Import] phase=copy outcome=cancelled")
+                recordImport("[Files Import] phase=copy outcome=cancelled")
             }
             catch {
-                LogStore.shared.log("[Files Import] phase=\(phase) outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
+                recordImport("[Files Import] phase=\(phase) outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
                 self.publication = nil
                 finishing = false
                 failure = error.localizedDescription; working = false

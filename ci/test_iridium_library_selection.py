@@ -16,6 +16,11 @@ class LibrarySelectionTests(unittest.TestCase):
             main.write_text('''import Foundation
 let a = UUID(), b = UUID(), c = UUID()
 let stale = UUID()
+precondition(IridiumLibrarySelection.boundaries(from: a, to: a, in: [a,b,c]) == 0)
+precondition(IridiumLibrarySelection.boundaries(from: a, to: c, in: [a,b,c]) == 2)
+precondition(IridiumLibrarySelection.boundaries(from: c, to: b, in: [a,b,c]) == 1)
+precondition(IridiumLibrarySelection.boundaries(from: a, to: stale, in: [a,b,c]) == 0)
+precondition(IridiumLibrarySelection.boundaries(from: a, to: b, in: []) == 0)
 let stored = IridiumLibraryOrder.encoded([c,c,stale,a])
 precondition(IridiumLibraryOrder.ordered([a,b,c], saved: stored) == [c,a,b])
 let reordered = IridiumLibraryOrder.moving(c, relativeTo: a, after: false, in: [a,b,c])
