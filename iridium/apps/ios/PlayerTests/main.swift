@@ -148,3 +148,19 @@ for size in [CGSize(width: 320, height: 568), CGSize(width: 568, height: 320), C
         precondition(menu.y >= 56 && menu.y <= size.height - 66)
     }
 }
+
+// The first drag starts at the visible clamped point, including fresh defaults
+// and a saved position that rotation has temporarily clamped.
+for saved in [CGPoint(x: 0.92, y: 0.12), CGPoint(x: 1.0, y: 1.0)] {
+    let size = CGSize(width: 874, height: 402)
+    let start = IridiumMenuPlacement.center(normalized: saved, size: size, leading: 62, trailing: 62, top: 0, bottom: 21)
+    let target = CGPoint(x: size.width * 0.11, y: size.height * 0.35)
+    let moved = IridiumMenuPlacement.draggedCenter(normalized: saved,
+        translation: CGSize(width: target.x - start.x, height: target.y - start.y), size: size,
+        leading: 62, trailing: 62, top: 0, bottom: 21)
+    close(moved.x, target.x, "Drag must not include the hidden clamp displacement")
+    close(moved.y, target.y, "Drag starts at its visible center")
+    let persisted = IridiumMenuPlacement.draggedCenter(normalized: CGPoint(x: moved.x / size.width, y: moved.y / size.height),
+        translation: .zero, size: size, leading: 62, trailing: 62, top: 0, bottom: 21)
+    precondition(persisted == moved, "Releasing the drag must not snap")
+}

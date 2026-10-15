@@ -141,20 +141,37 @@ private enum PEVersionName {
         guard let offset = fileOffset(resourceRVA, size: resourceSize), let data = read(offset, resourceSize) else { return nil }
         let resources = Bytes(data: data)
         var visited = Set<Int>(), payloads: [Data] = []
+        var remainingPayloads = 16, remainingPayloadBytes = 4 << 20
+        var payloadBudgetExhausted = false
         func directory(_ at: Int, depth: Int) {
-            guard depth <= 3, visited.count < 64, visited.insert(at).inserted, payloads.count < 16,
+            guard !payloadBudgetExhausted, depth <= 3, visited.count < 64, visited.insert(at).inserted,
                   let named = resources.u16(at + 12), let ids = resources.u16(at + 14), named + ids <= 256,
                   at + 16 + (named + ids) * 8 <= data.count else { return }
             for i in 0..<(named + ids) {
+                guard !payloadBudgetExhausted else { return }
                 let entry = at + 16 + i * 8
                 guard let id = resources.u32(entry), let target = resources.u32(entry + 4), depth != 0 || id == 16 else { continue }
                 let next = target & 0x7fff_ffff
-                if target & 0x8000_0000 != 0 { directory(next, depth: depth + 1) }
-                else if let rva = resources.u32(next), let size = resources.u32(next + 4), size <= 1 << 20,
-                        let start = fileOffset(rva, size: size), let payload = read(start, size) { payloads.append(payload) }
+                if target & 0x8000_0000 != 0 {
+                    directory(next, depth: depth + 1)
+                    guard !payloadBudgetExhausted else { return }
+                } else if let rva = resources.u32(next), let size = resources.u32(next + 4),
+                          size > 0, size <= 1 << 20, let start = fileOffset(rva, size: size) {
+                    // Reserve globally before I/O and retention, including
+                    // repeated leaves and failures across recursive siblings.
+                    guard remainingPayloads > 0, size <= remainingPayloadBytes else {
+                        payloadBudgetExhausted = true; return
+                    }
+                    remainingPayloads -= 1; remainingPayloadBytes -= size
+                    if let payload = read(start, size) { payloads.append(payload) }
+                    if remainingPayloads == 0 || remainingPayloadBytes == 0 {
+                        payloadBudgetExhausted = true; return
+                    }
+                }
             }
         }
         directory(0, depth: 0)
+        guard !payloadBudgetExhausted else { return nil }
         var values: [String: String] = [:]
         for payload in payloads {
             let view = Bytes(data: payload)

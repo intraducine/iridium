@@ -27,8 +27,7 @@ struct IridiumMovablePlayerMenu: View {
     private func position(in geometry: GeometryProxy, translation: CGSize) -> CGPoint {
         let size = geometry.size
         let insets = safeAreaInsets ?? geometry.safeAreaInsets
-        return IridiumMenuPlacement.center(normalized: CGPoint(x: x + translation.width / max(1, size.width),
-            y: y + translation.height / max(1, size.height)), size: size,
+        return IridiumMenuPlacement.draggedCenter(normalized: CGPoint(x: x, y: y), translation: translation, size: size,
             leading: insets.leading, trailing: insets.trailing,
             top: insets.top, bottom: insets.bottom)
     }

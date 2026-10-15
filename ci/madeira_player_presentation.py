@@ -246,16 +246,35 @@ def hardware_cursor(text):
     # Use Wine's clipped position and program-owned image/visibility reports.
     # Trackpad never invents an independent cursor from accumulated deltas.
     text = replace(text, '    private var mouseInUse = false', '''    private var mouseInUse = false
+    private var iridiumStickCursorOwned = false
     private var iridiumTrackpadActive: Bool {
         appActive && !mouseInUse && IridiumTouchMouseMode.current() == .trackpad && TouchMouseGate.mode != .off &&
             LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch &&
             !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive
     }
+    private var iridiumStickCursorActive: Bool {
+        appActive && iridiumStickCursorOwned && baseFocused &&
+            LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch &&
+            !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive
+    }
     func iridiumUpdateTouchPointer() { refreshFocus("touch pointer mode") }''')
+    text = replace(text, '''    private func setMouseInUse(_ on: Bool) {
+        guard on != mouseInUse else { return }''', '''    private func setMouseInUse(_ on: Bool, stick: Bool = false) {
+        let ownerChanged = iridiumStickCursorOwned != (on && stick)
+        iridiumStickCursorOwned = on && stick
+        guard on != mouseInUse else {
+            if ownerChanged { updateTracking(); renderCursor() }
+            return
+        }''')
+    text = replace(text, '''    func stickMoved() {
+        lastAbsolute = nil
+        setMouseInUse(true)''', '''    func stickMoved() {
+        lastAbsolute = nil
+        setMouseInUse(true, stick: true)''')
     text = replace(text, 'let on = mouseInUse && (currentRoute == .relative || lastAbsolute == nil)',
                    'let on = (mouseInUse && (currentRoute == .relative || lastAbsolute == nil)) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let visible = mouseInUse && mouseFocused && cursorState.shown != 0',
-                   'let visible = (mouseInUse && mouseFocused && cursorState.shown != 0) || (iridiumTrackpadActive && baseFocused)')
+                   'let visible = (mouseInUse && (mouseFocused || iridiumStickCursorActive) && cursorState.shown != 0) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let pos = lastAbsolute ?? (x: cursorState.x, y: cursorState.y)',
                    'let pos = iridiumTrackpadActive ? (x: cursorState.x, y: cursorState.y) : (lastAbsolute ?? (x: cursorState.x, y: cursorState.y))')
     text = replace(text, 'DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y)',

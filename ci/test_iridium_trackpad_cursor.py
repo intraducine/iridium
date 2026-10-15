@@ -21,7 +21,9 @@ class TrackpadCursorTests(unittest.TestCase):
     def test_production_policy_and_live_resolution_projection(self):
         source=presentation.hardware_cursor((ROOT/'vendor/Madeira/app/Madeira/HardwareInput.swift').read_text())
         actual='\n'.join(block(source,a) for a in ('    private var iridiumTrackpadActive:',
-            '    private func updateTracking()', '    private func renderCursor()', '    private func updateFocusTimer()'))
+            '    private var iridiumStickCursorActive:', '    private func updateTracking()',
+            '    private func renderCursor()', '    private func updateFocusTimer()',
+            '    private func setMouseInUse(', '    func stickMoved()', '    private func evaluateFocus('))
         code=r'''import Foundation
 import CoreGraphics
 enum IridiumTouchMouseMode {case off,trackpad,direct;static var mode=Self.trackpad;static func current()->Self{mode}}
@@ -39,12 +41,24 @@ final class DirectCursorOverlay {
 PROJECTION
 final class Probe {
  static let enabled=true
+ static let focusEnabled=true
  enum Route{case relative,absolute}
  var appActive=true,directCursorLive=true,mouseInUse=false,baseFocused=true,mouseFocused=false
+ var iridiumStickCursorOwned=false,mouseInUseMirror=false
+ // The exact pin initializes iPad hover this way, before any pointer enters.
+ var hoverSeen=true,pointerOver=false,pointerLocked=false,keyboardFocused=false,diagnostics=false
+ var clickFocus=(onGame:true,unused:false)
+ var gameButtons=Set<Int>(),pendingButtons=[Int:Int]()
+ struct Resettable {func reset(){};func focusLost(){}}
+ var keys=Resettable(),carry=Resettable(),wheel=Resettable();let motionLock=NSLock()
  var keyboardConnected=false,mouseConnected=false;var focusTimer:Timer?
  var currentRoute=Route.relative;var cursorState=(shown:Int32(1),x:Int32(712),y:Int32(328))
  var lastAbsolute:(x:Int32,y:Int32)?=(999,998)
  func refreshFocus(_ why:String){}
+ func installTouchObserver(){};func typingElsewhere()->Bool{false}
+ func computeBaseFocus()->Bool {appActive && LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch && !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive}
+ func syncKeys(){};func syncButtons(){};func log(_ text:String){}
+ func updateRoute(){};func updateAutoLock(){}
  ACTUAL
 }
 let p=Probe(),overlay=DirectCursorOverlay.shared
@@ -67,6 +81,28 @@ IridiumTouchMouseMode.mode = .direct;check(false,0,"direct mode")
 IridiumTouchMouseMode.mode = .off;check(false,0,"off mode")
 p.mouseInUse=true;p.mouseFocused=true;check(true,1,"hardware coexists");precondition(overlay.point.x==999)
 p.cursorState.shown=0;check(false,1,"hardware still respects program visibility")
+// Execute the actual pinned focus decision and stickMoved/setMouseInUse
+// transition, including ownership changes while mouseInUse is already true.
+IridiumTouchMouseMode.mode = .trackpad;p.setMouseInUse(false)
+p.lastAbsolute=(999,998);p.cursorState.shown=1;p.evaluateFocus("iPad initial focus")
+precondition(p.baseFocused && !p.mouseFocused,"iPad hoverSeen=true/pointerOver=false must leave physical mouse unfocused")
+p.stickMoved();precondition(overlay.visible && !overlay.fallback && tracking==1)
+precondition(p.iridiumStickCursorOwned && p.lastAbsolute==nil && overlay.point.x==712)
+p.evaluateFocus("controller after focus poll");precondition(overlay.visible && !p.mouseFocused)
+p.cursorState.shown=0;p.evaluateFocus("controller program hidden");precondition(!overlay.visible && !overlay.fallback)
+p.cursorState.shown=1;LibraryModel.shared.blocksGameplayTouch=true;p.evaluateFocus("controller menu")
+precondition(!p.baseFocused && !overlay.visible);LibraryModel.shared.blocksGameplayTouch=false
+p.evaluateFocus("controller resume");precondition(overlay.visible && !p.mouseFocused)
+p.setMouseInUse(true);precondition(!p.iridiumStickCursorOwned && !overlay.visible,"hardware takes ownership even when the activity Boolean stays true")
+p.pointerOver=true;p.evaluateFocus("hardware hover");precondition(p.mouseFocused && overlay.visible)
+p.cursorState.shown=0;p.evaluateFocus("hardware program hidden");precondition(!overlay.visible && !overlay.fallback)
+p.cursorState.shown=1;p.pointerOver=false;p.evaluateFocus("hardware left")
+for mode in [IridiumTouchMouseMode.off,.direct] {
+ IridiumTouchMouseMode.mode=mode;p.stickMoved();p.evaluateFocus("controller independent of touch mode")
+ precondition(overlay.visible && !overlay.fallback && !p.mouseFocused)
+}
+IridiumTouchMouseMode.mode = .trackpad;p.cursorState.shown=0;p.setMouseInUse(false)
+precondition(!p.iridiumStickCursorOwned && overlay.visible && overlay.fallback,"accepted touch clears controller ownership")
 let guest=CGSize(width:1424,height:656),icon=CGSize(width:32,height:32)
 for host in [CGRect(x:0,y:0,width:712,height:328),CGRect(x:0,y:0,width:328,height:151.1011235955)] {
  let f=IridiumPointerProjection.frame(point:CGPoint(x:712,y:328),guest:guest,host:host,image:icon,hotspot:.zero)
@@ -75,7 +111,7 @@ for host in [CGRect(x:0,y:0,width:712,height:328),CGRect(x:0,y:0,width:328,heigh
 }
 let f=IridiumPointerProjection.frame(point:CGPoint(x:712,y:328),guest:guest,host:CGRect(x:0,y:0,width:712,height:328),image:icon,hotspot:CGPoint(x:4,y:7))
 precondition(f.origin==CGPoint(x:352,y:157),"program hotspot follows icon scale")
-print("PASS shipping cursor gates, hidden-program fallback, no-mouse focus polling, live resolution and orientation")
+print("PASS shipping cursor gates, iPad pinned focus/stick transitions, physical-mouse hidden-cursor policy, touch fallback and live projection")
 '''.replace('ACTUAL',actual).replace('PROJECTION',block((ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift').read_text(),'enum IridiumPointerProjection'))
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);main=root/'main.swift';main.write_text(code);binary=root/'check'

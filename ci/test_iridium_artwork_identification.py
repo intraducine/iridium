@@ -11,6 +11,72 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class ArtworkIdentificationTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_pe_global_payload_budgets_across_repeated_and_nested_leaves(self):
+        def pe(topology, payload_size):
+            resource_size=0x8000;resources=bytearray(resource_size);cursor=0
+            def directory(children,root=False):
+                nonlocal cursor
+                at=cursor;cursor=(cursor+16+8*len(children)+3)&~3
+                struct.pack_into('<H',resources,at+14,len(children))
+                for index,child in enumerate(children):
+                    target=(0x80000000|directory(child)) if isinstance(child,list) else 0x7000
+                    struct.pack_into('<II',resources,at+16+index*8,16 if root else index+1,target)
+                return at
+            assert directory(topology,True)==0 and cursor<0x7000
+            struct.pack_into('<II',resources,0x7000,0x2000+resource_size,payload_size)
+            data=bytearray(0x400+resource_size+payload_size);data[:2]=b'MZ'
+            struct.pack_into('<I',data,60,0x80);data[0x80:0x84]=b'PE\0\0'
+            struct.pack_into('<H',data,0x86,1);struct.pack_into('<H',data,0x94,224)
+            struct.pack_into('<H',data,0x98,0x10b);struct.pack_into('<I',data,0x98+92,16)
+            struct.pack_into('<II',data,0x98+112,0x2000,resource_size)
+            struct.pack_into('<III',data,0x98+224+12,0x2000,resource_size+payload_size,0x400)
+            data[0x400:0x400+resource_size]=resources
+            return data
+        # Instrument only actual FileHandle I/O. The reader and its budget
+        # branches remain unchanged; a regression traps before a large read.
+        original=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumGameIdentity.swift').read_text()
+        needle='file.read(upToCount: count)';self.assertEqual(original.count(needle),1)
+        traced=original.replace(needle,'measuredPERead(file, offset: offset, count: count)')
+        check=r'''import Foundation
+enum IOProbe {
+    nonisolated(unsafe) static var reads=0
+    nonisolated(unsafe) static var bytes=0
+}
+func measuredPERead(_ file:FileHandle,offset:Int,count:Int) throws -> Data? {
+    if offset>=0x8400 {
+        precondition(IOProbe.reads<16 && count<=(4<<20)-IOProbe.bytes,"global payload budget exceeded before I/O")
+        IOProbe.reads+=1;IOProbe.bytes+=count
+        print("PAYLOAD \(count)")
+    }
+    return try file.read(upToCount:count)
+}
+@main struct Checks {
+ static func main() {
+    let value=IridiumGameIdentity.inspect(title:"Budget",relativePath:CommandLine.arguments[2],drive:URL(fileURLWithPath:CommandLine.arguments[1]))
+    precondition(value.productName==nil,"exhausted payload budget must fail closed")
+ }
+}
+'''
+        cases=[('repeated',[None]*256,1<<20,4),
+               ('fanout',[[None]*4 for _ in range(8)],64,16),
+               ('nested',[[[None]*8 for _ in range(8)] for _ in range(4)],768<<10,5)]
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder);source=path/'TracedIdentity.swift';source.write_text(traced)
+            main=path/'Check.swift';main.write_text(check);binary=path/'check'
+            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',str(path/'cache'),
+                str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),
+                str(ROOT/'vendor/Madeira/app/Madeira/SteamKeyValues.swift'),str(source),str(main),'-o',str(binary)],check=True,timeout=120)
+            for name,tree,size,reads in cases:
+                with self.subTest(topology=name):
+                    (path/(name+'.exe')).write_bytes(pe(tree,size))
+                    result=subprocess.run([str(binary),str(path),name+'.exe'],text=True,capture_output=True,timeout=10)
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    sizes=[int(line.split()[1]) for line in result.stdout.splitlines() if line.startswith('PAYLOAD ')]
+                    self.assertEqual(len(sizes),reads);self.assertLessEqual(sum(sizes),4<<20)
+                    print(f'PASS {name}: {len(sizes)} payload reads, {sum(sizes)} bytes')
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_local_pe_and_storefront_evidence_with_confidence(self):
         # Synthetic PE resources: no commercial executable or identifying hash.
         def block(key, value=b'', children=(), kind=1):

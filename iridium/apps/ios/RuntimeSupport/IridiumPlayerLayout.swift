@@ -23,6 +23,15 @@ enum IridiumTouchMouseMode: String, CaseIterable {
 /// The same saved menu position follows the window size; temporary safe-area
 /// clamping never rewrites it during rotation.
 enum IridiumMenuPlacement {
+    static func draggedCenter(normalized: CGPoint, translation: CGSize, size: CGSize,
+                              leading: CGFloat, trailing: CGFloat, top: CGFloat, bottom: CGFloat) -> CGPoint {
+        let visible = center(normalized: normalized, size: size, leading: leading, trailing: trailing, top: top, bottom: bottom)
+        let dx = translation.width.isFinite ? translation.width : 0
+        let dy = translation.height.isFinite ? translation.height : 0
+        return center(normalized: CGPoint(x: (visible.x + dx) / max(1, size.width),
+                                          y: (visible.y + dy) / max(1, size.height)),
+                      size: size, leading: leading, trailing: trailing, top: top, bottom: bottom)
+    }
     static func center(normalized: CGPoint, size: CGSize, leading: CGFloat, trailing: CGFloat,
                        top: CGFloat, bottom: CGFloat) -> CGPoint {
         let x = normalized.x.isFinite ? min(1, max(0, normalized.x)) : 0.92
