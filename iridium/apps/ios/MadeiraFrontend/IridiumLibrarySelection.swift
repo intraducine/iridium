@@ -119,3 +119,116 @@ enum IridiumLibraryOrder {
     }
     static func encoded(_ ids: [UUID]) -> String { ids.map(\.uuidString).joined(separator: ",") }
 }
+
+/// One local reorder owns its payload until a completed or cancelled drag ends.
+final class IridiumLibraryDragSession {
+    struct Payload: Equatable {
+        let gameID: UUID
+        let token: UUID
+    }
+    private(set) var active: Payload?
+    func begin(_ id: UUID) -> Payload {
+        let payload = Payload(gameID: id, token: UUID())
+        active = payload
+        return payload
+    }
+    func accepts(context: Payload?, item: Payload?, local: Bool, privateType: Bool) -> Bool {
+        local && privateType && active != nil && context == active && item == active
+    }
+    func end(_ payload: Payload?) {
+        if let payload, payload == active { active = nil }
+    }
+}
+
+#if canImport(UIKit)
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// UIKit supplies the local-session identity and cancellation callback absent
+/// from SwiftUI's item-provider closures. The card content and menu stay SwiftUI.
+struct IridiumLibraryReorderCard<Content: View>: UIViewControllerRepresentable {
+    static var typeIdentifier: String { "org.iridium.library-reorder" }
+    let id: UUID
+    let session: IridiumLibraryDragSession
+    let commit: (UUID, UUID, Bool) -> Void
+    var trace: (String) -> Void = { _ in }
+    @ViewBuilder var content: () -> Content
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIViewController(context: Context) -> UIViewController {
+        let container = UIViewController()
+        let host = UIHostingController(rootView: content())
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        container.addChild(host)
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        container.view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.leadingAnchor.constraint(equalTo: container.view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: container.view.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: container.view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: container.view.bottomAnchor)
+        ])
+        host.didMove(toParent: container)
+        let drag = UIDragInteraction(delegate: context.coordinator)
+        drag.isEnabled = true
+        container.view.addInteraction(drag)
+        container.view.addInteraction(UIDropInteraction(delegate: context.coordinator))
+        return container
+    }
+    func updateUIViewController(_ container: UIViewController, context: Context) {
+        context.coordinator.parent = self
+        (container.children.first as? UIHostingController<Content>)?.rootView = content()
+    }
+    static func dismantleUIViewController(_ container: UIViewController, coordinator: Coordinator) {
+        coordinator.parent.session.end(coordinator.payload)
+    }
+    final class Coordinator: NSObject, UIDragInteractionDelegate, UIDropInteractionDelegate {
+        var parent: IridiumLibraryReorderCard
+        var payload: IridiumLibraryDragSession.Payload?
+        init(_ parent: IridiumLibraryReorderCard) { self.parent = parent }
+        func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: any UIDragSession) -> [UIDragItem] {
+            // UIKit can request providers repeatedly for the same session.
+            let current = session.localContext as? IridiumLibraryDragSession.Payload
+            let value = current == parent.session.active && current?.gameID == parent.id
+                ? current! : parent.session.begin(parent.id)
+            payload = value
+            session.localContext = value
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(forTypeIdentifier: IridiumLibraryReorderCard.typeIdentifier, visibility: .ownProcess) { completion in
+                completion(Data(value.token.uuidString.utf8), nil); return nil
+            }
+            let item = UIDragItem(itemProvider: provider)
+            item.localObject = value
+            parent.trace("begin")
+            return [item]
+        }
+        func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: any UIDragSession) -> Bool { true }
+        func dragInteraction(_ interaction: UIDragInteraction, session: any UIDragSession, didEndWith operation: UIDropOperation) {
+            parent.session.end(session.localContext as? IridiumLibraryDragSession.Payload)
+            payload = nil
+            parent.trace("ended")
+        }
+        func acceptedPayload(_ session: any UIDropSession) -> IridiumLibraryDragSession.Payload? {
+            guard session.items.count == 1, let item = session.items.first,
+                  let local = session.localDragSession,
+                  let context = local.localContext as? IridiumLibraryDragSession.Payload,
+                  parent.session.accepts(context: context, item: item.localObject as? IridiumLibraryDragSession.Payload,
+                    local: true, privateType: item.itemProvider.hasItemConformingToTypeIdentifier(IridiumLibraryReorderCard.typeIdentifier)) else { return nil }
+            return context
+        }
+        func dropInteraction(_ interaction: UIDropInteraction, canHandle session: any UIDropSession) -> Bool {
+            acceptedPayload(session) != nil
+        }
+        func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: any UIDropSession) -> UIDropProposal {
+            UIDropProposal(operation: session.allowsMoveOperation && acceptedPayload(session) != nil ? .move : .cancel)
+        }
+        func dropInteraction(_ interaction: UIDropInteraction, performDrop session: any UIDropSession) {
+            guard session.allowsMoveOperation, let value = acceptedPayload(session), let view = interaction.view else { return }
+            let after = session.location(in: view).x > view.bounds.width / 2
+            parent.session.end(value)
+            parent.commit(value.gameID, parent.id, after)
+            parent.trace("committed")
+        }
+    }
+}
+#endif

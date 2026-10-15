@@ -65,12 +65,21 @@ struct IridiumFilesImportView: View {
                         let result = try await withTaskCancellationHandler {
                             try await worker.value
                         } onCancel: { worker.cancel() }
-                        guard !cancelled, !Task.isCancelled else { return }
+                        guard !cancelled, !Task.isCancelled else {
+                            LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
+                            return
+                        }
                         folder = result.0
                         candidates = result.1.map { $0.isEmpty ? url : url.appendingPathComponent($0) }
                         working = false
                         LogStore.shared.log("[Files Import] phase=scan outcome=ready candidates=\(candidates.count) folder=\(folder)")
+                    } catch is CancellationError {
+                        LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
                     } catch {
+                        guard !cancelled, !Task.isCancelled else {
+                            LogStore.shared.log("[Files Import] phase=scan outcome=cancelled")
+                            return
+                        }
                         LogStore.shared.log("[Files Import] phase=scan outcome=failed code=\(IridiumFilesImport.diagnosticCode(error))")
                         if !cancelled, !Task.isCancelled { failure = error.localizedDescription; working = false }
                     }
@@ -112,6 +121,7 @@ struct IridiumFilesImportView: View {
                 // Selecting an already imported executable retains every setting,
                 // artwork key, favorite and save identity rather than duplicating it.
                 if let existing = model.entries.first(where: { $0.relativePath == result.relativePath && $0.steamAppID == nil }) {
+                    LogStore.shared.log("[Files Import] phase=register outcome=reused")
                     imported(existing); return
                 }
                 let entry = LibraryEntry(id: result.importID ?? UUID(), title: result.title,

@@ -30,6 +30,26 @@ precondition(IridiumLibrarySelection.restingOffset(-20, widths: [210,66,66], spa
 precondition(IridiumLibrarySelection.restingOffset(9999, widths: [210,66,66], spacing: 10, focusWidth: 66) == 296)
 precondition(IridiumLibrarySelection.restingOffset(.nan, widths: [210,66], spacing: 10, focusWidth: 66) == nil)
 
+// A cancelled session cannot admit text or its old local payload.
+let drag = IridiumLibraryDragSession()
+let cancelledDrag = drag.begin(a)
+precondition(drag.accepts(context: cancelledDrag, item: cancelledDrag, local: true, privateType: true))
+drag.end(cancelledDrag)
+precondition(drag.active == nil)
+precondition(!drag.accepts(context: nil, item: nil, local: false, privateType: false))
+precondition(!drag.accepts(context: cancelledDrag, item: cancelledDrag, local: true, privateType: true))
+let currentDrag = drag.begin(a)
+precondition(currentDrag.token != cancelledDrag.token)
+precondition(!drag.accepts(context: cancelledDrag, item: cancelledDrag, local: true, privateType: true))
+precondition(!drag.accepts(context: currentDrag, item: cancelledDrag, local: true, privateType: true))
+precondition(!drag.accepts(context: currentDrag, item: currentDrag, local: false, privateType: true))
+precondition(!drag.accepts(context: currentDrag, item: currentDrag, local: true, privateType: false))
+drag.end(cancelledDrag) // A late old callback cannot cancel the new drag.
+precondition(drag.active == currentDrag)
+precondition(drag.accepts(context: currentDrag, item: currentDrag, local: true, privateType: true))
+drag.end(currentDrag)
+precondition(drag.active == nil)
+
 var selection = IridiumLibrarySelection()
 precondition(selection.reconcile([a,b,c]) == a)
 precondition(selection.select(b) == b)

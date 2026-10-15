@@ -22,8 +22,7 @@ struct IridiumLibraryView: View {
     @AppStorage("iridium.favoriteGames") private var favoriteIDs = ""
     @AppStorage("iridium.selectedGame") private var pageArtwork = ""
     @AppStorage(IridiumLibraryOrder.settingsKey) private var savedOrder = ""
-    @State private var dragToken: String?
-    @State private var draggedID: UUID?
+    @State private var reorderSession = IridiumLibraryDragSession()
     @State private var lastSelectionFeedback = Date.distantPast
     @State private var favorites = false
     @State private var search = ""
@@ -385,45 +384,31 @@ struct IridiumLibraryView: View {
         }
     }
     private func cover(_ entry: IridiumGame, height: CGFloat, width: CGFloat, featured: Bool) -> some View {
-        Button { select(entry.id); focus = "games" } label: {
-            IridiumGameArtwork(game: entry, featured: featured)
-                .frame(width: width, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .anchorPreference(key: IridiumLibraryCardBounds.self, value: .bounds) { [entry.id: $0] }
-        }.buttonStyle(.plain).id(entry.id)
-            .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
-            .accessibilityLabel(artwork.title(entry))
-            .accessibilityHint("Select game. Use Play to launch.")
-            .contextMenu {
-                Button("Game Options", systemImage: "slider.horizontal.3") { options(entry) }
-                Button("Edit Artwork", systemImage: "photo") { artworkDetail = entry }
-            }
-            .onDrag {
-                let provider = NSItemProvider()
-                let token = draggedID == entry.id ? (dragToken ?? UUID().uuidString) : UUID().uuidString
-                provider.registerDataRepresentation(forTypeIdentifier: IridiumLibraryDrop.type.identifier, visibility: .ownProcess) { completion in
-                    completion(Data(token.utf8), nil); return nil
+        IridiumLibraryReorderCard(id: entry.id, session: reorderSession, commit: { id, target, after in
+            savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id)))
+            select(id)
+        }, trace: { LogStore.shared.log("[Library Drag] phase=\($0)") }) {
+            Button { select(entry.id); focus = "games" } label: {
+                IridiumGameArtwork(game: entry, featured: featured)
+                    .frame(width: width, height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }.buttonStyle(.plain).id(entry.id)
+                .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
+                .accessibilityLabel(artwork.title(entry))
+                .accessibilityHint("Select game. Use Play to launch.")
+                .contextMenu {
+                    Button("Game Options", systemImage: "slider.horizontal.3") { options(entry) }
+                    Button("Edit Artwork", systemImage: "photo") { artworkDetail = entry }
                 }
-                draggedID = entry.id; dragToken = token
-                LogStore.shared.log("[Library Drag] phase=begin")
-                return provider
-            }
-            .onDrop(of: [IridiumLibraryDrop.type], delegate: IridiumLibraryDrop(
-                target: entry.id, width: width, moving: $draggedID, token: $dragToken,
-                commit: { id, target, after, token in
-                    guard dragToken == token else { return }
-                    let order = IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id))
-                    savedOrder = IridiumLibraryOrder.encoded(order)
-                    draggedID = nil; dragToken = nil
-                    select(id)
-                }))
-            .accessibilityAction(named: "Move to beginning") {
-                if let first = allGames.first {
-                    savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(entry.id, relativeTo: first.id, after: false, in: allGames.map(\.id)))
+                .accessibilityAction(named: "Move to beginning") {
+                    if let first = allGames.first {
+                        savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(entry.id, relativeTo: first.id, after: false, in: allGames.map(\.id)))
+                    }
                 }
-            }
-            .accessibilityAddTraits(selection.highlightedID == entry.id ? .isSelected : [])
+                .accessibilityAddTraits(selection.highlightedID == entry.id ? .isSelected : [])
+        }.frame(width: width, height: height).id(entry.id)
+            .anchorPreference(key: IridiumLibraryCardBounds.self, value: .bounds) { [entry.id: $0] }
     }
     private var filters: some View {
         Picker("Library", selection: Binding(get: { favorites }, set: { favorites = $0; keepSelection() })) {
@@ -595,41 +580,6 @@ private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
         target.anchor = .leading
     }
 }
-
-/// Native drag/context-menu arbitration keeps a stationary long press as a
-/// menu. Only a completed local drop commits order; cancellation changes none.
-private struct IridiumLibraryDrop: DropDelegate {
-    static let type = UTType.utf8PlainText
-    let target: UUID
-    let width: CGFloat
-    @Binding var moving: UUID?
-    @Binding var token: String?
-    let commit: (UUID, UUID, Bool, String) -> Void
-    func validateDrop(info: DropInfo) -> Bool {
-        let valid = moving != nil && token != nil && info.hasItemsConforming(to: [Self.type])
-        LogStore.shared.log("[Library Drag] phase=validate valid=\(valid)")
-        return valid
-    }
-    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
-    func performDrop(info: DropInfo) -> Bool {
-        guard validateDrop(info: info), let moving, let token,
-              let provider = info.itemProviders(for: [Self.type]).first else { return false }
-        let after = info.location.x > width / 2
-        LogStore.shared.log("[Library Drag] phase=drop")
-        // UIKit may copy its item provider. Verify the private session payload,
-        // rather than relying on provider object identity. A stale or external
-        // drop cannot match a freshly created local drag token.
-        provider.loadDataRepresentation(forTypeIdentifier: Self.type.identifier) { data, _ in
-            let matches = data == Data(token.utf8)
-            DispatchQueue.main.async {
-                LogStore.shared.log("[Library Drag] phase=payload matches=\(matches) bytes=\(data?.count ?? 0)")
-                if matches { commit(moving, target, after, token) }
-            }
-        }
-        return true
-    }
-}
-
 
 struct IridiumLibraryLayoutMetrics {
     let coverHeight: CGFloat
