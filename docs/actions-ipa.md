@@ -74,10 +74,11 @@ unchanged, so matching retained builds can be reused without recompilation.
 
 ## Source and package checks
 
-Source checks run their host fixtures on macOS for Apple Foundation, CoreGraphics
-and Objective-C ARC. They initialize the pinned frontend and console sources and
-verify Swift, Clang and zstd before running the suite. This job tests source and
-host fixtures; application and IPA builds remain manual.
+Source checks use the same Xcode 27 runner as the manual app build for Swift,
+Apple Foundation, CoreGraphics and Objective-C ARC. They initialize the pinned
+frontend and console sources and verify Swift, Clang and zstd before running the
+suite. This job tests source and host fixtures; application and IPA builds remain
+manual.
 
 The workflow records the final app's Mach-O, PE and ELF files and its static
 link inputs. It collects the exact repository and initialized dependency

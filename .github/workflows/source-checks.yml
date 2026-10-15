@@ -7,8 +7,8 @@ permissions:
   contents: read
 jobs:
   privacy:
-    # Host fixtures use Apple Foundation, CoreGraphics and Objective-C ARC.
-    runs-on: macos-15
+    # Host fixtures need Apple frameworks and the app build's Swift toolchain.
+    runs-on: xcode-27
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -21,6 +21,7 @@ jobs:
       - name: Verify host test tools
         run: |
           xcrun --find swiftc
+          xcrun swiftc --version
           xcrun --find clang++
           command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
       - name: Reject private material and oversized files
