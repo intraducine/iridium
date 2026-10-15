@@ -542,7 +542,7 @@ def touch_mouse(text):
     text = text[:start] + pointer + text[end:]
     # Explicit mouse modes own empty surface touches; controls/menu own their hit
     # regions in ControlsWindow. Retain the existing gesture-long swallowed set.
-    text = replace(text, 'guard TouchMouseGate.suppressing(touchpad: touchPointerMode) else { return touches }',
+    text = replace(text, 'guard TouchMouseGate.suppressing(touchpad: touchPointerMode, desktop: desktopMode) else { return touches }',
                    'guard TouchMouseGate.mode == .off || LibraryModel.shared.blocksGameplayTouch || TouchControlsModel.shared.editing else { return touches }')
     text = replace(text, '            .onChange(of: library.blocksGameplayTouch) { _, _ in configureGamepad(landscape: landscape) }',
                    '''            .onChange(of: library.blocksGameplayTouch) { _, blocked in

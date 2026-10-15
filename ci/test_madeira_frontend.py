@@ -98,7 +98,9 @@ class FrontendImportTests(unittest.TestCase):
                                 ('arm64ec-windows/xtajit64.dll', 'FEX'),
                                 ('i386-windows/winemetal.dll', 'DXMT'),
                                 ('arm64ec-windows/dockhost.exe', 'Madeira Dock and LLVM-MinGW runtime'),
-                                ('aarch64-windows/wow64win.dll', 'Wine and its bundled libraries')]:
+                                ('aarch64-windows/wow64win.dll', 'Wine and its bundled libraries'),
+                                ('arm64ec-windows/faultrep.dll', 'Madeira fault-reporting shim'),
+                                ('arm64ec-windows/vulkan-1.dll', 'Madeira Vulkan stand-in generated from Wine exports')]:
             self.assertEqual(collect.binary_component(name), component)
         for name in ('unknown.dylib', 'Frameworks/Unknown.framework/Unknown', '../i386-windows/game.dll'):
             with self.assertRaises(ValueError): collect.binary_component(name)
@@ -348,6 +350,25 @@ class FrontendImportTests(unittest.TestCase):
             madeira_presentation.apply('Library.swift', original.replace('.navigationTitle("Game details")', '.navigationTitle("Details")'))
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler is required')
+    def test_updated_library_preserves_per_game_storage_and_reset(self):
+        folder = ROOT / 'vendor/Madeira/app/Madeira'
+        if not (folder / 'Library.swift').is_file(): self.skipTest('Pinned Madeira source required')
+        original = (folder / 'Library.swift').read_text()
+        rendered = BUILD.overlay('Library.swift', original)
+        for start, end in [('    private func reloadBCD()', '    private func start()'),
+                           ('struct BCDGameValues {', '/// Game details')]:
+            self.assertEqual(madeira_presentation.between(original, start, end),
+                             madeira_presentation.between(rendered, start, end))
+        form = madeira_presentation.between(rendered, 'struct LibraryDetail: View {', 'struct BCDGameValues {')
+        self.assertEqual(form.count('Button("Reset to Recommended"'), 1)
+        self.assertIn('GameRecommendations.question(recommended', form)
+        self.assertIn('LibraryPrefs.setAVX(on, for: entry.windowsPath)', form)
+        self.assertIn('LibraryPrefs.setWineVCRT(on, for: entry.windowsPath)', form)
+        self.assertIn('GameProfile(windowsPath: entry.windowsPath)', form)
+        pointer = BUILD.overlay('ContentView.swift', (folder / 'ContentView.swift').read_text())
+        self.assertIn('static func suppressing(touchpad: Bool, desktop: Bool)', pointer)
+        self.assertIn('case .auto: return padOverlay && !touchpad && !desktop', pointer)
+
     def test_import_preserves_originals_and_rejects_conflicts(self):
         source = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryImport.swift'
         with tempfile.TemporaryDirectory() as folder:

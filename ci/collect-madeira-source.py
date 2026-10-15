@@ -36,6 +36,8 @@ def binary_component(name):
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
     if name == 'Frameworks/libIridiumPPSSPPNative.dylib': return 'PPSSPP and its selected native dependencies'
+    if name == 'arm64ec-windows/faultrep.dll': return 'Madeira fault-reporting shim'
+    if name == 'arm64ec-windows/vulkan-1.dll': return 'Madeira Vulkan stand-in generated from Wine exports'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
         if p.name in {'xtajit.dll', 'xtajit64.dll'}: return 'FEX'
         if p.name == 'dockhost.exe': return 'Madeira Dock and LLVM-MinGW runtime'
@@ -181,6 +183,9 @@ def collect(app, output, maps):
                     'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage) + psp_atlases['exclusions'],
                     'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external,
                     'psp_atlas_font_inputs': psp_atlases['inputs'], 'binaries': records, 'static_archives': static,
+                    'generated_frontend_components': {
+                        'arm64ec-windows/faultrep.dll': {'source': 'vendor/Madeira/build/faultrep/faultrep.c', 'build': 'vendor/Madeira/build/faultrep/build.sh'},
+                        'arm64ec-windows/vulkan-1.dll': {'generator': 'vendor/Madeira/tools/build-stub-dlls.py', 'exports': 'vendor/Madeira/wine/dlls/vulkan-1/vulkan-1.spec'}},
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

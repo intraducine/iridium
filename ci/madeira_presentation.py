@@ -151,6 +151,10 @@ def library(text):
     controls = between(form, '                Section("On screen")', '                Section {\n                    NavigationLink {\n                        LibraryGameConfigEditor')
     config = between(form, '                Section {\n                    NavigationLink {\n                        LibraryGameConfigEditor', '                // A link that starts this game')
     files = between(form, '                // A link that starts this game', '                if let error')
+    # The new upstream reset remains last for every entry, including Desktop.
+    marker = '                // madeira-bcd: always last'
+    reset = files[files.index(marker):]
+    files = files[:files.index(marker)]
     # Art remains the page's background. No opaque mini-background inside its header.
     art_background = between(header, '                        .listRowBackground(', '\n                }')
     header = header.replace(art_background, '.listRowBackground(Color.clear)')
@@ -164,7 +168,7 @@ def library(text):
     body += '                    ' + detail('Display', display) + '\n'
     body += '                    ' + detail('Files & Saves', 'if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }\n' + files) + '\n'
     body += '                    ' + detail('Advanced', launch + config + '\nif entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; dismiss() } }') + '\n'
-    body += '                }.iridiumRowSurface()\n                if entry.desktop != true { Section { IridiumFavoriteButton(entry: entry).id("Favorites").listRowBackground(iridiumGuided && iridiumFocus == "Favorites" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) } }\n                if let error { Section { Text(error).foregroundStyle(.red) } }\n            }\n' + destination_pages(detail_pages) + '\n'
+    body += '                }.iridiumRowSurface()\n                if entry.desktop != true { Section { IridiumFavoriteButton(entry: entry).id("Favorites").listRowBackground(iridiumGuided && iridiumFocus == "Favorites" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) } }\n' + reset + '                if let error { Section { Text(error).foregroundStyle(.red) } }\n            }\n' + destination_pages(detail_pages) + '\n'
     text = replace(text, form, body)
     text = replace(text, '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)', '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)\n            ' + keyboard_navigation())
     text = replace(text, 'struct LibraryDetail: View {', 'struct LibraryDetail: View {' + navigation_state('Controls'))
@@ -178,7 +182,7 @@ def library(text):
     # Accept must activate the focused native control, not start a game from any row.
     text = replace(text, '                if command == "accept" { start() }', '                if command == "play" { start() }')
     text = replace(text, '                if command == "back" { model.save(entry); dismiss() }', '                iridiumNavigate(command)')
-    detail_body = between(text, '        NavigationStack(path: $iridiumPages) {\n            Form', '\n}\n\n/// Game details')
+    detail_body = between(text, '        NavigationStack(path: $iridiumPages) {\n            Form', '\n}\n\n/// madeira-bcd: a game')
     new_body = detail_body.replace('        NavigationStack', '      ScrollViewReader { proxy in\n        NavigationStack', 1)
     end = '\n        }\n    }'
     if not new_body.endswith(end): raise ValueError('Game Options closing scope changed')

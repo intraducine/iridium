@@ -21,7 +21,7 @@ FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
 RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
 RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
-REVISION = '48f976429c189f8396e23d251d8a82f43c705922'
+REVISION = '279fd0f83170425db002fe25d6bd62f6355f497d'
 PSP_REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
@@ -172,9 +172,10 @@ def prepare():
     app = OUTPUT / 'app'
     # Only generated presentation files are replaced. Native build outputs are
     # retained at their upstream locations, with the same project link paths.
-    app.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(UPSTREAM / 'app', app, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns('xcuserdata', '.DS_Store'))
+    # Recreate generated staging so removed or renamed upstream resources cannot
+    # survive a pin change. Never replace runtime sources or delivered packages.
+    app.parent.mkdir(parents=True, exist_ok=True)
+    refresh_generated_tree(UPSTREAM / 'app', app)
     for name in ('FEX', 'wine', 'dxmt', 'madeira-dock', 'madeira-d3d12', 'build', 'LICENSES', 'toolchains'):
         link = OUTPUT / name
         if not link.is_symlink() and link.exists():
@@ -466,6 +467,12 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
     run('xcrun', '--sdk', 'iphoneos', 'libtool', '-static', '-o', 'app/Madeira/libdxmt_combined.a',
         *map(str, sorted((UPSTREAM / 'build/dxmt-ios/obj').glob('*.o'))),
         *map(str, sorted((UPSTREAM / 'toolchains/llvm-ios-build/lib').glob('*.a'))))
+    # New upstream units must be present in the archives that the app links.
+    for name, required in {'libwineserver.a': 'storage_device_ios.o',
+                           'libdxmt_combined.a': 'madeira_sc_pack.o'}.items():
+        members = subprocess.check_output(['xcrun', 'ar', '-t', str(UPSTREAM / 'app/Madeira' / name)], text=True).splitlines()
+        if required not in members:
+            raise ValueError('Missing required native archive member: ' + name + '/' + required)
     run('bash', 'build/madeira-dock/build.sh', '--check')
 
 
