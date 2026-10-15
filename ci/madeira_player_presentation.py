@@ -270,7 +270,9 @@ def hardware_cursor(text):
         lastAbsolute = nil
         setMouseInUse(true)''', '''    func stickMoved() {
         lastAbsolute = nil
-        setMouseInUse(true, stick: true)''')
+        setMouseInUse(true, stick: true)
+        // The next nonzero GC delta must reclaim physical-mouse ownership.
+        motionLock.lock(); mouseInUseMirror = false; motionLock.unlock()''')
     text = replace(text, 'let on = mouseInUse && (currentRoute == .relative || lastAbsolute == nil)',
                    'let on = (mouseInUse && (currentRoute == .relative || lastAbsolute == nil)) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let visible = mouseInUse && mouseFocused && cursorState.shown != 0',

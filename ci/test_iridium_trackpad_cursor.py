@@ -23,7 +23,9 @@ class TrackpadCursorTests(unittest.TestCase):
         actual='\n'.join(block(source,a) for a in ('    private var iridiumTrackpadActive:',
             '    private var iridiumStickCursorActive:', '    private func updateTracking()',
             '    private func renderCursor()', '    private func updateFocusTimer()',
-            '    private func setMouseInUse(', '    func stickMoved()', '    private func evaluateFocus('))
+            '    private func setMouseInUse(', '    func stickMoved()', '    private func evaluateFocus(', '    private func moved('))
+        callback=block(source, '        m.mouseMovedHandler =')
+        policy='\n'.join(block(source,a) for a in ['enum PointerRoute:', 'enum PointerPolicy {'])
         code=r'''import Foundation
 import CoreGraphics
 enum IridiumTouchMouseMode {case off,trackpad,direct;static var mode=Self.trackpad;static func current()->Self{mode}}
@@ -39,12 +41,24 @@ final class DirectCursorOverlay {
  func render(visible:Bool,x:Int32,y:Int32,fallback:Bool){self.visible=visible;self.fallback=fallback;point=(x,y)}
 }
 PROJECTION
+POINTER_POLICY
+func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
+final class GCMouseInputProbe {
+ var mouseMovedHandler: ((GCMouseInputProbe,Float,Float)->Void)?
+}
 final class Probe {
  static let enabled=true
  static let focusEnabled=true
- enum Route{case relative,absolute}
+ typealias Route=PointerRoute
  var appActive=true,directCursorLive=true,mouseInUse=false,baseFocused=true,mouseFocused=false
  var iridiumStickCursorOwned=false,mouseInUseMirror=false
+ var gcDeltaLive=false,lastGCDeltaAt=0.0,absoluteAllowed=true
+ var route=Route.relative,firstGCDeltas=0,relativeMoves=0
+ let mouseQueue=DispatchQueue(label:"cursor-test.mouse")
+ func logRaw(_ path:String,_ dx:Double,_ dy:Double){};func noteDelivery(_ now:Double){}
+ func postMotion(_ dx:Double,_ dy:Double){relativeMoves+=1}
+ func firstGCDelta(){firstGCDeltas+=1}
+ func installGCMovement(_ m:GCMouseInputProbe) { GC_MOVEMENT_CALLBACK }
  // The exact pin initializes iPad hover this way, before any pointer enters.
  var hoverSeen=true,pointerOver=false,pointerLocked=false,keyboardFocused=false,diagnostics=false
  var clickFocus=(onGame:true,unused:false)
@@ -58,7 +72,12 @@ final class Probe {
  func installTouchObserver(){};func typingElsewhere()->Bool{false}
  func computeBaseFocus()->Bool {appActive && LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch && !TouchControlsModel.shared.editing && !IridiumConsoleSession.shared.isActive}
  func syncKeys(){};func syncButtons(){};func log(_ text:String){}
- func updateRoute(){};func updateAutoLock(){}
+ func updateRoute(){
+  currentRoute=PointerPolicy.route(focused:mouseFocused,hover:hoverSeen,locked:pointerLocked,
+    cursorShown:cursorState.shown != 0,absoluteAllowed:absoluteAllowed)
+  motionLock.lock();route=currentRoute;motionLock.unlock()
+ }
+ func updateAutoLock(){}
  ACTUAL
 }
 let p=Probe(),overlay=DirectCursorOverlay.shared
@@ -103,6 +122,27 @@ for mode in [IridiumTouchMouseMode.off,.direct] {
 }
 IridiumTouchMouseMode.mode = .trackpad;p.cursorState.shown=0;p.setMouseInUse(false)
 precondition(!p.iridiumStickCursorOwned && overlay.visible && overlay.fallback,"accepted touch clears controller ownership")
+// Install the exact GCMouse mouseMovedHandler closure and execute the actual
+// moved() path on its mouse queue, including its first/wake main-thread hop.
+let gc=GCMouseInputProbe();p.installGCMovement(gc)
+func waitForMain(_ condition:()->Bool) {
+ let deadline=Date(timeIntervalSinceNow:2)
+ while !condition() && Date()<deadline {RunLoop.main.run(until:Date(timeIntervalSinceNow:0.01))}
+ precondition(condition(),"GC callback must transfer ownership through the main-thread hop")
+}
+func gcMotion(_ dx:Float,_ dy:Float) {p.mouseQueue.sync{gc.mouseMovedHandler?(gc,dx,dy)}}
+p.absoluteAllowed=false;p.pointerOver=true;p.cursorState.shown=1;p.evaluateFocus("relative GC pointer")
+precondition(p.currentRoute == .relative,"MADEIRA_POINTER_ABSOLUTE=0 uses the real relative-route policy")
+gcMotion(3,4);waitForMain{p.mouseInUse};precondition(p.firstGCDeltas==1 && p.mouseInUseMirror && !p.iridiumStickCursorOwned)
+p.stickMoved();precondition(p.iridiumStickCursorOwned)
+gcMotion(0,0);precondition(p.iridiumStickCursorOwned,"zero motion does not take ownership")
+let movesBefore=p.relativeMoves
+gcMotion(5,6);waitForMain{!p.iridiumStickCursorOwned}
+precondition(p.firstGCDeltas==1 && p.mouseInUseMirror && p.relativeMoves==movesBefore+1,"an already-live GC mouse wakes after stick activity")
+p.pointerOver=false;p.evaluateFocus("relative GC pointer leaves")
+precondition(!p.mouseFocused && !overlay.visible,"physical hover exit cannot retain controller ownership")
+p.pointerOver=true;p.cursorState.shown=0;p.evaluateFocus("relative GC program hidden");precondition(!overlay.visible && !overlay.fallback)
+p.absoluteAllowed=true
 let guest=CGSize(width:1424,height:656),icon=CGSize(width:32,height:32)
 for host in [CGRect(x:0,y:0,width:712,height:328),CGRect(x:0,y:0,width:328,height:151.1011235955)] {
  let f=IridiumPointerProjection.frame(point:CGPoint(x:712,y:328),guest:guest,host:host,image:icon,hotspot:.zero)
@@ -111,8 +151,8 @@ for host in [CGRect(x:0,y:0,width:712,height:328),CGRect(x:0,y:0,width:328,heigh
 }
 let f=IridiumPointerProjection.frame(point:CGPoint(x:712,y:328),guest:guest,host:CGRect(x:0,y:0,width:712,height:328),image:icon,hotspot:CGPoint(x:4,y:7))
 precondition(f.origin==CGPoint(x:352,y:157),"program hotspot follows icon scale")
-print("PASS shipping cursor gates, iPad pinned focus/stick transitions, physical-mouse hidden-cursor policy, touch fallback and live projection")
-'''.replace('ACTUAL',actual).replace('PROJECTION',block((ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift').read_text(),'enum IridiumPointerProjection'))
+print("PASS shipping cursor gates, iPad pinned focus/stick transitions, real GC mouse callback after stick activity, physical hidden-cursor policy, touch fallback and live projection")
+'''.replace('ACTUAL',actual).replace('GC_MOVEMENT_CALLBACK',callback).replace('POINTER_POLICY',policy).replace('PROJECTION',block((ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift').read_text(),'enum IridiumPointerProjection'))
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);main=root/'main.swift';main.write_text(code);binary=root/'check'
             subprocess.run(['swiftc','-swift-version','5','-module-cache-path',str(root/'cache'),
