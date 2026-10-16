@@ -160,9 +160,10 @@ class PreparedRuntimeTests(unittest.TestCase):
 
     def test_reuse_skips_only_dependency_compilation(self):
         workflow = (prepared.ROOT / prepared.reuse.WORKFLOW).read_text()
-        for component in ('native', 'wine', 'windows', 'graphics', 'jit'):
-            self.assertLess(workflow.index('Retain ' + component + ' compilation'),
-                            workflow.index('Check Madeira build readiness'))
+        for component in ('madeira-native', 'madeira-windows'):
+            self.assertLess(workflow.index('Retain ' + component + ' compilation'), workflow.index('Check build prerequisites'))
         self.assertNotIn('Retain prepared runtime and source', workflow)
-        self.assertIn('python3 ci/collect-release-source.py repository', workflow)
-        self.assertIn('run: python3 ci/madeira-package.py prepare', workflow)
+        self.assertIn('python3 ci/collect-madeira-source.py', workflow)
+        app = workflow.split('      - name: Build without signing\n')[1].split('      - name:')[0]
+        self.assertNotIn('if:', app)
+        self.assertIn('run: python3 ci/madeira-frontend.py app', app)

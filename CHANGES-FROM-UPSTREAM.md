@@ -1,5 +1,111 @@
 # Changes from upstream
 
+## Shared player presentation and diagnostics
+
+Iridium's generated app adapts Madeira's existing touch control model, buttons,
+and mapping editor for console sessions, preserving its Windows input callbacks
+and storing console layouts separately. Shared menu presentation keeps runtime
+capabilities available. Touch pointer modes use viewport coordinates; configurable
+haptics trigger on press transitions. No emulator pin or native engine is changed.
+
+The generated JIT coordinator admits one enable request until its failure cleanup
+finishes. Shortcut callbacks carry a request identifier; late callbacks and open
+failures cannot finish a newer operation. Failed cleanup remains owed for later
+recovery. Start and completion cleanup remain distinct operations.
+
+The portrait shelf places title and actions beneath the header and gives covers
+available space without an empty band above them. Landscape keeps title and
+actions on one row. The Windows HUD installs its host before showing the window,
+refreshes it on activation and rotation, and uses a native 48-point menu target
+with matching accessibility bounds. That target hides while the menu is open.
+
+The console bridge records runtime steps, fresh video callbacks, changed images,
+audio and input separately and forwards bounded core log messages. These are
+liveness and presentation measurements, not proof of game progress. In-game
+Diagnostics and Settings export bounded, sanitized copies of the relevant logs;
+original logs and credential stores remain untouched. The compact library keeps
+its leading focus slot, follows the nearest cover during native scrolling, and
+truncates titles to one line. Pointer modes are explicit Trackpad/Direct settings;
+control surfaces retain touch ownership and clear held inputs on cancellation.
+
+## Multi runtime frontend boundary
+
+Original Iridium code adds an additive console library and a runtime driver
+contract. Madeira's native source stays pinned and unmodified. The generated
+app has four explicit guards at its Windows/Dock launch entry points to prevent
+overlap with a console session, and its bridging header imports the new core
+boundary. Its library view combines Madeira records with isolated console
+records. Existing Windows callbacks, settings, media and saves remain Madeira's.
+
+SameBoy's pinned Libretro C core is compiled as a separate static archive. The
+builder generates upstream replacement boot arrays and a complete private
+symbol namespace; it changes no vendored files. A generated copy of the Libretro
+adapter selects 48 kHz through `GB_set_sample_rate`, leaving the upstream Core
+and APU unchanged. The seven boot images are assembled from the pinned source
+using RGBDS 0.9.4 and stored as reviewed hexadecimal build inputs with source
+and output hashes; ordinary builds verify them without needing an assembler.
+Iridium supplies bounded
+software video/audio callbacks, joypad input, and battery/RTC save handling.
+The corresponding-source collector includes the initialized SameBoy gitlink
+and original notices along with the build generator. See `docs/multi-runtime.md`
+for validation scope, migration, recovery and currently unsupported engines.
+
+## Madeira frontend target
+
+`vendor/Madeira` is pinned to `48f976429c189f8396e23d251d8a82f43c705922`.
+Its four runtime submodules keep the exact revisions selected by that commit.
+`ci/madeira-frontend.py` generates a separate app project under `.build`.
+It replaces the root library with `iridium/apps/ios/MadeiraFrontend`, selects
+that interface at startup, and adds an X-button Play command to the library
+menu publisher. `ci/madeira_presentation.py` groups the original settings and
+game options into pages, applies a shared artwork backdrop, and organizes the
+player menu. It keeps the upstream controls, bindings and action callbacks.
+Explicit navigation-bar visibility and inline titles keep page safe areas
+stable. The player uses native glass on iOS 26 and material on older systems;
+Reduce Transparency uses an opaque surface. Close Game asks for confirmation
+before calling the original graceful close action.
+The app identity, version and icon use Iridium's values. These are the declared
+app-source hooks. The original launch, JIT provider, game surface, input, Steam, downloads,
+media, memory, and save implementations remain upstream code.
+
+The frontend adds Favorites, a horizontal cover shelf, and links to the native
+features. Its optional import copies an existing first prefix and subsequent
+game/save files into Madeira's shared prefix. It preserves original folders,
+checks path containment and conflicting files before copying, and converts
+the old artwork, title, arguments, favorites, and touch-layout records. Different
+saves with the same name stop import. Separate Wine registries are not merged.
+
+The cold native build reconstructs the missing wineserver base archive with
+the upstream compiler flags, then runs its original replacement-object script.
+It supplies an explicit arm64/generic FEX host configuration on macOS, builds
+the original allocator-hook archive, and refreshes the app's GPL and Converter
+Exception copies from the pinned root notices. LLVM 15.0.7's two Darwin checks
+also accept iOS. Newer Metal compilers use the public relaxed threadgroup atomic
+operation in a generated tessellation shader instead of the changed private
+intrinsic. The installed iPhoneOS Metal tool can compile the original macOS AIR
+command target when the macOS tool lookup is absent. These are build adapters;
+the pinned source trees remain unchanged.
+
+The frontend orchestration stages rebuilt GnuTLS, Hogweed, Nettle and GMP
+archives at the app's existing link paths and records both prefix and app
+hashes. Its ntdll adapter stops on any failed compilation before archiving or
+installation. Its i386 adapter preserves serial retries, but retries every
+selected target after bulk failure, including existing DLLs. Failed retries
+prevent installation and a new completion record. These checks adapt the pinned
+recipes in memory without changing vendored source.
+
+Native build completion is saved before packaging, with a 14-day reuse limit
+and checks for matching inputs and output archives. The local frontend builder
+also builds Madeira's untracked i386 farm with its original Wine/DXMT recipe
+and validates all three architecture farms before packaging. The i386 outputs
+use their own 14-day completion record, so a packaging repair does not repeat
+the native build. The local frontend command
+is `bash ci/build-madeira-ipa.sh`. Hosted Actions uses the same native/i386/app
+steps, retains completed components before packaging for 14 days, and collects
+matching source and notices. The app build disables Debug's separate dylib so
+its runtime libraries appear in the final executable link map. Source archives
+retain dependency revisions and can be rebuilt without Git metadata.
+
 ## Global sync setting in the consolidated v0.2.1 app
 
 Original Iridium Swift code exposes Fastsync, Madsync and Wine standard sync in
@@ -146,7 +252,7 @@ Generated artifacts, personal paths, device identifiers, and local captures were
 - Added CI recipes for Wine PE modules, ARM64EC FEX, DXMT, ANGLE, source-built GStreamer, source-built idevice/StikJIT, and the legacy userland bundle. No application runtime behavior was changed.
 - Madeira prefix generation now uses a marked temporary directory, fails on wineboot failure, waits for its server, and removes host links and registry identities before archiving.
 - The legacy Wine Linux builder enables Debian source repositories and includes Python for exact dependency-source collection.
-- StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision; compatibility remains untested.
+- StikJIT's fetched prebuilt FFI archive is excluded from linking. Its replacement is built from a documented source revision.
 - Explicit unresolved source/license items keep IPA publication blocked. No local compilation or manual IPA workflow was run.
 
 ## Corresponding-source collection (2026-09-10)
@@ -341,3 +447,130 @@ logic and D3D12 commands with platform stubs, plus the shader recipe with tool
 stubs. Swift wait coverage runs when `swiftc` is available. These checks do not
 establish Apple compilation, AIR acceptance, physical-device behavior or game
 compatibility; those require separately authorized builds and device validation.
+
+## Pinned PSP component
+
+Iridium builds the unchanged PPSSPP Libretro target as an isolated Apple dylib.
+A separate companion exposes only asynchronous boot status. Iridium owns the
+UI, import metadata, serial stepping, bounded frame/audio delivery, per-game
+memory-stick paths and teardown coordination. The initial adapter uses the IR
+interpreter and software renderer, with no native JIT or networking advertised.
+The Apple recipe, export audit, selected support assets and source receipt are
+maintained outside upstream. No PPSSPP emulation source is rewritten.
+
+Corresponding-source collection omits only the digest-verified public UWP
+signing fixture, which the iOS Libretro target does not use. Its pinned upstream
+URL, path, SHA-256 and exclusion reason are recorded in the component manifest.
+The upstream checkout is unchanged; unreviewed signing files stop collection.
+
+
+## Native PSP frontend integration
+
+The PSP source moves to published PPSSPP v1.20.4,
+`fa50bb1976065c4f8b1b47af227d367fe9771555`, with its exact selected dependency
+pins. Madeira remains `48f976429c189f8396e23d251d8a82f43c705922` and its nested
+pins. The previous Libretro/software-rendering PSP adapter is replaced in this
+frontend by the native iOS engine with FFmpeg media, OpenGL and Vulkan graphics,
+and the complete release resource tree (with the licensed atlas replacements
+below). IridiumConsolePlayer supplies the shared menu, loading presentation,
+touch controls/editor, feedback, keyboard/controller routing and diagnostic UI.
+The embedded controller is a display-only child. Its upstream touch widgets,
+loading widgets, pause screens, controller registration and keyboard ownership
+are removed by ci/ppsspp_frontend_overlay.py; this is not a hidden second UI.
+PSP firmware utility dialogs remain in the emulated game/PPGe renderer.
+
+The ABI 2 boundary samples Iridium's source-aware input queue immediately before
+sceCtrl's existing controller latch sample; no sample or emulation algorithm is
+replaced. Resizes use the same asynchronous render drain as pause/close. Native
+boot completion is distinct from renderer initialization. Engine failures and
+menu requests return to the shared Iridium session. Resolution changes and five
+save/load slots are requested from that menu and applied by the native render
+owner after resume; completion callbacks reject retired session generations.
+Callback ownership also completes policy-rejected save-state requests when
+upstream drops every callback copy without invoking it. Queued operations keep
+that ownership until completion; no timeout releases an operation still running.
+The frontend-owned AutoRun debugger preference is normalized after configuration
+load so preserved AutoRun=false cannot strand boot in an inaccessible debugger.
+Boot status reports the effective core's CPU mode through the existing event
+bridge; the shared menu does not assume the default or alter the selected mode.
+No new save format or memory-stick migration is introduced. Settings not yet
+exposed by Iridium keep their existing per-game configuration values.
+Fresh PSP settings default to OpenGL, two-times resolution and IR interpreter.
+Existing per-game settings and writable memory sticks are retained. JIT remains
+unavailable until the native PSP code allocation path is independently verified.
+No emulation Core, HLE or GPU algorithm is changed.
+
+The out-of-tree overlay adapts app entry/lifecycle, scene screen lookup, rotation,
+file/photo presentation, per-game memory-stick ownership and optional IAP guards.
+The embedded session cannot relocate its managed memory stick. Upstream
+configuration storage remains intact; interface-owned touch, debugger and
+rotation flags are overridden for the shared player. App-active/interruption
+state and user play intent jointly control resuming after asynchronous render
+drain. Explicit stop cancels a pending backend restart. Render-owner and loop
+identities reject delayed callbacks from retired or restarted controllers.
+Camera, GPS, motion and picker owners are canceled and drained before teardown;
+weak sensor delegates and ARC for the base controller remove their ownership
+cycles. Queued gamepad, photo, keyboard and platform callbacks are session scoped.
+The host supplies purpose descriptions and its application orientation mask.
+
+Renderer and UIKit teardown occurs on main. Render and sensor drains keep the
+UI run loop available until their work has stopped. NativeShutdown then runs
+synchronously on main, matching Common/System/NativeApp.h and the pinned iOS
+SceneDelegate restart path. Environment observers remain registered through a
+backend restart, and mandatory cleanup continuations remain runnable after the
+session is retired. The host has no hard UI timeout while upstream's synchronous
+NativeShutdown joins workers and saves configuration. Real UIKit/device teardown
+latency remains an acceptance requirement; a successful build or injected worker
+stall does not establish it.
+
+The builder replaces the PPSSPP MoltenVK prebuilt link input with MoltenVK 1.2.9
+from the existing locked source closure. Original source files are verified
+against their archives, upstream generated headers are prepared, and a final
+link inventory proves which static archives were used. Corresponding source
+includes all nine locked MoltenVK source archives and the build/replacement
+recipe. The binary receipt retains compiled-source, dependency, resource and
+archive hashes. Full TTF and identified PGF family grants are included. The separate UI/PSP
+atlas resource replacements are described below; combined proprietary converter
+terms remain an explicit distribution-review limit in LICENSING.md.
+
+Host regression tests exercise actual lifecycle, renderer-drain, camera,
+presentation, orientation and gamepad callback methods with platform stubs.
+They do not establish God of War loading, audio, graphics, saves or input on a
+physical iPhone. Private build success must not be described as fixing the
+reported white screen until a matching device run reaches gameplay.
+
+The separate licensed native PSP resource patch replaces only font_atlas.meta,
+font_atlas.zim, ppge_atlas.meta and ppge_atlas.zim at packaging time. It preserves
+all 4,427 UI and 4,568 unique PSP glyph lookups, historical range order, the
+UBUNTU24 font ID and four PSP image IDs/sizes/texels. Other resources and runtime
+pins/backends are unchanged. The out-of-tree host recipe compiles the upstream
+rasterizer and actual metadata/ZIM readers, adapts historical input ranges,
+initializes undefined missing records, and checks serialization against actual
+rasterizer pixels. It pads GE textures, retains icon pixels and fits two vertical
+repeat glyphs to horizontal cells. Scalar host RGBA4444 conversion avoids observed
+Clang vectorization errors. Full font input notices and a generation receipt
+accompany the resources. New corresponding source includes the locked inputs and
+omits only exact superseded upstream atlas bytes. Previously delivered personal
+IPAs and source packages remain intact. See ci/psp-atlas-host/README.md for the
+specific host adaptations, metric deltas and remaining device acceptance limits.
+
+### Native OpenGL synchronization correction
+
+The release pin remains `fa50bb1976065c4f8b1b47af227d367fe9771555`.
+`ci/ppsspp_gl_sync_overlay.py` adapts only GLRenderManager's completion protocol
+in the generated native source. An empty host drain acknowledges no GPU work.
+Each synchronous readback waits for its own completed SYNC request; publication
+and waiting share a mutex so immediate completion cannot lose its notification.
+Shutdown and skipped GL work cancel readbacks without copying GPU memory.
+Monotonic request IDs prevent an old completion from releasing a later request.
+The iOS embedding drain also waits for both the joined producer and the empty
+render queue, matching upstream's shutdown contract before pausing display.
+
+The native build audits compiler dependencies to ensure every GL translation
+unit uses the adapted class layout. Component receipts include the compiled
+translation unit, header audit and both generated source hashes. App preparation
+rejects a component built before this correction. Corresponding source retains
+the immutable upstream tree, the transformation and its deterministic race
+tests. No game-specific emulation workaround or backend switch is introduced.
+Host protocol tests do not establish that Ghost of Sparta is fixed on a phone;
+that requires a new run of the delivered patched native component.

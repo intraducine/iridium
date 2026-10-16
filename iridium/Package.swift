@@ -139,7 +139,7 @@ let package = Package(
                 "LiveContainerIntegration.swift",
                 "Views",
             ],
-            sources: ["RuntimeLogCapture.swift"]
+            sources: ["RuntimeLogCapture.swift", "RuntimeDiagnosticLogFiles.swift"]
         ),
         .testTarget(
             name: "IridiumRuntimeLogCaptureTests",

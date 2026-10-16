@@ -1,0 +1,177 @@
+{
+  "familyEvidence": "Historical PGF headers before font-name camouflage; byte-identical source generation inputs are not asserted",
+  "fontNameCamouflageCommit": "dc34bea8d4dee77629da3cbaedc83fc8c05af159",
+  "umeLicenseSource": {
+    "url": "https://deb.debian.org/debian/pool/main/f/fonts-horai-umefont/fonts-horai-umefont_670.orig.tar.xz",
+    "sha256": "49ecb8f556c2448687d27bb485009ce51b90df26bb4f0c24c9e63b170c647c81",
+    "manifestURL": "https://deb.debian.org/debian/pool/main/f/fonts-horai-umefont/fonts-horai-umefont_670-5.dsc"
+  },
+  "sourceHanLicenseSource": {
+    "url": "https://github.com/adobe-fonts/source-han-sans/blob/0b993716f6910f0c8e00f957c767ab3cf5cb7602/LICENSE.txt",
+    "sha256": "fcac737e761ec63dbfbdce11030a1780161920d80315edba9c8beff1c2bac5a2"
+  },
+  "files": {
+    "jpn0.pgf": {
+      "releaseAssetSHA256": "d363cec75fecfafd1511e370e48c748c30199c694b83a4026be34d799b192917",
+      "preCamouflageFontFamily": "Source Han Sans",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "9ab91f520b75d685aa1ed685b59a83041884c76f",
+      "historicalPGFSHA256": "59254bec7f0370424a904469e84b1068f9fa6cea355f201696e798e5888de34f",
+      "terms": "SourceHanSans-OFL.txt",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/jpn0.pgf"
+    },
+    "kr0.pgf": {
+      "releaseAssetSHA256": "6b0b3a8be9e709d6af02223d077675e1530f9879f42656377a9d8d42e2614333",
+      "preCamouflageFontFamily": "Source Han Sans",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "c8185c9d73393f5cb3e2f5c51de826e9dd618f0f",
+      "historicalPGFSHA256": "bb414a4fac24c503ff07d78aa6c8c08958ba7c518440450da4c6ac44523c2921",
+      "terms": "SourceHanSans-OFL.txt",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/kr0.pgf"
+    },
+    "ltn0.pgf": {
+      "releaseAssetSHA256": "1184f16bc89bad1fea49093806784470281af54f279b57ef0378ce33e6603870",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "fb3d98a2447747e9b3f4da1685c668f441ac580d",
+      "historicalPGFSHA256": "e4f98d7f221eb0121d385844555450224aaf89d347458df94f9ef2a529212107",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn0.pgf"
+    },
+    "ltn1.pgf": {
+      "releaseAssetSHA256": "0cb72bdce33780b78596001fdc6842c244aac06e813fddf28e3437e4db45dd5b",
+      "preCamouflageFontFamily": "Ume P Mincho",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "866bd102e242d2b39658ce87cbf564d73116e5db",
+      "historicalPGFSHA256": "3ae0732b667b60aaa7b3f204c6ba42ec3955330cc9fc48831579cf8630f50eb4",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn1.pgf"
+    },
+    "ltn2.pgf": {
+      "releaseAssetSHA256": "ecfdfc8c7f1ee367dda81ff3177af626b5bf64014315ce0c389903c40964b4bf",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "34c2268af5d39e962d57eff494c2136873f88717",
+      "historicalPGFSHA256": "eafc02b3f0e2025463f7a32e62367945eb40bc33a43a16998ca4b2d7b694f218",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn2.pgf"
+    },
+    "ltn3.pgf": {
+      "releaseAssetSHA256": "82bf8f0b60fd7e513560b29c52f6c721ade05910a144704c17f78aba298d9b08",
+      "preCamouflageFontFamily": "Ume P Mincho",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "089fb1f7218a06fb042538a4e55ec8dc0cfecff5",
+      "historicalPGFSHA256": "c33820c387b0c99e6409128b45e53015b62200fd4b862b0f1173b015be4f597d",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn3.pgf"
+    },
+    "ltn4.pgf": {
+      "releaseAssetSHA256": "250babd8a242d7eaaa84284c78d5e2273b29e61d0d8c01b65414e3248d7c1164",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "d549c698425f518a1a22b73d266d677806d944b3",
+      "historicalPGFSHA256": "4ae00e18621e20af98601813d1ac8d20c481ca1df97b11f38ef5251bd621a30c",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn4.pgf"
+    },
+    "ltn5.pgf": {
+      "releaseAssetSHA256": "e30b45662d37516c590ca070c831b44a6883587e223abd28082cb017623474f7",
+      "preCamouflageFontFamily": "Ume P Mincho",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "f15c6b73807362f03f6dcee92a7fce8d6aaea538",
+      "historicalPGFSHA256": "7ba3a04d602bf57df9c1c40ec03dc5d902a7225d3d5efa3a1fda47503e3e588b",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn5.pgf"
+    },
+    "ltn6.pgf": {
+      "releaseAssetSHA256": "a0fb14123ceb1ef81cb230cbf0688de594d0725de234a2ad710cd9b89391c7e9",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "38759d4e025b776b4a2f45375489ed0502788463",
+      "historicalPGFSHA256": "79188057278018b192a3a9ba69f230ba5234665eb66c8b4985cb2ee31138c5db",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn6.pgf"
+    },
+    "ltn7.pgf": {
+      "releaseAssetSHA256": "9a4d35eeeee93fe8b5434e8dff79dabf7bbd914ad0d6461fb60d36eb178bf2c8",
+      "preCamouflageFontFamily": "Ume P Mincho",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "64e3eedaf79b92282cbdef9f5918dbbee032b6d3",
+      "historicalPGFSHA256": "ee009e747e6d1fc41852607cf2ebb12967bb43f2a8de98be6ee70ea6a55236de",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn7.pgf"
+    },
+    "ltn8.pgf": {
+      "releaseAssetSHA256": "c8620bdd244585bbf993a82903168f6ec8464d4cbcad238d4e0ca5623c1ba3c1",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "ad4c48dd7e48f77dc2443ed3a1037255ec02807e",
+      "historicalPGFSHA256": "87e75290cace40b36fc6ee8942dc282544699b04ce58309067f1f20a65a7cd7f",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn8.pgf"
+    },
+    "ltn9.pgf": {
+      "releaseAssetSHA256": "e250f2782e0c72707ce16f73331e2604daa84c488c8b9c959e2296867c1710bf",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "f0d14f62fa319590af82ac1d97ab4cc8918a9fec",
+      "historicalPGFSHA256": "bf67c7bd1b2cec1d7735de774afd70400d2ad58d12297f1e0c999fc6cab84b8d",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn9.pgf"
+    },
+    "ltn10.pgf": {
+      "releaseAssetSHA256": "ff8fcdebca739eaa81c07caabd78b3e3eafb89cac0e68caf7aaf7a2b25514e85",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "406960c3292e06a6477d0f5056966952da5129df",
+      "historicalPGFSHA256": "50594f5eba9b1951109826d0016b801badcc7c3421084d8e096168234aa2a610",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn10.pgf"
+    },
+    "ltn11.pgf": {
+      "releaseAssetSHA256": "ebb94efd7d18143d6c6d54ae7aa5cc801d8c56dc7ca613c779cc60dc8b640a16",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "4ef50a0a428036607b8d1981a568d05e0fcb2b8d",
+      "historicalPGFSHA256": "ff3cd634fbb9e3a5e426dc7d415a6308c23943718d8984f860c71fe1bbfad13f",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn11.pgf"
+    },
+    "ltn12.pgf": {
+      "releaseAssetSHA256": "c71f3dee57b8a105a88791dd041a008adb918b14a3892a1b18ed6a63f721201a",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "5d134bab995cde7c0d3903a2863057ff764ab89e",
+      "historicalPGFSHA256": "5d1962bcf461dbf586e3657d738823203462d9feb1c67f6191ed6eac58bbc49b",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn12.pgf"
+    },
+    "ltn13.pgf": {
+      "releaseAssetSHA256": "25b0efa79cf1b6656b35356483ad2b1191626550d59b5943ed681e82b945bd73",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "6421f56420908a85a7c1964611d14bf68bb41913",
+      "historicalPGFSHA256": "f742eb3d1305efa0f33b3817ae3c164250b23c6283b654223eab60788739bb50",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn13.pgf"
+    },
+    "ltn14.pgf": {
+      "releaseAssetSHA256": "bc2c9389ac33f120b4be4fd3efc467de12fd886ec147969a4309ea270ccc1da3",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "9d099a91ec66af56d570ea60607d3c1ba9be37c1",
+      "historicalPGFSHA256": "07781f2e3f3d278a033289c77b781b007d8e34ef0ac710e64a4282cc7e4205c8",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn14.pgf"
+    },
+    "ltn15.pgf": {
+      "releaseAssetSHA256": "4ab43137ebed97d8bbec829b32d4b343f9895e0b14ec1c884c1b44dfa35d5204",
+      "preCamouflageFontFamily": "Ume Hy Gothic",
+      "historicalCommit": "0c243ee13909a1256de4be2b9d374aa6f7b46d38",
+      "historicalBlob": "63fcb1510025c4fad77c8d3ea9e64f3bc5c7fde2",
+      "historicalPGFSHA256": "0aefe7c513ea24dccdcd03d1119b08cb1175b5135df2a87458a4404295fe83db",
+      "terms": "UmeFont-LICENSE.html",
+      "sourceEvidence": "https://github.com/hrydgard/ppsspp/blob/0c243ee13909a1256de4be2b9d374aa6f7b46d38/assets/flash0/font/ltn15.pgf"
+    }
+  }
+}

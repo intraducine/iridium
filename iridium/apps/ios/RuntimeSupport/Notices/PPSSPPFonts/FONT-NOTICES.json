@@ -1,0 +1,132 @@
+{
+  "Inconsolata-Regular.ttf": {
+    "sha256": "e0267abf9d734e2b9f766f8cb7a496b552c57cdfeacfa0efdc5bfd21940ae145",
+    "embeddedNameRecords": {
+      "0": [
+        "Copyright 2006 The Inconsolata Project Authors (https://github.com/cyrealtype/Inconsolata)"
+      ],
+      "1": [
+        "Inconsolata"
+      ],
+      "8": [
+        "Raph Levien, Cyreal, Google"
+      ],
+      "9": [
+        "Raph Levien, Cyreal, Brenton Simpson"
+      ],
+      "13": [
+        "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: http://scripts.sil.org/OFL"
+      ],
+      "14": [
+        "http://scripts.sil.org/OFL"
+      ]
+    },
+    "terms": "Inconsolata-OFL.txt",
+    "termsSource": "https://github.com/googlefonts/Inconsolata/blob/fc1fc21081558b39a2db43bfd9b65bf9acb50701/OFL.txt",
+    "termsSHA256": "5d362a6f8690517fd9a5573128a081d8bbbb2f92714cf00556e08fbbe9600426"
+  },
+  "Roboto_Condensed-Bold.ttf": {
+    "sha256": "da69d6f3193e279c892451c17f7e4926aecd4aeaf7300171ddb44c70551260ca",
+    "embeddedNameRecords": {
+      "0": [
+        "Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
+      ],
+      "1": [
+        "Roboto Condensed"
+      ],
+      "8": [
+        "Google"
+      ],
+      "9": [
+        "Christian Robertson"
+      ],
+      "13": [
+        "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org"
+      ],
+      "14": [
+        "https://openfontlicense.org"
+      ]
+    },
+    "terms": "Roboto-OFL.txt",
+    "termsSource": "https://github.com/googlefonts/roboto-3-classic/blob/5166f3d07889bf7d3732fb72e09623d7e52f862b/OFL.txt",
+    "termsSHA256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41"
+  },
+  "Roboto_Condensed-Italic.ttf": {
+    "sha256": "9fe1c2390bbce960ebba517eec37659fdd1c7a59dd256da6274b5b4d88509575",
+    "embeddedNameRecords": {
+      "0": [
+        "Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
+      ],
+      "1": [
+        "Roboto Condensed"
+      ],
+      "8": [
+        "Google"
+      ],
+      "9": [
+        "Christian Robertson"
+      ],
+      "13": [
+        "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org"
+      ],
+      "14": [
+        "https://openfontlicense.org"
+      ]
+    },
+    "terms": "Roboto-OFL.txt",
+    "termsSource": "https://github.com/googlefonts/roboto-3-classic/blob/5166f3d07889bf7d3732fb72e09623d7e52f862b/OFL.txt",
+    "termsSHA256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41"
+  },
+  "Roboto_Condensed-Light.ttf": {
+    "sha256": "3f1a3f85852fafc3a198904f6efc1fce5ae1013775ac40da35bd52ec82d38e41",
+    "embeddedNameRecords": {
+      "0": [
+        "Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
+      ],
+      "1": [
+        "Roboto Condensed Light"
+      ],
+      "8": [
+        "Google"
+      ],
+      "9": [
+        "Christian Robertson"
+      ],
+      "13": [
+        "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org"
+      ],
+      "14": [
+        "https://openfontlicense.org"
+      ]
+    },
+    "terms": "Roboto-OFL.txt",
+    "termsSource": "https://github.com/googlefonts/roboto-3-classic/blob/5166f3d07889bf7d3732fb72e09623d7e52f862b/OFL.txt",
+    "termsSHA256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41"
+  },
+  "Roboto_Condensed-Regular.ttf": {
+    "sha256": "d8e6f7c5a1356d41dd82b0c00219febd21c791cc5cd1ecf8a0323cbeafe6496c",
+    "embeddedNameRecords": {
+      "0": [
+        "Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)"
+      ],
+      "1": [
+        "Roboto Condensed"
+      ],
+      "8": [
+        "Google"
+      ],
+      "9": [
+        "Christian Robertson"
+      ],
+      "13": [
+        "This Font Software is licensed under the SIL Open Font License, Version 1.1. This license is available with a FAQ at: https://openfontlicense.org"
+      ],
+      "14": [
+        "https://openfontlicense.org"
+      ]
+    },
+    "terms": "Roboto-OFL.txt",
+    "termsSource": "https://github.com/googlefonts/roboto-3-classic/blob/5166f3d07889bf7d3732fb72e09623d7e52f862b/OFL.txt",
+    "termsSHA256": "061402327a96aadb0bfb694a960ed289ecd38d383e396243831ab81feb109c41"
+  }
+}

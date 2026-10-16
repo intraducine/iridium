@@ -1,0 +1,67 @@
+{
+  "madeira": {
+    "activeCommit": "48f976429c189f8396e23d251d8a82f43c705922",
+    "activeDependencies": {
+      "FEX": "3bec2ac498bf78156ab47c0c194b0e8cb2849756",
+      "dxmt": "db546ee466ad50ec6463edb5fa183de11db43761",
+      "madeira-dock": "72558e416a390f3669457930f09a389e54f49556",
+      "wine": "257f271cfffed9f22f7987cac53bc00095d092fe"
+    },
+    "releaseCommit": "4e9d45a74294cd820120791c4b3f2b79adf4fc70",
+    "releaseDependencies": {
+      "FEX": "26859e184ad90f0e811d7f8bbd943a4b1573a2c3",
+      "dxmt": "35a4db11bd1bda380c5176a3bc6c1878f7192101",
+      "madeira-dock": "3cadfbea700e4da4b04e331dd7ef1ba633dfacef",
+      "wine": "4f5b19718f4de88ecc5cb0dc08b119497a67ba8f"
+    },
+    "releaseTag": "v0.1.3",
+    "releaseURL": "https://github.com/willfaust/Madeira/releases/tag/v0.1.3",
+    "selectedDependencyPins": {
+      "FEX": "3bec2ac498bf78156ab47c0c194b0e8cb2849756",
+      "FEX/External/fmt": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+      "FEX/External/range-v3": "ca1388fb9da8e69314dda222dc7b139ca84e092f",
+      "FEX/External/rpmalloc": "812c2b9cf4310ffacf14e6b64066e78ab0c394b5",
+      "FEX/External/unordered_dense": "3234af2c03549bc85656bfd3a86993bf1cd8aef1",
+      "FEX/External/vixl": "5f418449c48f6ca3ad37c47ec632f17a561c0580",
+      "FEX/External/xxhash": "e626a72bc2321cd320e953a0ccf1584cad60f363",
+      "FEX/Source/Common/cpp-optparse": "9f94388a339fcbb0bc95c17768eb786c85988f6e",
+      "dxmt": "db546ee466ad50ec6463edb5fa183de11db43761",
+      "dxmt/external/nvapi": "d08488fcc82eef313b0464db37d2955709691e94",
+      "dxmt/include/native/directx": "9df86f2341616ef1888ae59919feaa6d4fad693d",
+      "madeira-dock": "72558e416a390f3669457930f09a389e54f49556",
+      "wine": "257f271cfffed9f22f7987cac53bc00095d092fe"
+    },
+    "status": "deliberately retain current exact commit and nested pins; user selected preservation over v0.1.3 downgrade"
+  },
+  "ppsspp": {
+    "commit": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+    "dependencies": {
+      "SDL/macOS": "c387d93ab5910b5a6be78b4840a5bbbc452f3ac8",
+      "assets/debugger": "9776332f720c854ef26f325a0cf9e32c02115a9c",
+      "ext/OpenXR-SDK": "be392bf6949adeeabad5082aa79d12aacbda781f",
+      "ext/SPIRV-Cross": "4212eef67ed0ca048cb726a6767185504e7695e5",
+      "ext/aemu_postoffice": "530fee545c27ffb8524a8f496cbbcfdb687fe8c5",
+      "ext/armips": "a8d71f0f279eb0d30ecf6af51473b66ae0cf8e8d",
+      "ext/cpu_features": "fd4ffc1632db7b4e763bd28ffa6fc9d761cf3587",
+      "ext/discord-rpc": "963aa9f3e5ce81a4682c6ca3d136cddda614db33",
+      "ext/freetype": "063ed27f481f0bcd3962fd468e1546739d7d285a",
+      "ext/glslang": "50e0708ec3a5c16020c4f845c654b80b8edb80bd",
+      "ext/libadrenotools": "8fae8ce254dfc1344527e05301e43f37dea2df80",
+      "ext/libchdr": "8bba7745d758627258b315997a860039244cedaf",
+      "ext/lua": "7648485f14e8e5ee45e8e39b1eb4d3206dbd405a",
+      "ext/miniupnp": "27d13ca9beeb5541f5fbf11959dced03dac39972",
+      "ext/naett": "5f695cfa9fcbf30668a4d3ac4b4abf1cd89a1302",
+      "ext/nanosvg": "478dbb8f7ed11c3d9b20b3986a8ee2283f483ef7",
+      "ext/rapidjson": "73063f5002612c6bf64fe24f851cd5cc0d83eef9",
+      "ext/rcheevos": "ebfe8ca1bf944358e27200d66964fcb4e00e2487",
+      "ext/zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+      "ffmpeg": "1e3b4965632f60b1d85360261d1b9dd45444bc71",
+      "ios/MoltenVK": "0bf904d2d1d159eb95bdefcd8432eee79ee1da14",
+      "libretro/libretro-common": "76a3d54feb0ee0ce9d59b90aa24694f3782063d3",
+      "pspautotests": "4374348477b425f48f99c8fd58a853c439f78acd"
+    },
+    "releaseTag": "v1.20.4",
+    "releaseURL": "https://github.com/hrydgard/ppsspp/releases/tag/v1.20.4",
+    "tagObject": "3a31057b7e44270b4d5cef8c31b6559d51802a3b"
+  }
+}

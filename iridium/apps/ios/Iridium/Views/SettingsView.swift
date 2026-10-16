@@ -422,31 +422,10 @@ private struct StorageSettingsView: View {
 private struct DiagnosticsSettingsView: View {
     @ObservedObject var viewModel: AppViewModel
 
-    private var logURLs: [URL] {
-        guard let documents = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first else {
-            return []
-        }
-        return RuntimeDiagnosticLogFiles.existing(in: documents)
-    }
-
     var body: some View {
         List {
-            Section("Runtime Logs") {
-                if !logURLs.isEmpty {
-                    ShareLink(items: logURLs) {
-                        Label("Share Runtime Logs", systemImage: "square.and.arrow.up")
-                    }
-                    Text("Includes app and native Wine/FEX/DXMT logs, including the previous run when available. Logs may contain file paths; review before sharing.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Label("No runtime log is available yet", systemImage: "doc")
-                        .foregroundStyle(.secondary)
-                }
-            }.listRowBackground(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.06)).padding(.vertical, 2)).listRowSeparator(.hidden)
+            RuntimeDiagnosticsExportSection()
+                .listRowBackground(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.06)).padding(.vertical, 2)).listRowSeparator(.hidden)
 
             Section("Current State") {
                 MenuValue("JIT", value: viewModel.jitStatus.displayName)

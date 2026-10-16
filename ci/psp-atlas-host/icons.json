@@ -1,0 +1,47 @@
+{
+  "source": "PPSSPP/assets/ppge_atlas.zim",
+  "sourceRevision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+  "sourceSHA256": "3ab7fcf6956d0281ada94d501fc6d1cfa8fc034f139e25fed6c829f723d92a95",
+  "images": [
+    {
+      "name": "I_CROSS",
+      "size": [
+        37,
+        37
+      ],
+      "file": "I_CROSS.png",
+      "pngSHA256": "4cf6538cbb02147d1b3e1779b2e4f6eed337f1bd9f082a813312ff289593f779",
+      "rgbaSHA256": "a4e606a6646258252de66d11f2bffab321940bb7db02691816d5271afdb59c53"
+    },
+    {
+      "name": "I_CIRCLE",
+      "size": [
+        39,
+        39
+      ],
+      "file": "I_CIRCLE.png",
+      "pngSHA256": "e52625ac3c8d797657745bda585e2346d653a34c00f221ca2a1f9f8632396e88",
+      "rgbaSHA256": "b39e08e108e5a3787ff7782e2dd2e871a44f437b8a0c4a30af220d1c0fcf2fba"
+    },
+    {
+      "name": "I_SQUARE",
+      "size": [
+        35,
+        35
+      ],
+      "file": "I_SQUARE.png",
+      "pngSHA256": "2d2fa6a50a60b334cd9398214cc5de420959bb705baeeb8ea0dc6538bbdcd851",
+      "rgbaSHA256": "4aa540e7746daf8ae993e3dca46989bf3b64c274e74dcd2042bf9d595f1378c3"
+    },
+    {
+      "name": "I_TRIANGLE",
+      "size": [
+        41,
+        35
+      ],
+      "file": "I_TRIANGLE.png",
+      "pngSHA256": "d29c79fac588aacbbb9f925818e5d2dd1bdf53ea70e49fec5cf3aee83e20f2fc",
+      "rgbaSHA256": "10de87afb7ccaf678f995beecaf1edda6ca5bb45b9f3f611b74a849d64c0a200"
+    }
+  ]
+}

@@ -159,14 +159,14 @@ class MediaTransferTests(unittest.TestCase):
 
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertIn('needs: [asset-plan, media, prefix, steam, steam_simulator]', workflow)
-        self.assertIn("needs.steam.result == 'success'", workflow)
-        self.assertIn("needs.steam_simulator.result == 'success'", workflow)
-        self.assertIn('runs-on: macos-26', workflow)
-        self.assertIn("needs.media.result == 'success'", workflow)
-        self.assertIn('--only cerbero-source', workflow)
-        self.assertIn('name: media-sdk-with-source', workflow)
-        self.assertNotIn('prepare-media-sdk.sh', (ROOT / 'ci/prepare-native-runtime.sh').read_text())
+        self.assertIn('runs-on: xcode-27', workflow)
+        self.assertIn('run: python3 ci/madeira-frontend.py native', workflow)
+        self.assertIn('name: Retain madeira-native compilation', workflow)
+        self.assertIn('retention-days: 14', workflow)
+        self.assertNotIn('prepare-media-sdk.sh', workflow)
+        builder = (ROOT / 'ci/madeira-frontend.py').read_text()
+        self.assertIn("'build/ffmpeg/build.sh'", builder)
+        self.assertIn('libavcodec.a', (ROOT / 'vendor/Madeira/app/Madeira.xcodeproj/project.pbxproj').read_text())
 
     def test_media_config_tracks_app_target_and_preserves_user_config(self):
         script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()

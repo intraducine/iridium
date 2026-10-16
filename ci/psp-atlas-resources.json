@@ -1,0 +1,436 @@
+{
+  "acceptance": "Resource loader/bounds/glyph/icon and visual proof checks only; device layout and game dialogs remain untested.",
+  "compiledUpstreamSHA256": {
+    "PPSSPP/Common/Data/Encoding/Utf8.cpp": "f7b9e63b698489efbd7403830e396aba6de225a72d8d1bbdc610fcb31c043cb4",
+    "PPSSPP/Common/Data/Format/PNGLoad.cpp": "d35b26e56f167abe2ff9b390444b50c5668dcc3b08a0a4a34eaa7faa6abc4531",
+    "PPSSPP/Common/Data/Format/ZIMLoad.cpp": "8c3ff33f0cc05ee68b1ac2e2a818913e14eed55ac9f86522e9cb887259a9f6e3",
+    "PPSSPP/Common/Data/Format/ZIMSave.cpp": "57f0255f5bef65a6f6a5207944d1800c6f34c8380875ae19b424e9e187049dde",
+    "PPSSPP/Common/Render/AtlasGen.cpp": "56f1fddc8b0dfcb64201f20ed256b88babeb715479872ec4d104d5348bed3ced",
+    "PPSSPP/Common/Render/TextureAtlas.cpp": "f3cdc9cc582667b506050711ffbd9a714d3e25afd9d70e50303e6dec3113dafc",
+    "PPSSPP/ext/freetype/builds/unix/ftsystem.c": "2a327a47653f5b5ce2d58c547dd94eeaf8da56530fc4bfa390e81b70beebebc5",
+    "PPSSPP/ext/freetype/src/autofit/autofit.c": "c47649d89d1aa06f87df27b324804e52ff3bcbdf123e2b8910d9bb2be5180711",
+    "PPSSPP/ext/freetype/src/base/ftbase.c": "ede5d8a2bf3b844591de00b263ed080fde06f2a909f7b508b308cbb465ce79ca",
+    "PPSSPP/ext/freetype/src/base/ftbbox.c": "5dbd49707bd12221637d22ef0450287d9c1bbf61e304ed57f85949fa6d4ca0a4",
+    "PPSSPP/ext/freetype/src/base/ftbdf.c": "92fbddf5b9b205c3c14964c752e7cdc5db35c98b0569981aa30550b1f5f90043",
+    "PPSSPP/ext/freetype/src/base/ftbitmap.c": "51a966c868d1a1a6f25cf79395aec236972f5ab0b6dcc58fff4fc57bb46d6430",
+    "PPSSPP/ext/freetype/src/base/ftcid.c": "bd111133a572806c35b9a3fe510455c14e05042277ddc9483c75b0817ce43f7f",
+    "PPSSPP/ext/freetype/src/base/ftdebug.c": "88dd62c8c4ba540ab1b9232a14aeefc01e1dcb9218a275be1d1c7c6afaacd789",
+    "PPSSPP/ext/freetype/src/base/ftfstype.c": "9200fdb5dc2bb5a30e73d823862d005fd2f947a3eb89d66f759b772109bb1ef4",
+    "PPSSPP/ext/freetype/src/base/ftgasp.c": "e26cfa249c10ce9e0ddff05caeeaed1566c63a1406575838533d2e8176ab6a72",
+    "PPSSPP/ext/freetype/src/base/ftglyph.c": "a818af964aee2ed723d0586c0f2b51e073715e611713f3655d70b2f1c9d03934",
+    "PPSSPP/ext/freetype/src/base/ftgxval.c": "9b60be87b047290a979571386659cef6c2a6ae33ffa7a64018d78ea2b24636c3",
+    "PPSSPP/ext/freetype/src/base/ftinit.c": "a84bd79d5364ef9aa69c619a40cbf7a27a0a2b2f75c28b680bb9eb5575097a54",
+    "PPSSPP/ext/freetype/src/base/ftmm.c": "8abd40288adc67ca599d5a4917f01484987ed2a5ed85a4c64a945c94a0773895",
+    "PPSSPP/ext/freetype/src/base/ftotval.c": "fcc21609be423715940d401d6b2a11341ca3e79fd5134b708bcd41fb7ff5fbbf",
+    "PPSSPP/ext/freetype/src/base/ftpatent.c": "38e56548a34fb2b935caf0baa7d9aedf0bf8a6c64c030a15f891430cee4373be",
+    "PPSSPP/ext/freetype/src/base/ftpfr.c": "5ddc8335814fffd8be82030ba59144332a8fbf09867b9ff11d51e0f813680a44",
+    "PPSSPP/ext/freetype/src/base/ftstroke.c": "daeec05b7c2b1139be64bff7411224d74eec31f3fa2bc1ea38d9b0aea39dd9d0",
+    "PPSSPP/ext/freetype/src/base/ftsynth.c": "cf3fe12627d0db96f7980d8a3f59bfcc4e67b8788a0a318affb6d2ef98f245cc",
+    "PPSSPP/ext/freetype/src/base/fttype1.c": "63804cbd21e99778719f694aa403f16dd8d51a01a87de81e321fccec0c3928be",
+    "PPSSPP/ext/freetype/src/base/ftwinfnt.c": "10749ed3aa7f7a53ea4375378464eb1c2e74ac7f84e82cddc18ec4e499dfd4e7",
+    "PPSSPP/ext/freetype/src/bdf/bdf.c": "053783d11562d291cd477a5f6d2e01008bb9546a994c12fd857874b637be6544",
+    "PPSSPP/ext/freetype/src/bzip2/ftbzip2.c": "4a849571ef1d23c3aa8924c9e398d7f19240a48d1500f35f86a8bf45fd17acc7",
+    "PPSSPP/ext/freetype/src/cache/ftcache.c": "c50be0704e6fa3698ca40495058d667b0aa6a28601da25cde5eddc118611a7d7",
+    "PPSSPP/ext/freetype/src/cff/cff.c": "5d4fee6be626aa452031916cf9f6401315be9f9e90161e5d002d2e30f79d9835",
+    "PPSSPP/ext/freetype/src/cid/type1cid.c": "45e939bdf84c7878da1a5c0d9e48c61df395e93d400feca310f161555c1daf94",
+    "PPSSPP/ext/freetype/src/gzip/ftgzip.c": "ad89c2d5fd4d0284d02c40a017e097da003515c1402abac800ab986b7e0671de",
+    "PPSSPP/ext/freetype/src/lzw/ftlzw.c": "3cdce1fca9933d0fced8da1d7650c6ef1d49725c68995be29f6e98756f12ec12",
+    "PPSSPP/ext/freetype/src/pcf/pcf.c": "4700f30d4da8b290c09cc3e9c8c2623710c758536966d384d538d62f3d25a423",
+    "PPSSPP/ext/freetype/src/pfr/pfr.c": "90e7c1b097137959ad524a8a9b68690997e796ff1ec1cc02a04a47bc2f138809",
+    "PPSSPP/ext/freetype/src/psaux/psaux.c": "ce0cc349dba9aa8f8898fffba65c4f0c6b35d849eeddd4e3ae4feb0f7bd677d4",
+    "PPSSPP/ext/freetype/src/pshinter/pshinter.c": "c5ae273e7dd08f5638d43be99d78de8ed5c989e37be48209f08ad6bc605d0d10",
+    "PPSSPP/ext/freetype/src/psnames/psnames.c": "5f6a41a8b9974e6af911e5067dadb42f6d5c68da792445cac6097e428a7054bf",
+    "PPSSPP/ext/freetype/src/raster/raster.c": "d095e5b77230e35ee424e01a2059695702bb4be97902c69c7c1d9b3a61ee801d",
+    "PPSSPP/ext/freetype/src/sdf/sdf.c": "5f6a9392806be726bd6e7360565d5fbce520cd4d1c83997575113d5310242385",
+    "PPSSPP/ext/freetype/src/sfnt/sfnt.c": "1886543ae86e6abe7bf1ebfdacb4f1584f7a1107aa125ac0853980aa98bd6db4",
+    "PPSSPP/ext/freetype/src/smooth/smooth.c": "043fc244ece1da647d8cdb8544d63b7239c0a12eeabfabdb40808edddaa1abb9",
+    "PPSSPP/ext/freetype/src/svg/svg.c": "f84a258b3e3b86d86cd1379226fddc57b52a5f6356188363e7e57fbffd1e0db7",
+    "PPSSPP/ext/freetype/src/truetype/truetype.c": "b64cf3e79c5480a0eca72b6ce51b949eeaffa21d12aed4b884d87db39a86f827",
+    "PPSSPP/ext/freetype/src/type1/type1.c": "8ce11b559e621fcf031f325ec64d707149f9c73980260c753350dc423e3e8feb",
+    "PPSSPP/ext/freetype/src/type42/type42.c": "0da1751d20c002600f32f071a0d7c2656e5b6bd982610e34b62d274a4663f3f0",
+    "PPSSPP/ext/freetype/src/winfonts/winfnt.c": "c02ceb5a04e15e64763180e9c255bba9f724769483418aa57a787d48829ff17e",
+    "PPSSPP/ext/libpng17/arm/arm_init.c": "ea43acc0a88a84a0cdc0e40fb86ba666a4f12b3265b63a631acc5e2b07ecf64a",
+    "PPSSPP/ext/libpng17/arm/filter_neon_intrinsics.c": "2ee74b5710a4c5fb3e3c857d258b2819a504973afafa85a5db1956d3a580475d",
+    "PPSSPP/ext/libpng17/png.c": "195db4a458f1e662c82916176b7e318822a90d425abe1e0a4cc92bf153cfc31d",
+    "PPSSPP/ext/libpng17/pngerror.c": "7e16a966e16afd87acefc1d2a08a1f781b734a80ba9c956d1f64c204b6fd7aff",
+    "PPSSPP/ext/libpng17/pngget.c": "1215286af0f6e0cc918d2794dde0ee519e5d6b7cb562d631c667a6829d254f6c",
+    "PPSSPP/ext/libpng17/pngmem.c": "c04001bebf4c346146f25ac24ac8d9fef3db36ff99cf1deb70fb4f44285ad848",
+    "PPSSPP/ext/libpng17/pngpread.c": "7bdb5ac3a3428b2e585ffaeb9c39e1b095e6eac8d9687c25f782dc2426b42a73",
+    "PPSSPP/ext/libpng17/pngread.c": "66d15f8f722cb9b319ab0d51e36d4e31efa98cc104b3bd5954621f901e93d1bc",
+    "PPSSPP/ext/libpng17/pngrio.c": "09515f8a4d2a2fccbdd6d0884c15f955c12165a7ea25514b25d781127f716c27",
+    "PPSSPP/ext/libpng17/pngrtran.c": "c794a8b4911076f4bca3e17f219f01efc98e4492c650c3658f64902ea78e3aad",
+    "PPSSPP/ext/libpng17/pngrutil.c": "931e3e749030356922ecfebd749e0267000eb77910fcc01603c92aa122b45ef5",
+    "PPSSPP/ext/libpng17/pngset.c": "69bb57f7fd625d956b1b344c693fe27a78bdcdf4c282e5bd15fa167743103a59",
+    "PPSSPP/ext/libpng17/pngtest.c": "9d17bc2ede3d3c03f645d4909dd20ddd53bd5b618f4a93afeec38d2ad315cc7e",
+    "PPSSPP/ext/libpng17/pngtrans.c": "ecb24c91395dea6efd1fc926493c32c602d1e5c684ac6d1bbb6f980fe0d05b41",
+    "PPSSPP/ext/libpng17/pngwio.c": "aac12e774feeeda3e30c1080c5bdd935d88b4f314444881a5a7f319e3b85ca95",
+    "PPSSPP/ext/libpng17/pngwrite.c": "7964509b3ad7e903d5662d50f3bc44a8ca25209ca19345bdd83545eace3db957",
+    "PPSSPP/ext/libpng17/pngwtran.c": "ae3b1da7c0de75cbace7012f08048a96df08ed4c8648b4c184afa8c65f227fc0",
+    "PPSSPP/ext/libpng17/pngwutil.c": "21e265cd11b7bf36248d72e46d2348e975d64e4468cb0aa92c6e8e8e1d442911",
+    "PPSSPP/ext/zstd/lib/common/debug.c": "7ab1ea104acf3243fc1cd4e6d2514046f1dfc1101c7c676145c8da080e8c24ca",
+    "PPSSPP/ext/zstd/lib/common/entropy_common.c": "7dfce29c6bc807645b1f0c373dad94bbb49603b175a84e72d1739bf9df65feb8",
+    "PPSSPP/ext/zstd/lib/common/error_private.c": "3f5873b2626ca1cdf554b7ec7b04ea0ef296fd0f6882d7fad42448b7e2dbb41c",
+    "PPSSPP/ext/zstd/lib/common/fse_decompress.c": "84eba7030a036b36363a5108e760428ce549f1a833bec6464dc755f6ed51a6fb",
+    "PPSSPP/ext/zstd/lib/common/pool.c": "9431e26cf7ca46ffb878f17df31198046664d592ae208dfbe3715e82b87af79d",
+    "PPSSPP/ext/zstd/lib/common/threading.c": "50448323b46a8e1bde042ee88ec44fcfc646f3d4aeba8a06be54d26a710ed78d",
+    "PPSSPP/ext/zstd/lib/common/xxhash.c": "8444d064922f434b67b708a987981aa21dfeece735b48c82d31f7027d0ccef03",
+    "PPSSPP/ext/zstd/lib/common/zstd_common.c": "f49eb8023a90d3de925373bd9ee0d36ed46b26c529840b64220397446cd73795",
+    "PPSSPP/ext/zstd/lib/compress/fse_compress.c": "5070807a489757b87c1e1f50332b099e8ffe22971228218111eef64d3321ae82",
+    "PPSSPP/ext/zstd/lib/compress/hist.c": "1a613082642b9cabdeecd3b5929f7230cbb2f8344a28f5010f3aec12cb647ab8",
+    "PPSSPP/ext/zstd/lib/compress/huf_compress.c": "0be78471f5175e49bbacb898d8b107bb8f7e13adc84780e0625be5861f016086",
+    "PPSSPP/ext/zstd/lib/compress/zstd_compress.c": "10c315ae609d49b2fc431521aa95908086e69fd917991c5ed9a875af3d1208e8",
+    "PPSSPP/ext/zstd/lib/compress/zstd_compress_literals.c": "a8f25f1bd4c0d2d9dda3355d2103c9dfbd0b7056bfd373e29e923662bfea5596",
+    "PPSSPP/ext/zstd/lib/compress/zstd_compress_sequences.c": "3f4334c19ed770c4007bc12df4098026d4eb1a6fbebfbf36df58054e7babc3e9",
+    "PPSSPP/ext/zstd/lib/compress/zstd_compress_superblock.c": "dd62ed79ee1feec78b2e5bfc63417ccbdcda426f4220d112b0fcd8a9d0c7e667",
+    "PPSSPP/ext/zstd/lib/compress/zstd_double_fast.c": "9f6d003c2fe1208737bec685910324220424ba47d0323fa30d9d5f53c50e91da",
+    "PPSSPP/ext/zstd/lib/compress/zstd_fast.c": "8037320f321836652e73ab6cbf7b8f1f4c97cef38835ac6b4aaf0af716aa398d",
+    "PPSSPP/ext/zstd/lib/compress/zstd_lazy.c": "dd6ccf357165dc8cb574ea56a34ff1db57b7b31728b32103d0c6b72319fd45b1",
+    "PPSSPP/ext/zstd/lib/compress/zstd_ldm.c": "4a2bef3612ae4a9e15a78a55541a152091fa8ba160410db24d495bd6dd57249e",
+    "PPSSPP/ext/zstd/lib/compress/zstd_opt.c": "625936ee3fb02d789abb894c1fbc2918ee47582434094c963b630da13532c876",
+    "PPSSPP/ext/zstd/lib/compress/zstd_preSplit.c": "8d7da15de31318ebb7dfe2f2e2c79f05b0d0563dcb92d4525814d05a279d0d64",
+    "PPSSPP/ext/zstd/lib/compress/zstdmt_compress.c": "c83db699b4041bf4db89c5558db490dd295635f1eeefd60b643fbc862bbac7b5",
+    "PPSSPP/ext/zstd/lib/decompress/huf_decompress.c": "710a88d877d5dc5c83a4f839392996f337ec81cf38006c4a5be6042de5b54828",
+    "PPSSPP/ext/zstd/lib/decompress/zstd_ddict.c": "38bf812283d61f4cd1f6aea30f84b43317418257c4e6fc198b09b436bd484397",
+    "PPSSPP/ext/zstd/lib/decompress/zstd_decompress.c": "029580818b7e9cd38d9d07c63516b00ceaa943ffcfbd099fc5ccbe3628fa362f",
+    "PPSSPP/ext/zstd/lib/decompress/zstd_decompress_block.c": "9cb8bcb07aeb87e4717a9c8a86d20832dc525dde2c1b72efdaaab7c937f43b87",
+    "PPSSPP/ext/zstd/lib/dictBuilder/cover.c": "2419631b20b0f4867d0f3c178fc4a3006d05f58e8ce3ce6657133f85ed40d683",
+    "PPSSPP/ext/zstd/lib/dictBuilder/divsufsort.c": "2081acb08865f623857d2c0dcb0e79fce9489f01416528c30cfee7097915c616",
+    "PPSSPP/ext/zstd/lib/dictBuilder/fastcover.c": "0b8b511e6370e89cb257d1a4b4d8e77add5537ffb999cfe5e7e59e454c93f38f",
+    "PPSSPP/ext/zstd/lib/dictBuilder/zdict.c": "dbe57910c9d446bbf2195f31bdba5cffef2c80b93c0325e9df8c9ffa744b0aa3",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v01.c": "8f439ec4d83f13caaa4ee86d8de74660a38cade89b48bedf3943a9315b98e167",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v02.c": "ffedd2b0e4dae744b8592656050f2c56eb4c8ccad1795fb3efeceb7924808712",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v03.c": "1d69626197b9c76d28012b78fc66bcc3077bf8d796ff6f82457666d3271e7f3d",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v04.c": "a80d9591ff3fc387a05e8e075713af9ad34596dc5c8681666346a716013a6e14",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v05.c": "62170472e18505b3347e563cdb1eba439312bb53385663730ac58cd92f3c4678",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v06.c": "d2cadc9e2906fe50e9c9564bdcb291582532060fdcec9c4bc5f0ee4370182b75",
+    "PPSSPP/ext/zstd/lib/legacy/zstd_v07.c": "ae9f3c0a440b0f61d0ce44b06ee7ed3d256e10f3cb7dbbd9834d6c13625ac944"
+  },
+  "composedToolSHA256": "3e509d7bbcb172f0025f4701e726e5a493f20e7e1d520084a5b5324c778b3740",
+  "fontInputs": {
+    "fonts": {
+      "font": [
+        [
+          "Roboto_Condensed-Regular.ttf",
+          34,
+          -2
+        ],
+        [
+          "SourceHanSans-Regular.otf",
+          30,
+          0
+        ],
+        [
+          "NotoSans.ttf",
+          30,
+          0
+        ],
+        [
+          "NotoSansHebrew.ttf",
+          30,
+          0
+        ],
+        [
+          "NotoSansThai.ttf",
+          30,
+          0
+        ],
+        [
+          "NotoSansCoptic.ttf",
+          30,
+          0
+        ],
+        [
+          "NotoSansSymbols.ttf",
+          30,
+          0
+        ],
+        [
+          "NotoSansMath.ttf",
+          30,
+          0
+        ]
+      ],
+      "ppge": [
+        [
+          "SourceHanSans-Regular.otf",
+          24,
+          0
+        ],
+        [
+          "Roboto_Condensed-Regular.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSans.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSansHebrew.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSansThai.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSansCoptic.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSansSymbols.ttf",
+          24,
+          0
+        ],
+        [
+          "NotoSansMath.ttf",
+          24,
+          0
+        ]
+      ]
+    },
+    "inputs": [
+      {
+        "bytes": 145908,
+        "file": "Roboto_Condensed-Regular.ttf",
+        "license": "Roboto-OFL.txt",
+        "name": "RobotoCondensed",
+        "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+        "sha256": "d8e6f7c5a1356d41dd82b0c00219febd21c791cc5cd1ecf8a0323cbeafe6496c",
+        "source": "PPSSPP/assets/Roboto_Condensed-Regular.ttf"
+      },
+      {
+        "bytes": 569208,
+        "file": "NotoSans.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSans",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
+      },
+      {
+        "bytes": 26900,
+        "file": "NotoSansHebrew.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSansHebrew",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "a7fa16fffb27bedb060a0866267c29e9859aeb9c21cc33f5b3aaf6eb062eca85",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf"
+      },
+      {
+        "bytes": 37752,
+        "file": "NotoSansThai.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSansThai",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "404ddfb5ed0aaa6b6ec8a85700d682978992062d67da93903967b56cbd9a4acc",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansThai/NotoSansThai-Regular.ttf"
+      },
+      {
+        "archiveSHA256": "c6b77d7aabdee4ff6cc24823e3f1048c41cd5bba9df61ca59b071183ec297195",
+        "bytes": 16560052,
+        "entry": "OTF/Japanese/SourceHanSans-Regular.otf",
+        "file": "SourceHanSans-Regular.otf",
+        "license": "SourceHanSans-OFL.txt",
+        "name": "SourceHanSans",
+        "release": "2.005R",
+        "sha256": "6fe3b72967986ccdef600128752d1ade57c13c68129a548cdebe4c7d3c0f8543",
+        "url": "https://github.com/adobe-fonts/source-han-sans/releases/download/2.005R/07_SourceHanSansJ.zip"
+      },
+      {
+        "bytes": 50472,
+        "file": "NotoSansCoptic.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSansCoptic",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "7f3e5f77493cdcd27ac58a5a647572e59fd1b62496d7b998b0101846a20b727a",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansCoptic/NotoSansCoptic-Regular.ttf"
+      },
+      {
+        "bytes": 258156,
+        "file": "NotoSansSymbols.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSansSymbols",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "8f02f31959bbdf6061547a188248e13f84dc5fdd940326ec494675f453f072bb",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansSymbols/NotoSansSymbols-Regular.ttf"
+      },
+      {
+        "bytes": 590904,
+        "file": "NotoSansMath.ttf",
+        "license": "Noto-OFL.txt",
+        "name": "NotoSansMath",
+        "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+        "sha256": "80b61fd613d3519197e64fff6f7e71fdc7f3e6526440ea4115b554ef7fd59af7",
+        "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansMath/NotoSansMath-Regular.ttf"
+      }
+    ],
+    "schema": 1
+  },
+  "generationRecipeSHA256": {
+    "ci/build-ppsspp-atlases.py": "83e3cb532406417634de6767f2baa05682bdc797ff71e25a6962173792839faa",
+    "ci/ppsspp_atlas_resources.py": "3aac54652749f1b1237b77a171d15318d1d9abcc913d90150e67fd6e0971ee2b",
+    "ci/prove-ppsspp-atlases.py": "066f6f453354098f57963dde76caf1dfd2d5b74bc9f48d6b848679a95e434002"
+  },
+  "hostSourceSHA256": {
+    "ci/psp-atlas-host/CMakeLists.txt": "2154c362361f9498f1bda2cbc3bb4de7736bee561135760ba79fc113b2ab5b08",
+    "ci/psp-atlas-host/icons.json": "e2bb917da714a39b0301a2fa79222f8ffd861f15b9e74ec3fab49e2ea5c3fef0",
+    "ci/psp-atlas-host/icons/I_CIRCLE.png": "e52625ac3c8d797657745bda585e2346d653a34c00f221ca2a1f9f8632396e88",
+    "ci/psp-atlas-host/icons/I_CROSS.png": "4cf6538cbb02147d1b3e1779b2e4f6eed337f1bd9f082a813312ff289593f779",
+    "ci/psp-atlas-host/icons/I_SQUARE.png": "2d2fa6a50a60b334cd9398214cc5de420959bb705baeeb8ea0dc6538bbdcd851",
+    "ci/psp-atlas-host/icons/I_TRIANGLE.png": "d29c79fac588aacbbb9f925818e5d2dd1bdf53ea70e49fec5cf3aee83e20f2fc",
+    "ci/psp-atlas-host/io/Common/File/FileUtil.h": "6decacd0f6c2a3441d1cf6e8dc0f1caf9e81d7d3105acd001a706dc8243ad4e6",
+    "ci/psp-atlas-host/io/Common/File/Path.h": "8575fd5a3e2abf705208d10343086eaf7103337d8907d5e18f1e87eae90e8de7",
+    "ci/psp-atlas-host/io/Common/File/VFS/VFS.h": "b1e474549c2046d9032a1287201cd675e9e75ab0e895e92fdcf89b02ec0ccc3a",
+    "ci/psp-atlas-host/io/Common/Log.h": "2be75b29c9684297719fd9c7224e4b018927d4863f1a991aac3c3b88234f7b34",
+    "ci/psp-atlas-host/io/Common/StringUtils.h": "c3f897412c237551add7e17e66f69aedae824375740b21ddbdf7254bd55c779d",
+    "ci/psp-atlas-host/ranges.json": "f1f0c078bf7374845330c54ce6086c9d7c905f3be618b5d9b9669c92eac3839f",
+    "ci/psp-atlas-host/validate.cpp": "a514d2506e80d2059c55ab49775969b8d2302218eb07fcb8b23e43f5558a0fb7"
+  },
+  "loaderResults": {
+    "font": {
+      "fonts": 1,
+      "format": 0,
+      "glyphRecords": 4427,
+      "height": 2048,
+      "images": 0,
+      "width": 2048
+    },
+    "ppge": {
+      "fonts": 1,
+      "format": 1,
+      "glyphRecords": 4571,
+      "height": 2048,
+      "images": 4,
+      "width": 2048
+    }
+  },
+  "metrics": {
+    "font": {
+      "ascend": 39.9375,
+      "height": 51.5,
+      "images": [],
+      "name": "UBUNTU24",
+      "padding": -6.8203125,
+      "size": [
+        2048,
+        2048
+      ],
+      "slope": 0.75,
+      "validGlyphs": 4427
+    },
+    "ppge": {
+      "ascend": 27.6875,
+      "height": 37.5,
+      "images": [
+        {
+          "name": "I_CROSS",
+          "size": [
+            37,
+            37
+          ],
+          "uv": [
+            0.0402832031,
+            0.000244140625,
+            0.0578613281,
+            0.0178222656
+          ]
+        },
+        {
+          "name": "I_CIRCLE",
+          "size": [
+            39,
+            39
+          ],
+          "uv": [
+            0.000244140625,
+            0.000244140625,
+            0.0187988281,
+            0.0187988281
+          ]
+        },
+        {
+          "name": "I_SQUARE",
+          "size": [
+            35,
+            35
+          ],
+          "uv": [
+            0.0588378906,
+            0.000244140625,
+            0.0754394531,
+            0.0168457031
+          ]
+        },
+        {
+          "name": "I_TRIANGLE",
+          "size": [
+            41,
+            35
+          ],
+          "uv": [
+            0.0197753906,
+            0.000244140625,
+            0.0393066406,
+            0.0168457031
+          ]
+        }
+      ],
+      "name": "UBUNTU24",
+      "padding": -2.234375,
+      "size": [
+        2048,
+        2048
+      ],
+      "slope": 0.75,
+      "validGlyphs": 4568
+    }
+  },
+  "normalization": "U+3031/U+3032: one horizontal cell; advances and complete sampled glyph retained",
+  "proofSHA256": {
+    "PROOF-METRICS.json": "ec114f022b59d61df0417086d1d15c0d70d0288b2dbbdbbb992874648c20ddb1",
+    "ppge-0.6-page1.png": "1e8dcf8c726af1e2c93f8169b5515b6102a40596749fa65fb038b4fbcffd0cd7",
+    "ppge-0.6-page2.png": "5f31db293ec36cbf6f86007fd71f01278791e258030206d334aa2c2705f3b5f1",
+    "ppge-0.65-page1.png": "d3d9879a0105e0a5ae2a7c3a481c042f5e97fc2b7fcf2932a6a84bb8d21cdafd",
+    "ppge-0.65-page2.png": "7a808b1135a3bfc29f858b346f73fe6832d4bafb42722ec71c2bbecc0baa53d3",
+    "psp-icons.png": "a710d492f1b3beccfd2898a33eb9c1301f7c71cc1fe481afff4d2ef74ff69a6b",
+    "ui-14pt.png": "36e1daf1369a578b0dfb07f1301ab1061811c9f0a6b67e3503053d7516be0427",
+    "ui-17pt.png": "ab05834ba2014ec1ad656439de1e3f9db7001cf27e72288fcdd2cbc8fa0f7687",
+    "ui-22pt.png": "e79c0c5310d843771cf4a2f47ab9cd5079acb4f6ee9d0a49dcd995079e360f35",
+    "ui-28pt.png": "49f015597521c5c362e548d31d47199fb6e00c8bfb382e00db4456061c6f2489"
+  },
+  "quantizationComparedPixels": {
+    "font": 4100096,
+    "ppge": 2897920
+  },
+  "resources": {
+    "font_atlas.meta": {
+      "originalSHA256": "26a173366b420596279d69894384387e4867e66be73cedd1ee5cda5ec96a31fa",
+      "sha256": "af762f7a3e6c76f08931b6162d603ef05a3ca264bbb0f27cb4fb0f6978cf80a9"
+    },
+    "font_atlas.zim": {
+      "originalSHA256": "5929677cbfb28fd9040f6c16cf479d5ac54b205f5df180d100d3b1a210df0353",
+      "sha256": "0557328d25011922de8a106a321292008d16f3fc89b1c3f5d538f78415a82372"
+    },
+    "ppge_atlas.meta": {
+      "originalSHA256": "2eadb18c05d8f492b46c23bcbad4f4811c98cf717145536ccfe136787845f2ed",
+      "sha256": "3128b9a281baa2b93222d5127055191dc190ee96220d7bbe6025e8dcb105e81f"
+    },
+    "ppge_atlas.zim": {
+      "originalSHA256": "3ab7fcf6956d0281ada94d501fc6d1cfa8fc034f139e25fed6c829f723d92a95",
+      "sha256": "390ee428bb79e205233c1a731428a658fa494f10dd3a91e3fee9bc49d0d3be20"
+    }
+  },
+  "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+  "schema": 1,
+  "sourceRevisions": {
+    "ext/freetype": "063ed27f481f0bcd3962fd468e1546739d7d285a",
+    "ext/zstd": "f8745da6ff1ad1e7bab384bd1f9d742439278e99"
+  },
+  "toolchain": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "upstreamToolSHA256": "5f35b58baebe0d01bca92b35087eac7fe5a2b02b6064eaf41bc0960de8b8aa82"
+}

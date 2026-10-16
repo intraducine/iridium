@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Exact lifecycle methods from Iridium commit b042571950bce27117a6f0f6a83c5946f69398e1.
+- (void)setPlaying:(BOOL)playing {
+    NSAssert(NSThread.isMainThread, @"Player lifecycle belongs to the main thread");
+    if (self.pausing || (self.closing && playing)) return;
+    if (playing && !self.active) {
+        self.active = YES;
+        [self.player didBecomeActive];
+        if (g_Config.bEnableSound) iOSCoreAudioInit();
+    } else if (!playing && self.active) {
+        self.active = NO; self.pausing = YES;
+        iOSCoreAudioShutdown();
+        [self.player iridiumStopRenderLoop:^{
+            self.pausing = NO;
+            if (self.closing) [self finishClose];
+            else if (self.wantsActive) [self setPlaying:YES];
+        }];
+    }
+}
+
+- (void)closePlayer {
+    if (self.closing) return;
+    self.closing = YES;
+    [self setPlaying:NO];
+    if (!self.pausing) [self finishClose];
+}
+
+void ir_native_psp_stop(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [container closePlayer]; });
+}

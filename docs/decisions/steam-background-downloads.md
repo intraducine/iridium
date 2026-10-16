@@ -1,9 +1,9 @@
 # Steam background transfers and local Live Activity
 
-The work developed on the v0.2.2 branch is included in the consolidated v0.2.1
-preparation. The implementation and historical evidence below are retained.
+This guide describes the retained Iridium Steam downloader. The frontend app
+uses the downloader supplied by `vendor/Madeira`.
 
-The v0.2.2 implementation separates the existing native downloader into authenticated
+The retained implementation separates its native downloader into authenticated
 request planning, system-owned encrypted HTTP downloads, and permitted-runtime
 verification/assembly. Original integration code remains AGPL-3.0-only. SteamKit
 3.4.0's public `DepotChunk.Process` performs decrypt/decompress/Adler verification;

@@ -52,11 +52,16 @@ def validate_host():
         raise RuntimeError("Python 3.11 or newer is required. Install it with: brew install python")
 
 
-def build_path(root, prefix, original):
-    directories = [root / ".build/dotnet",
-                   root / "testrepos/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"]
+def build_path(root, prefix, original, *, madeira=False):
+    runtime = "vendor/Madeira" if madeira else "testrepos/Madeira"
+    cross = root / runtime / "toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin"
+    directories = [root / ".build/dotnet"]
+    if not madeira: directories.append(cross)
     directories += [prefix / "opt" / name / "bin" for name in FORMULAE]
     directories += [prefix / "bin", prefix / "sbin", Path.home() / ".cargo/bin"]
+    # Keep host clang ahead of LLVM-MinGW's unprefixed binaries. The target
+    # wrappers find their own compiler; this directory may be fetched later.
+    if madeira: directories.append(cross)
     return os.pathsep.join(dict.fromkeys([str(p) for p in directories] + original.split(os.pathsep)))
 
 
@@ -71,7 +76,7 @@ def missing_formulae(prefix, env):
     return missing
 
 
-def prepare_environment(root, *, install=True, environ=None):
+def prepare_environment(root, *, install=True, environ=None, madeira=False):
     validate_host()
     env = dict(os.environ if environ is None else environ)
     original = env.get("PATH", "")
@@ -81,7 +86,7 @@ def prepare_environment(root, *, install=True, environ=None):
     if brew is None:
         raise RuntimeError("Homebrew is required. Install Homebrew, then rerun this command; no source was changed.")
     prefix = Path(require_output([brew, "--prefix"], env))
-    env["PATH"] = build_path(root, prefix, original)
+    env["PATH"] = build_path(root, prefix, original, madeira=madeira)
 
     # Preserve build-local-ipa.sh's historical Xcode-beta default when present.
     beta = Path("/Applications/Xcode-beta.app/Contents/Developer")
@@ -102,7 +107,7 @@ def prepare_environment(root, *, install=True, environ=None):
     errors = ["Missing macOS tool: " + tool for tool in SYSTEM_TOOLS
               if shutil.which(tool, path=env["PATH"]) is None]
     steam = root / "iridium/packages/steam"
-    if (steam / "global.json").is_file():
+    if not madeira and (steam / "global.json").is_file():
         version = json.loads((steam / "global.json").read_text())["sdk"]["version"]
         try:
             actual = require_output(["dotnet", "--version"], env, cwd=steam)
@@ -163,10 +168,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-env", type=Path, required=True)
     parser.add_argument("--check", action="store_true", help="Report missing tools without installing them")
+    parser.add_argument("--madeira", action="store_true", help="Use Madeira's native app; no separate .NET Steam bridge")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     args.write_env.unlink(missing_ok=True)  # A failed preflight must not leave a usable stale environment.
-    env = prepare_environment(root, install=not args.check and os.environ.get("IRIDIUM_AUTO_INSTALL_BUILD_TOOLS", "1") != "0")
+    env = prepare_environment(root, install=not args.check and os.environ.get("IRIDIUM_AUTO_INSTALL_BUILD_TOOLS", "1") != "0", madeira=args.madeira)
     args.write_env.parent.mkdir(parents=True, exist_ok=True)
     values = {key: env[key] for key in ("PATH", "DEVELOPER_DIR") if key in env}
     args.write_env.write_text("".join("export " + key + "=" + shlex.quote(value) + "\n" for key, value in values.items()))

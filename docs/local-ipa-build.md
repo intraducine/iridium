@@ -1,76 +1,41 @@
-# Local incremental IPA builds
+# Local IPA builds
 
-From `ci/`, run:
+From the repository root:
 
 ```sh
 git pull --ff-only
-bash build-local-ipa.sh
+bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-build"
 ```
 
-From the repository root, use `bash ci/build-local-ipa.sh` instead.
+Use `git pull` only on the branch you intend to update. The build command does
+not reset source, delete saves or install the app. It builds the pinned Madeira
+app with Iridium's presentation overlay. GitHub Actions uses the same builder.
+See [build, source and replacement instructions](actions-ipa.md).
 
-The command now checks the complete local host tool set **before** downloading
-sources or changing submodules. It installs missing Homebrew tools in one
-`brew install --formula ...` invocation: CMake, Ninja, Bison, Flex, pkgconf, LLVM,
-XcodeGen, Meson, zstd and rustup. Existing working tools are reused; it does not
-run a blanket `brew upgrade`, change shell startup files, or clear build caches.
-The build exports keg-only tool paths to all child processes.
+Use an Apple Silicon Mac, Homebrew, Python 3.11 or newer, and full Xcode 27.
+Set `DEVELOPER_DIR` if you need to select a different Xcode installation.
+The tool preflight installs missing Homebrew tools, exports keg-only paths,
+and downloads the Metal toolchain only if it is missing. It does not upgrade
+all installed packages or change shell startup files.
 
-Apple Silicon macOS, Homebrew, Python 3.11+, and a full Xcode installation with
-its iPhoneOS SDK are required. Set `DEVELOPER_DIR` to select a particular Xcode;
-otherwise the existing `/Applications/Xcode-beta.app` default is retained
-when installed, followed by the active full Xcode and `/Applications/Xcode.app`. Command Line Tools alone are not
-sufficient. Metal is downloaded only when `xcrun` cannot find a working compiler.
-
-To check without installing tools:
+To check tools without installing them:
 
 ```sh
-IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0 bash ci/build-local-ipa.sh
+python3 ci/local_build_tools.py --madeira --check --write-env .build/madeira-build-tools.env
 ```
 
-A failed check reports the full missing-package set and one install command.
-Do not use this as a clean-room dependency bootstrap: the existing local runtime
-Madeira flow requires staged media/JIT/ANGLE frameworks, a prefix and a verified
-native producer record. The native rebuild updates FEX/Wine/DXMT and uses those
-staged inputs. It does not require or extract the legacy Linux userland. The
-package keeps 32-bit Windows modules for installers and retains shared bridge
-link inputs. See [the package profile](actions-ipa.md#local-incremental-app-builds).
-Installing an Actions IPA does not automatically stage development dependencies
-into a local checkout.
+The builder initializes only the needed Madeira runtime submodules. It uses
+locked LLVM 15.0.7 and LLVM-MinGW downloads, the tracked FFmpeg/crypto source
+archives, pinned FreeType, and Madeira's Cargo lockfile. It does not need the
+separate .NET Steam framework or Cerbero SDK.
 
-## Interrupted source preparation
+Native and i386 completion records live in `vendor/Madeira/.build/`. Successful
+outputs are reused for 14 days when inputs and output hashes match. App builds
+use `.build/madeira-frontend-derived/`; generated frontend source lives in
+`.build/madeira-frontend/`. Packaging failures keep these outputs. Do not delete
+them to fix a packaging problem.
 
-Git can clone multiple submodules before checking any of them out. A later
-failure can leave earlier directories containing only `.git`, without an
-index—even if HEAD already equals the required commit. Local preparation now
-materializes this specific empty state before inspecting tracked modifications.
-It does not reset a populated checkout as part of that recovery.
-
-Directories containing only headers restored from artifacts are not complete
-submodule sources. Unversioned directories at the selected gitlink paths are
-moved intact to unique locations under `.build/local-submodule-backups/` before
-Git initializes the pinned checkout. The paths are printed in the build log.
-Keep these backups until any local source edits have been reviewed.
-
-## Build output and verification
-
-Every invocation saves console output under `.build/local-build-logs/` and
-prints the path. A failure prints that path and exits without packaging an IPA.
-Packaging places the anonymous increased-memory-limit carrier on the main
-executable and verifies the sealed bundle; helper extensions remain unsigned.
-The retained `Iridium-unsigned.ipa` filename needs re-signing with a sideloading
-tool before installation. See [the signature policy](actions-ipa.md#source-and-binary-checks).
-The native-input cache and `.build/local-ipa` Xcode directory are retained.
-The existing native cache skips native compilation when its inputs match;
-this change does not replace it with unconditional native builds.
-
-Run the executable bootstrap and real-Git recovery tests without macOS tools:
-
-```sh
-python3 -m unittest discover -s ci -p 'test_local_build_tools.py'
-python3 -m unittest discover -s ci -p 'test_local_submodule_recovery.py'
-```
-
-The tests use fake Homebrew/Xcode executables and real temporary Git repositories.
-They validate setup and recovery behavior, not iOS native compilation or device
-execution. A successful Xcode build and device test remain separate requirements.
+Each run saves its full log under `.build/local-build-logs/` and prints the path.
+The output folder contains `Iridium-unsigned.ipa`, `SHA256SUMS`, and
+`ipa-signature-audit.json`. The package needs recipient signing before install.
+Its anonymous memory-limit carrier does not grant a provisioning entitlement.

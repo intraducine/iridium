@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import json
+import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = {
@@ -63,8 +64,16 @@ REQUIRED = {
 }
 
 def required_for_profile(profile):
-    if profile not in {'madeira', 'legacy'}:
+    if profile not in {'madeira', 'legacy', 'madeira-frontend'}:
         raise ValueError('Unknown runtime package profile: ' + profile)
+    if profile == 'madeira-frontend':
+        return {'Madeira frontend runtime': [
+            'vendor/Madeira/app/Madeira/' + name for name in (
+                'libwineserver.a', 'libntdll_unix.a', 'libwin32u_unix.a',
+                'libdxmt_combined.a', 'libmadeira_rppairing.a', 'libavcodec.a',
+                'libavformat.a', 'libavutil.a', 'libswresample.a',
+                'arm64ec-windows/xtajit64.dll', 'aarch64-windows/xtajit.dll',
+                'i386-windows/ntdll.dll', 'd3d12/libmetalirconverter.dylib')] }
     return {group: paths for group, paths in REQUIRED.items()
             if profile == 'legacy' or group != 'legacy runtime host and userland'}
 
@@ -75,6 +84,22 @@ def blockers(root, package=False, profile='madeira'):
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
             result.append(f"{group}: missing " + ", ".join(missing))
+    if package and profile == 'madeira-frontend':
+        output = root / '.build/ipa-output'
+        try:
+            manifest = json.loads((output / 'COMPONENT-MANIFEST.json').read_text())
+            if not manifest['binaries'] or not all(record.get('component') for record in manifest['binaries']):
+                raise ValueError('incomplete component mapping')
+            if not manifest['static_archives'] or 'vendor/Madeira' not in manifest['revisions']:
+                raise ValueError('missing source or link records')
+            expected, filename = (output / 'SOURCE-SHA256SUMS').read_text().strip().split()
+            if filename != 'Iridium-corresponding-source.tar.gz':
+                raise ValueError('unexpected source archive')
+            with (output / filename).open('rb') as stream:
+                if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
+                    raise ValueError('source checksum mismatch')
+        except (OSError, ValueError, KeyError, TypeError):
+            result.append('Matching source archive or component manifest is missing or invalid')
     records = ['binary-release-blockers.json']
     if package:
         records.append('binary-package-blockers.json')
@@ -92,7 +117,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', action='store_true')
-    parser.add_argument('--profile', choices=('madeira', 'legacy'), default='madeira')
+    parser.add_argument('--profile', choices=('madeira', 'legacy', 'madeira-frontend'), default='madeira')
     args = parser.parse_args()
     problems = blockers(ROOT, package=args.package, profile=args.profile)
     if problems:

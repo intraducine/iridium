@@ -1,349 +1,252 @@
 # Build a sideloading IPA
 
-The Madeira D3D12 runtime downloads a checksum-pinned Metal Shader Converter
-4.0 beta 2 dependency from the repository's `deps-metal-shader-converter-4.0-beta2`
-release. Local builds and hosted Actions use the same archive. No Apple account
-credentials or additional CI secrets are needed.
+Local builds and **Actions → Build sideloading IPA** build the pinned Madeira
+app with Iridium's presentation overlay. Both use `ci/madeira-frontend.py`.
+The source revision is recorded in `UPSTREAM-SOURCES.json` and in the app.
 
-The archive contains the iOS and macOS dynamic libraries, public headers,
-Apple's agreement, and the header licenses and acknowledgements. It excludes
-the installer and command-line tools. Libraries retain Apple's terms; headers
-retain Apache-2.0. The download hash is pinned in `ci/runtime-inputs.json` and
-`testrepos/Madeira/build/madeira-d3d12/deps.sh`. Extracted files are checked
-against the archive's checksum manifest before use. A damaged cache stops the
-build rather than silently omitting D3D12.
+## Local build
 
-For an offline build, set `MADEIRA_MSC_PKG` to the official Apple 4.0 beta 2
-installer. Its SHA-256 must be
-`0e7b6c83617a0b67905614579e82031d177ed49cfaacccb0aaef6ddadf19107c`.
-The build extracts it without installing it system-wide.
-
-Use **Actions → Build sideloading IPA → Run workflow**. Select the branch to build.
-For a checked local checkout, `python3 ci/dispatch-build.py` starts the workflow
-and verifies that GitHub builds the selected commit. Builds are manual; the
-source privacy check runs on pushes and pull requests.
-
-The workflow compiles the app without signing, then packaging adds the anonymous
-ad-hoc entitlement carrier described below. The `build-unsigned-ipa.yml` workflow
-filename and `Iridium-unsigned.ipa` filename are retained for compatibility.
-Packaging requires the checks in
-`ci/binary-release-blockers.json` and `ci/binary-package-blockers.json` to pass.
-A stopped packaging step does not mean that compilation failed. Inspect the
-individual steps and their logs.
-
-The IPA must be re-signed with a suitable sideloading tool before it can
-be installed. Re-sign the app and sign its helper extensions. Preserve
-`com.apple.developer.kernel.increased-memory-limit=true` on the main app and
-verify it in both the final signature and the recipient's provisioning profile.
-The carrier supplies the request to the signing tool; it does not authorize
-installation or guarantee a higher device memory allowance. JIT, game playback, audio,
-and input need separate device tests.
-
-## Build requirements
-
-Use a fresh checkout, Python 3.12 or newer, and Xcode 27. The workflow installs
-its host tools and prepares dependencies. Follow its commands for a local build;
-generate the app project with `iridium/apps/ios/stikjit.yml`.
-
-The v0.2.1 Madeira profile omits the legacy Linux runtime. The manual workflow
-does not build or download its Wine userland, host executable, or translator
-resources. The macOS jobs prepare native libraries, Wine Windows modules, FEX,
-DXMT, ANGLE, GStreamer, StikJIT/idevice, and a temporary prefix. Prefix preparation
-uses a separate build directory and does not modify player saves.
-
-Archive pins are in `ci/runtime-inputs.json`. Git dependencies use committed
-revisions. Host tools and the prefix preparation image are not fully version-locked, so the
-build does not promise byte-for-byte reproducibility.
-
-Inspect inputs and run local checks before compilation:
+Use an Apple Silicon Mac, Homebrew, Python 3.11 or newer, and full Xcode 27
+with its iPhoneOS SDK. From the repository root:
 
 ```sh
-python3 ci/fetch-runtime-inputs.py --plan
-bash ci/prepare-native-runtime.sh --plan
-python3 -B -m unittest discover -s ci -p 'test_*.py'
+bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-build"
 ```
 
-With Xcode selected, `bash ci/prepare-media-sdk.sh --preflight` checks the
-prepared Cerbero compiler configuration without compiling the full media SDK.
-Use the same isolated Python environment for media and source-package checks.
+The result is `Iridium-build/Iridium-unsigned.ipa`, its checksum, and a signature
+report. Logs stay under `.build/local-build-logs/`. The builder checks and
+installs missing host tools before it compiles. It downloads Metal only when
+the installed compiler cannot run. Set `DEVELOPER_DIR` to choose Xcode.
+See [local build details](local-ipa-build.md).
+
+The app uses Madeira's Debug configuration. Packaging strips debug symbols.
+`ENABLE_DEBUG_DYLIB=NO` puts the runtime link in the main executable so its final
+link map includes the static libraries. It does not change compiler optimization.
+The main app target has an iOS 18.0 minimum. Madeira's JIT helper retains its
+upstream iOS 26 minimum. Use external JIT on earlier versions.
+
+## GitHub Actions
+
+Builds are manual. Source checks can run on pushes and pull requests.
+Current development uses `feature/madeira-279fd0f`. Check its exact reviewed
+commit when selecting source-check results or dispatching a developer build;
+an older feature-branch run does not validate the current development tree.
+Push the reviewed commit, then use:
+
+```sh
+python3 ci/dispatch-build.py
+```
+
+The command builds the current branch and passes its full commit as
+`expected_sha`. It checks the actual dispatched commit and cancels a mismatched
+run. The workflow also checks this value before downloads or compilation.
+You can run the workflow in GitHub by selecting a branch and supplying its full
+40-character commit. Do not rerun an old commit to test a new fix.
+
+The workflow initializes the pinned Madeira, Wine, FEX, DXMT and Dock sources.
+It uses the same host setup, locked toolchain downloads, native recipes, i386
+build, overlay, app build and package tool as the local command. Steam and media
+use Madeira's implementations. FFmpeg 7.1.1 replaces the separate Cerbero SDK in
+this target. The tracked converter library comes with Madeira's Apple notice;
+no maintainer account or signing credentials are used.
 
 ## Saved build outputs
 
-Successful native, Wine, Windows, graphics, and JIT builds are uploaded before
-later packaging steps. Media outputs are also retained. A packaging
-failure does not discard these completed components.
+Successful native and i386 builds are uploaded **before** app compilation and
+packaging. Each compiler stage has its own artifact, retained for 14 days.
+Reuse requires a trusted manual producer, matching source pins and recipes,
+matching compiler/SDK details, checksums and workspace paths. The saved
+completion record also checks age and every retained output. A missing, changed
+or expired output triggers a rebuild. Reusing an artifact does not upload another
+copy or extend its lifetime. Set `reuse_assets=false` for a fresh hosted build.
+Local completion records use the same 14-day limit.
 
-Artifacts expire after seven days. Reuse does not create another copy or extend
-that lifetime. The search includes all retained artifacts, even when their build
-is older than the last 30 runs. Missing or expired artifacts trigger a rebuild. Reuse requires
-matching source inputs, build recipes, toolchain details, and archive checksums.
-Changes to shared inputs can require more than one component to rebuild.
+The native stage copies rebuilt GnuTLS, Hogweed, Nettle and GMP archives from
+their toolchain prefix into the app's linked paths. Its completion record checks
+both copies. Failed ntdll compilation stops before archiving or installing old
+objects. A failed bulk i386 build retries every selected target, including
+existing DLLs; a failed retry stops installation and completion recording.
 
-The application is built and audited after component restoration. Set
-`reuse_assets=false` and leave explicit media overrides empty to request
-a fresh build. Source collection and release checks still run when components
-are reused.
+App code and docs do not invalidate compiler outputs. In
+`ci/madeira-frontend.py`, reviewed app-staging and presentation function bodies
+are excluded from the compiler comparison. Compiler recipes, shared helpers,
+imports, globals, function signatures and command-line routing still invalidate
+both components. Unrecognized source layouts or dependencies use the stricter
+whole-file comparison. Existing completion records and provenance checks are
+unchanged, so matching retained builds can be reused without recompilation.
 
-## Source and binary checks
+## Source and package checks
 
-The source artifact contains the selected repository revision, dependency source,
-local patches, build files, and notices. Its checksum is in `SOURCE-SHA256SUMS`.
-The workflow retains this artifact and app link maps for review before IPA
-packaging. Source collection alone does not prove that every binary is covered.
+Source checks use the same Xcode 27 runner as the manual app build for Swift,
+Apple Foundation, CoreGraphics and Objective-C ARC. They initialize the pinned
+frontend and console sources and verify Swift, Clang and zstd before running the
+suite. This job tests source and host fixtures; application and IPA builds remain
+manual.
 
-The package check rejects signing files, unreviewed private-key material, device
-identifiers, missing helpers, and symlinks outside the app. Only exact reviewed
-public test-library hashes have a private-key scan exception. Vendor signatures
-are removed in a staging copy; the original build output stays intact.
+The workflow records the final app's Mach-O, PE and ELF files and its static
+link inputs. It collects the exact repository and initialized dependency
+snapshots, FreeType source, locked LLVM and runtime source archives, pairing
+crate sources, generators, build instructions and notices into
+`Iridium-corresponding-source.tar.gz`. Source collection fetches and verifies the
+pinned FreeType revision when a reused native build leaves its source checkout
+absent. Existing checkouts must match the pin and pass the source-change check
+before collection.
+`COMPONENT-MANIFEST.json` maps packaged binaries to their components and records
+source revisions and release hashes.
+Its `source_exclusions` receipt records the exact path, SHA-256, pinned upstream
+URL and reason for omitting PPSSPP's public Windows UWP signing fixture and
+unused prebuilt FFmpeg archives. The codec source is included and the native
+builder compiles it; none of those omitted archives are link inputs. The
+checkout remains unchanged, and native iOS source and required build inputs remain
+in the archive. The privacy scan accepts only the reviewed path and bytes in
+`ci/public-signing-fixtures.json`; changed or additional signing files fail both
+the scan and source collection. The unused archive manifest also requires exact
+paths and hashes; changed bytes fail exclusion. Other private-data checks remain in force.
+An unknown binary, absent runtime link map, missing source input or unresolved
+entry in the repository's build/package blocker records stops IPA upload.
 
-Only the staged main executable receives an ad-hoc signature, with the fixed
-`software.iridium` identifier and the sole boolean entitlement
-`com.apple.developer.kernel.increased-memory-limit=true`, in XML and DER. It
-contains no CMS payload, certificates, team identifier, timestamp, or identity
-entitlements. Packaging signs the app bundle without `--deep`, retaining its
-`_CodeSignature/CodeResources` seal; helpers and every other Mach-O stay unsigned.
-Runtime manifests are refreshed after signature changes, then the bundle is
-resealed if those manifests changed. The final audit checks actual artifact
-hashes without modifying sealed files.
+Retained artifacts include the IPA and signature report, the matching source
+package and checksum, and link maps with the binary inventory. Actions artifacts
+expire. For a public release, host the matching source package and required
+notices permanently beside the IPA. Follow [the release policy](releasing.md).
 
-The audit checks the embedded binary signature policy and uses strict codesign
-verification of every architecture and sealed resource. It rejects unknown
-signature formats, additional entitlements, signed nested code, and unexpected
-signature resources. The ZIP is extracted and audited again before publication;
-all bundle paths, modes, and symlink targets must survive the round trip.
-`ipa-signature-audit.json` records the delivered main executable hash, resource
-seal hash, exact entitlement, and count of unsigned native executables.
+The package removes existing signatures and puts an anonymous ad-hoc
+`com.apple.developer.kernel.increased-memory-limit=true` carrier on the main
+app. It checks the entitlement, empty CMS payload, absent team identity,
+resource seal and nested executable signatures. This carrier is a request to
+the recipient's signer, not permission to install. Re-sign the app, helper and
+frameworks with a suitable sideloading tool. Check the final provisioning
+profile and installed entitlements. JIT must be enabled before launching a game.
 
-Do not supply signing keys, provisioning profiles, pairing records, Apple account
-credentials, or private device logs to Actions. Release the IPA with matching
-source, checksums, notices, build instructions, and signing instructions. See the
-[release policy](releasing.md) and [license guide](../LICENSING.md).
+## Rebuild from the supplied source package
 
-## Rebuild and relink a modified media library
-
-The app audit artifact includes `static-inputs.json`: the archive checksum and
-linked object names for each static library referenced by the final app link
-maps. Collection runs immediately after the app build and fails if a referenced
-archive is missing. It also records each map's checksum. Keep these records with
-`binaries.json` and the corresponding source inventory. They identify build
-inputs; they do not establish license coverage or verify replacement/relinking.
-Do not use hashes collected later from changed archives as proof of an earlier
-link. ANGLE's separately built framework inputs need their own link evidence.
-
-For a pinned archive supplied as `NAME.source-archive`, restore it into a fresh
-checkout without downloading it:
-
-```sh
-python3 ci/fetch-runtime-inputs.py --only gmp \
-  --source-archive /path/to/corresponding-source/gmp.source-archive
-```
-
-The command checks the pinned checksum and refuses to overwrite changed input.
-A missing or damaged supplied archive fails without a download fallback. This
-option restores one pinned archive; it does not restore the complete source
-package, vendor trees, or host tools.
-
-Use a separate working directory. Keep the original source archive, checksums
-and test app. Do not use a player's game folder or prefix as a build directory.
-Install Xcode and host tools separately; they are not supplied in the source
-archive. Start with the exact release source and its component patches.
-
-Keep the supplied `sources` directory with the restored Cerbero tree. The cache
-restore patches use its nested Meson archives and Cargo vendor trees. Meson
-checks archive hashes; Cargo uses Cargo.lock and locked, offline dependency
-resolution. Missing inputs must fail the offline rebuild. Use a physical build
-path rather than a symlink so Autoconf does not create self-referencing links.
-
-The app links the static library at
-`iridium/apps/ios/.build/media-sdk/GStreamer.xcframework/ios-arm64/libGStreamer.a`.
-The headers come from the same slice. To test library replacement:
-
-1. Prepare the normal build inputs using the release workflow's commands. Keep
-   the prepared Cerbero tree and generated `.build/cerbero-ci.cbc` configuration.
-2. Make the library change in a Cerbero recipe patch, and rebuild the affected
-   recipe and GStreamer package using Cerbero. Keep the patch in the source
-   package. A patch to a temporary extracted source directory can be lost when
-   Cerbero extracts that source again.
-3. Export the XCFramework using the `package` and `xcframework` commands in
-   `ci/prepare-media-sdk.sh`. In this separate test checkout, replace the media
-   SDK slice with that output, including its headers. Do not restore a cached
-   media artifact over the modified output.
-4. Run `python3 ci/check-media-link.py` with the modified `libGStreamer.a` path.
-   Generate the Xcode project with `xcodegen generate --spec
-   iridium/apps/ios/stikjit.yml`, then repeat the unsigned Xcode build command
-   from the workflow using a new DerivedData directory.
-5. Inspect the app link map and library checksum to confirm the modified input
-   was linked. Run the modified code on the device with the user's signing
-   setup. Record what changed and the observed result.
-
-This is a usable replacement procedure and an optional engineering test.
-The source package must support replacement; a marker test for every library
-and a byte-identical rebuild are not general license requirements. The media
-probe confirms a link only. Record source completeness, distribution permission
-and device behavior separately.
-
-## Optional modified GMP test
-
-Run `python3 ci/dispatch-build.py --verify-lgpl-relink` to request a separate
-unsigned app build with modified GMP. The test checks the supplied GMP source
-checksum, rebuilds it with a marker in `mpn_add_n`, and checks for that marker
-in the linked MadeiraNative framework. It restores the original archive before
-packaging. Results are retained in `lgpl-relink.json` with the app audit files.
-The test covers GMP source replacement and app linking, not device execution
-or replacement of every other LGPL library.
-
-## Replace native and Windows components
-
-Run these commands from the extracted release checkout, after preparing its
-pinned dependencies and toolchains with the workflow's build steps. Use a
-separate working copy. Keep the original release files and record your changes.
-Commands below reuse configured build directories; changes to configuration or
-headers can require reconfiguration and rebuilding dependents. They do not fetch
-an old binary cache over your replacement.
-
-Set the same Xcode used by the release:
+Verify `SOURCE-SHA256SUMS`, then extract the archive:
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-export IRIDIUM_BUILD_JOBS=2
+shasum -a 256 -c SOURCE-SHA256SUMS
+tar -xzf Iridium-corresponding-source.tar.gz
+cd iridium
+bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-rebuilt"
 ```
 
-For native static libraries, use the component's recorded build command and
-replace the archive at the path recorded in `static-inputs.json`. For example,
-the Madeira Wine server recipe also stages its archive:
+The archive has all initialized runtime source trees and a `SOURCE-REVISIONS.json`
+record. The builder accepts this source layout without Git metadata. It keeps
+Apple SDKs, Xcode and host compilers external. LLVM and runtime source downloads
+are retained under `.build/runtime-downloads/`; LLVM-MinGW remains a locked
+external compiler download. Pairing's vendored Cargo sources use a relative
+configuration and remain usable after extraction.
+
+## Replace native libraries and media
+
+Build the source package once to prepare headers and tools. Edit the supplied
+library source, run its recipe, then relink the app. Native output archives go
+in `vendor/Madeira/app/Madeira/`; FEX native archives stay in `FEX/build-ios/`.
+For example:
 
 ```sh
-bash testrepos/Madeira/build/wineserver/build.sh
+source .build/madeira-build-tools.env
+bash vendor/Madeira/build/wineserver/build.sh
+bash vendor/Madeira/build/ntdll-unix/build.sh
+bash vendor/Madeira/build/win32u-unix/build.sh
+bash vendor/Madeira/build/gnutls-ios/build.sh
+cp vendor/Madeira/toolchains/gnutls-ios/lib/lib{gnutls,hogweed,nettle,gmp}.a vendor/Madeira/app/Madeira/
+bash vendor/Madeira/build/ffmpeg/build.sh --reconfigure
+python3 ci/madeira-frontend.py app
+python3 ci/package-unsigned-ipa.py \
+  .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app \
+  "$HOME/Downloads/Iridium-relinked"
 ```
 
-For Wine native media or loader changes, regenerate the media wrapper archives
-used by the final app, rather than replacing only the unused base archive:
+Run the recipes for the libraries you changed. FFmpeg uses an LGPL-only
+configuration and Apple audio/video decoders. Do not enable GPL or nonfree
+codecs without reviewing their terms. The app step copies the replacement
+archives into the generated project and relinks. It does not run the native
+cache stage or overwrite a replacement archive. Use the supplied source layout
+for source changes; a normal Git checkout rejects changes to the pinned upstream
+sources until the overlay and dependency pin are reviewed.
+
+## Replace Wine, DXMT and FEX Windows modules
+
+Keep each architecture in its own farm. Do not stage a 32-bit DLL into
+`arm64ec-windows` or `aarch64-windows`.
 
 ```sh
-sh iridium/apps/ios/Scripts/build_media_runtime.sh
+source .build/madeira-build-tools.env
+bash vendor/Madeira/build/wine-pe/build-modules.sh kernelbase shell32
+bash vendor/Madeira/build/wine-pe/build-ntdll.sh
+bash vendor/Madeira/build/fex-arm64ec/build.sh
+bash vendor/Madeira/build/fex-wow64/build.sh
+bash vendor/Madeira/build/wine-i386/build.sh
+python3 ci/madeira-frontend.py app
 ```
 
-For Wine Windows DLLs, compile and then stage with the existing architecture
-checks. Staging Wine also restores FEX and DXMT over Wine's placeholders:
+The Wine scripts stage ARM64EC modules. The FEX scripts stage `xtajit64.dll`
+under `arm64ec-windows` and `xtajit.dll` under `aarch64-windows`. The i386 recipe
+builds and stages Wine and DXMT's 32-bit modules. For 64-bit DXMT replacements,
+use the cross-build settings in `vendor/Madeira/dxmt/` and stage the rebuilt
+DLLs in the matching farm. Rebuild native DXMT with
+`vendor/Madeira/build/dxmt-ios/build.sh`; `build_native()` in
+`ci/madeira-frontend.py` shows the shader preparation and combined-archive link.
+Then run the app and package steps above. Preserve the applicable notices.
+Replacement binaries can have different checksums. Byte-identical builds,
+per-library marker tests and a separate application object kit are not required
+when the complete source and build material provide a usable relink path.
+
+
+## Replace the native PSP component
+
+The app and native component must both use ABI 2. Rebuild/relink both when changing
+the boundary; the loader rejects ABI 1 components. The shared Iridium player owns
+all frontend controls and menus. Its resolution and save-state requests apply on
+resume in the native render owner. The phone UI and God of War acceptance still
+require separate device tests; a component/app build does not establish them.
+
+The PSP engine uses the exact PPSSPP v1.20.4 source/dependency pins in its build
+receipt, upstream FFmpeg codec sources and the source-built MoltenVK closure in
+`ci/moltenvk-source-inputs.json`. Required source downloads are included under
+`.build/runtime-downloads/` in the corresponding-source archive. Apple SDKs and
+Xcode remain external prerequisites.
+
+Edit the supplied sources or the declared embedding hooks, rebuild the component,
+then run the app and package steps. With `--reuse-psp-component`, the app step validates the component receipt
+and copies it; it does not rebuild and overwrite a replacement PSP library.
 
 ```sh
-bash ci/compile-wine.sh
-bash ci/prepare-windows-runtime.sh
+python3 ci/build-ppsspp-native.py --output .build/ppsspp/iphoneos --sdk iphoneos
+python3 ci/madeira-frontend.py app --reuse-psp-component
+python3 ci/package-unsigned-ipa.py \
+  .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app \
+  .build/relinked-native-psp-ipa
 ```
 
-For FEX or DXMT changes, rebuild the Windows component stage and then stage it:
+The builder verifies expanded MoltenVK sources against the locked archives and
+records its exact final link inputs. MoltenVK source edits require updating the
+source-input manifest and hashes with the intended replacement source closure.
+FFmpeg is built from its included source with the selected LGPL codec recipe.
+The receipt records those codec configuration arguments and rebuilt archive
+hashes. Preserve all applicable GPL/LGPL/OFL/Apache and other upstream notices.
+The public-distribution review limits in LICENSING.md still apply to the combined
+app and proprietary converter interpretation; the recipe is not a determination
+of combined-work classification.
+
+Native PSP resources use the four owned atlas files identified by
+`ci/psp-atlas-resources.json`. Other upstream assets retain their exact bytes.
+The component receipt includes the atlas receipt; corresponding source includes
+all eight font inputs, full notices and the generation recipe, and omits the
+four exact superseded upstream atlas files. The source checkout remains intact.
+Generation is separate from an iOS build and requires Python 3.14, CMake, Ninja
+and a host C++ compiler:
 
 ```sh
-bash ci/compile-windows-modules.sh
-bash ci/prepare-windows-runtime.sh
+python3 ci/build-ppsspp-atlases.py --fetch --output .build/psp-atlas-review
 ```
 
-The compiler step builds FEX's `arm64ecfex` target to
-`testrepos/Madeira/FEX/build-arm64ec/Bin/libarm64ecfex.dll`, copies it to the
-retained transfer location, and staging names it `arm64ec-windows/xtajit64.dll`.
-The same step builds `wow64fex` to
-`testrepos/Madeira/FEX/build-wow64/Bin/libwow64fex.dll`; staging names it
-`aarch64-windows/xtajit.dll`. DXMT builds for aarch64, arm64ec, and i386.
-The i386 farm contains the D3D9 shim and emulated frontend; the native frontend
-is linked into the app by `ci/prepare-native-runtime.sh`. `compile-wine.sh` also
-builds Wine’s separate i386 tree. Do not copy Wine’s placeholder translator
-DLLs over either FEX translator. The staging check rejects
-that placeholder and checks the required architecture views. Prepared prefix
-and other runtime files are prerequisites; do not use a player's prefix.
-
-For GStreamer/media replacement, use the preceding Cerbero instructions to
-rebuild and export the framework. Replace the SDK slice including its headers,
-then run `build_media_runtime.sh` above when its headers or wrapper inputs change.
-
-After any replacement, generate and build the complete unsigned app:
-
-```sh
-xcodegen generate --spec iridium/apps/ios/stikjit.yml
-xcodebuild -project iridium/apps/ios/IridiumStikJIT.xcodeproj \
-  -scheme Iridium -configuration Release -destination 'generic/platform=iOS' \
-  -derivedDataPath .build/replacement-app \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-  DEVELOPMENT_TEAM= EXPANDED_CODE_SIGN_IDENTITY= \
-  PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= \
-  LD_GENERATE_MAP_FILE=YES build
-python3 ci/collect-app-link-audit.py \
-  .build/replacement-app/Build/Products/Release-iphoneos/Iridium.app \
-  .build/replacement-audit/binaries.json \
-  --link-maps .build/replacement-app/Build/Intermediates.noindex
-```
-
-Check the replacement archive or DLL hash against the new link inventory or
-bundle file, not against the original release hash. For static code, inspect
-the selected members and symbols; a marker is one optional way to do this.
-Use the recipient's own supported signing and JIT setup for device execution.
-No maintainer key is required by these unsigned build commands. Installation
-rights and runtime behavior must be assessed separately; these commands do not
-establish either. They are not a claim that all replacement variants were tested.
-
-## Local incremental app builds
-
-On an Apple Silicon Mac, with Python 3.12+, Xcode 27 and the initial runtime
-dependencies staged, run this same command for both first builds and retries:
-
-```sh
-bash ci/build-local-ipa.sh
-```
-
-The script prepares missing host tools, checks retained inputs, refreshes native
-components when their inputs or outputs changed, and stages the native Madeira
-package. It requires no Linux userland archive or extracted cache. A
-second build in the same checkout is rejected before shared files are modified.
-No manual extraction, clean build, or cache deletion is needed after a native
-refresh.
-
-The local build targets iOS 18. Its media link check rejects a retained SDK
-whose linked objects require a newer iOS version. Restore or rebuild the media
-SDK from the current source revision if that check fails. Xcode beta is selected
-by default; set `DEVELOPER_DIR` to select another suitable full Xcode installation.
-`IRIDIUM_AUTO_INSTALL_BUILD_TOOLS=0` reports missing host tools without installing
-them. Keep the existing source trees, compiler build directories and
-`.build/local-ipa` to retain incremental compilation.
-
-Native reuse checks committed and working-tree source inputs, compiler recipes,
-toolchain identity, staged input bytes and the presence/metadata of native
-outputs. A rebuild invalidates its success record before it starts. Failed or
-interrupted refreshes are retried; only validated completed outputs receive a
-new success record. The original retained-producer revision stays separate from
-the native producer record. Changing media, prefix, ANGLE or JIT producer inputs
-requires matching component inputs from the procedures above; the native refresh
-does not silently relabel these old binaries as newly built.
-
-`madeira.yml` and `stikjit.yml` select `IRIDIUM_RUNTIME_PROFILE=madeira`.
-`IRIDIUM_RUNTIME=legacy` cannot switch these apps to an absent Linux runtime.
-Xcode stages native Wine modules, the clean prefix, media/controller resources,
-and the shared ANGLE frameworks. The aggregate finalizer removes old Linux
-resources and the SwiftPM fallback after its resource copy. Packaging independently
-requires the native inventory and rejects leftover legacy resources. Incremental
-builds from the older package therefore receive the same resource layout.
-
-The runtime SDK still references the embedded FEX and Wine server bridge archives,
-so their link inputs and source notices remain. Both `aarch64-windows` and
-`i386-windows` remain; a 64-bit game may use a 32-bit installer. No framework or
-media-library size saving is assumed. Legacy source, SDK bundle recipes, and their
-historical notices remain available to developers using the base `project.yml`.
-The normal source archive retains all checkout and linked-dependency source; it
-no longer demands Debian sources solely for the omitted Linux userland.
-
-The measured v0.2.0 IPA is 399,916,792 compressed bytes. Its extracted Linux
-userland contributes 156,769,339 compressed bytes. Subtracting that component gives
-243,147,453 bytes (about 243 MB), an arithmetic estimate rather than a measured
-v0.2.1 IPA size. ZIP overhead, changed code and other resources can change the
-result. Measure a fresh v0.2.1 artifact before publishing a size claim.
-
-Logs are kept in `.build/local-build-logs`. Successful package audits produce a
-new `.build/local-ipa-output.XXXXXX/Iridium-unsigned.ipa` and its checksum. Earlier
-IPAs remain intact. Rerun the same build command after fixing an error; completed
-native compiler outputs remain cached even when Xcode or packaging fails.
-
-A missing initial media/prefix/graphics/JIT input is reported with its
-path before native compilation. A fresh checkout still needs the initial
-cross-platform dependencies described above. This command does not download a
-complete runtime from an unspecified Actions run, use an Apple signing identity, trigger Actions,
-or bypass source/license/package checks. Keep matching source and notices for
-any IPA distributed. Successful source tests do not prove an Xcode build or
-device compatibility.
+Use a fresh output directory. Review its receipt, parser checks, metrics and
+actual-size multilingual PNG proofs before copying the four outputs into
+RuntimeSupport/PPSSPPAtlases and the receipt into ci/psp-atlas-resources.json.
+Both atlas textures remain 2048x2048 with their original pixel formats. The
+replacement keeps all existing glyph lookups and image IDs/sizes/texels.
+The horizontal line heights are 51.5 UI pixels (previously 49) and 37.5 PSP
+pixels (previously 37.4375); verify actual UI wrapping and game dialogs on device.
+The resource patch does not alter runtime pins, backends, saves, input or media.
+It does not replace an already delivered personal IPA or establish GOW loading.
