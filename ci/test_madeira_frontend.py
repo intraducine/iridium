@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 import madeira_presentation
 import madeira_jit_lifecycle
+import build_source_identity as provenance
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('madeira_frontend', ROOT / 'ci/madeira-frontend.py')
@@ -19,6 +20,29 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_build_generated_root_revision_and_archive_fallback(self):
+        head, sameboy = 'a' * 40, 'b' * 40
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            shutil.copy2(ROOT / 'UPSTREAM-SOURCES.json', root / 'UPSTREAM-SOURCES.json')
+            with patch.object(provenance.subprocess, 'check_output') as git:
+                self.assertEqual(provenance.source_identity(root, BUILD.PSP_REVISION)['IridiumRootRevision'], 'Unknown')
+                git.assert_not_called()  # A surrounding checkout cannot identify an extracted source tree.
+                for payload in ({'.': head, 'vendor/SameBoy': sameboy}, {'.': 'bad'}, []):
+                    (root / 'SOURCE-REVISIONS.json').write_text(json.dumps(payload))
+                    result = provenance.source_identity(root, BUILD.PSP_REVISION)
+                    self.assertEqual(result['IridiumRootRevision'], head if isinstance(payload, dict) and payload.get('.') == head else 'Unknown')
+                (root / 'SOURCE-REVISIONS.json').write_text(json.dumps({'.': head, 'vendor/SameBoy': sameboy}))
+                self.assertEqual(provenance.source_identity(root, BUILD.PSP_REVISION)['IridiumRuntimeRevisions']['SameBoy'], sameboy)
+            (root / '.git').write_text('worktree marker')
+            for dirty in ('', ' M ci/madeira-frontend.py'):
+                with patch.object(BUILD.subprocess, 'check_output', side_effect=[head, dirty, sameboy]):
+                    result = provenance.source_identity(root, BUILD.PSP_REVISION)
+                self.assertEqual(result['IridiumRootRevision'], head)
+                self.assertEqual(result['IridiumSourceState'], 'Local changes' if dirty else 'Committed source')
+            with patch.object(BUILD.subprocess, 'check_output', side_effect=OSError('Git unavailable')):
+                self.assertEqual(provenance.source_identity(root, BUILD.PSP_REVISION)['IridiumRootRevision'], 'Unknown')
+
     def test_bundle_rejects_missing_platform_purpose_descriptions(self):
         with tempfile.TemporaryDirectory() as folder:
             app = pathlib.Path(folder)

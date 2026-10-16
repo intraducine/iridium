@@ -221,6 +221,8 @@ def prepare():
     data['CFBundleDisplayName'] = 'Iridium'
     data['IridiumMadeiraRevision'] = REVISION
     data['IridiumPPSSPPRevision'] = PSP_REVISION
+    from build_source_identity import source_identity
+    data.update(source_identity(ROOT, PSP_REVISION))
     data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
     icon = ROOT / 'iridium/apps/ios/Iridium/Assets.xcassets/AppIcon.appiconset'

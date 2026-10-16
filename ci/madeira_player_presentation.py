@@ -247,6 +247,7 @@ def hardware_cursor(text):
     # Trackpad never invents an independent cursor from accumulated deltas.
     text = replace(text, '    private var mouseInUse = false', '''    private var mouseInUse = false
     private var iridiumStickCursorOwned = false
+    private var iridiumPointerReport = ""
     private var iridiumTrackpadActive: Bool {
         appActive && !mouseInUse && IridiumTouchMouseMode.current() == .trackpad && TouchMouseGate.mode != .off &&
             LibraryModel.shared.current != nil && !LibraryModel.shared.blocksGameplayTouch &&
@@ -276,19 +277,30 @@ def hardware_cursor(text):
     text = replace(text, 'let on = mouseInUse && (currentRoute == .relative || lastAbsolute == nil)',
                    'let on = (mouseInUse && (currentRoute == .relative || lastAbsolute == nil)) || (iridiumTrackpadActive && baseFocused)')
     text = replace(text, 'let visible = mouseInUse && mouseFocused && cursorState.shown != 0',
-                   'let visible = (mouseInUse && (mouseFocused || iridiumStickCursorActive) && cursorState.shown != 0) || (iridiumTrackpadActive && baseFocused)')
+                   'let visible = cursorState.shown != 0 && ((mouseInUse && (mouseFocused || iridiumStickCursorActive)) || (iridiumTrackpadActive && baseFocused))')
     text = replace(text, 'let pos = lastAbsolute ?? (x: cursorState.x, y: cursorState.y)',
                    'let pos = iridiumTrackpadActive ? (x: cursorState.x, y: cursorState.y) : (lastAbsolute ?? (x: cursorState.x, y: cursorState.y))')
     text = replace(text, 'DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y)',
-                   'DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y, fallback: iridiumTrackpadActive && cursorState.shown == 0)')
+                   '''let fallback = iridiumTrackpadActive && cursorState.shown != 0 && !DirectCursorOverlay.shared.hasVisibleImage
+        let report = "mode=\\(IridiumTouchMouseMode.current().rawValue) trackpad=\\(iridiumTrackpadActive) base=\\(baseFocused) hardware=\\(mouseInUse) shown=\\(cursorState.shown) image=\\(DirectCursorOverlay.shared.hasVisibleImage) visible=\\(visible) fallback=\\(fallback)"
+        if report != iridiumPointerReport {
+            iridiumPointerReport = report
+            log("Iridium pointer " + report)
+        }
+        DirectCursorOverlay.shared.render(visible: visible, x: pos.x, y: pos.y, fallback: fallback)''')
     text = replace(text, '(keyboardConnected || mouseConnected || PadStickMouse.shared.controllerConnected)',
                    '(keyboardConnected || mouseConnected || PadStickMouse.shared.controllerConnected || iridiumTrackpadActive)')
     text = replace(text, '    private var serial: UInt32 = 0',
-                   '    private var serial: UInt32 = 0\n    private var programImage: CGImage?\n    private static let arrowImage = arrow()')
+                   '    private var serial: UInt32 = 0\n    private var programImage: CGImage?\n    private(set) var hasVisibleImage = false\n    private static let arrowImage = arrow()')
     text = replace(text, '        serial = s\n        let w = Int(image.w), h = Int(image.h)',
                    '        let w = Int(image.w), h = Int(image.h)\n        guard w > 0, h > 0, w <= Int(WINIOS_CURSOR_MAX), h <= Int(WINIOS_CURSOR_MAX) else { return }')
     text = replace(text, '        ensureLayer().contents = cg',
-                   '        serial = s\n        programImage = cg\n        ensureLayer().contents = cg')
+                   '''        serial = s
+        programImage = cg
+        // A blank Windows cursor can be reported as shown. Explicit trackpad
+        // mode still needs feedback; physical mice retain program visibility.
+        hasVisibleImage = stride(from: 3, to: w * h * 4, by: 4).contains { buffer[$0] != 0 }
+        ensureLayer().contents = cg''')
     start = text.index('    func render(visible: Bool, x: Int32, y: Int32) {', text.index('final class DirectCursorOverlay'))
     end = text.index('\n    private func ensureLayer()', start)
     text = text[:start] + '''    func render(visible: Bool, x: Int32, y: Int32, fallback: Bool = false) {

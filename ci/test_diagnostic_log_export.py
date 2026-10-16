@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import madeira_presentation
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift"
@@ -177,8 +178,10 @@ class DiagnosticLogExportTests(unittest.TestCase):
         self.assertIn("RuntimeDiagnosticsExportSection()", diagnostics)
         self.assertNotIn("ShareLink", diagnostics)
         self.assertNotIn("LogStore.shared", diagnostics)
-        shipping = (ROOT / "ci/madeira_presentation.py").read_text()
-        self.assertIn("setting('Diagnostics', 'RuntimeDiagnosticsExportSection()')", shipping)
+        shipping = madeira_presentation.library((ROOT / "vendor/Madeira/app/Madeira/Library.swift").read_text())
+        destination = shipping.split('case "Diagnostics":', 1)[1].split('case "Credits":', 1)[0]
+        self.assertIn("RuntimeDiagnosticsExportSection()", destination)
+        self.assertIn("IridiumDiagnosticsSections()", destination)
         view = (ROOT / "iridium/apps/ios/RuntimeSupport/IridiumDiagnosticsView.swift").read_text()
         self.assertIn("RuntimeDiagnosticLogFiles.export(in: documents)", view)
         self.assertIn("Task.detached(priority: .utility)", view)

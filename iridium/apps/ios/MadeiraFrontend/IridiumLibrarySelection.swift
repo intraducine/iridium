@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import Foundation
+import Observation
 
 /// Native scrolling owns geometry until momentum settles. Focus navigation
 /// requests a scroll explicitly; observing a scroll never requests another one.
@@ -126,22 +127,44 @@ enum IridiumLibraryOrder {
 }
 
 /// One local reorder owns its payload until a completed or cancelled drag ends.
-final class IridiumLibraryDragSession {
+@Observable final class IridiumLibraryDragSession {
     struct Payload: Equatable {
         let gameID: UUID
         let token: UUID
     }
-    private(set) var active: Payload?
+    @ObservationIgnored private(set) var active: Payload?
+    struct Insertion: Equatable { let beforeID: UUID? }
+    private(set) var insertion: Insertion?
     func begin(_ id: UUID) -> Payload {
         let payload = Payload(gameID: id, token: UUID())
         active = payload
+        if insertion != nil { insertion = nil }
         return payload
+    }
+    /// Both edges of a gap name the same slot, excluding the lifted card.
+    @discardableResult func preview(target: UUID, after: Bool, in ids: [UUID]) -> Bool {
+        guard let active, ids.contains(active.gameID), ids.contains(target) else { return false }
+        let remaining = ids.filter { $0 != active.gameID }
+        let next: Insertion
+        if target == active.gameID {
+            let following = ids.drop(while: { $0 != target }).dropFirst().first
+            next = Insertion(beforeID: following)
+        } else {
+            guard let index = remaining.firstIndex(of: target) else { return false }
+            next = Insertion(beforeID: after ? remaining.dropFirst(index + 1).first : target)
+        }
+        guard insertion != next else { return false }
+        insertion = next
+        return true
     }
     func accepts(context: Payload?, item: Payload?, local: Bool, privateType: Bool) -> Bool {
         local && privateType && active != nil && context == active && item == active
     }
     func end(_ payload: Payload?) {
-        if let payload, payload == active { active = nil }
+        if let payload, payload == active {
+            active = nil
+            if insertion != nil { insertion = nil }
+        }
     }
 }
 
@@ -155,7 +178,9 @@ struct IridiumLibraryReorderCard<Content: View>: UIViewControllerRepresentable {
     static var typeIdentifier: String { "org.iridium.library-reorder" }
     let id: UUID
     let session: IridiumLibraryDragSession
+    let order: [UUID]
     let commit: (UUID, UUID, Bool) -> Void
+    var feedbackEnabled = true
     var trace: (String) -> Void = { _ in }
     @ViewBuilder var content: () -> Content
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -190,6 +215,7 @@ struct IridiumLibraryReorderCard<Content: View>: UIViewControllerRepresentable {
     final class Coordinator: NSObject, UIDragInteractionDelegate, UIDropInteractionDelegate {
         var parent: IridiumLibraryReorderCard
         var payload: IridiumLibraryDragSession.Payload?
+        private let feedback = UISelectionFeedbackGenerator()
         init(_ parent: IridiumLibraryReorderCard) { self.parent = parent }
         func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: any UIDragSession) -> [UIDragItem] {
             // UIKit can request providers repeatedly for the same session.
@@ -205,6 +231,7 @@ struct IridiumLibraryReorderCard<Content: View>: UIViewControllerRepresentable {
             let item = UIDragItem(itemProvider: provider)
             item.localObject = value
             parent.trace("begin")
+            feedback.prepare()
             return [item]
         }
         func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: any UIDragSession) -> Bool { true }
@@ -225,7 +252,15 @@ struct IridiumLibraryReorderCard<Content: View>: UIViewControllerRepresentable {
             acceptedPayload(session) != nil
         }
         func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: any UIDropSession) -> UIDropProposal {
-            UIDropProposal(operation: session.allowsMoveOperation && acceptedPayload(session) != nil ? .move : .cancel)
+            guard session.allowsMoveOperation, acceptedPayload(session) != nil, let view = interaction.view else {
+                return UIDropProposal(operation: .cancel)
+            }
+            if parent.session.preview(target: parent.id, after: session.location(in: view).x > view.bounds.midX, in: parent.order) {
+                if parent.feedbackEnabled { feedback.selectionChanged() }
+                feedback.prepare()
+                parent.trace("slot")
+            }
+            return UIDropProposal(operation: .move)
         }
         func dropInteraction(_ interaction: UIDropInteraction, performDrop session: any UIDropSession) {
             guard session.allowsMoveOperation, let value = acceptedPayload(session), let view = interaction.view else { return }

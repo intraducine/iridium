@@ -105,8 +105,25 @@ def library(text):
     madeira_link = setting('Madeira', 'Section { ' + '\n'.join(madeira_links) + ' }')
     psp_link = setting('PPSSPP', 'IridiumSystemGameSettings(platform: .psp, focus: iridiumGuided ? iridiumFocus : nil)')
     gb_link = setting('Game Boy', 'IridiumSystemGameSettings(platform: .gameBoy, focus: iridiumGuided ? iridiumFocus : nil)')
-    diagnostics_link = setting('Diagnostics', 'RuntimeDiagnosticsExportSection()')
-    credits_link = setting('Credits', credits)
+    diagnostics_link = setting('Diagnostics', 'IridiumDiagnosticsSections()\nRuntimeDiagnosticsExportSection()')
+    contributors = between(credits, '                    MadeiraCredit', '\n                } header:')
+    thanks = credits[credits.index(' footer:'):]
+    credits = '''Section {
+        Link("intraducine/iridium", destination: URL(string: "https://github.com/intraducine/iridium")!)
+    } header: { Text("Iridium") } footer: { Text("Launcher, shared controls and runtime integration.") }
+    Section {
+        Link("willfaust/Madeira", destination: URL(string: "https://github.com/willfaust/Madeira")!)
+        DisclosureGroup("Contributors") { ''' + contributors + ''' }
+    } header: { Text("Madeira") }''' + thanks + '''
+    Section {
+        Link("hrydgard/ppsspp", destination: URL(string: "https://github.com/hrydgard/ppsspp")!)
+    } header: { Text("PPSSPP") } footer: { Text("PSP emulation by the PPSSPP project and contributors.") }
+    Section {
+        Link("LIJI32/SameBoy", destination: URL(string: "https://github.com/LIJI32/SameBoy")!)
+    } header: { Text("SameBoy") } footer: { Text("Game Boy and Game Boy Color emulation by Lior Halphon and contributors.") }
+    IridiumLegalNoticesSection()'''
+    credits_view = '\nprivate struct IridiumCreditsSections: View {\n    var body: some View {\n' + credits + '\n    }\n}\n'
+    credits_link = setting('Credits', 'IridiumCreditsSections()')
     root_order = ['Controls', 'Madeira', 'PPSSPP', 'Game Boy', 'Diagnostics', 'Credits']
     settings = '''    private var settings: some View {
         Form {
@@ -325,7 +342,7 @@ struct LibraryLiveLogs''', '''        .scrollIndicators(.visible)
 }
 
 struct LibraryLiveLogs''')
-    return text
+    return text + credits_view
 
 
 # All user-facing native pages. Never patch SwiftSteam auth/network implementations.
@@ -365,6 +382,15 @@ def apply(name, text):
         start = text.index(boundary)
         # Keep the Dock and actual shortcut names, identifiers and services upstream.
         text = text[:start] + re.sub(r'\bMadeira\b(?! (?:Dock|JIT))', 'Iridium', text[start:])
+    if name == 'Onboarding.swift':
+        text = replace(text, 'Text("Iridium runs Windows games on your \\(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone").")',
+                       'Text(IridiumConsoleLibrary.supportsPSP ? "Play your Windows, PSP, Game Boy and Game Boy Color games in one library." : "Play your Windows, Game Boy and Game Boy Color games in one library.")')
+        text = replace(text, 'Text("A few optional steps get you ready:")',
+                       'Text("These optional steps prepare Windows games. You can skip setup and add console games now.")')
+        text = text.replace('Settings › JIT', 'Settings › Madeira › Launch Support')
+        text = text.replace('Settings › Steam › Madeira Dock', 'Settings › Madeira › Steam Account & Dock')
+        text = text.replace('Settings › .NET Framework', 'Settings › Madeira › Windows Components')
+        text = text.replace(' or Settings › Steam.', '.')
     if name == 'JITSetup.swift':
         text = replace(text, 'Automatic uses StikDebug when it is installed. Iridium does not silently change methods after a failure.',
                        'Automatic opens StikDebug when it is installed. Otherwise, it uses the built-in helper.')

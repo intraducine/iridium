@@ -58,6 +58,12 @@ enum RuntimeDiagnosticLogFiles {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         text += "App: \(version) (\(build))\n"
+        let revision = Bundle.main.object(forInfoDictionaryKey: "IridiumRootRevision") as? String ?? "Unknown"
+        let sourceState = Bundle.main.object(forInfoDictionaryKey: "IridiumSourceState") as? String ?? "Unknown"
+        text += "Root commit: \(revision)\nSource: \(sourceState)\n"
+        if let revisions = Bundle.main.object(forInfoDictionaryKey: "IridiumRuntimeRevisions") as? [String: String] {
+            for name in revisions.keys.sorted() { text += "\(name) source: \(revisions[name]!)\n" }
+        }
         text += "Sanitized copies; original files preserved. Up to 4 MiB of each log's latest complete lines; includes the newest 40 native session logs.\n"
         text += "Runtime activity, submitted frames and changing images do not establish game loading progress.\n"
         do {

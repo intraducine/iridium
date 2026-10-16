@@ -28,7 +28,7 @@ class TrackpadCursorTests(unittest.TestCase):
         policy='\n'.join(block(source,a) for a in ['enum PointerRoute:', 'enum PointerPolicy {'])
         code=r'''import Foundation
 import CoreGraphics
-enum IridiumTouchMouseMode {case off,trackpad,direct;static var mode=Self.trackpad;static func current()->Self{mode}}
+enum IridiumTouchMouseMode: String {case off,trackpad,direct;static var mode=Self.trackpad;static func current()->Self{mode}}
 enum TouchMouseGate {enum Mode{case off,on};static var mode=Mode.on}
 final class LibraryModel {static let shared=LibraryModel();var current:Int?=1;var blocksGameplayTouch=false}
 final class TouchControlsModel {static let shared=TouchControlsModel();var editing=false}
@@ -37,7 +37,7 @@ final class PadStickMouse {static let shared=PadStickMouse();var controllerConne
 var tracking:Int32 = -1
 func winios_direct_cursor_track(_ value:Int32){tracking=value}
 final class DirectCursorOverlay {
- static let shared=DirectCursorOverlay();var visible=false,fallback=false;var point=(x:Int32(0),y:Int32(0))
+ static let shared=DirectCursorOverlay();var visible=false,fallback=false,hasVisibleImage=true;var point=(x:Int32(0),y:Int32(0))
  func render(visible:Bool,x:Int32,y:Int32,fallback:Bool){self.visible=visible;self.fallback=fallback;point=(x,y)}
 }
 PROJECTION
@@ -52,6 +52,7 @@ final class Probe {
  typealias Route=PointerRoute
  var appActive=true,directCursorLive=true,mouseInUse=false,baseFocused=true,mouseFocused=false
  var iridiumStickCursorOwned=false,mouseInUseMirror=false
+ var iridiumPointerReport=""
  var gcDeltaLive=false,lastGCDeltaAt=0.0,absoluteAllowed=true
  var route=Route.relative,firstGCDeltas=0,relativeMoves=0
  let mouseQueue=DispatchQueue(label:"cursor-test.mouse")
@@ -83,12 +84,14 @@ final class Probe {
 let p=Probe(),overlay=DirectCursorOverlay.shared
 func check(_ visible:Bool,_ tracked:Int32,_ why:String){p.updateTracking();p.renderCursor();precondition(overlay.visible==visible,why);precondition(tracking==tracked,why)}
 check(true,1,"trackpad works without hardware mouse focus")
+overlay.hasVisibleImage=false;check(true,1,"shown transparent cursor keeps trackpad feedback");precondition(overlay.fallback)
+overlay.hasVisibleImage=true
 precondition(overlay.point.x==712 && overlay.point.y==328)
 p.updateFocusTimer();precondition(p.focusTimer != nil,"trackpad keeps focus fresh without hardware")
-p.cursorState.shown=0;check(true,1,"explicit trackpad retains a visible pointer when the program hides its cursor");precondition(overlay.fallback)
+p.cursorState.shown=0;check(false,1,"deliberately hidden program cursor stays hidden during trackpad gameplay");precondition(!overlay.fallback)
 p.mouseInUse=true;p.mouseFocused=true;check(false,1,"active hardware retains program visibility with the default trackpad preference");precondition(!overlay.fallback)
 p.cursorState.shown=1;check(true,1,"active hardware keeps its absolute position");precondition(overlay.point.x==999)
-p.mouseInUse=false;p.mouseFocused=false;p.cursorState.shown=0;check(true,1,"accepted touch returns ownership to trackpad");precondition(overlay.fallback && overlay.point.x==712)
+p.mouseInUse=false;p.mouseFocused=false;p.cursorState.shown=0;check(false,1,"accepted touch returns ownership without overriding program visibility");precondition(!overlay.fallback && overlay.point.x==712)
 p.cursorState.shown=1;p.baseFocused=false;check(false,0,"focus lost");p.baseFocused=true
 p.appActive=false;check(false,0,"background");p.updateFocusTimer();precondition(p.focusTimer==nil);p.appActive=true
 LibraryModel.shared.blocksGameplayTouch=true;check(false,0,"menu");LibraryModel.shared.blocksGameplayTouch=false
@@ -121,7 +124,7 @@ for mode in [IridiumTouchMouseMode.off,.direct] {
  precondition(overlay.visible && !overlay.fallback && !p.mouseFocused)
 }
 IridiumTouchMouseMode.mode = .trackpad;p.cursorState.shown=0;p.setMouseInUse(false)
-precondition(!p.iridiumStickCursorOwned && overlay.visible && overlay.fallback,"accepted touch clears controller ownership")
+precondition(!p.iridiumStickCursorOwned && !overlay.visible && !overlay.fallback,"accepted touch clears controller ownership and retains deliberate hiding")
 // Install the exact GCMouse mouseMovedHandler closure and execute the actual
 // moved() path on its mouse queue, including its first/wake main-thread hop.
 let gc=GCMouseInputProbe();p.installGCMovement(gc)

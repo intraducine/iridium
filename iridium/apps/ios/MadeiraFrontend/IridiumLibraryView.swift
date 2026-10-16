@@ -185,7 +185,7 @@ struct IridiumLibraryView: View {
             }
             .onChange(of: selection.highlightedID) { old, value in
                 pageArtwork = selected?.id.uuidString ?? ""
-                if old != nil, value != nil, (selection.userIsScrolling || showFocus),
+                if old != nil, value != nil, reorderSession.active == nil, (selection.userIsScrolling || showFocus),
                    IridiumTouchHaptics.current() != .off {
                     let ids = games.map(\.id)
                     let boundaries = IridiumLibrarySelection.boundaries(from: old, to: value, in: ids)
@@ -273,12 +273,9 @@ struct IridiumLibraryView: View {
 
     private var header: some View {
         Group {
-            if searching { toolbar }
-            else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { filters; toolbar }
-                    VStack(alignment: .leading, spacing: 8) { toolbar; filters }
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { if !searching { filters }; toolbar }
+                VStack(alignment: .leading, spacing: 8) { toolbar; if !searching { filters } }
             }
         }
     }
@@ -314,6 +311,18 @@ struct IridiumLibraryView: View {
                                 .offset(x: rect.minX, y: rect.minY)
                                 .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: id)
                                 .accessibilityIdentifier("librarySelectionBorder")
+                        }
+                        if let slot = reorderSession.insertion {
+                            let remaining = games.filter { $0.id != reorderSession.active?.gameID }
+                            let anchor = slot.beforeID.flatMap { anchors[$0] } ?? remaining.last.flatMap { anchors[$0.id] }
+                            if let anchor {
+                                let rect = proxy[anchor]
+                                Capsule().fill(Color.blue)
+                                    .frame(width: 4, height: height)
+                                    .offset(x: slot.beforeID == nil ? rect.maxX + 3 : rect.minX - 7, y: rect.minY)
+                                    .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: slot)
+                                    .accessibilityIdentifier("libraryInsertionLine")
+                            }
                         }
                     }.allowsHitTesting(false).accessibilityHidden(true)
                 }.scrollTargetLayout()
@@ -386,10 +395,13 @@ struct IridiumLibraryView: View {
         }
     }
     private func cover(_ entry: IridiumGame, height: CGFloat, width: CGFloat, featured: Bool) -> some View {
-        IridiumLibraryReorderCard(id: entry.id, session: reorderSession, commit: { id, target, after in
-            savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id)))
-            select(id)
-        }, trace: { LogStore.shared.log("[Library Drag] phase=\($0)") }) {
+        IridiumLibraryReorderCard(id: entry.id, session: reorderSession, order: games.map(\.id), commit: { id, target, after in
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+                savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id)))
+                select(id)
+            }
+        }, feedbackEnabled: IridiumTouchHaptics.current() != .off,
+           trace: { LogStore.shared.log("[Library Drag] phase=\($0)") }) {
             Button { select(entry.id); focus = "games" } label: {
                 IridiumGameArtwork(game: entry, featured: featured)
                     .frame(width: width, height: height)
@@ -410,6 +422,7 @@ struct IridiumLibraryView: View {
                 }
                 .accessibilityAddTraits(selection.highlightedID == entry.id ? .isSelected : [])
         }.frame(width: width, height: height).id(entry.id)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: featured)
             .anchorPreference(key: IridiumLibraryCardBounds.self, value: .bounds) { [entry.id: $0] }
     }
     private var filters: some View {
@@ -419,23 +432,19 @@ struct IridiumLibraryView: View {
     }
     private var toolbar: some View {
         HStack(spacing: 4) {
-            if searching {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass").accessibilityHidden(true)
+            HStack(spacing: 0) {
+                if searching {
                     TextField("Search games", text: $search, prompt: Text("Search games").foregroundStyle(.white.opacity(0.7)))
                         .accessibilityIdentifier("libraryInlineSearch")
                         .focused($searchFocus).textInputAutocapitalization(.never)
-                        .autocorrectionDisabled().submitLabel(.search)
-                    Button(action: endSearch) { Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44) }
-                        .accessibilityLabel("Done searching")
-                }.padding(.leading, 12).modifier(IridiumSearchSurface()).tint(.white)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                tool("Search", icon: "magnifyingglass", id: "search") {
-                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { searching = true }
-                    searchFocus = true
+                        .autocorrectionDisabled().submitLabel(.search).padding(.leading, 14)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
                 }
-            }
+                tool(searching ? "Done searching" : "Search", icon: searching ? "xmark" : "magnifyingglass", id: "search") {
+                    if searching { endSearch() } else { beginSearch() }
+                }
+            }.frame(maxWidth: searching ? .infinity : nil, alignment: .trailing)
+                .modifier(IridiumSearchSurface(active: searching)).tint(.white)
             tool("Add Game", icon: "plus", id: "add") { choosingAdd = true }
             tool("Settings", icon: "gearshape", id: "settings") { features = 1 }
         }.frame(maxWidth: .infinity, alignment: .trailing)
@@ -483,7 +492,15 @@ struct IridiumLibraryView: View {
             }
         }.frame(width: 22, height: 22).accessibilityHidden(true)
     }
-    private func endSearch() { searching = false; search = ""; searchFocus = false; keyboardFocus = true }
+    private func beginSearch() {
+        focus = "search"
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { searching = true }
+        searchFocus = true
+    }
+    private func endSearch() {
+        searchFocus = false; keyboardFocus = true
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { searching = false; search = "" }
+    }
     private func key(_ value: String) -> KeyPress.Result {
         guard !searchFocus, !consoleSession.isActive else { return .ignored }
         showFocus = true; showHints = false; command(value); return .handled
@@ -524,7 +541,7 @@ struct IridiumLibraryView: View {
         case "accept":
             switch focus {
             case "filters": favorites.toggle(); keepSelection()
-            case "search": searching = true; searchFocus = true
+            case "search": beginSearch()
             case "add": choosingAdd = true
             case "settings": features = 1
             case "games": focus = "play"
@@ -538,9 +555,17 @@ struct IridiumLibraryView: View {
 }
 
 private struct IridiumSearchSurface: ViewModifier {
+    var active: Bool
+    @Environment(\.accessibilityReduceTransparency) private var opaque
     @ViewBuilder func body(content: Content) -> some View {
-        if #available(iOS 26, *) { content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16)) }
-        else { content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) }
+        content.background {
+            let shape = RoundedRectangle(cornerRadius: 16)
+            Group {
+                if opaque { shape.fill(Color(uiColor: .secondarySystemBackground)) }
+                else if #available(iOS 26, *) { shape.fill(.clear).glassEffect(.regular, in: shape) }
+                else { shape.fill(.regularMaterial) }
+            }.opacity(active ? 1 : 0)
+        }
     }
 }
 
