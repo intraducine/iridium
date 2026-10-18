@@ -72,14 +72,18 @@ class FrontendImportTests(unittest.TestCase):
                     BUILD.check_bundle(app)
 
     def test_compiler_identity_ignores_only_metal_mount(self):
-        def identity(version, mount):
-            def output(command, **kwargs):
-                if 'metal' in command: return f'Metal {version}\nTarget: air64\nInstalledDir: {mount}'
-                return 'fixed compiler version'
-            with patch.object(BUILD.subprocess, 'check_output', side_effect=output):
-                return BUILD.compiler_identity()
-        self.assertEqual(identity('1', '/mount/one'), identity('1', '/mount/two'))
-        self.assertNotEqual(identity('1', '/mount/one'), identity('2', '/mount/one'))
+        with tempfile.TemporaryDirectory() as folder:
+            executable = pathlib.Path(folder) / 'tool'
+            executable.write_bytes(b'fixed compiler fixture')
+            def identity(version, mount):
+                def output(command, **kwargs):
+                    if 'metal' in command: return f'Metal {version}\nTarget: air64\nInstalledDir: {mount}'
+                    return 'fixed compiler version'
+                with patch.object(BUILD.shutil, 'which', return_value=str(executable)), \
+                     patch.object(BUILD.subprocess, 'check_output', side_effect=output):
+                    return BUILD.compiler_identity()
+            self.assertEqual(identity('1', '/mount/one'), identity('1', '/mount/two'))
+            self.assertNotEqual(identity('1', '/mount/one'), identity('2', '/mount/one'))
 
     def test_settings_copy_changes_only_notes(self):
         import re
@@ -327,6 +331,8 @@ class FrontendImportTests(unittest.TestCase):
                 dll.parent.mkdir(parents=True, exist_ok=True)
                 dll.write_bytes(b'built')
             with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), \
+                 patch.object(BUILD, 'compiler_tools', return_value={
+                     'fixture compiler': {'executable': '/fixture/compiler', 'version': 'fixed version'}}), \
                  patch.object(BUILD.subprocess, 'check_output', side_effect=lambda args, **kw: '/tool/Metal.xctoolchain/usr/bin/metal\n' if kw.get('text') else b'tool version'), \
                  patch.object(BUILD.subprocess, 'run', side_effect=build) as run, \
                  patch.object(BUILD.time, 'time', return_value=100) as now:
