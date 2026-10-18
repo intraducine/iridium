@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from test_manual_build import load
+from test_madeira_native_reuse import build as native_build, fixture_inputs, fixture_record, source_fixture
 
 components = load('components_tests', 'compiled-components.py')
 space = load('build_space_tests', 'free-build-space.py')
@@ -15,6 +16,120 @@ reuse = components.reuse
 
 
 class CompiledComponentsTests(unittest.TestCase):
+    def test_frontend_app_bodies_do_not_change_compiler_source(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        original = reuse.frontend_compiler_source(source)
+        self.assertNotEqual(original, source)
+        for name in reuse.FRONTEND_APP_FUNCTIONS:
+            with self.subTest(function=name):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                changed = source.replace(header + '\n', header + '\n    print("app-only edit")\n')
+                self.assertEqual(original, reuse.frontend_compiler_source(changed))
+        # The actual diagnostics-staging edit that unnecessarily rebuilt both
+        # components changed prepare(), not either native compiler recipe.
+        before = source.replace(
+            "ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'",
+            "ROOT / 'fixture-without-diagnostics.swift'")
+        self.assertNotEqual(before, source)
+        self.assertEqual(original, reuse.frontend_compiler_source(before))
+
+    def test_frontend_compiler_helpers_and_global_inputs_remain_exact(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        original = reuse.frontend_compiler_source(source)
+        for name in ('native', 'windows', 'build_native', 'bootstrap', 'toolchains',
+                     'stage_crypto_libraries', 'run_checked_recipe', 'verify_pin', 'compiler_identity'):
+            with self.subTest(function=name):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                changed = source.replace(header + '\n', header + '\n    # Changed compiler recipe.\n')
+                self.assertNotEqual(original, reuse.frontend_compiler_source(changed))
+        revision = next(line for line in source.splitlines() if line.startswith('REVISION = '))
+        for old, new in (("CRYPTO_LIBRARIES = ('gnutls',", "CRYPTO_LIBRARIES = ('different',"),
+                         (revision, "REVISION = '0000000000000000000000000000000000000000'"),
+                         ('import subprocess', 'import subprocess as another_process'),
+                         ("'native': lambda: native(reuse_only=args.reuse_only)", "'native': windows"),
+                         ('def prepare():', 'def prepare(*args):')):
+            with self.subTest(input=old):
+                changed = source.replace(old, new)
+                self.assertNotEqual(source, changed)
+                self.assertNotEqual(original, reuse.frontend_compiler_source(changed))
+        self.assertNotEqual(original, reuse.frontend_compiler_source(source + '\ndef new_helper():\n    return 1\n'))
+
+    def test_frontend_unknown_or_shared_app_dependencies_fail_closed(self):
+        source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+        def helper(body, arguments=''):
+            return source.replace("\nif __name__ == '__main__':",
+                                  '\ndef new_helper(' + arguments + '):\n' + body + "\nif __name__ == '__main__':")
+        variants = [
+            source + '\ndef prepare():\n    return 1\n',
+            source + '\nprepare = native\n',
+            source + '\nif True:\n    native = prepare\n',
+            helper('    prepare()\n'),
+            helper('    callback()\n', 'callback=prepare'),
+            helper('    def nested():\n        prepare()\n    nested()\n'),
+            helper('    return globals()["prepare"]\n'),
+            helper('    return sys.modules[__name__]\n'),
+            helper('    importlib.import_module(__name__).prepare()\n'),
+            helper('    from builtins import globals as namespace\n    namespace()["prepare"]()\n'),
+            helper('    return Path(__file__).read_text()\n'),
+            helper('    subprocess.run([sys.executable, str(ROOT / "ci/madeira-frontend.py"), "prepare"], check=True)\n'),
+            helper('    subprocess.run([driver, "prepare"], check=True)\n'),
+            helper('    module.prepare()\n'),
+            source.replace('import json', 'from builtins import globals as namespace\nimport json'),
+            source.replace('import json', 'import inspect as inspection\nimport json'),
+            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    inspect.stack()\n'),
+            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    __builtins__["globals"]()["prepare"]()\n'),
+            source.replace('def prepare():', '@decorator\ndef prepare():'),
+            source.replace('def prepare():', 'def prepare(value=bootstrap()):'),
+            source.replace('def prepare():', 'def prepare() -> bootstrap():'),
+            source.replace('def prepare():', 'async def prepare():'),
+            source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
+            source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
+            source.replace("'native': lambda: native(reuse_only=args.reuse_only)", "'native': prepare"),
+            source + '\ninvalid python !\n',
+        ]
+        for index, changed in enumerate(variants):
+            with self.subTest(variant=index):
+                self.assertEqual(reuse.frontend_compiler_source(changed), changed)
+
+    def test_frontend_app_only_edit_reuses_existing_producer_both_components(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q'); git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            script = root / 'ci/madeira-frontend.py'
+            script.parent.mkdir()
+            source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
+            script.write_text(source)
+            workflow = root / reuse.WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text((components.ROOT / reuse.WORKFLOW).read_text())
+            contract = root / 'ci/compiled-components.py'
+            contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
+            def commit():
+                git('add', '.'); git('commit', '-qm', 'fixture')
+            commit(); revision = git('rev-parse', 'HEAD')
+            script.write_text(source.replace('def prepare():\n', 'def prepare():\n    print("new app staging")\n'))
+            commit()
+            for stage in ('madeira-native', 'madeira-windows'):
+                reuse.compatible(root, revision, stage)
+            app_only = script.read_text()
+            for name in ('build_native', 'windows', 'verify_pin', 'run_checked_recipe', 'stage_crypto_libraries'):
+                header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
+                script.write_text(app_only.replace(header + '\n', header + '\n    print("changed recipe")\n'))
+                commit()
+                for stage in ('madeira-native', 'madeira-windows'):
+                    with self.subTest(stage=stage, helper=name), self.assertRaisesRegex(ValueError, 'Changed producer input: ci/madeira-frontend.py'):
+                        reuse.compatible(root, revision, stage)
+            script.write_text(app_only)
+            contract.write_text(contract.read_text() + '\n# Changed artifact contract.\n')
+            commit()
+            for stage in ('madeira-native', 'madeira-windows'):
+                with self.assertRaisesRegex(ValueError, 'Changed producer input: ci/compiled-components.py'):
+                    reuse.compatible(root, revision, stage)
+
     def test_uploaded_transfers_are_removed_without_touching_runtime(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -78,6 +193,42 @@ class CompiledComponentsTests(unittest.TestCase):
                 changed[index] += '\nchanged'
                 self.assertNotEqual(components.prepared.fingerprint(changed), expected)
 
+    def test_frontend_checkpoint_restores_libraries_and_completion_records(self):
+        for component in ('madeira-native', 'madeira-windows'):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                for name in components.PATHS[component]:
+                    base = root / name
+                    if base.suffix in {'.json', '.exe', '.txt'}:
+                        base.parent.mkdir(parents=True, exist_ok=True)
+                        base.write_bytes(b'completion record')
+                    else:
+                        base.mkdir(parents=True, exist_ok=True)
+                        (base / 'output.a').write_bytes(b'archive')
+                library = root / components.FRONTEND / 'app/Madeira/libntdll_unix.a'
+                library.parent.mkdir(parents=True, exist_ok=True)
+                library.write_bytes(b'native library')
+                library.with_suffix('.o').write_bytes(b'temporary object')
+                env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
+                if component == 'madeira-native': fixture_record(root / components.FRONTEND)
+                with patch.dict(os.environ, env), patch.object(reuse, 'git', return_value='b' * 40), \
+                     patch.object(components, 'frontend_module', return_value=native_build), \
+                     patch.object(native_build, 'ROOT', root), patch.object(native_build, 'UPSTREAM', root / components.FRONTEND), \
+                     patch.object(native_build, 'native_inputs', return_value=fixture_inputs()), patch.object(native_build, 'verify_pin'):
+                    components.package(root, component)
+                archive = root / '.build' / (component + '-compiled-transfer/compiled.tar.gz')
+                with tarfile.open(archive) as tar:
+                    names = [m.name for m in tar]
+                    self.assertFalse(any(name.endswith('.o') for name in names))
+                    for name in names: (root / name.removeprefix('compiled/')).unlink()
+                with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40), \
+                     patch.object(components, 'frontend_module', return_value=native_build), \
+                     patch.object(native_build, 'ROOT', root), patch.object(native_build, 'UPSTREAM', root / components.FRONTEND), \
+                     patch.object(native_build, 'native_inputs', return_value=fixture_inputs()), patch.object(native_build, 'verify_pin'):
+                    components.restore(root, component, '123')
+                self.assertTrue(all((root / name.removeprefix('compiled/')).is_file() for name in names))
+                if component == 'madeira-native': self.assertEqual(library.read_bytes(), b'native library')
+
     def test_round_trip_preserves_executable_and_rejects_corruption(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -108,6 +259,50 @@ class CompiledComponentsTests(unittest.TestCase):
                          'testrepos/Madeira/wine/build-macos/cert.p12'):
                 self.assertFalse(components.allowed(name, 'wine'))
 
+    def test_partial_native_generation_cannot_be_packaged_as_a_producer(self):
+        for change in ('partial', 'changed', 'missing', 'tool'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); upstream = root / components.FRONTEND
+                record = fixture_record(upstream)
+                current = fixture_inputs()
+                if change == 'partial': record['state'] = 'building'
+                elif change == 'changed': (upstream / 'app/Madeira/libswresample.a').write_bytes(b'partial relink')
+                elif change == 'missing': (upstream / 'app/Madeira/libavcodec.a').unlink()
+                else: current['tools']['bison --version']['executable'] = '/different/bison'
+                (upstream / '.build/iridium-native.json').write_text(json.dumps(record))
+                with patch.object(components, 'frontend_module', return_value=native_build), \
+                     patch.object(native_build, 'ROOT', root), patch.object(native_build, 'UPSTREAM', upstream), \
+                     patch.object(native_build, 'native_inputs', return_value=current), patch.object(native_build, 'verify_pin'):
+                    with self.assertRaisesRegex(ValueError, 'native reuse rejected'):
+                        components.package(root, 'madeira-native')
+                self.assertFalse((root / '.build/madeira-native-compiled-transfer').exists())
+
+    def test_invalid_restored_native_stamp_is_rejected_before_staging_any_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); upstream = root / components.FRONTEND
+            record = fixture_record(upstream)
+            transfer = root / '.build/madeira-native-compiled-transfer'; transfer.mkdir(parents=True)
+            archive = transfer / 'compiled.tar.gz'
+            record['state'] = 'building'
+            stamp = upstream / '.build/iridium-native.json'; stamp.write_text(json.dumps(record))
+            names = [p for p in upstream.rglob('*') if p.is_file()]
+            with tarfile.open(archive, 'w:gz') as tar:
+                for p in names: tar.add(p, arcname='compiled/' + str(p.relative_to(root)))
+            manifest = {'revision': 'b' * 40, 'component': 'madeira-native', 'toolchain': 'a' * 64,
+                        'workspace': str(root.resolve()), 'sha256': components.inputs.digest(archive)}
+            (transfer / 'manifest.json').write_text(json.dumps(manifest))
+            library = upstream / 'app/Madeira/libswresample.a'; library.write_bytes(b'preserve previous output')
+            stamp.write_bytes(b'preserve previous receipt')
+            before = {p: p.read_bytes() for p in names}
+            env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
+            with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40), \
+                 patch.object(components, 'frontend_module', return_value=native_build), \
+                 patch.object(native_build, 'ROOT', root), patch.object(native_build, 'UPSTREAM', upstream), \
+                 patch.object(native_build, 'native_inputs', return_value=fixture_inputs()), patch.object(native_build, 'verify_pin'):
+                with self.assertRaisesRegex(ValueError, 'incomplete_record'):
+                    components.restore(root, 'madeira-native', '123')
+            self.assertEqual(before, {p: p.read_bytes() for p in names})
+
     def test_failed_later_job_keeps_completed_component_but_expiry_rebuilds(self):
         run = {'id': 123, 'event': 'workflow_dispatch', 'head_branch': 'main',
                'head_sha': 'b' * 40, 'path': reuse.WORKFLOW,
@@ -123,6 +318,54 @@ class CompiledComponentsTests(unittest.TestCase):
                  {'expired': True, 'workflow_run': run}]}), \
              patch.object(reuse, 'verify_producer', side_effect=ValueError('absent or expired')):
             self.assertEqual(reuse.select(Path('.'), 'wine', 'main'), '')
+
+    def test_restore_rejects_in_checkout_leaf_and_ancestor_symlinks_before_any_copy(self):
+        for kind in ('leaf', 'ancestor', 'dangling'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                binary = root / 'testrepos/Madeira/wine/build-macos/tools/wine/wine'
+                binary.parent.mkdir(parents=True); binary.write_bytes(b'new artifact binary')
+                guest = root / 'testrepos/Madeira/wine/build-i386/ntdll.dll'
+                guest.parent.mkdir(parents=True); guest.write_bytes(b'guest artifact')
+                env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
+                with patch.dict(os.environ, env), patch.object(reuse, 'git', return_value='b' * 40):
+                    components.package(root, 'wine')
+                retained = root / 'retained'
+                if kind == 'ancestor':
+                    binary.parent.rename(retained); binary.parent.symlink_to(retained, target_is_directory=True)
+                    sentinel = retained / 'wine'; sentinel.write_bytes(b'preserve target')
+                else:
+                    binary.unlink()
+                    if kind == 'leaf': retained.write_bytes(b'preserve target')
+                    binary.symlink_to(retained); sentinel = retained
+                copy = components.shutil.copy2
+                with patch.dict(os.environ, env), patch.object(reuse, 'verify_producer', return_value='b' * 40), \
+                     patch.object(components.shutil, 'copy2', wraps=copy) as copied:
+                    with self.assertRaisesRegex(ValueError, 'symbolic link'): components.restore(root, 'wine', '123')
+                    copied.assert_not_called()
+                self.assertTrue(binary.is_symlink() if kind != 'ancestor' else binary.parent.is_symlink())
+                if kind == 'dangling': self.assertFalse(sentinel.exists())
+                else: self.assertEqual(sentinel.read_bytes(), b'preserve target')
+
+    def test_native_package_and_restore_validate_actual_upstream_sources(self):
+        with source_fixture() as (root, upstream):
+            fixture_record(upstream, native_build.native_inputs())
+            for name in components.PATHS['madeira-native']:
+                p = root / name
+                if not p.suffix: p.mkdir(parents=True, exist_ok=True)
+            env = {'NATIVE_TOOLCHAIN': 'a' * 64, 'GITHUB_REF_NAME': 'main'}
+            source = upstream / 'Makefile'; original = source.read_bytes()
+            with patch.object(components, 'frontend_module', return_value=native_build), patch.dict(os.environ, env), \
+                 patch.object(reuse, 'git', return_value='b' * 40), patch.object(reuse, 'verify_producer', return_value='b' * 40):
+                source.write_bytes(original + b'changed build input\n')
+                with self.assertRaisesRegex(ValueError, 'upstreamSources'): components.package(root, 'madeira-native')
+                self.assertFalse((root / '.build/madeira-native-compiled-transfer').exists())
+                source.write_bytes(original); components.package(root, 'madeira-native')
+                source.write_bytes(original + b'changed build input\n')
+                library = upstream / 'app/Madeira/libswresample.a'; library.write_bytes(b'preserve destination')
+                with self.assertRaisesRegex(ValueError, 'upstreamSources'): components.restore(root, 'madeira-native', '123')
+                self.assertEqual(library.read_bytes(), b'preserve destination')
+                self.assertEqual(source.read_bytes(), original + b'changed build input\n')
 
     def test_packaging_edit_reuses_wine_but_compiler_edit_invalidates(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -153,12 +396,11 @@ class CompiledComponentsTests(unittest.TestCase):
 
     def test_uploads_precede_staging_and_only_follow_new_compilation(self):
         workflow = (components.ROOT / reuse.WORKFLOW).read_text()
-        for component in components.PATHS:
+        for component in ('madeira-native', 'madeira-windows'):
             step = workflow.split('      - name: Retain ' + component + ' compilation\n')[1].split('      - name:')[0]
-            self.assertIn(f"if: steps.compiled_{component}.outputs.run_id == ''", step)
-            self.assertIn('retention-days: 7', step)
-        self.assertLess(workflow.index('Retain wine compilation'), workflow.index('Stage Windows modules'))
-        self.assertLess(workflow.index('Retain windows compilation'), workflow.index('Stage Windows modules'))
+            self.assertIn(f"if: steps.compiled_{component.replace('-', '_')}.outputs.run_id == ''", step)
+            self.assertIn('retention-days: 14', step)
+            self.assertLess(workflow.index('Retain ' + component + ' compilation'), workflow.index('name: Build without signing'))
 
     def test_helper_edits_reuse_libraries_but_media_and_fex_edits_rebuild(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -200,10 +442,9 @@ class CompiledComponentsTests(unittest.TestCase):
 
     def test_helpers_are_always_rebuilt_after_library_cache_and_before_staging(self):
         workflow = (components.ROOT / reuse.WORKFLOW).read_text()
-        label = '      - name: Build game input and prerequisite helpers\n'
-        step = workflow.split(label)[1].split('      - name:')[0]
-        self.assertNotIn('if:', step)
-        self.assertIn('llvm-mingw-20260421-ucrt-macos-universal/bin:$PATH', step)
-        self.assertIn('sh iridium/apps/ios/Scripts/build_controller_runtime.sh', step)
-        self.assertLess(workflow.index('Retain native compilation'), workflow.index(label))
-        self.assertLess(workflow.index(label), workflow.index('Stage Windows modules'))
+        for component, action in (('madeira-native', 'native'), ('madeira-windows', 'windows')):
+            step = workflow.split('      - name: Compile ' + component + '\n')[1].split('      - name:')[0]
+            self.assertNotIn('if:', step)
+            self.assertIn('ci/madeira-frontend.py ' + action, step)
+            self.assertLess(workflow.index('Compile ' + component), workflow.index('Check build prerequisites'))
+        self.assertNotIn('build_controller_runtime.sh', workflow)

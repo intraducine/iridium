@@ -1,4 +1,18 @@
 {
+  "frontend_runtime": {
+    "path": "vendor/Madeira",
+    "upstream": "https://github.com/willfaust/Madeira",
+    "revision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+    "dependencies": {
+      "FEX": "f59cab95659e8add0c88f0c76ec1cf483c536dbf",
+      "wine": "9129e9684daaeae70da9435e7c6060e59392634e",
+      "dxmt": "128b297c6e9a00014408dc68b4c2c2373b5813de",
+      "madeira-dock": "72558e416a390f3669457930f09a389e54f49556"
+    },
+    "presentation": "iridium/apps/ios/MadeiraFrontend",
+    "hooks": "ci/madeira-frontend.py",
+    "native_build": "ci/build-madeira-ipa.sh"
+  },
   "snapshots": [
     {
       "path": "testrepos/Madeira",
@@ -115,6 +129,40 @@
         "testrepos/Madeira/build/dxmt-ios/build.sh"
       ],
       "adaptation": "Fixed Metal 3.1 language pin and script-change cache invalidation; preserve native iphoneos SDK and ios18 AIR target; omit upstream macOS target, binary and include-layout changes. Auxiliary native AIR preparation is unchanged."
+    }
+  ],
+  "console_runtimes": [
+    {
+      "id": "sameboy",
+      "path": "vendor/SameBoy",
+      "upstream": "https://github.com/LIJI32/SameBoy",
+      "revision": "98da08c3117a7bf39c7329fc662c0d18cb54707d",
+      "platforms": [
+        "gameBoy",
+        "gameBoyColor"
+      ],
+      "license": "Expat (MIT); Libretro API header MIT",
+      "build": "ci/build-sameboy.py",
+      "execution": "interpreter",
+      "version": "1.0.4",
+      "adaptation": "Private symbol namespace; unchanged Core/Libretro; frontend target sample rate 96 kHz and standalone iOS model/color/high-pass defaults",
+      "bootROMs": "ci/sameboy-bootroms.json; regenerate with ci/sameboy_bootroms.py and pinned RGBDS 0.9.4"
+    },
+    {
+      "id": "ppsspp",
+      "path": "vendor/PPSSPP",
+      "upstream": "https://github.com/hrydgard/ppsspp",
+      "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+      "platforms": [
+        "psp"
+      ],
+      "license": "GPL family and dependency-specific terms; see LICENSING.md",
+      "build": "ci/build-ppsspp-native.py",
+      "execution": "Native iOS player; initial IR interpreter and OpenGL; upstream settings retained",
+      "adaptation": "Declared generated iOS embedding/lifecycle hooks; emulator CPU/GPU/media internals unchanged",
+      "assets": "Complete native upstream assets; build receipt hashes every delivered file",
+      "version": "1.20.4",
+      "releaseTag": "v1.20.4"
     }
   ]
 }

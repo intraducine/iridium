@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "inputs": [
+    {
+      "name": "RobotoCondensed",
+      "file": "Roboto_Condensed-Regular.ttf",
+      "sha256": "d8e6f7c5a1356d41dd82b0c00219febd21c791cc5cd1ecf8a0323cbeafe6496c",
+      "bytes": 145908,
+      "source": "PPSSPP/assets/Roboto_Condensed-Regular.ttf",
+      "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+      "license": "Roboto-OFL.txt"
+    },
+    {
+      "name": "NotoSans",
+      "file": "NotoSans.ttf",
+      "sha256": "b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5",
+      "bytes": 569208,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
+    },
+    {
+      "name": "NotoSansHebrew",
+      "file": "NotoSansHebrew.ttf",
+      "sha256": "a7fa16fffb27bedb060a0866267c29e9859aeb9c21cc33f5b3aaf6eb062eca85",
+      "bytes": 26900,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansHebrew/NotoSansHebrew-Regular.ttf"
+    },
+    {
+      "name": "NotoSansThai",
+      "file": "NotoSansThai.ttf",
+      "sha256": "404ddfb5ed0aaa6b6ec8a85700d682978992062d67da93903967b56cbd9a4acc",
+      "bytes": 37752,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansThai/NotoSansThai-Regular.ttf"
+    },
+    {
+      "name": "SourceHanSans",
+      "file": "SourceHanSans-Regular.otf",
+      "sha256": "6fe3b72967986ccdef600128752d1ade57c13c68129a548cdebe4c7d3c0f8543",
+      "bytes": 16560052,
+      "license": "SourceHanSans-OFL.txt",
+      "release": "2.005R",
+      "url": "https://github.com/adobe-fonts/source-han-sans/releases/download/2.005R/07_SourceHanSansJ.zip",
+      "archiveSHA256": "c6b77d7aabdee4ff6cc24823e3f1048c41cd5bba9df61ca59b071183ec297195",
+      "entry": "OTF/Japanese/SourceHanSans-Regular.otf"
+    },
+    {
+      "name": "NotoSansCoptic",
+      "file": "NotoSansCoptic.ttf",
+      "sha256": "7f3e5f77493cdcd27ac58a5a647572e59fd1b62496d7b998b0101846a20b727a",
+      "bytes": 50472,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansCoptic/NotoSansCoptic-Regular.ttf"
+    },
+    {
+      "name": "NotoSansSymbols",
+      "file": "NotoSansSymbols.ttf",
+      "sha256": "8f02f31959bbdf6061547a188248e13f84dc5fdd940326ec494675f453f072bb",
+      "bytes": 258156,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansSymbols/NotoSansSymbols-Regular.ttf"
+    },
+    {
+      "name": "NotoSansMath",
+      "file": "NotoSansMath.ttf",
+      "sha256": "80b61fd613d3519197e64fff6f7e71fdc7f3e6526440ea4115b554ef7fd59af7",
+      "bytes": 590904,
+      "license": "Noto-OFL.txt",
+      "revision": "ffebf8c1ee449e544955a7e813c54f9b73848eac",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-fonts/ffebf8c1ee449e544955a7e813c54f9b73848eac/hinted/ttf/NotoSansMath/NotoSansMath-Regular.ttf"
+    }
+  ],
+  "fonts": {
+    "font": [
+      [
+        "Roboto_Condensed-Regular.ttf",
+        34,
+        -2
+      ],
+      [
+        "SourceHanSans-Regular.otf",
+        30,
+        0
+      ],
+      [
+        "NotoSans.ttf",
+        30,
+        0
+      ],
+      [
+        "NotoSansHebrew.ttf",
+        30,
+        0
+      ],
+      [
+        "NotoSansThai.ttf",
+        30,
+        0
+      ],
+      [
+        "NotoSansCoptic.ttf",
+        30,
+        0
+      ],
+      [
+        "NotoSansSymbols.ttf",
+        30,
+        0
+      ],
+      [
+        "NotoSansMath.ttf",
+        30,
+        0
+      ]
+    ],
+    "ppge": [
+      [
+        "SourceHanSans-Regular.otf",
+        24,
+        0
+      ],
+      [
+        "Roboto_Condensed-Regular.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSans.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSansHebrew.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSansThai.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSansCoptic.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSansSymbols.ttf",
+        24,
+        0
+      ],
+      [
+        "NotoSansMath.ttf",
+        24,
+        0
+      ]
+    ]
+  }
+}

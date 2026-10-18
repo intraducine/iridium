@@ -285,7 +285,13 @@ def check_payload(app):
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != "software.iridium":
         raise ValueError("Expected the Iridium application bundle")
-    if not (app / "fonts/tahoma.ttf").is_file():
+    if info.get("IridiumMadeiraRevision"):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("madeira_frontend", Path(__file__).with_name("madeira-frontend.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.check_bundle(app)
+    elif not (app / "fonts/tahoma.ttf").is_file():
         raise ValueError("The bundled Windows fonts are missing")
     if info.get("IridiumRuntimeProfile") == "madeira":
         import importlib.util
@@ -308,6 +314,9 @@ def check_payload(app):
 
 def check_asset_catalog(app):
     source = Path(__file__).resolve().parents[1] / "iridium/apps/ios/Iridium/Assets.xcassets"
+    info = plistlib.loads((app / 'Info.plist').read_bytes())
+    if info.get('IridiumMadeiraRevision'):
+        source = Path(__file__).resolve().parents[1] / 'vendor/Madeira/app/Madeira/Assets.xcassets'
     expected = {path.stem for path in source.glob("*.imageset")}
     if not expected:
         return

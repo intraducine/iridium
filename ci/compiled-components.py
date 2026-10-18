@@ -18,7 +18,15 @@ reuse, inputs = prepared.reuse, prepared.inputs
 M = 'testrepos/Madeira/'
 # Keep the configured Wine tree and import libraries: later DXMT compilation
 # and prefix creation use them. Object files are not needed after a stage passes.
+FRONTEND = 'vendor/Madeira/'
 PATHS = {
+    'madeira-native': (FRONTEND + 'FEX/build-ios', FRONTEND + 'toolchains/llvm-ios-build/lib',
+                       FRONTEND + 'toolchains/llvm-ios-build/include', FRONTEND + 'toolchains/gnutls-ios',
+                       FRONTEND + '.build/iridium-native.json',
+                       FRONTEND + 'app/Madeira/arm64ec-windows/dockhost.exe',
+                       FRONTEND + 'app/Madeira/arm64ec-windows/dock-notices.txt',
+                       FRONTEND + 'app/Madeira/legal/LICENSES-rppairing-crates.txt'),
+    'madeira-windows': (FRONTEND + 'app/Madeira/i386-windows', FRONTEND + '.build/iridium-i386.json'),
     'native': (
         M + 'toolchains/llvm-ios-build/lib', M + 'toolchains/llvm-ios-build/include',
         M + 'toolchains/gnutls-ios', M + 'build/freetype-ios/build',
@@ -48,15 +56,21 @@ def allowed(name, component):
         # Each compiler owns only its own source archives and inventories.
         prefixes = ('angle', 'depot') if component == 'graphics' else ('StikJIT', 'idevice', 'rust-')
         return p.name.startswith(prefixes)
+    if component == 'madeira-native' and p.parent == Path(FRONTEND + 'app/Madeira') and p.suffix == '.a':
+        return True
     return any(p == Path(base) or p.is_relative_to(base) for base in PATHS[component])
 
 
 def package(root, component):
+    if component == 'madeira-native': validate_native_checkpoint(root)
     out = root / '.build' / (component + '-compiled-transfer')
     out.mkdir(parents=True, exist_ok=False)
     archive = out / 'compiled.tar.gz'
     names = set()
-    for base in PATHS[component]:
+    bases = PATHS[component]
+    if component == 'madeira-native':
+        bases += tuple(str(p.relative_to(root)) for p in (root / FRONTEND / 'app/Madeira').glob('*.a'))
+    for base in bases:
         p = root / base
         if not p.exists():
             raise ValueError('Missing compiler output: ' + base)
@@ -101,12 +115,18 @@ def restore(root, component, run_id):
             names.add(name)
     if not names:
         raise ValueError('Empty compiler artifact')
+    for name in names:
+        destination = root / name
+        if root.is_symlink() or any(path.is_symlink() for path in (destination, *destination.parents)
+                                   if path == root or path.is_relative_to(root)):
+            raise ValueError('Restore destination contains a symbolic link: ' + name)
+        if not destination.resolve().is_relative_to(root.resolve()):
+            raise ValueError('Restore destination escapes checkout')
     with tempfile.TemporaryDirectory(dir=root / '.build') as temp:
         staged = Path(temp) / 'compiled'
         inputs.unpack(archive, staged, 'compiled')
-        for name in names:
-            if not (root / name).resolve().is_relative_to(root.resolve()):
-                raise ValueError('Restore destination escapes checkout')
+        # Check the complete generation before any destination file is replaced.
+        if component == 'madeira-native': validate_native_checkpoint(root, staged / FRONTEND)
         for name in names:
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -114,13 +134,36 @@ def restore(root, component, run_id):
     print('Restored completed ' + component + ' compilation')
 
 
+def frontend_module():
+    spec = spec_from_file_location('frontend_compiler', ROOT / 'ci/madeira-frontend.py')
+    frontend = module_from_spec(spec)
+    spec.loader.exec_module(frontend)
+    return frontend
+
+
+def validate_native_checkpoint(root, upstream=None):
+    frontend = frontend_module()
+    frontend.ROOT = root
+    frontend.UPSTREAM = root / FRONTEND
+    frontend.verify_pin()
+    frontend.validate_native_reuse(upstream=upstream)
+
+
+def frontend_toolchain():
+    return frontend_module().compiler_identity()
+
+
 if __name__ == '__main__':
+    if sys.argv[1:] == ['madeira-toolchain']:
+        with open(os.environ['GITHUB_ENV'], 'a') as out:
+            out.write('NATIVE_TOOLCHAIN=' + frontend_toolchain() + '\n')
+        raise SystemExit(0)
     if sys.argv[1:] == ['toolchain']:
         with open(os.environ['GITHUB_ENV'], 'a') as out:
             out.write('NATIVE_TOOLCHAIN=' + prepared.toolchain() + '\n')
         raise SystemExit(0)
     if len(sys.argv) != 3 or sys.argv[1] not in ('select', 'package', 'restore') or sys.argv[2] not in PATHS:
-        raise SystemExit('Usage: compiled-components.py select|package|restore native|wine|windows|graphics|jit')
+        raise SystemExit('Usage: compiled-components.py select|package|restore madeira-native|madeira-windows|native|wine|windows|graphics|jit')
     action, component = sys.argv[1:]
     os.environ['NATIVE_TOOLCHAIN'] = hashlib.sha256(
         (os.environ['NATIVE_TOOLCHAIN'] + str(ROOT.resolve())).encode()).hexdigest()

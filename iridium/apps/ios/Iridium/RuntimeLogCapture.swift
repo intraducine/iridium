@@ -128,24 +128,7 @@ enum RuntimeLogCapture {
     }
 
     static func redactedPlayerLogLine(_ line: String) -> String {
-        // Fail closed for credential-bearing lines, including unfamiliar assignment formats.
-        if line.range(of: #"(?i)token|password|passwd|secret|authorization|cookie|credential|api[_-]?key"#, options: .regularExpression) != nil {
-            return "[Private log entry redacted]"
-        }
-        var clean = line
-        for pattern in [
-            #"(?i)https?://[^\s]+"#,
-            #"(?i)[a-z]:[\\/][^\r\n]*"#,
-            #"/[^\s]+"#,
-            #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
-            #"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"#,
-            #"(?i)\b(?:0x[0-9a-f]+|[0-9a-f]{12,})\b"#,
-            #"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::[0-9]+)?\b"#
-        ] {
-            clean = clean.replacingOccurrences(of: pattern, with: "[redacted]", options: .regularExpression)
-        }
-        clean = clean.replacingOccurrences(of: #"[\x00-\x1f\x7f]"#, with: "", options: .regularExpression)
-        return String(clean.prefix(400)).trimmingCharacters(in: .whitespacesAndNewlines)
+        String(RuntimeDiagnosticLogFiles.sanitizedLine(line).prefix(400))
     }
 
     private static func rotateLogIfNeeded(at url: URL, previousURL: URL) throws {

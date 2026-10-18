@@ -114,16 +114,10 @@ class BuildSpaceTests(unittest.TestCase):
 
     def test_workflow_reclaims_only_after_consumption_and_upload(self):
         text = (space.ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
-        self.assertLess(text.index('run: python3 ci/madeira-package.py prepare'),
-                        text.index('reclaim-build-space.py prepare-source'))
-        self.assertLess(text.index('name: Retain source archive for release audit'),
-                        text.index('reclaim-build-space.py source-uploaded'))
-        self.assertLess(text.index('reclaim-build-space.py source-uploaded'),
-                        text.index('name: Build without signing'))
-        for step in ('name: Retain source archive for release audit',
-                     'name: Verify modified LGPL library relinking',
-                     'name: Retain app link maps for final audit',
-                     'name: Check final binary audit before packaging'):
-            self.assertLess(text.index(step), text.index('reclaim-build-space.py package-ready'))
-        self.assertLess(text.index('reclaim-build-space.py package-ready'),
-                        text.index('name: Prepare and audit sideloading package'))
+        self.assertNotIn('reclaim-build-space.py', text)
+        stages = ('Retain madeira-native compilation', 'Retain madeira-windows compilation',
+                  'Build without signing', 'Collect matching source and component records',
+                  'Retain source archive for release audit', 'Check final binary audit before packaging',
+                  'Prepare and audit sideloading package', 'Upload sideloading IPA')
+        positions = [text.index('name: ' + stage) for stage in stages]
+        self.assertEqual(positions, sorted(positions))

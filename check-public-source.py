@@ -3,6 +3,9 @@
 from pathlib import Path
 import re
 import sys
+import subprocess
+import hashlib
+import json
 
 ROOT = Path(__file__).resolve().parent
 PATTERNS = {
@@ -15,21 +18,53 @@ PATTERNS = {
 for index, value in enumerate(sys.argv[1:]):
     PATTERNS[f"private identifier {index + 1}"] = re.escape(value.encode())
 findings = []
-for path in ROOT.rglob("*"):
+# This published archive includes GnuTLS's RSA self-test fixture. The key matches
+# gnutls-3.8.9/lib/crypto-selftests-pk.c in the supplied source tarball. Any changed
+# archive still fails this check; no maintainer key or other pattern is exempt.
+PUBLIC_SELF_TEST = {
+    'vendor/Madeira/app/Madeira/libgnutls.a': {
+        '1d514008193616c017131714e74b585d8e09753c3681875a128db93cd2abaf7b',
+        # Local source rebuild: all 11 PEM blocks exactly match the same public
+        # gnutls-3.8.9/lib/crypto-selftests-pk.c fixture; no other patterns bypass.
+        '687032df65f8aca7da181b8667de33df20dd94ebdeb55a2652a7e941c85c1e88',
+    },
+}
+# Only reviewed public upstream bytes may bypass the signing-file suffix check.
+# The source collector omits these files; other privacy patterns still apply.
+PUBLIC_SIGNING_FIXTURES = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
+unused_manifest = ROOT / 'ci/public-unused-archives.json'
+PUBLIC_UNUSED_ARCHIVES = json.loads(unused_manifest.read_text()) if unused_manifest.exists() else {}
+def source_files(root):
+    if (root / '.git').exists():
+        result = subprocess.check_output(['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'])
+        for name in set(result.decode().split('\0')) - {''}:
+            path = root / name
+            if path.is_dir() and (path / '.git').exists(): yield from source_files(path)
+            elif path.is_file(): yield path
+    else:
+        yield from root.rglob('*')
+
+for path in source_files(ROOT):
     if not path.is_file() or ".git" in path.relative_to(ROOT).parts or path == Path(__file__).resolve():
         continue
-    if path.stat().st_size >= 50 * 1024 * 1024:
+    data = path.read_bytes()
+    unused = PUBLIC_UNUSED_ARCHIVES.get(path.relative_to(ROOT).as_posix(), {})
+    reviewed_unused = not path.is_symlink() and unused.get('sha256') == hashlib.sha256(data).hexdigest()
+    if path.stat().st_size >= 50 * 1024 * 1024 and not reviewed_unused:
         findings.append((path.relative_to(ROOT), "large file; use release assets"))
     if any(part.endswith((".app", ".xcarchive")) or part in {"_CodeSignature", "xcuserdata"} for part in path.relative_to(ROOT).parts):
         findings.append((path.relative_to(ROOT), "generated app or personal metadata"))
-    data = path.read_bytes()
     if data.startswith(b"version https://git-lfs.github.com/spec/v1"):
         findings.append((path.relative_to(ROOT), "LFS pointer"))
     for category, pattern in PATTERNS.items():
         if re.search(pattern, data, re.IGNORECASE):
+            if category == 'private key' and hashlib.sha256(data).hexdigest() in PUBLIC_SELF_TEST.get(str(path.relative_to(ROOT)), set()):
+                continue
             findings.append((path.relative_to(ROOT), category))
     if path.suffix.lower() in {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}:
-        findings.append((path.relative_to(ROOT), "signing material"))
+        fixture = PUBLIC_SIGNING_FIXTURES.get(path.relative_to(ROOT).as_posix(), {})
+        if path.is_symlink() or fixture.get('sha256') != hashlib.sha256(data).hexdigest():
+            findings.append((path.relative_to(ROOT), "signing material"))
 for path, category in findings:
     print(f"{path}: {category}")
 print(f"Privacy scan: {len(findings)} finding(s)")
