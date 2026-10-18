@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 set(bridge "${IRIDIUM_ROOT}/iridium/apps/ios/RuntimeBridge")
 if(TARGET dolphin)
+  foreach(tls_target mbedtls mbedx509 mbedcrypto)
+    target_compile_definitions(${tls_target} PUBLIC
+      "MBEDTLS_USER_CONFIG_FILE=\"${IRIDIUM_PHASE3_GENERATED}/mbedtls-user-config.h\"")
+  endforeach()
   target_sources(dolphin PRIVATE "${bridge}/IRDolphin.mm")
   target_include_directories(dolphin PRIVATE "${bridge}" "${CMAKE_SOURCE_DIR}/Source/iOS/Library")
   set_source_files_properties("${bridge}/IRDolphin.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

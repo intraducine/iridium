@@ -106,6 +106,11 @@ def generated(engine, destination):
     (directory / 'native.exports').write_text('\n'.join(sorted(NATIVE_EXPORTS)) + '\n')
     (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else ''))
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
+    if engine == 'dolphin':
+        # Supported mbedTLS user configuration: its public self-test keys are
+        # unnecessary in a player. Preserve TLS/PEM support and all source.
+        (directory / 'mbedtls-user-config.h').write_text(
+            '#undef MBEDTLS_SELF_TEST\n#undef MBEDTLS_CERTS_C\n')
     if engine == 'play':
         source = ROOT / 'vendor/Play'
         main = (source / 'Source/ui_libretro/main_libretro.cpp').read_text()

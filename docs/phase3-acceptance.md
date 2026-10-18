@@ -123,6 +123,12 @@ copied bytes still fail privacy checks. The four separately recorded upstream
 Windows/test signing fixtures are excluded from corresponding source. They are
 unused by the iOS targets and remain untouched in local upstream checkouts.
 
+Dolphin's mbedTLS uses its supported user-configuration hook to disable the
+optional self-tests and bundled test-certificate module in the player binary.
+TLS, certificate parsing and PEM handling remain enabled. All original test
+source and notices remain in corresponding source. This avoids shipping the
+public test private keys; package privacy checks remain unchanged.
+
 ## Four-engine acceptance gates
 
 Record source/build, model/OS, legal fixture/version, input method, observed
