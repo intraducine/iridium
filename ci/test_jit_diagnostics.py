@@ -71,9 +71,17 @@ import Foundation
     def test_production_watchdog_retains_owner_and_ignores_returned_or_stale_worker(self):
         launch = (ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumPSPExecutableLaunch.swift').read_text()
         start = launch.index('DispatchQueue.main.asyncAfter(deadline: .now() + 5)')
-        timer = launch[start:launch.index('\n        }\n    }', start)].replace('.now() + 5', '.now() + 0.02')
+        timer = launch[start:launch.index('\n        }\n    }', start)].replace('DispatchQueue.main.asyncAfter', 'clock.asyncAfter')
         fixture = r'''
 import Foundation
+@MainActor final class FixtureClock {
+    var scheduled: [() -> Void] = []
+    func asyncAfter(deadline: DispatchTime, execute: @escaping () -> Void) { scheduled.append(execute) }
+    func fire() {
+        let callbacks = scheduled; scheduled.removeAll()
+        for callback in callbacks { callback() }
+    }
+}
 @MainActor final class Session {
     enum Phase { case starting, stopping, restartRequired }
     enum Outcome { case restart(String) }
@@ -81,6 +89,8 @@ import Foundation
     var diagnostic: IridiumJITDiagnostic!
     var cleanups = 0, launches = 0
     let admission: UInt64 = 1
+    let clock: FixtureClock
+    init(_ clock: FixtureClock) { self.clock = clock }
     func cancel() {}
     func finish(_ outcome: Outcome) { finished = true; phase = .restartRequired; if case .restart(let message) = outcome { error = message } }
     func watch(_ diagnostic: IridiumJITDiagnostic, returned: Bool) {
@@ -96,12 +106,20 @@ import Foundation
             IridiumJITDiagnostic.create(directory: directory, identity: "source=fixture build=1") { continuation.resume(returning: $0) }
         }
         precondition(diagnostic != nil)
-        let stopped = Session(), returned = Session(), stale = Session(), stopping = Session()
+        let clock = FixtureClock()
+        let stopped = Session(clock), returned = Session(clock), stale = Session(clock), stopping = Session(clock)
         stopped.watch(diagnostic!, returned: false)
         returned.watch(diagnostic!, returned: true)
         stale.watch(diagnostic!, returned: false); stale.finished = true
         stopping.watch(diagnostic!, returned: false); stopping.phase = .stopping
-        try! await Task.sleep(nanoseconds: 100000000)
+        // Drive every production callback, then await the real serial journal.
+        // Sleeping cannot prove that utility-queue writes have reached disk.
+        precondition(clock.scheduled.count == 4)
+        clock.fire()
+        let persisted: Bool = await withCheckedContinuation { continuation in
+            diagnostic!.mark(IR_JIT_CANCEL) { continuation.resume(returning: $0) }
+        }
+        precondition(persisted)
         precondition(stopped.phase == .restartRequired && stopped.lease == 1 && stopped.error != nil)
         precondition(stopped.cleanups == 0 && stopped.launches == 0)
         precondition(returned.phase == .starting && returned.error == nil)
