@@ -99,3 +99,19 @@ class Phase3Tests(unittest.TestCase):
                 self.assertIn('#ifdef HAVE_OPENGLES3', (generated / 'glsm.c').read_text())
                 source.write_text('upstream changed\n')
                 with self.assertRaises(ValueError): builder.generated('flycast', root / 'output')
+
+    def test_dolphin_simulator_capability_overlay_requires_pinned_hook(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'vendor/Dolphin/Source/Core/VideoBackends/Metal/MTLUtil.mm'
+            source.parent.mkdir(parents=True)
+            capability = 'backend_info->bSupportsFramebufferFetch = [device supportsFamily:MTLGPUFamilyApple1];'
+            source.write_text(capability + '\n')
+            with patch.object(builder, 'ROOT', root):
+                generated = builder.generated('dolphin', root / 'output')
+                self.assertIn(capability[:-1] + ' && !TARGET_OS_SIMULATOR;',
+                              (generated / 'MTLUtil.mm').read_text())
+                self.assertEqual((generated / 'mbedtls-user-config.h').read_text(),
+                                 '#undef MBEDTLS_SELF_TEST\n#undef MBEDTLS_CERTS_C\n')
+                source.write_text('upstream changed\n')
+                with self.assertRaises(ValueError): builder.generated('dolphin', root / 'output')

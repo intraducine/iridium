@@ -111,6 +111,14 @@ def generated(engine, destination):
         # unnecessary in a player. Preserve TLS/PEM support and all source.
         (directory / 'mbedtls-user-config.h').write_text(
             '#undef MBEDTLS_SELF_TEST\n#undef MBEDTLS_CERTS_C\n')
+        metal = (ROOT / 'vendor/Dolphin/Source/Core/VideoBackends/Metal/MTLUtil.mm').read_text()
+        capability = 'backend_info->bSupportsFramebufferFetch = [device supportsFamily:MTLGPUFamilyApple1];'
+        if metal.count(capability) != 1:
+            raise ValueError('Dolphin Metal framebuffer-fetch capability hook changed')
+        # Simulator advertises an Apple GPU family but rejects render-target
+        # reads. Select the upstream non-fetch shader path on that platform.
+        (directory / 'MTLUtil.mm').write_text(metal.replace(capability,
+            capability[:-1] + ' && !TARGET_OS_SIMULATOR;'))
     if engine == 'play':
         source = ROOT / 'vendor/Play'
         main = (source / 'Source/ui_libretro/main_libretro.cpp').read_text()

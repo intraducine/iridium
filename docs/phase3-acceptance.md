@@ -24,6 +24,11 @@ check does not establish later arena sizes or guest JIT behavior. No PSP
 prepared arenas, BetterJIT experiments, new helper opcodes, exception-port
 repair, or replacement emulator internals are used.
 
+The Dolphin platform overlay disables framebuffer fetch only on Simulator:
+its advertised Apple GPU family otherwise selects shaders that Simulator Metal
+rejects as unsupported render-target reads. Device capability detection and
+the upstream non-fetch shader fallback remain intact.
+
 The shared Iridium menu, pause/resume, touch editor, opacity, keyboard, physical
 controller and ownership rules remain app owned. Cores use separate dynamic
 images with private C APIs, retained after stop. Ownership is released only
