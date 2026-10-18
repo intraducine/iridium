@@ -102,23 +102,26 @@ static void sampleController(IRDolphinPlayer *p) {
             auto controller=config->GetController(0);controller->LoadConfig(ini.GetOrCreateSection("Profile"));controller->UpdateReferences(g_controller_interface);
         }
     }
-    Config::SetBase(Config::MAIN_CPU_CORE,PowerPC::CPUCore::CachedInterpreter);
-    Config::SetBase(Config::MAIN_FASTMEM,false);Config::SetBase(Config::MAIN_FASTMEM_ARENA,false);
-    Config::SetBase(Config::MAIN_DSP_HLE,true);Config::SetBase(Config::MAIN_DSP_JIT,false);
-    Config::SetBase(Config::MAIN_GFX_BACKEND,std::string("Metal"));
-    Config::SetBase(Config::MAIN_AUDIO_BACKEND,std::string(BACKEND_COREAUDIO));
-    Config::SetBase(Config::GFX_VERTEX_LOADER_TYPE,VertexLoaderType::Software);
+    // Current-run settings outrank per-game INI layers loaded during BootCore.
+    // The plain interpreter avoids the iOS port's cached-code allocation/free
+    // path and cannot be replaced by a game's saved JIT choice.
+    Config::SetCurrent(Config::MAIN_CPU_CORE,PowerPC::CPUCore::Interpreter);
+    Config::SetCurrent(Config::MAIN_FASTMEM,false);Config::SetCurrent(Config::MAIN_FASTMEM_ARENA,false);
+    Config::SetCurrent(Config::MAIN_DSP_HLE,true);Config::SetCurrent(Config::MAIN_DSP_JIT,false);
+    Config::SetCurrent(Config::MAIN_GFX_BACKEND,std::string("Metal"));
+    Config::SetCurrent(Config::MAIN_AUDIO_BACKEND,std::string(BACKEND_COREAUDIO));
+    Config::SetCurrent(Config::GFX_VERTEX_LOADER_TYPE,VertexLoaderType::Software);
     DolphinAnalytics::Instance().ReportDolphinStart("ios");
     IRDolphinPlayer *p=self;
     presentation=AfterPresentEvent::Register([p](PresentInfo &){
-        if(p->frames.fetch_add(1)==0)p->event(p->generation,1,"Dolphin submitted its first Metal frame; cached interpreter selected.");
+        if(p->frames.fetch_add(1)==0)p->event(p->generation,1,"Dolphin submitted its first Metal frame; interpreter selected.");
     },"Iridium presentation");
     sampling=VIEndFieldEvent::Register([p]{sampleController(p);},"Iridium shared input");
     auto boot=BootParameters::GenerateFromFile({game},BootSessionData());
     if(!boot||!BootManager::BootCore(system,std::move(boot),wsi)) {
         event(generation,3,"Dolphin could not boot this game. Check the dump and any user-supplied Wii prerequisites.");[self finish];return;
     }
-    event(generation,0,"DolphiniOS upstream runtime loaded; Metal; cached interpreter; no executable memory requested.");
+    event(generation,0,"DolphiniOS upstream runtime loaded; Metal; interpreter; no executable memory requested.");
     watcher=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,DOLHostQueueGetUnderlyingQueue());
     dispatch_source_set_timer(watcher,dispatch_time(DISPATCH_TIME_NOW,25*NSEC_PER_MSEC),25*NSEC_PER_MSEC,NSEC_PER_MSEC);
     dispatch_source_set_event_handler(watcher,^{

@@ -198,7 +198,7 @@ struct IridiumConsoleOptions: View {
     private var runtimeDescription: String {
         guard let runtime = resolvedRuntime else { return "This game's selected runtime is not available in this build." }
         switch runtime.id {
-        case "dolphin": return "DolphiniOS · Metal graphics and cached CPU interpreter. Performance and Wii controller support vary by game. Physical-device acceptance is pending."
+        case "dolphin": return "DolphiniOS · Metal graphics and CPU interpreter. Performance and Wii controller support vary by game. Physical-device acceptance is pending."
         case "azahar": return "Azahar · Software graphics and CPU interpreter. This mode can be very slow. Use prepared, unencrypted games or homebrew. Physical-device acceptance is pending."
         case "play": return "Play! · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Restart Iridium after closing a Play! session. Physical-device acceptance is pending."
         case "flycast": return "Flycast · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Some games need user-supplied firmware. Physical-device acceptance is pending."

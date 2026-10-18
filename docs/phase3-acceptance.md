@@ -9,12 +9,14 @@ for an upstream video callback and reports failures without simulating playback.
 
 | Engine | Selected source | Adapter policy |
 | --- | --- | --- |
-| Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. Cached CPU interpreter, HLE DSP without DSP JIT, software vertex loader. |
+| Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. CPU interpreter, HLE DSP without DSP JIT, software vertex loader. |
 | Azahar, Nintendo 3DS | Official `2126.2`, `219d743a1e698101fe1ab8bef43e6563126c3c27` | Digest-verified official iOS Libretro binary and matching unified source. CPU/shader interpreters and software graphics. Simulator core built from that source. |
 | Play!, PlayStation 2 | Official `0.77`, `fa75cea31a33f5ab7a2008ed0d90dc74353e9cef` | Upstream Libretro VM, OpenGL ES GS and CodeGen. Its own executable-memory probe is required. Restart after a session because configuration uses a process singleton. |
 | Flycast, Dreamcast/arcade | Official `v2.7`, `5aa091fde632fb332c8d8c34e280d62dc951954c` | Upstream Libretro runtime and ES3 renderer. Device requires its own executable-memory probe; simulator recompilers are compiled out upstream. This release dropped supported iOS distribution; the adapter remains device unverified. |
 
-Dolphin's selected iOS port is a beta. Its interpreter and Azahar's software
+Dolphin's selected iOS port is a beta. The plain interpreter avoids a reproduced
+cached-interpreter shutdown allocator crash in that port; current-run settings
+prevent game INI files from selecting JIT. Its interpreter and Azahar's software
 renderer can be too slow for a game. Play!/Flycast may remain unavailable when
 iOS rejects their upstream allocators. Helper readiness is only a prerequisite;
 the allocator must execute 42, rewrite the block, then execute 7. That small
@@ -66,6 +68,12 @@ CMake and Ninja. Choose an installed Xcode with per-process `DEVELOPER_DIR` when
 needed. Complete Xcode's supported first launch and Metal installation; never
 reseal native receipts or omit essential shaders to bypass a missing compiler.
 Reuse Madeira/PPSSPP only when their existing source/toolchain audits accept it.
+If Apple has mounted Metal but Xcode cannot discover it, select that existing
+`.xctoolchain` through process-local `EXTERNAL_TOOLCHAINS_DIR` (its parent) and
+`TOOLCHAINS` (the identifier in `ToolchainInfo.plist`). Xcode's `-toolchain`
+option plus `EXTERNAL_TOOLCHAINS_DIR=...` build setting can also select it.
+Verify the resulting Metal compile command points into the installed toolchain;
+do not copy compilers into Xcode or edit the toolchain metadata.
 
 ```sh
 git submodule update --init --recursive vendor/Dolphin vendor/Play vendor/Flycast
