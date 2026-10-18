@@ -89,7 +89,7 @@ FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tre
                                     'prepare', 'verify', 'app'))
 FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
-                              'time', 'sys', 'madeira_presentation'))
+                              'time', 'sys', 'tempfile', 'madeira_presentation'))
 # This reviewed route cannot run app preparation during a compiler action.
 # A new CLI shape uses whole-file comparison until its isolation is reviewed.
 FRONTEND_MAIN = """if __name__ == '__main__':
@@ -97,15 +97,17 @@ FRONTEND_MAIN = """if __name__ == '__main__':
     parser.add_argument('action', choices=('prepare', 'verify', 'app', 'native', 'windows', 'toolchains', 'check-bundle'))
     parser.add_argument('app', nargs='?', type=Path)
     parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
+    parser.add_argument('--reuse-only', action='store_true', help='Validate completed native outputs without building or writing')
     args = parser.parse_args()
     if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
+    if args.reuse_only and args.action != 'native': parser.error('--reuse-only requires native')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only), 'windows': windows, 'toolchains': toolchains}[args.action]()
 """
 
 

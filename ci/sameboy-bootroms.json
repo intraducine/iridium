@@ -284,7 +284,7 @@
       "sha256": "8a65465a9da7ec657726a671da9a85963cf19d2c975e499aea6b97eb37e0b6ea"
     }
   },
-  "revision": "208ba4afabffab9edde416f2dbb8ae459e34adb8",
+  "revision": "98da08c3117a7bf39c7329fc662c0d18cb54707d",
   "rgbdsRevision": "d1829ed92327a9f9210ffd45d865331f24dfa4e6",
   "rgbdsVersion": "v0.9.4",
   "sourceSHA256": {
@@ -300,7 +300,7 @@
     "BootROMs/sameboot.inc": "356c6a76512661098f471d43cae8bdff7c8f9c75973cd536882459e59d0baa8d",
     "BootROMs/sgb2_boot.asm": "65da70675083830e20ea536d0b7599210ea040b7a9b12f9a531de72bf7f9220b",
     "BootROMs/sgb_boot.asm": "096c33241e2ea738dbaedb80f6e962a91dcbe57566c8a182d16e8d3cb0a17d7d",
-    "Makefile": "08f6034b7e666881833b593459b50846e78cbeeda29068862bbb14af7e099fdf",
-    "version.mk": "0138c3c84ee1f76497001c897743f2228ac027603db69d570832029d42d12adb"
+    "Makefile": "317fdb2ea902abd5e614311633df73ffbe5d79c5d06898c1034ada55c7b2ad00",
+    "version.mk": "394423d0bab414b2ef5ec8ce25b6a17b212e3445fe6cb9aeec419fd5f8a65055"
   }
 }

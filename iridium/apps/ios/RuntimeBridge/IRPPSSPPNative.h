@@ -2,6 +2,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "IRJITDiagnostic.h"
 #ifdef __OBJC__
 @class UIViewController;
 #endif
@@ -16,6 +17,12 @@ typedef void (*IRNativePSPInput)(uint16_t *buttons, int16_t *x, int16_t *y);
 // arrive on the main thread. Requests: 1 resolution (1–4), 2 save / 3 load (slot 0–4).
 // Event 8 reports the effective CPU mode when game boot completes.
 IR_NATIVE_EXPORT uint32_t ir_native_psp_abi(void);
+// Before creating a player: actual upstream allocation/protection/cache/execute
+// probe. 1 ready, 0 execution denied, -1 unsupported, -2 allocation, -3 protection,
+// -4 debugger absent, -5 player active. Readiness is consumed by create().
+IR_NATIVE_EXPORT int ir_native_psp_check_jit(void);
+// Additive ABI-3 diagnostic entry; -6 means a required breadcrumb could not persist.
+IR_NATIVE_EXPORT int ir_native_psp_check_jit_diagnostic(const IRJITDiagnosticSink *sink);
 IR_NATIVE_EXPORT void *ir_native_psp_create(const char *game, const char *memory_stick, const char *assets,
                           bool jit_verified, IRNativePSPEvent event, IRNativePSPInput input);
 IR_NATIVE_EXPORT void ir_native_psp_pause(void);

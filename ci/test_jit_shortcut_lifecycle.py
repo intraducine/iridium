@@ -46,7 +46,12 @@ import CoreFoundation
     static func waitUntilReachable(within: Double, completion: (Probe) -> Void) { completion(Probe(reachable: false)) }
 }
 @MainActor enum SigningStatus { struct Status { let debuggable = true }; static let current = Status(); static let notDebuggableMessage = "fixture" }
-@MainActor enum StikJITHelper { static var ready = false }
+@MainActor enum StikJITHelper {
+    static var ready = false
+    nonisolated static func detachDebugger() { fatalError("fixture has no debugger") }
+}
+func isDebuggerAttached() -> Bool { true } // Foreign OR supported helper: neither is ours to detach.
+func jit_arm_trap_fallback() { fatalError("fixture has no debugger") }
 @MainActor final class JITNetworkShortcut {
     enum Outcome { case done(String), failed(String) }
     static let shared = JITNetworkShortcut()
@@ -150,6 +155,89 @@ let beforeReady = app.urls.count
 StikJITHelper.ready = true
 coordinator.enable { first.append((try? $0.get()) != nil) }
 precondition(first == [false, false, false, false, true] && app.urls.count == beforeReady && !coordinator.busy)
+// PSP uses these exact generated methods plus its production continuation.
+// No real Shortcut, network setting or debugger endpoint is invoked.
+// A preexisting debugger can satisfy ready without starting our helper.
+// Both forbidden protocol endpoints above trap if cleanup invokes them.
+let foreign = IridiumJITRequest()
+var foreignRelease: IridiumJITCleanup = { $0() }
+var foreignLaunched = false
+let foreignBefore = coordinator.enables
+foreign.start(requested: true, activate: { callback in
+    coordinator.enableForPSP { result, release in foreignRelease = release; callback(result) }
+}, validate: { $0(.success(())) }, cleanup: { foreignRelease($0) }) { foreignLaunched = $0 }
+precondition(foreignLaunched && coordinator.enables == foreignBefore && !coordinator.busy)
+StikJITHelper.ready = false
+func awaitCleanupURL(_ count: Int) {
+    let deadline = Date().addingTimeInterval(3)
+    while app.urls.count < count && Date() < deadline {
+        _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    precondition(app.urls.count == count)
+}
+var launches: [Bool] = [], releases: [IridiumJITCleanup] = []
+var probe: ((Result<Void, Error>) -> Void)?
+func launch(_ request: IridiumJITRequest) {
+    var release: IridiumJITCleanup = { $0() }
+    request.start(requested: true, activate: { callback in
+        coordinator.enableForPSP { result, cleanup in
+            release = cleanup
+            if case .success = result { releases.append(cleanup) }
+            callback(result)
+        }
+    }, validate: { probe = $0 }, cleanup: { release($0) }) { launches.append($0) }
+    LoopbackProbe.pending?(LoopbackProbe.Probe(reachable: false))
+    shortcut.handle(callback(app.urls.last!, "x-success"))
+}
+let failed = IridiumJITRequest()
+launch(failed)
+coordinator.resolved?(.success(()))
+precondition(coordinator.busy && probe != nil)
+let beforeFailureCleanup = app.urls.count
+probe?(.failure(NSError(domain: "probe", code: -3)))
+precondition(failed.state == .restoring && launches.isEmpty)
+// Duplicate release waits for the same restoration; it cannot start another.
+var duplicateCompleted = false
+releases.last! { duplicateCompleted = true }
+awaitCleanupURL(beforeFailureCleanup + 1)
+coordinator.enable { precondition((try? $0.get()) == nil) }
+precondition(coordinator.busy && !duplicateCompleted && launches.isEmpty)
+shortcut.handle(callback(app.urls.last!, "x-success"))
+precondition(launches == [false] && duplicateCompleted && shortcut.pending == nil && !coordinator.busy)
+let staleRelease = releases.last!
+let cancelledActivation = IridiumJITRequest()
+launch(cancelledActivation)
+cancelledActivation.cancel()
+let beforeCancelledActivationCleanup = app.urls.count
+coordinator.resolved?(.success(()))
+awaitCleanupURL(beforeCancelledActivationCleanup + 1)
+shortcut.handle(callback(app.urls.last!, "x-success"))
+precondition(launches == [false] && !coordinator.busy && shortcut.pending == nil)
+let cancelledProbe = IridiumJITRequest()
+launch(cancelledProbe)
+coordinator.resolved?(.success(()))
+let beforeCancelledProbeCleanup = app.urls.count
+cancelledProbe.cancel()
+precondition(coordinator.busy && app.urls.count == beforeCancelledProbeCleanup)
+// Cleanup must wait for the worker acknowledgment, even after cancellation.
+probe?(.success(()))
+awaitCleanupURL(beforeCancelledProbeCleanup + 1)
+shortcut.handle(callback(app.urls.last!, "x-success"))
+precondition(launches == [false] && !coordinator.busy && shortcut.pending == nil)
+let successful = IridiumJITRequest()
+launch(successful)
+coordinator.resolved?(.success(()))
+let beforeSuccessCleanup = app.urls.count
+var staleCompleted = false
+staleRelease { staleCompleted = true }
+precondition(staleCompleted && coordinator.busy && app.urls.count == beforeSuccessCleanup && shortcut.pending != nil)
+probe?(.success(()))
+awaitCleanupURL(beforeSuccessCleanup + 1)
+precondition(launches == [false])
+shortcut.handle(callback(app.urls.last!, "x-success"))
+precondition(launches == [false, true] && !coordinator.busy && shortcut.pending == nil)
+print("PASS PSP foreign ready debugger and coordinator-started supported activation never invoke private detach or mutate SIGTRAP")
+print("PASS PSP backend failure, cancelled activation/probe, successful launch restore before continuation; duplicate/stale cleanup cannot release another owner")
 print("PASS generated JIT single-flight, failed/cancelled start cleanup, late callbacks, explicit retry, restore recovery, open failure, timeout, already-ready")
 }
 MainActor.assumeIsolated { runChecks() }
@@ -159,5 +247,6 @@ MainActor.assumeIsolated { runChecks() }
             source.write_text(swift)
             binary = Path(folder) / 'check'
             subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(Path(folder) / 'cache'),
+                            str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumJITRequest.swift'),
                             str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=30)

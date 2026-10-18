@@ -223,6 +223,15 @@ struct IridiumConsoleOptions: View {
                         }.disabled(library.working)
                     }
                     Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary)
+                    if game.platform == .psp {
+                        Toggle("Use JIT", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
+                            var changed = currentGame; changed.pspJIT = value; library.update(changed)
+                        }))
+                        .disabled(library.working || IridiumConsoleSession.shared.isActive)
+                        .accessibilityIdentifier("psp-use-jit")
+                        Text("Off by default. Uses the shared Launch Support setup. If PPSSPP cannot use JIT, this game starts with the IR interpreter.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 Section {
                     Button("Rename & Artwork", systemImage: "photo") { editingArtwork = true }

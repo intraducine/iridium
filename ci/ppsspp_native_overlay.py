@@ -5,6 +5,7 @@ import ppsspp_picker_overlay as picker
 import ppsspp_callback_overlay as callbacks
 import ppsspp_frontend_overlay as frontend
 import ppsspp_gl_sync_overlay as gl_sync
+import ppsspp_exec_overlay as executable
 
 REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
 
@@ -16,6 +17,35 @@ def replace(text, old, new):
 
 
 def apply(name, text):
+    if name == 'Common/CodeBlock.h':
+        text = replace(text, 'void BeginWrite(size_t sizeEstimate = 1)', 'bool BeginWrite(size_t sizeEstimate = 1)')
+        text = replace(text, '''			ProtectMemoryPages(writeStart_, sizeEstimate, MEM_PROT_READ | MEM_PROT_WRITE);
+		}
+	}
+
+	// In case you now know''', '''			return ProtectMemoryPages(writeStart_, sizeEstimate, MEM_PROT_READ | MEM_PROT_WRITE);
+		}
+		return true;
+	}
+
+	// In case you now know''')
+        text = replace(text, 'void EndWrite()', 'bool EndWrite()')
+        text = replace(text, '''			ProtectMemoryPages(writeStart_, sz, MEM_PROT_READ | MEM_PROT_EXEC);
+			writeStart_ = nullptr;
+		}
+	}''', '''			bool protectedOK = ProtectMemoryPages(writeStart_, sz, MEM_PROT_READ | MEM_PROT_EXEC);
+			writeStart_ = nullptr;
+			return protectedOK;
+		}
+		return true;
+	}''')
+        return executable.apply(name, text)
+    if name == 'Common/Arm64Emitter.cpp':
+        # Count reads all four entries. Non-optimized emission needs every
+        # active part, including zero chunks, to start with MOVZ rather than MOVK.
+        text = replace(text, 'bool upload_part[4];',
+                       'bool upload_part[4] = {!optimize, !optimize, !optimize, !optimize};')
+        return executable.apply(name, text)
     if name in gl_sync.PATCHED: return gl_sync.apply(name, text)
     if name in sensors.PATCHED: return sensors.apply(name, text)
     if name == picker.NAME: return picker.apply(text)
@@ -212,17 +242,20 @@ def apply(name, text):
                           '- (void)PushCameraImageIOS:(long long)len buffer:(unsigned char*)data {',
                           '- (void)SetGpsDataIOS:(CLLocation *)newLocation {'):
             text = replace(text, signature, signature + '\n\tif (iridiumSensorsClosed || !ir_native_psp_generation_current(iridiumOwnerGeneration)) return;')
-    return frontend.apply(name, callbacks.apply(name, text))
+    return executable.apply(name, frontend.apply(name, callbacks.apply(name, text)))
 
 
-PATCHED = ('CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED)
+PATCHED = ('Common/CodeBlock.h', 'Common/Arm64Emitter.cpp', 'CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED, *executable.PATCHED)
 
 
 def stage(source, destination):
     """Mirror immutable source; only declared platform/ownership hooks are copied."""
     source = source.resolve(strict=True)
     destination.mkdir(parents=True, exist_ok=True)
-    mirrored_directories = ('ios', 'UI', 'Core', 'Core/Util', 'Core/HLE', 'Common', 'Common/GPU', 'Common/GPU/OpenGL')
+    mirrored_directories = set(('ios', 'UI', 'Core', 'Core/Util', 'Core/HLE', 'Common', 'Common/GPU', 'Common/GPU/OpenGL'))
+    for name in PATCHED:
+        mirrored_directories.update(parent.as_posix() for parent in Path(name).parents if parent.as_posix() != '.')
+    mirrored_directories = sorted(mirrored_directories, key=lambda name: (name.count('/'), name))
     for relative in ('', *mirrored_directories):
         target = destination / relative
         target.mkdir(exist_ok=True)

@@ -10,7 +10,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def cartridge():
+def cartridge(fixed_palette=False):
     # Original test code only. No commercial ROM, firmware or Nintendo logo.
     # Battery marker and polled joypad register expose actual CPU/input behavior.
     data = bytearray(32768)
@@ -23,7 +23,7 @@ def cartridge():
     def register(address, value):
         program.extend([0x3e, value, 0xe0, address])
     register(0x40, 0)  # LCD off while defining an original test tile.
-    program.extend([0x21, 0, 0x80, 0x06, 16, 0x3e, 0xaa, 0x22, 0x05, 0x20, 0xfc])
+    program.extend([0x21, 0, 0x80, 0x06, 8, 0x3e, 0xaa, 0x22, 0xaf, 0x22, 0x3e, 0xaa, 0x05, 0x20, 0xf8])
     register(0x47, 0xe4)
     register(0x40, 0x91)
     for address, value in [(0x26, 0x80), (0x24, 0x77), (0x25, 0xff),
@@ -32,7 +32,9 @@ def cartridge():
     register(0, 0x10)  # Select joypad buttons.
     loop = 0x150 + len(program)
     # Store actual input and make it visibly change the palette.
-    program.extend([0xf0, 0, 0xea, 1, 0xa0, 0xe0, 0x47, 0xc3, loop & 255, loop >> 8])
+    program.extend([0xf0, 0, 0xea, 1, 0xa0])
+    if not fixed_palette: program.extend([0xe0, 0x47])
+    program.extend([0xc3, loop & 255, loop >> 8])
     data[0x150:0x150 + len(program)] = program
     data[0x14d] = (-sum(data[0x134:0x14d]) - 25) & 255
     return data
@@ -79,8 +81,8 @@ def check(library):
             for _ in range(250):
                 assert lib.ir_core_step(0, c.byref(frame))
                 assert frame.width == 160 and frame.height == 144
-                assert 59 < frame.fps < 61 and frame.rate == 48000
-                assert 0 < frame.audio_frames < 1000
+                assert 59 < frame.fps < 61 and frame.rate == 96000
+                assert 0 < frame.audio_frames < 2000
                 audio += frame.audio_frames
             expected = 250 * frame.rate / frame.fps
             assert expected * 0.98 < audio < expected * 1.02
@@ -113,7 +115,30 @@ def check(library):
             assert lib.ir_core_write_save(True, clock, clock_size)
             lib.ir_core_close(); lib.ir_core_close()
             assert not lib.ir_core_step(0, c.byref(frame))
-    print('Real SameBoy: DMG/CGB across three lifecycles, 750 frames, audio, input, SRAM and RTC round trips passed')
+    # Ordinary DMG cartridges must receive CGB boot colorization, not a tint
+    # painted over grayscale frames by the frontend.
+    rom = cartridge(fixed_palette=True)
+    buffer = (c.c_uint8 * len(rom)).from_buffer_copy(rom)
+    assert lib.ir_core_open(buffer, len(rom), folder.encode())
+    for _ in range(250): assert lib.ir_core_step(0, c.byref(frame))
+    colors = {int(frame.pixels[i]) & 0xffffff for i in range(frame.width * frame.height)}
+    assert len(colors) > 1
+    assert any(len({v >> 16, (v >> 8) & 255, v & 255}) > 1 for v in colors), colors
+    assert lib.ir_core_audio_dropped_frames() == 0
+    print('DMG compatibility colors:', [hex(v) for v in sorted(colors)])
+    lib.ir_core_close()
+    # Upstream 1.0.4 no longer exposes RTC memory for cartridges without an RTC.
+    rom[0x147] = 3  # MBC1 RAM/battery, no clock
+    rom[0x146] = 3  # SGB-capable header selects standalone iOS's SGB2 model
+    rom[0x14d] = (-sum(rom[0x134:0x14d]) - 25) & 255
+    buffer = (c.c_uint8 * len(rom)).from_buffer_copy(rom)
+    assert lib.ir_core_open(buffer, len(rom), folder.encode())
+    assert lib.ir_core_save_size(True) == 0
+    for _ in range(250): assert lib.ir_core_step(0, c.byref(frame))
+    assert frame.width == 160 and frame.height == 144 and frame.rate == 96000
+    assert 59 < frame.fps < 62
+    lib.ir_core_close()
+    print('Real SameBoy: five lifecycles, 1250 frames, DMG CGB-boot colorization, CGB/SGB2, 96 kHz audio, input, SRAM, RTC and no-RTC passed')
 
 
 def main():

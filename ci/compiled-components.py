@@ -62,6 +62,7 @@ def allowed(name, component):
 
 
 def package(root, component):
+    if component == 'madeira-native': validate_native_checkpoint(root)
     out = root / '.build' / (component + '-compiled-transfer')
     out.mkdir(parents=True, exist_ok=False)
     archive = out / 'compiled.tar.gz'
@@ -114,12 +115,18 @@ def restore(root, component, run_id):
             names.add(name)
     if not names:
         raise ValueError('Empty compiler artifact')
+    for name in names:
+        destination = root / name
+        if root.is_symlink() or any(path.is_symlink() for path in (destination, *destination.parents)
+                                   if path == root or path.is_relative_to(root)):
+            raise ValueError('Restore destination contains a symbolic link: ' + name)
+        if not destination.resolve().is_relative_to(root.resolve()):
+            raise ValueError('Restore destination escapes checkout')
     with tempfile.TemporaryDirectory(dir=root / '.build') as temp:
         staged = Path(temp) / 'compiled'
         inputs.unpack(archive, staged, 'compiled')
-        for name in names:
-            if not (root / name).resolve().is_relative_to(root.resolve()):
-                raise ValueError('Restore destination escapes checkout')
+        # Check the complete generation before any destination file is replaced.
+        if component == 'madeira-native': validate_native_checkpoint(root, staged / FRONTEND)
         for name in names:
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -127,11 +134,23 @@ def restore(root, component, run_id):
     print('Restored completed ' + component + ' compilation')
 
 
-def frontend_toolchain():
+def frontend_module():
     spec = spec_from_file_location('frontend_compiler', ROOT / 'ci/madeira-frontend.py')
     frontend = module_from_spec(spec)
     spec.loader.exec_module(frontend)
-    return frontend.compiler_identity()
+    return frontend
+
+
+def validate_native_checkpoint(root, upstream=None):
+    frontend = frontend_module()
+    frontend.ROOT = root
+    frontend.UPSTREAM = root / FRONTEND
+    frontend.verify_pin()
+    frontend.validate_native_reuse(upstream=upstream)
+
+
+def frontend_toolchain():
+    return frontend_module().compiler_identity()
 
 
 if __name__ == '__main__':

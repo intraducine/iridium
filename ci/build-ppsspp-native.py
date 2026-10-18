@@ -19,7 +19,8 @@ RELEASE = 'v1.20.4'
 EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 'ext/freetype', 'assets/debugger')
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
-EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames')}
+EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames',
+    'exec_version', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')}
 
 
 def run(*args, **kwargs):
@@ -69,13 +70,13 @@ def compiled_inputs(source, destination):
             relative = path.relative_to(destination / 'source').as_posix()
             if relative not in overlay.PATCHED: raise ValueError('Undeclared native source hook')
             name = 'embedding/' + relative
-        elif path in (NATIVE / 'IRPPSSPPNative.mm', NATIVE / 'IRPPSSPPCodecCheck.c'):
+        elif path in (NATIVE / 'IRPPSSPPNative.mm', NATIVE / 'IRPPSSPPCodecCheck.c', NATIVE / 'IRJITExecutionProbe.c', NATIVE / 'IRPSPExecutableMemory.cpp'):
             name = 'Iridium/' + path.name
         elif path.is_relative_to(destination / 'build'):
             name = 'generated/' + path.relative_to(destination / 'build').as_posix()
         else: raise ValueError('Compiler input is outside the reviewed native player')
         hashes[name] = digest(path)
-    if not all('Iridium/' + n in hashes for n in ('IRPPSSPPNative.mm', 'IRPPSSPPCodecCheck.c')):
+    if not all('Iridium/' + n in hashes for n in ('IRPPSSPPNative.mm', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c', 'IRPSPExecutableMemory.cpp')):
         raise ValueError('The native player and media check were not both compiled')
     return hashes
 
@@ -92,6 +93,21 @@ def gl_sync_headers(destination):
         if not path.is_absolute(): path = destination / 'build' / path
         if path.resolve(strict=True) != expected.resolve(strict=True):
             raise ValueError('A GL translation unit used the unadapted upstream class layout')
+    return {'headerSHA256': digest(expected), 'references': len(headers)}
+
+
+def codeblock_headers(destination):
+    """Core and the probe must compile the same status-propagating template."""
+    expected = destination / 'source/Common/CodeBlock.h'
+    if expected.is_symlink(): raise ValueError('The adapted CodeBlock header must be a real staged file')
+    dependencies = output('ninja', '-C', destination / 'build', '-t', 'deps')
+    headers = [line.strip() for line in dependencies.splitlines() if line.strip().endswith('/CodeBlock.h')]
+    if not headers: raise ValueError('No compiler dependencies reference the adapted CodeBlock header')
+    for name in headers:
+        path = Path(name)
+        if not path.is_absolute(): path = destination / 'build' / path
+        if path.resolve(strict=True) != expected.resolve(strict=True):
+            raise ValueError('A translation unit used the unadapted upstream CodeBlock header')
     return {'headerSHA256': digest(expected), 'references': len(headers)}
 
 
@@ -255,6 +271,7 @@ def build(source, destination, sdk, jobs):
     run(*command)
     run('cmake', '--build', destination / 'build', '--target', 'IridiumPPSSPPNative', '--parallel', jobs)
     header_audit = gl_sync_headers(destination)
+    codeblock_audit = codeblock_headers(destination)
     binary = destination / 'build/lib/libIridiumPPSSPPNative.dylib'
     boundary = audit(binary, sdk)
     delivered = destination / binary.name
@@ -276,8 +293,11 @@ def build(source, destination, sdk, jobs):
         componentType='native-ios-player', binary=delivered.name, sha256=digest(delivered),
         compiledInputSHA256=compiled_inputs(source, destination), assetSHA256=hashes, codecs=codecs,
         moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination), glSyncHeaderAudit=header_audit,
+        codeBlockHeaderAudit=codeblock_audit,
         licensedAtlases=json.loads(atlases.MANIFEST.read_text()),
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
+        diagnosticHeaderSHA256=digest(NATIVE / 'IRJITDiagnostic.h'),
+        executableMemoryHeaderSHA256=digest(NATIVE / 'IRPSPExecutableMemory.h'),
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
         mode='native iOS engine; upstream media/graphics; shared Iridium frontend')

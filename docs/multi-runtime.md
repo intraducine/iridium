@@ -28,8 +28,8 @@ failure handling. No new executable code is downloaded at runtime.
 
 ## First core
 
-`vendor/SameBoy` is pinned to the official 1.0.3 source at
-`208ba4afabffab9edde416f2dbb8ae459e34adb8`.
+`vendor/SameBoy` is pinned to the official 1.0.4 source at
+`98da08c3117a7bf39c7329fc662c0d18cb54707d`.
 The build compiles its 21 Core/Libretro/generated-boot C units without RetroArch
 or libretro-common. It generates replacement boot-ROM arrays from reviewed
 hexadecimal data assembled from upstream's replacement boot code. The source
@@ -42,17 +42,26 @@ duplicate static-link definitions. This isolates all exported C symbols,
 not just `retro_*`. An audit rejects unisolated symbols. Compiler flags, source
 count, source pin, target and archive hash are recorded in the build output.
 
-The generated Libretro adapter calls the existing public `GB_set_sample_rate`
-API with 48 kHz instead of clock/2. The upstream Core and APU are unchanged.
-This keeps ordinary frames inside the bounded audio queue without silently
-dropping half of the high-rate upstream output. The adapted source hash and
-sample rate are recorded in the build manifest.
+The unchanged Libretro adapter uses its target-sample-rate environment API
+at 96 kHz, matching standalone iOS. The host selects CGB E for ordinary DMG/CGB
+cartridges, SGB2 for SGB-capable DMG headers, modern-balanced color correction
+and accurate high-pass filtering. CGB replacement boot code can therefore
+colorize DMG games, without frontend tinting. The game viewport omits SGB borders.
+The build manifest records the complete source/header/boot/recipe fingerprint,
+flags, archive and private-namespace hashes; app generation rejects stale cores.
 
 The C bridge owns one interpreter instance, bounds ROM/video/audio buffers,
 accepts only the supported software pixel format, and copies frame data before
 the next step. Audio callbacks consume dropped overflow rather than causing a
 retry loop. Actual core timing supplies frame and sample rates; the audio mixer
 converts to the device output rate. UI deliveries and queued audio are bounded.
+SameBoy playback prefills 50 ms and caps queued audio at 150 ms. A monotonic
+frame clock recovers coalesced timer events with at most three steps per event;
+long stalls discard timing debt. Empty audio queues prefill again. Pause clears
+queued samples and starts a fresh clock on resume. Logs record queue duration,
+underruns, dropped frames, timer delays and core/output rates. These measures
+address host buffering gaps; real-device crackling still requires comparison.
+For cartridges without an RTC, old unused clock files are preserved and ignored.
 
 Touch controls, arrow keys with Z/X/Space/Return, and controller sampling route
 to the active console instance. Controller Menu+Options opens the player menu.
@@ -174,7 +183,7 @@ claim GameCube, Wii, 3DS, PS2, Dreamcast, Switch, Vita, Xbox or Android support.
 
 PPSSPP is pinned to published v1.20.4 at
 `fa50bb1976065c4f8b1b47af227d367fe9771555`. Iridium embeds upstream's native iOS
-player in a separate dylib with eight C exports. Its UI, codecs, graphics,
+player in a separate dylib with an audited C interface. Its UI, codecs, graphics,
 configuration and full resource tree remain available. Generated platform hooks
 replace app/window ownership, route restart/exit through Iridium, choose each
 game's existing memory stick and drain render threads while the main run loop
@@ -184,10 +193,107 @@ are unchanged. Madeira remains at its existing exact pin and dependencies.
 Imports accept bounded PSP ELF, ISO, CSO v0/v1 and PBP headers. Each game retains
 its UUID memory-stick directory. Upstream manages its configuration, saves and
 advanced settings in that directory. New memory sticks start with OpenGL,
-2× resolution and the IR interpreter. Native JIT is reported unavailable until
-the embedded allocator has been verified; capability is not inferred from a
-Madeira JIT lease. Existing settings remain subject to upstream's capability
-fallbacks, and the selected CPU/graphics configuration is logged.
+2× resolution and the IR interpreter. Each game's **Use JIT** option defaults
+off, including existing records. Enabling it uses the same app-level
+`JITCoordinator` and Launch Support configuration as Windows. The coordinator's
+single-flight gate also covers Shortcut cleanup. Cancelling a console launch
+discards its continuation without terminating a debugger helper or resuming a
+different game later. PSP holds activation admission through native validation
+and releases it after restoring the Shortcut's network changes, before starting
+either player mode. Cancellation waits for any active native probe to acknowledge
+completion before that cleanup; stale cleanup cannot release a later owner.
+PSP cleanup does not acquire debugger ownership: it sends no private detach RPC
+and does not replace SIGTRAP, for either a ready debugger or a newly enabled helper.
+
+Activation is followed by a PPSSPP-specific check of its own 16 MB allocation,
+upstream W^X protection and cache path, generated ARM64 execution, and rewriting
+and executing the same page again. Only a successful check consumed by the
+next native player exposes JIT capability. An activation or check failure
+starts the IR interpreter and reports the reason in PSP Settings. A stalled
+probe retains ownership and requires restart; it cannot safely be abandoned
+under a new player. A Madeira JIT lease alone never enables PPSSPP JIT. The
+native adapter does not substitute Madeira's split RX/RW allocator for
+PPSSPP's upstream allocator. Platforms that reject that allocator fall back.
+The execution guard also declines to run when a custom fault handler is already
+installed; it does not emulate another handler's masks, flags or alternate stack.
+The effective CPU/graphics configuration is logged separately from the option.
+
+JIT attempts also keep a private diagnostic journal in
+`Documents/iridium-psp-jit-stages.log` and one `.previous.log` file, each bounded
+to 32 KiB. The header identifies the attempt, source/build and UTC/monotonic
+anchor; records contain fixed stage names, pass numbers, numeric results and
+the app/native image UUIDs and bases plus the probe allocation base. These
+private address anchors must persist before execution; a missing image UUID
+or failed anchor write declines the probe. They contain no game paths, game data, pairing
+records or arbitrary native log text. Each boundary uses checked writes and
+`fsync` before continuing. This preserves completed records across process
+termination; it does not establish power-loss durability or diagnose the cause
+of an execution window that never returns.
+
+The follow-up probe records `code.length` and `code.word.0` through `.3` for
+at most 16 bytes of its own constant-return instructions, before cache/RX
+transitions. No game code is recorded. `exec.enter`
+precedes TLS setup; `call.enter` follows the TLS accessor and an unarmed flag
+write, immediately before arming and calling the generated leaf. A missing
+return still does not establish the faulting instruction or termination cause.
+
+The pinned emitter has a declared one-line overlay initializing its chunk
+flags; full-production-emitter UBSan/constant-emission tests cover optimized
+and unoptimized W/X values. This repairs demonstrated uninitialized reads,
+without claiming to fix physical-device JIT execution.
+
+The generated Madeira helper stores `Documents/iridium-jit-helper.log` plus
+one `.previous.log` in **the helper's own private container**. Each is at most
+4 KiB/16 records, with checked writes and `fsync`; write failure only disables
+file recording. Export All App Logs requests a bounded snapshot over the existing
+extension request/response channel, including on a later app launch. The app
+validates the response's request ID and every complete allowlisted record, then
+atomically merges up to 32 records into `iridium-jit-helper-mirror.log` for normal
+export. Enable requests and their helper records share a random attempt ID;
+historical attempts remain tagged separately. A two-second retrieval timeout,
+empty response or incomplete tail preserves the app's existing mirror. Retrieval
+runs outside the helper's debugger work queue and does not rotate journals or
+perform pairing/preparation. Physical-device delivery remains unverified; no
+shared-container entitlement or permission is added. Records retain build/UTC,
+attempt ID, setup reply categories (`ok`, `empty`, `error`,
+`stop`, `other`) and the first stop/fault/exit's bounded signal/exception/code
+fields. The first non-BRK fault also records `pc` and the second repeated
+`medata` as 16 lowercase hexadecimal digits, or explicit `missing`/`invalid`;
+`md` is `0`, `1`, `2` or `more`, and `insn` is `mov42`, `mov7`, `ret`, `other`
+or `unreadable`. The PC comes from the already parsed little-endian register;
+the instruction category reuses the existing memory-read result. No extra
+debugger operation is issued. The private journal is mode 0600, capped at 240
+bytes per record, and stores the first fault only. System logging and the app
+mirror strip `pc`/`addr`, retaining only the bounded categories. Ordinary
+export and recent-log display redact private tuple/base lines defensively.
+Raw packets, thread/process IDs, paths, pairing data, unknown instruction bytes
+and unknown progress strings are dropped. The script is overlaid from pinned Madeira,
+not the separate alternate `BuiltinJIT/Helper` script. Neither acknowledgements
+nor diagnostics change readiness, forwarding policy, debugger commands or
+ownership. Private local collection of both journals can compare the actual PC
+with the probe and image anchors. Missing/invalid fields remain unknown; a
+stage marker alone cannot locate a fault. Cache flush still precedes RX in
+both probe passes; the separate cache-order proposal is not part of this change.
+
+Journal work runs off main. A cancelled or timed-out worker and its restoration
+callbacks retain the same journal; a new attempt cannot rotate a live writer.
+Failed journal admission or a required write declines JIT with interpreter
+fallback. The additive ABI-3 diagnostic export is required by this app's build
+receipt, so an older untraced component cannot silently satisfy validation.
+The native error callback is installed before preflight. Only known memory
+failure classifications and their explicit upstream errno fields are retained;
+`error=-1` means the status is unavailable. Cache flush and unmap wrappers return
+void upstream, so their return records do not claim checked syscall success.
+
+Signal recovery records are written after the existing `siglongjmp`, in ordinary
+C flow. The handler only saves the signal number and bounded generated-code
+offset. It performs no journal I/O, allocation, callback or locking. Debugger
+Mach exception routing and nonrecoverable OS/helper termination remain outside
+this guard. Diagnostic I/O counts toward the existing five-second probe
+watchdog; an instrumented timeout retains ownership and requires restart.
+Host journal, cancellation and execution-guard tests are separate from physical
+iPhone JIT/TXM validation. No runtime switching or allocator/debugger policy is
+changed by this instrumentation.
 
 PPSSPP owns its native touch, keyboard and controller input. Iridium provides
 the menu and return-to-library actions. Backgrounding and audio interruptions

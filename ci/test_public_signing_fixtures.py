@@ -159,6 +159,8 @@ class PublicSigningFixtureTests(unittest.TestCase):
         (downloads / (external_hash + '.tar')).write_bytes(external_data)
         (psp / 'component.json').write_text(json.dumps({'moltenVK': {'sourceInputs': external}}))
         output = self.root / 'output'
+        native_inventory = {'schema': 1, 'files': {'vendor/Madeira/build/build.sh': '100644'},
+                            'revisions': {'vendor/Madeira': 'test revision'}}
 
         def snapshot(repo, destination, revisions):
             destination.mkdir(parents=True, exist_ok=True)
@@ -166,6 +168,7 @@ class PublicSigningFixtureTests(unittest.TestCase):
             if repo == self.root:
                 self.write(destination)
                 self.write(destination, 'vendor/PPSSPP/libretro/libretro.cpp', b'upstream core')
+                self.write(destination, 'vendor/Madeira/build/build.sh', b'# fixture build recipe\n')
 
         def command(args, **kwargs):
             if args[0] == 'cargo':
@@ -176,6 +179,7 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 patch.object(COLLECT.build, 'UPSTREAM', self.root / 'vendor/Madeira'), \
                 patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
                 patch.object(COLLECT.build, 'verify_pin'), \
+                patch.object(COLLECT.build, 'native_source_inventory', return_value=native_inventory), \
                 patch.object(COLLECT.build, 'check_bundle'), \
                 patch.object(COLLECT.audit, 'inventory', return_value=[{'path': 'Iridium'}]), \
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[
@@ -196,6 +200,8 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 'iridium/vendor/PPSSPP/libretro/libretro.cpp').read(), b'upstream core')
             self.assertEqual(json.load(archive.extractfile('iridium/COMPONENT-MANIFEST.json')),
                              manifest)
+            self.assertEqual(json.load(archive.extractfile('iridium/MADEIRA-NATIVE-SOURCES.json')),
+                             native_inventory)
 
 
 if __name__ == '__main__': unittest.main()

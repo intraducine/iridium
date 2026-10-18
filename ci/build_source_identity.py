@@ -28,7 +28,7 @@ def source_identity(ROOT, PSP_REVISION):
     pins = json.loads((ROOT / 'UPSTREAM-SOURCES.json').read_text())['frontend_runtime']
     runtimes = {'Madeira': pins['revision'], **pins['dependencies'], 'PPSSPP': PSP_REVISION}
     try:
-        runtimes['SameBoy'] = (subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD:vendor/SameBoy'], text=True).strip()
+        runtimes['SameBoy'] = (subprocess.check_output(['git', '-C', str(ROOT / 'vendor/SameBoy'), 'rev-parse', 'HEAD'], text=True).strip()
             if (ROOT / '.git').exists() else archived.get('vendor/SameBoy', 'Unknown'))
     except (OSError, subprocess.CalledProcessError):
         runtimes['SameBoy'] = 'Unknown'

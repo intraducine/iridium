@@ -14,16 +14,25 @@ from sameboy_bootroms import REVISION, read_bootroms
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / 'vendor/SameBoy'
 PREFIX = 'iridium_sb_'
-AUDIO_RATE = 48000
+
+def build_input_hashes():
+    paths = [CORE / 'version.mk', CORE / 'LICENSE', CORE / 'Makefile', CORE / 'libretro/Makefile', CORE / 'libretro/Makefile.common',
+             ROOT / 'ci/build-sameboy.py', ROOT / 'ci/sameboy_bootroms.py',
+             ROOT / 'ci/sameboy-bootroms.json']
+    paths += [p for directory in ('Core', 'libretro', 'BootROMs')
+              for p in sorted((CORE / directory).rglob('*')) if p.is_file()
+              and (p.suffix in {'.c', '.h', '.inc', '.asm', '.png'} or p.name == 'Makefile')]
+    return {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
-def audio_adapter(source):
-    # This is a frontend setting through the public Core API, not an APU patch.
-    # Never define another platform's macro to select its audio configuration.
-    original = 'GB_set_sample_rate(&gameboy[i], GB_get_clock_rate(&gameboy[i]) / 2);'
-    if source.count(original) != 1:
-        raise ValueError('Pinned Libretro audio adapter changed')
-    return source.replace(original, f'GB_set_sample_rate(&gameboy[i], {AUDIO_RATE});')
+def verify_component(folder):
+    folder = Path(folder)
+    record = json.loads((folder / 'source-manifest.json').read_text())
+    if (record.get('revision') != REVISION or record.get('buildInputSHA256') != build_input_hashes()
+            or record.get('archiveSHA256') != hashlib.sha256((folder / 'libIridiumSameBoy.a').read_bytes()).hexdigest()
+            or record.get('namespaceSHA256') != hashlib.sha256((folder / 'SameBoyNamespace.h').read_bytes()).hexdigest()):
+        raise ValueError('Rebuild SameBoy from the matching pinned source and recipe')
+    return record
 
 
 def run(argv, **kwargs):
@@ -88,18 +97,16 @@ def build(output, sdk=None, target=None):
             path = output / (model + '.c')
             path.write_text('const unsigned char ' + model + '[] = {' + ','.join(map(str, data)) + '};\n'
                             + 'const unsigned ' + model + '_length = ' + str(len(data)) + ';\n')
-        if relative == 'libretro/libretro.c':
-            adapted = audio_adapter(path.read_text())
-            path = output / 'libretro.c'
-            path.write_text(adapted)
         if not path.is_file():
             raise ValueError('Missing core source: ' + str(path))
         sources.append(path)
     if len(sources) != 21:
         raise ValueError('Pinned core source list changed')
     version = re.fullmatch(r'VERSION := ([0-9.]+)\s*', (CORE / 'version.mk').read_text()).group(1)
+    copyright_year = re.search(r'20[2-9][0-9]', (CORE / 'LICENSE').read_text()).group(0)
     flags = platform + ['-std=gnu11', '-O2', '-fPIC', '-fvisibility=hidden', '-D_GNU_SOURCE',
-        '-D_USE_MATH_DEFINES', '-D__LIBRETRO__', '-DGB_INTERNAL', '-DGB_VERSION="' + version + '"',
+        '-D_USE_MATH_DEFINES', '-D__LIBRETRO__', '-DGB_INTERNAL', '-DNDEBUG', '-DGB_VERSION="' + version + '"',
+        '-DGB_COPYRIGHT_YEAR="' + copyright_year + '"',
         '-DGB_DISABLE_TIMEKEEPING', '-DGB_DISABLE_REWIND', '-DGB_DISABLE_DEBUGGER', '-DGB_DISABLE_CHEATS',
         '-I' + str(CORE), '-I' + str(CORE / 'libretro')]
 
@@ -135,8 +142,11 @@ def build(output, sdk=None, target=None):
     (output / 'source-manifest.json').write_text(json.dumps({
         'revision': REVISION, 'version': version, 'sourceCount': len(sources),
         'definedSymbols': len(actual), 'jit': False, 'sdk': sdk, 'target': target,
-        'audioRate': AUDIO_RATE,
-        'adapterSHA256': hashlib.sha256((output / 'libretro.c').read_bytes()).hexdigest(),
+        'audioRate': 'frontend RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE',
+        'compilerFlags': [flag.replace(str(ROOT), '$IRIDIUM_SOURCE') for flag in flags],
+        'adapterSHA256': hashlib.sha256((CORE / 'libretro/libretro.c').read_bytes()).hexdigest(),
+        'buildInputSHA256': build_input_hashes(),
+        'namespaceSHA256': hashlib.sha256(namespace.read_bytes()).hexdigest(),
         'bootROMs': {name: hashlib.sha256(data).hexdigest() for name, data in boots.items()},
         'archiveSHA256': hashlib.sha256(archive.read_bytes()).hexdigest()}, indent=2) + '\n')
     print(archive)

@@ -43,7 +43,7 @@ enum IridiumRuntimeRegistry {
     static let sameBoy = IridiumRuntimeDescriptor(id: "sameboy", name: "SameBoy", platforms: [.gameBoy, .gameBoyColor],
         jit: .none, supportsPause: true, restartAfterStop: false)
     static let ppsspp = IridiumRuntimeDescriptor(id: "ppsspp", name: "PPSSPP", platforms: [.psp],
-        jit: .none, supportsPause: true, restartAfterStop: false)
+        jit: .optional, supportsPause: true, restartAfterStop: false)
     #if IRIDIUM_PPSSPP
     static let all = [madeira, sameBoy, ppsspp]
     #else
@@ -135,6 +135,9 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
     var runtimeID: String
     let fileExtension: String
     let importedAt: Date
+    // Missing in existing version-1 records; nil deliberately means off.
+    var pspJIT: Bool? = nil
+    var pspJITEnabled: Bool { platform == .psp && pspJIT == true }
 
     func validate() throws {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.utf8.count <= 512

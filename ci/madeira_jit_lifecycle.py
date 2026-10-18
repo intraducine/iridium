@@ -57,6 +57,35 @@ def apply(name, text):
                     userInfo: [NSLocalizedDescriptionKey: message])))
             }''')
         text = text[:start] + prefix + flow + text[end:]
+        text = replace(text, "    /// LocalDevVPN's loopback first", '''    /// PSP holds admission through validation and network restoration. A stale
+    /// subscriber can release only the activation it actually acquired.
+    func enableForPSP(completion: @escaping (Result<Void, Error>, @escaping IridiumJITCleanup) -> Void) {
+        enable { [weak self] result in
+            guard let self, case .success = result else { completion(result, { $0() }); return }
+            let owner = UUID()
+            enableRequest = owner; busy = true
+            var releasing = false
+            var waiters: [() -> Void] = []
+            completion(result, { [weak self] done in
+                guard let self, self.enableRequest == owner else { done(); return }
+                waiters.append(done)
+                guard !releasing else { return }
+                releasing = true
+                // Admission owns network restoration, not the debugger. Even
+                // a successful activation is not permission to send a private
+                // detach RPC or replace SIGTRAP. Leave helper/debugger lifecycle
+                // to its existing owner, including the already-ready path.
+                JITNetworkShortcut.shared.restoreIfNeeded {
+                    guard self.enableRequest == owner else { return }
+                    self.enableRequest = nil; self.busy = false
+                    let callbacks = waiters; waiters = []
+                    callbacks.forEach { $0() }
+                }
+            })
+        }
+    }
+
+    /// LocalDevVPN's loopback first''')
         text = replace(text, '    func connectWithShortcut() {', '''    func connectWithShortcut() {
         guard enableRequest == nil, !busy else { return }''')
         text = replace(text, '    func prepareBuiltIn() {', '''    func prepareBuiltIn() {

@@ -20,6 +20,22 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_psp_jit_interface_rejects_stale_component_before_preparation(self):
+        record = {
+            'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+            'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
+            'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
+            'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
+            'compiledInputSHA256': {'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
+        }
+        BUILD.check_psp_jit_interface(record)
+        for change in ({'exports': []}, {'exports': ['_ir_native_psp_check_jit']},
+                       *({'exports': [name for name in record['exports'] if name != missing]}
+                         for missing in ('_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic')),
+                       {'diagnosticHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
+            with self.assertRaisesRegex(ValueError, 'matching JIT validation'):
+                BUILD.check_psp_jit_interface(dict(record, **change))
+
     def test_build_generated_root_revision_and_archive_fallback(self):
         head, sameboy = 'a' * 40, 'b' * 40
         with tempfile.TemporaryDirectory() as folder:
@@ -36,8 +52,10 @@ class FrontendImportTests(unittest.TestCase):
                 self.assertEqual(provenance.source_identity(root, BUILD.PSP_REVISION)['IridiumRuntimeRevisions']['SameBoy'], sameboy)
             (root / '.git').write_text('worktree marker')
             for dirty in ('', ' M ci/madeira-frontend.py'):
-                with patch.object(BUILD.subprocess, 'check_output', side_effect=[head, dirty, sameboy]):
+                with patch.object(BUILD.subprocess, 'check_output', side_effect=[head, dirty, sameboy]) as git:
                     result = provenance.source_identity(root, BUILD.PSP_REVISION)
+                    self.assertEqual(git.call_args_list[-1].args[0], ['git', '-C', str(root / 'vendor/SameBoy'), 'rev-parse', 'HEAD'])
+                    self.assertEqual(result['IridiumRuntimeRevisions']['SameBoy'], sameboy)
                 self.assertEqual(result['IridiumRootRevision'], head)
                 self.assertEqual(result['IridiumSourceState'], 'Local changes' if dirty else 'Committed source')
             with patch.object(BUILD.subprocess, 'check_output', side_effect=OSError('Git unavailable')):
@@ -144,6 +162,11 @@ class FrontendImportTests(unittest.TestCase):
             psp_output = root / 'psp-output'; psp_output.mkdir()
             (psp_output / 'component.json').write_text(json.dumps({
                 'revision': BUILD.PSP_REVISION, 'componentType': 'native-ios-player',
+                'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+                'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
+            'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
+                'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
+                'compiledInputSHA256': {'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
                 'sha256': hashlib.sha256(component.read_bytes()).hexdigest(),
                 'assetSHA256': {'compat.ini': hashlib.sha256(asset.read_bytes()).hexdigest()},
             }))

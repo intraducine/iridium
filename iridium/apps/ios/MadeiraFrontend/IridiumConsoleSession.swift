@@ -16,6 +16,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var pspReady = false
     @Published private(set) var pspResolution = 2
     @Published private(set) var pspCPUMode = "Not reported"
+    @Published private(set) var pspJITStatus = "Off — using IR interpreter"
+    @Published private(set) var pspJITFallbackReason: String?
     @Published var pspStateSlot = 0
     @Published private(set) var pspStateStatus: String?
     @Published var error: String?
@@ -40,6 +42,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var terminalFailure = false
     private var pendingFrame = false
     private var pendingAudio = 0
+    private var audioBuffering = IridiumAudioBuffering() // runtime queue only
+    private var framePacer = IridiumFramePacer() // runtime queue only
     private var audioGeneration = UUID()
     private var timer: DispatchSourceTimer?
     private var ownership = IridiumRuntimeOwnership() // main thread only
@@ -61,6 +65,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var lastProgressLogged = 0.0
     private var lastProgressPhase = ""
     private var lastSameBoyPixels: Data?
+    private var preparedJIT: IridiumPSPExecutableLaunch?
+    private var pspJITVerifiedForLaunch = false
+    private var jitDiagnostic: IridiumJITDiagnostic? // main-thread reference; workers retain their own owner
     private var displayedImageCount: UInt64 = 0 // protected by lock
 
     func start(_ game: IridiumConsoleGame, store: IridiumConsoleStore) {
@@ -79,11 +86,15 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             diagnostics = IridiumRuntimeProgress()
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
+            pspJITStatus = "Off — using IR interpreter"
+            pspJITFallbackReason = nil; pspJITVerifiedForLaunch = false
+            jitDiagnostic = nil
             lock.lock(); displayedImageCount = 0; lock.unlock()
             LibraryController.shared.configure(enabled: true, ownsInput: false)
             queue.async { [self] in
                 queueOwner = owner; bootComplete = false; stopRequested = false; terminalFailure = false
                 backend = runtime.id == "ppsspp" ? .psp : .sameBoy
+                audioBuffering = IridiumAudioBuffering()
                 progress = IridiumRuntimeProgress(); progressStarted = ProcessInfo.processInfo.systemUptime
                 lastFreshImage = nil; lastChangedImage = nil
                 lastProgressPublished = 0; lastProgressLogged = 0; lastProgressPhase = ""; lastSameBoyPixels = nil
@@ -118,7 +129,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                             guard self.requested != .stop else {
                                 self.queue.async { self.complete(owner) }; return
                             }
-                            self.openNativePSP(game: url, memoryStick: folder, owner: owner)
+                            self.prepareNativePSP(game: url, memoryStick: folder, owner: owner)
                         }
                     }
                 } catch {
@@ -128,7 +139,77 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         } catch { self.error = error.localizedDescription }
     }
 
-    private func openNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease) {
+    @MainActor private func prepareNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard self.game?.pspJITEnabled == true else {
+            prepareNativePSP(game: game, memoryStick: memoryStick, owner: owner, diagnostic: nil); return
+        }
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            pspJITFallbackReason = "JIT diagnostics could not be opened."
+            pspJITStatus = "Using IR interpreter. JIT diagnostics could not be opened."
+            openNativePSP(game: game, memoryStick: memoryStick, owner: owner, jitVerified: false); return
+        }
+        let info = Bundle.main.infoDictionary ?? [:]
+        let identity = "source=\(info["IridiumRootRevision"] as? String ?? "Unknown") build=\(info["CFBundleVersion"] as? String ?? "Unknown")"
+        IridiumJITDiagnostic.create(directory: documents, identity: identity) { [weak self] diagnostic in
+            guard let self, self.lease == owner, self.requested != .stop else { return }
+            guard let diagnostic else {
+                self.pspJITFallbackReason = "JIT diagnostics could not be opened."
+                self.pspJITStatus = "Using IR interpreter. JIT diagnostics could not be opened."
+                self.openNativePSP(game: game, memoryStick: memoryStick, owner: owner, jitVerified: false)
+                return
+            }
+            self.jitDiagnostic = diagnostic
+            self.prepareNativePSP(game: game, memoryStick: memoryStick, owner: owner, diagnostic: diagnostic)
+        }
+    }
+
+    @MainActor private func prepareNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease,
+                                           diagnostic: IridiumJITDiagnostic?) {
+        pspJITVerifiedForLaunch = false
+        guard self.game?.pspJITEnabled == true else {
+            pspJITFallbackReason = "JIT is turned off for this game."
+            pspJITStatus = "Off — using IR interpreter"
+            openNativePSP(game: game, memoryStick: memoryStick, owner: owner, jitVerified: false); return
+        }
+        guard let diagnostic,
+              let component = Bundle.main.privateFrameworksURL?.appendingPathComponent("libIridiumPPSSPPNative.dylib") else {
+            pspJITFallbackReason = "JIT diagnostics are unavailable."
+            pspJITStatus = "Using IR interpreter. JIT diagnostics are unavailable."
+            openNativePSP(game: game, memoryStick: memoryStick, owner: owner, jitVerified: false); return
+        }
+        let launch = IridiumPSPExecutableLaunch(diagnostic: diagnostic, component: component.path)
+        preparedJIT = launch
+        launch.changed = { [weak self] message in
+            guard let self, self.lease == owner else { return }
+            self.pspJITStatus = message
+            RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP JIT] " + message)
+        }
+        launch.completed = { [weak self] outcome in
+            guard let self, self.lease == owner else { return }
+            switch outcome {
+            case .restart(let message):
+                self.phase = .restartRequired; self.error = message
+                self.pspJITStatus = message; self.diagnostics.phase = "JIT restart required"
+                return // Retain admission/context/journal around any uncertain worker.
+            case .ready:
+                self.pspJITVerifiedForLaunch = true
+                self.pspJITStatus = "PPSSPP JIT executed 42 and 7 after owned teardown and network restoration."
+            case .fallback(let reason):
+                self.pspJITFallbackReason = reason
+                self.pspJITStatus = "Using IR interpreter. " + reason
+            }
+            if self.requested == .stop {
+                self.queue.async { self.complete(owner) }; return
+            }
+            guard self.phase != .restartRequired else { return }
+            diagnostic.mark(IR_JIT_COMPLETION, value: self.pspJITVerifiedForLaunch ? 1 : 0)
+            self.openNativePSP(game: game, memoryStick: memoryStick, owner: owner, jitVerified: self.pspJITVerifiedForLaunch)
+        }
+        launch.start()
+    }
+
+    private func openNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease, jitVerified: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let frameworks = Bundle.main.privateFrameworksURL,
               let resources = Bundle.main.resourceURL else {
@@ -141,7 +222,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             game.path.withCString { gamePath in
                 memoryStick.path.withCString { savePath in
                     assets.path.withCString { assetPath in
-                        ir_psp_native_open(binary, gamePath, savePath, assetPath, false, { kind, message in
+                        ir_psp_native_open(binary, gamePath, savePath, assetPath, jitVerified, { kind, message in
                             let text = message.map { String(cString: $0) } ?? ""
                             if kind == 0 {
                                 RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)")
@@ -167,7 +248,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         nativePSPController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
         if requested == .pause { ir_psp_native_pause() }
         diagnostics.phase = "native graphics starting"
-        RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] release=v1.20.4 jit_verified=false; renderer pending; game_progress=unknown")
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] release=v1.20.4 jit_verified=\(jitVerified ? "true" : "false"); renderer pending; game_progress=unknown")
         LibraryController.shared.configure(enabled: true, ownsInput: requested == .pause)
     }
 
@@ -193,7 +274,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             pspStateStatus = text
             if kind == 6 { error = text }
         case 7: pause()
-        case 8: pspCPUMode = text
+        case 9:
+            phase = .restartRequired; error = text; diagnostics.phase = "native JIT cleanup incomplete"
+        case 8:
+            pspCPUMode = text
+            if pspJITVerifiedForLaunch && text != "JIT" && text != "JIT using IR" {
+                pspJITFallbackReason = "PPSSPP selected the interpreter after JIT verification."
+                pspJITStatus = "PPSSPP selected the interpreter after launch."
+            }
         default: break
         }
     }
@@ -267,11 +355,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func stop() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase != .stopping, phase != .restartRequired else { return }
+        preparedJIT?.cancel()
+        jitDiagnostic?.mark(IR_JIT_CANCEL)
         lock.lock(); intent.stop(); intentGeneration &+= 1; lock.unlock()
         phase = .stopping; releaseButtons()
         diagnostics.phase = "stop requested"
         watchStop(owner)
         if nativePSPController != nil { ir_psp_native_stop(); return }
+        if let preparedJIT, !preparedJIT.finished { return } // Its owned cleanup releases this lease.
         queue.async { [self] in
             guard queueOwner == owner, requested == .stop else { return }
             beginStop(owner)
@@ -332,6 +423,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
             self.ownership.release(owner)
+            self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
+            self.jitDiagnostic = nil
+            self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
+            self.pspReady = false; self.pspCPUMode = "Not reported"; self.pspJITFallbackReason = nil
             // Async drain can dismiss the player after its error observer ran.
             // Preserve an unacknowledged launch/runtime failure at the library.
             if failed, let error = self.error { LibraryModel.shared.error = error }
@@ -363,7 +458,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         else if engine?.isRunning != true { try engine?.start() }
         lock.lock()
         let play = intent.request == .play
-        if play { player?.play() }
+        if play, backend != .sameBoy { player?.play() }
         lock.unlock()
         guard play else {
             if requested == .stop { beginStop(owner) } else { stopTimer(); silenceAudio() }
@@ -494,7 +589,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard timer == nil, runningGame != nil else { return }
         let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now(), repeating: 1 / fps, leeway: .milliseconds(1))
-        source.setEventHandler { [weak self] in self?.tick(owner) }
+        framePacer = IridiumFramePacer()
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let steps = self.backend == .sameBoy ? self.framePacer.steps(at: ProcessInfo.processInfo.systemUptime, fps: self.fps) : 1
+            for _ in 0..<steps { self.tick(owner) }
+        }
         timer = source; source.resume()
     }
     private func stopTimer() { timer?.cancel(); timer = nil }
@@ -629,6 +729,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if force || changedPhase || now - lastProgressLogged >= 5 {
             lastProgressLogged = now
             RuntimeDiagnosticLogFiles.writeConsoleLine(progress.logLine)
+            if backend == .sameBoy {
+                RuntimeDiagnosticLogFiles.writeConsoleLine("[SameBoy audio] core_rate_hz=\(Int(rate)) queued_ms=\(Int(Double(audioBuffering.queuedFrames) / rate * 1000)) underruns=\(audioBuffering.underruns) dropped_frames=\(audioBuffering.droppedFrames) bridge_dropped_frames=\(ir_core_audio_dropped_frames()) late_timer_events=\(framePacer.lateEvents) discarded_steps=\(framePacer.discardedSteps)")
+            }
         }
         if force || changedPhase || now - lastProgressPublished >= 1 {
             lastProgressPublished = now
@@ -664,6 +767,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             let url = try saveURL(clock: clock)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let count = ir_core_save_size(clock)
+            // 1.0.3 exposed an RTC region even for cartridges without an RTC.
+            // Retain that old file, but do not apply it to a nonexistent clock.
+            if clock, count == 0 { continue }
             guard count <= 1024 * 1024,
                   try url.resourceValues(forKeys: [.fileSizeKey]).fileSize == count else { throw IridiumRuntimeError.invalidGame }
             let data = try Data(contentsOf: url)
@@ -694,13 +800,18 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         engine.connect(player, to: engine.mainMixerNode, format: format)
         self.engine = engine; self.player = player
         try engine.start()
+        if backend == .sameBoy {
+            RuntimeDiagnosticLogFiles.writeConsoleLine("[SameBoy] version=1.0.4 model=\(String(cString: ir_core_model())) highpass=accurate correction=modern-balanced core_rate_hz=\(Int(rate)) output_rate_hz=\(Int(engine.outputNode.outputFormat(forBus: 0).sampleRate))")
+        }
     }
     private func silenceAudio() {
         player?.stop()
+        audioBuffering.resetQueue()
         lock.lock(); pendingAudio = 0; audioGeneration = UUID(); lock.unlock()
     }
     private func stopAudio() {
         player?.stop(); engine?.stop(); player = nil; engine = nil
+        audioBuffering.resetQueue()
         lock.lock(); pendingAudio = 0; audioGeneration = UUID(); lock.unlock()
         if let oldAudio {
             try? AVAudioSession.sharedInstance().setCategory(oldAudio.0, mode: oldAudio.1, options: oldAudio.2)
@@ -728,12 +839,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
         guard let samples = frame.audio, frame.audio_frames > 0, let player,
               let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { return }
+        let audioFrames = Int(frame.audio_frames)
+        if backend == .sameBoy, !audioBuffering.enqueue(audioFrames, rate: rate) { return }
         lock.lock(); let generation = audioGeneration
-        let sendAudio = pendingAudio < 4; if sendAudio { pendingAudio += 1 }; lock.unlock()
+        let sendAudio = backend == .sameBoy || pendingAudio < 4; if sendAudio { pendingAudio += 1 }; lock.unlock()
         guard sendAudio else { return }
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frame.audio_frames)),
               let channels = buffer.floatChannelData else {
-            lock.lock(); pendingAudio = max(0, pendingAudio - 1); lock.unlock(); return
+            lock.lock(); pendingAudio = max(0, pendingAudio - 1); lock.unlock()
+            if backend == .sameBoy { _ = audioBuffering.consumed(audioFrames) }
+            return
         }
         buffer.frameLength = AVAudioFrameCount(frame.audio_frames)
         for index in 0..<Int(frame.audio_frames) {
@@ -743,14 +858,28 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock()
         guard intent.request == .play, audioGeneration == generation else {
             if audioGeneration == generation { pendingAudio = max(0, pendingAudio - 1) }
-            lock.unlock(); return
+            lock.unlock()
+            if backend == .sameBoy { _ = audioBuffering.consumed(audioFrames) }
+            return
         }
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self, weak player] _ in
             guard let self else { return }
-            self.lock.lock()
-            if self.audioGeneration == generation { self.pendingAudio = max(0, self.pendingAudio - 1) }
-            self.lock.unlock()
+            // Never stop/pause AVAudioPlayerNode on its render callback.
+            self.queue.async {
+                self.lock.lock()
+                let current = self.audioGeneration == generation
+                if current { self.pendingAudio = max(0, self.pendingAudio - 1) }
+                self.lock.unlock()
+                if current, self.backend == .sameBoy, self.audioBuffering.consumed(audioFrames) {
+                    // An empty queue must prefill again before resuming audio.
+                    player?.pause()
+                }
+            }
         }
+        lock.unlock()
+        lock.lock()
+        if backend == .sameBoy, intent.request == .play, audioGeneration == generation,
+           audioBuffering.beginPlayback(rate: rate) { player.play() }
         lock.unlock()
     }
 }

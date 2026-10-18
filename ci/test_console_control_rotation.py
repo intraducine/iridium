@@ -13,7 +13,9 @@ CONTROLS = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleControls.swift
 
 
 def production_geometry():
-    upstream = UPSTREAM.read_text()
+    spec = importlib.util.spec_from_file_location('opacity_rotation_frontend', ROOT / 'ci/madeira-frontend.py')
+    frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
+    upstream = frontend.overlay('ContentView.swift', UPSTREAM.read_text())
     # Use the actual normalized model and action-specific dimensions rather
     # than a parallel reimplementation of the buttons' displayed geometry.
     start = upstream.index('enum ControlAction:')
@@ -67,7 +69,7 @@ for profile in [IridiumPlayerProfile.psp, .gameBoy] {
 for action in ["DPad", "LS", "A", "LB", "Menu"] {
     for position in [0.0, 0.03, 0.5, 0.97, 1.0] {
         for scale in [0.5, 1.0, 3.0] {
-            let saved = TouchControl(nx: position, ny: position, scale: scale, action: .pad(action))
+            let saved = TouchControl(nx: position, ny: position, scale: scale, action: .pad(action), opacity: 0.25)
             let original = saved
             for screen in screens + [CGSize(width: 240, height: 160)] {
                 for global in [0.5, 1.0, 2.0] {
@@ -81,7 +83,7 @@ for action in ["DPad", "LS", "A", "LB", "Menu"] {
                             let handle = CGRect(x: visible.maxX - 14, y: visible.minY - 8, width: 22, height: 22)
                             precondition(bounds.contains(handle), "Editor delete handle must remain reachable")
                         }
-                        precondition(saved == original && projected.id == saved.id && projected.action == saved.action,
+                        precondition(saved == original && projected.id == saved.id && projected.action == saved.action && projected.opacity == saved.opacity,
                                      "Render fitting must not mutate custom layout identity or data")
                     }
                 }

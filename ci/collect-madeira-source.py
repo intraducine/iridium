@@ -190,6 +190,7 @@ def collect(app, output, maps):
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}
         (stage / 'SOURCE-REVISIONS.json').write_text(json.dumps(revisions, indent=2) + '\n')
+        (stage / 'MADEIRA-NATIVE-SOURCES.json').write_text(json.dumps(build.native_source_inventory(), indent=2) + '\n')
         (stage / 'COMPONENT-MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
         archive = output / 'Iridium-corresponding-source.tar.gz'
         with tarfile.open(archive, 'w:gz') as tar: tar.add(stage, arcname='iridium')

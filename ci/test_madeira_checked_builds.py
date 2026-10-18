@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from test_manual_build import load
+from test_madeira_native_reuse import fixture_inputs
 
 build = load('checked_madeira_builds', 'madeira-frontend.py')
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,17 +85,24 @@ class CheckedBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             app = root / 'app/Madeira'; app.mkdir(parents=True)
-            prefix = root / 'toolchains/gnutls-ios/lib'; prefix.mkdir(parents=True)
+            prefix = root / 'toolchains/gnutls-ios/lib'
             for name in build.CRYPTO_LIBRARIES:
                 (app / f'lib{name}.a').write_bytes(b'tracked prebuilt')
-                (prefix / f'lib{name}.a').write_bytes(b'rebuilt ' + name.encode())
             for name in ('arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
                          'legal/LICENSES-rppairing-crates.txt'):
                 path = app / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'fixture')
+            def bootstrap():
+                prefix.mkdir(parents=True)
+                for name in build.CRYPTO_LIBRARIES:
+                    (prefix / f'lib{name}.a').write_bytes(b'rebuilt ' + name.encode())
+            def compile_outputs():
+                for name in build.native_required_outputs():
+                    p = root / name; p.parent.mkdir(parents=True, exist_ok=True)
+                    if not p.exists(): p.write_bytes(b'fresh output')
             with patch.object(build, 'UPSTREAM', root), patch.object(build, 'verify_pin'), \
-                 patch.object(build, 'compiler_identity', return_value='fixture compiler'), \
+                 patch.object(build, 'native_inputs', return_value=fixture_inputs()), \
                  patch.object(build.inspect, 'getsource', return_value='fixed fixture compiler recipe'), \
-                 patch.object(build, 'bootstrap'), patch.object(build, 'build_native') as compile:
+                 patch.object(build, 'bootstrap', side_effect=bootstrap), patch.object(build, 'build_native', side_effect=compile_outputs) as compile:
                 build.native(); build.native()
                 self.assertEqual(compile.call_count, 1)
                 record = json.loads((root / '.build/iridium-native.json').read_text())
@@ -102,11 +110,11 @@ class CheckedBuildTests(unittest.TestCase):
                     self.assertEqual((app / f'lib{name}.a').read_bytes(), (prefix / f'lib{name}.a').read_bytes())
                     self.assertIn(f'toolchains/gnutls-ios/lib/lib{name}.a', record['outputs'])
                 (prefix / 'libgmp.a').write_bytes(b'changed input')
-                build.native()
-                self.assertEqual(compile.call_count, 2)
+                with self.assertRaisesRegex(ValueError, 'Unverified native substages'): build.native()
+                self.assertEqual(compile.call_count, 1)
                 completed = (root / '.build/iridium-native.json').read_bytes()
                 (prefix / 'libnettle.a').unlink()
-                with self.assertRaisesRegex(ValueError, 'crypto libraries'):
+                with self.assertRaisesRegex(ValueError, 'Unverified native substages'):
                     build.native()
                 self.assertEqual((app / 'libnettle.a').read_bytes(), b'rebuilt nettle')
                 self.assertEqual((root / '.build/iridium-native.json').read_bytes(), completed)

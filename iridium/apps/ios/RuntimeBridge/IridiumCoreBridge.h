@@ -19,6 +19,8 @@ typedef struct {
 
 bool ir_core_open(const void *rom, size_t length, const char *system_directory);
 bool ir_core_step(uint16_t buttons, IRCoreFrame *frame);
+uint64_t ir_core_audio_dropped_frames(void);
+const char *ir_core_model(void);
 size_t ir_core_save_size(bool clock);
 bool ir_core_read_save(bool clock, void *bytes, size_t length);
 bool ir_core_write_save(bool clock, const void *bytes, size_t length);

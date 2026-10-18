@@ -20,6 +20,20 @@ void retro_init(void) { fake_poll(); }
 bool retro_load_game(const struct retro_game_info *game)
 {
     assert(game->data && game->size == 0x150);
+    const struct { const char *key, *value; } expected[] = {
+        {"sameboy_model", "Game Boy Color"},
+        {"sameboy_high_pass_filter_mode", "accurate"},
+        {"sameboy_color_correction_mode", "emulate hardware"},
+    };
+    for (size_t i = 0; i < sizeof expected / sizeof *expected; ++i) {
+        struct retro_variable value = {expected[i].key, NULL};
+        assert(fake_environment(RETRO_ENVIRONMENT_GET_VARIABLE, &value));
+        assert(!strcmp(value.value, expected[i].value));
+    }
+    unsigned rate = 0;
+    assert(fake_environment(RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE, &rate) && rate == 96000);
+    struct retro_variable unknown = {"unknown", "stale"};
+    assert(!fake_environment(RETRO_ENVIRONMENT_GET_VARIABLE, &unknown) && !unknown.value);
     fake_poll(); // Initialization callbacks must not acknowledge a step.
     return accept_game;
 }
@@ -116,6 +130,6 @@ int main(void)
     assert(step(0, &frame) && !frame.input_polled);
     ir_core_close();
 
-    puts("PASS: check_core_input_poll (open, failure, close, poll scope, stable digital snapshots)");
+    puts("PASS: check_core_input_poll (iOS model/filter/correction/rate defaults, unknown option; open, failure, close, poll scope, stable digital snapshots)");
     return 0;
 }

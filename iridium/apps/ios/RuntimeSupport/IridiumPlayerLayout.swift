@@ -221,6 +221,20 @@ struct IridiumControlPressState {
     }
 }
 
+/// Per-control appearance composes with the existing session preference. It
+/// never participates in input registration or hit testing.
+enum IridiumControlOpacity {
+    static let minimum = 0.15
+    static func normalized(_ value: Double?) -> Double {
+        guard let value, value.isFinite else { return 1 }
+        return min(1, max(minimum, value))
+    }
+    static func visual(control: Double?, layout: Double, pressed: Bool) -> Double {
+        let idle = max(minimum, normalized(control) * normalized(layout))
+        return pressed ? max(0.55, idle) : idle
+    }
+}
+
 enum IridiumPlayerMenuNavigation {
     static func ownsCommands(page: String, nativeEditor: Bool) -> Bool {
         !nativeEditor && (page == "Session" || page == "Controls")

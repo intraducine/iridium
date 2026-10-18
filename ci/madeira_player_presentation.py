@@ -15,6 +15,19 @@ def between(text, start, end):
 
 
 def controls(text):
+    text = replace(text, '    var padBinding: String?\n}', '''    var padBinding: String?
+    // Missing in older layouts/presets: retain their existing appearance.
+    var opacity: Double?
+}''')
+    button = between(text, 'struct TouchControlButton: View {', '    /// 8-way snap. Screen y grows downward')
+    changed = replace(button, '    let screen: CGSize', '    let screen: CGSize\n    var iridiumLayoutOpacity: Double = 1')
+    changed = replace(changed, '''        .frame(width: size.width, height: size.height)
+        .overlay(outline.stroke''', '''        // Visuals only: UIKit touch surfaces, gestures and editor handles stay opaque.
+        .opacity(IridiumControlOpacity.visual(control: control.opacity,
+                                             layout: iridiumLayoutOpacity, pressed: isDown))
+        .frame(width: size.width, height: size.height)
+        .overlay(outline.stroke''')
+    text = replace(text, button, changed)
     text = replace(text, 'struct TouchControlsOverlay: View {', '''struct TouchControlsOverlay: View {
     @ObservedObject private var iridiumController = IridiumPhysicalController.shared''')
     text = replace(text, 'if (m.visible || m.editing) && !library.blocksGameplayTouch {',
@@ -24,18 +37,8 @@ def controls(text):
     text = replace(text, '            .onChange(of: m.visible) { _, _ in configureGamepad(landscape: landscape) }',
                    '''            .onChange(of: m.visible) { _, _ in configureGamepad(landscape: landscape) }
             .onChange(of: iridiumController.hidesTouchControls) { _, _ in configureGamepad(landscape: landscape) }''')
-    # Install the host before showing it; reattach on scene activation/rotation.
-    text = replace(text, '            w.isHidden = false        // deliberately never made key', '')
-    text = replace(text, '        window?.frame = scene.coordinateSpace.bounds',
-                   '        window?.frame = scene.coordinateSpace.bounds\n        window?.isHidden = false')
-    text = replace(text, '            w.windowLevel = .normal + 101\n            w.backgroundColor = .clear',
-                   '            w.windowLevel = .normal + 101\n            w.backgroundColor = .clear\n            w.overrideUserInterfaceStyle = .dark')
-    text = replace(text, '            window = w', """            window = w
-            for name in [UIDevice.orientationDidChangeNotification, UIScene.didActivateNotification] {
-                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
-                    MainActor.assumeIsolated { TouchControlsHost.attach() }
-                }
-            }""")
+    # Keep the pinned controls-window construction, visibility and attachment
+    # lifecycle. Shared faces and input guards do not own this window.
     # Hidden controls must also stop intercepting the game's pointer/touch window.
     old = between(text, '    func hitsInteractive(_ p: CGPoint, in bounds: CGRect, topBar: Bool = true)', '\n}\n\n/// Click-through')
     new = replace(old, 'guard visible else { return false }',
@@ -100,6 +103,16 @@ def controls(text):
                         guard let i = m.index(of: control.id) else { return }
                         m.controls[i].scale = min(3, max(0.5, value))
                     }), in: 0.5...3).accessibilityIdentifier("controlSizeSlider")
+                    LabeledContent("Button opacity", value: "\\(Int(IridiumControlOpacity.normalized(m.controls.first { $0.id == control.id }?.opacity) * 100))%")
+                    Slider(value: Binding(get: {
+                        IridiumControlOpacity.normalized(m.controls.first { $0.id == control.id }?.opacity)
+                    }, set: { value in
+                        guard let i = m.index(of: control.id) else { return }
+                        m.controls[i].opacity = IridiumControlOpacity.normalized(value)
+                    }), in: IridiumControlOpacity.minimum...1, step: 0.05)
+                    .accessibilityLabel("Button opacity")
+                    .accessibilityValue("\\(Int(IridiumControlOpacity.normalized(m.controls.first { $0.id == control.id }?.opacity) * 100)) percent")
+                    .accessibilityIdentifier("controlOpacitySlider")
                     (tab == 0 ? AnyView(keyboardTab) : AnyView(controllerTab))
                 }""")
     return text
@@ -332,7 +345,7 @@ def hardware_cursor(text):
 def shared_console(text):
     # One editor/model and serialized layout format for every runtime. A scoped
     # console session never writes Madeira's original controls file or presets.
-    text = replace(text, '    private var loading = false\n    private static var url: URL {', '''    var iridiumConsoleScope: UUID?
+    text = replace(text, '    private var loading = false\n    private static var url: URL {', '''    @Published var iridiumConsoleScope: UUID?
     private var iridiumConsoleBaseline: ConsoleSaved?
     private var iridiumConsoleDefaults: [TouchControl]?
     private var iridiumConsoleHadUnreadableData = false
@@ -360,6 +373,7 @@ def shared_console(text):
            Set(saved.controls.map { $0.id }).count == saved.controls.count,
            saved.controls.allSatisfy({ control in
                control.nx.isFinite && control.ny.isFinite && control.scale.isFinite &&
+               (control.opacity.map { $0.isFinite && (0.15...1).contains($0) } ?? true) &&
                (0...1).contains(control.nx) && (0...1).contains(control.ny) &&
                (0.5...3).contains(control.scale) && control.action.padName.map { name in
                    controlsDefault.contains { $0.action.padName == name } || ["D↑", "D↓", "D←", "D→"].contains(name)
@@ -444,6 +458,7 @@ def shared_console(text):
                    '                if (landscape || iridiumConsole) && !iridiumSuspended {\n                    if (m.editing')
     text = replace(text, '            .onDisappear { GamepadInput.shared.configureTouch(controls: []); TouchMouseGate.padOverlay = false }',
                    '''            .onChange(of: console.isActive) { _, _ in configureGamepad(landscape: landscape) }
+            .onChange(of: m.iridiumConsoleScope) { _, _ in configureGamepad(landscape: landscape) }
             .onDisappear {
                 if !iridiumEmbedded { GamepadInput.shared.configureTouch(controls: []); TouchMouseGate.padOverlay = false }
             }''')
@@ -468,11 +483,12 @@ def shared_console(text):
     text = replace(text, 'if m.editing && Self.editorDone {', 'if m.editing && (Self.editorDone || iridiumConsole) {')
     text = replace(text, '                    var c = TouchControl()\n                    // Stagger',
                    '                    guard !iridiumConsole || m.controls.count < 128 else { return }\n                    var c = TouchControl()\n                    if iridiumConsole { c.action = .pad("A") }\n                    // Stagger')
-    text = replace(text, '.opacity(session && !m.editing ? library.opacity : 1)',
-                   '.opacity(session && !m.editing ? (iridiumConsole ? ((UserDefaults.standard.object(forKey: "IridiumConsoleControlOpacity") as? Double) ?? 0.78) : library.opacity) : 1)')
-    text = replace(text, '            TouchControlButton(control: c, screen: screen)', '''            TouchControlButton(control: iridiumConsole
+    text = replace(text, '''            TouchControlButton(control: c, screen: screen)
+                // A library session's Control opacity; full while editing.
+                .opacity(session && !m.editing ? library.opacity : 1)''', '''            TouchControlButton(control: iridiumConsole
                 ? IridiumConsoleControlLayout.fitted(c, screen: screen, sizeScale: m.sizeScale, editing: m.editing)
-                : c, screen: screen)''')
+                : c, screen: screen, iridiumLayoutOpacity: session && !m.editing
+                    ? (iridiumConsole ? ((UserDefaults.standard.object(forKey: "IridiumConsoleControlOpacity") as? Double) ?? 0.78) : library.opacity) : 1)''')
     # The D-pad's hollow center must still select/drag the whole control in the
     # actual Madeira editor. Gameplay retains its existing UIKit touch surface.
     text = replace(text, '''        .frame(width: size.width, height: size.height)

@@ -19,9 +19,9 @@ def production_fragment():
     frontend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(frontend)
     generated = frontend.overlay('ContentView.swift', SOURCE.read_text())
-    start = generated.index('    var iridiumConsoleScope: UUID?')
+    start = generated.index('    @Published var iridiumConsoleScope: UUID?')
     end = generated.index('    private static var url: URL {', start)
-    return generated[start:end]
+    return generated[start:end].replace('@Published ', '')
 
 
 STUBS = r'''
@@ -38,6 +38,7 @@ struct TouchControl: Codable, Equatable {
     var ny = 0.5
     var scale = 1.0
     var action: ControlAction = .pad("A")
+    var opacity: Double?
 }
 final class Model {
     // Match the shipping model's eager save observers, including callbacks
@@ -74,7 +75,7 @@ defer {
     for game in games { defaults.removeObject(forKey: key(game)) }
     defaults.removeObject(forKey: unrelated)
 }
-let windows = [TouchControl(nx: 0.2, ny: 0.3, action: .mouseLeft)]
+let windows = [TouchControl(nx: 0.2, ny: 0.3, action: .mouseLeft, opacity: 0.45)]
 let initial = [TouchControl(action: .pad("A")), TouchControl(action: .pad("B"))]
 let model = Model()
 model.controls = windows; model.visible = false; model.sizeScale = 1.75; model.layoutID = "windows-custom"
@@ -117,12 +118,25 @@ precondition(repairedFuture.version == 1 && repairedFuture.controls[0].nx == 0.6
 
 // Explicit edits repair corrupt data and survive independent game sessions.
 model.iridiumBeginConsole(games[1], defaults: initial, visible: true)
-model.controls[0].nx = 0.75; model.visible = false; model.sizeScale = 1.6
+model.controls[0].nx = 0.75; model.controls[0].opacity = 0.25
+model.visible = false; model.sizeScale = 1.6
 let edited = model.controls
 model.iridiumSaveConsole()
 let savedOne = defaults.data(forKey: key(games[1]))!
 precondition(savedOne != Data("not JSON".utf8))
 model.iridiumEndConsole(); assertWindows()
+
+// New per-control appearance rejects invalid values without rewriting old or
+// rejected records; changing it opts an automatic layout into a custom layout.
+for (offset, opacity) in [0.05, 1.1].enumerated() {
+    var invalid = initial; invalid[0].opacity = opacity
+    let game = games[16 + offset], rejected = try bytes(invalid)
+    defaults.set(rejected, forKey: key(game))
+    model.iridiumBeginConsole(game, defaults: initial, visible: true)
+    precondition(model.controls == initial)
+    model.iridiumEndConsole(); assertWindows()
+    precondition(defaults.data(forKey: key(game)) == rejected)
+}
 model.iridiumBeginConsole(games[4], defaults: initial, visible: true)
 model.controls[1].ny = 0.9
 let other = model.controls
@@ -211,6 +225,20 @@ precondition(!model.visible && model.sizeScale == 1.25)
 model.iridiumResizeConsole(defaults: initial)
 model.iridiumEndConsole(); assertWindows()
 precondition(defaults.data(forKey: key(games[14])) == preferenceBytes)
+
+// Opacity alone is an explicit edit and persists independently of geometry.
+model.iridiumBeginConsole(games[15], defaults: initial, visible: true)
+model.controls[0].opacity = 0.2
+let appearance = model.controls
+let appearanceBytes = defaults.data(forKey: key(games[15]))!
+precondition(try! JSONDecoder().decode(Fixture.self, from: appearanceBytes).automatic != true)
+model.iridiumResizeConsole(defaults: landscape)
+precondition(model.controls == appearance)
+model.iridiumEndConsole(); assertWindows()
+model.iridiumBeginConsole(games[15], defaults: landscape, visible: true)
+precondition(model.controls == appearance && model.controls[0].opacity == 0.2)
+model.iridiumEndConsole(); assertWindows()
+precondition(defaults.data(forKey: key(games[15])) == appearanceBytes)
 
 // An explicit control edit opts out before the next resize and survives it.
 model.iridiumBeginConsole(games[14], defaults: initial, visible: true)

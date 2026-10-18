@@ -18,7 +18,7 @@ check(try IridiumRuntimeRegistry.resolve(platform: .windows, preferred: nil).id 
 check(IridiumRuntimeRegistry.ppsspp.id == "ppsspp")
 check(IridiumRuntimeRegistry.ppsspp.platforms == [.psp])
 check(try IridiumRuntimeRegistry.ppsspp.executionMode(jitAvailable: false) == .interpreter)
-check(try IridiumRuntimeRegistry.ppsspp.executionMode(jitAvailable: true) == .interpreter)
+check(try IridiumRuntimeRegistry.ppsspp.executionMode(jitAvailable: true) == .jit)
 #if IRIDIUM_PPSSPP
 check(try IridiumRuntimeRegistry.resolve(platform: .psp, preferred: nil) == IridiumRuntimeRegistry.ppsspp)
 #else
@@ -62,6 +62,9 @@ let input = temporary.appendingPathComponent("Test.gb")
 try Data(repeating: 0, count: 32768).write(to: input)
 let original = try Data(contentsOf: input)
 let game = try store.importROM(input, into: [])
+check(!game.pspJITEnabled && game.pspJIT == nil)
+var gameWithPSPFlag = game; gameWithPSPFlag.pspJIT = true
+check(!gameWithPSPFlag.pspJITEnabled) // Other platforms never acquire PSP JIT.
 check(try store.load() == [game])
 check(try Data(contentsOf: store.rom(game)) == original)
 check(try store.validateROM(game) == store.rom(game))
@@ -190,6 +193,15 @@ for (ext, data) in fixtures {
     #if IRIDIUM_PPSSPP
     let imported = try pspStore.importROM(source, into: pspStore.load())
     check(imported.platform == .psp && imported.runtimeID == "ppsspp" && imported.fileExtension == ext)
+    check(!imported.pspJITEnabled && imported.pspJIT == nil)
+    var enabled = imported; enabled.pspJIT = true
+    var records = try pspStore.load()
+    records[records.firstIndex { $0.id == enabled.id }!] = enabled
+    try pspStore.save(records)
+    check(try pspStore.load().first { $0.id == enabled.id }!.pspJITEnabled)
+    let oldRecord = try JSONSerialization.jsonObject(with: JSONEncoder().encode(imported)) as! [String: Any]
+    check(oldRecord["pspJIT"] == nil)
+    check(try !JSONDecoder().decode(IridiumConsoleGame.self, from: JSONSerialization.data(withJSONObject: oldRecord)).pspJITEnabled)
     check(try Data(contentsOf: pspStore.validateROM(imported)) == data)
     // A same-size damaged private copy must be rejected at the next launch.
     try invalidMagic.write(to: pspStore.rom(imported))

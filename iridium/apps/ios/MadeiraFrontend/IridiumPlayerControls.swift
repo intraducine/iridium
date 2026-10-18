@@ -26,7 +26,8 @@ final class IridiumPhysicalController: ObservableObject {
     private var observations: [AnyCancellable] = []
     private init() {
         refresh()
-        for name in [Notification.Name.GCControllerDidConnect, .GCControllerDidDisconnect] {
+        for name in [Notification.Name.GCControllerDidConnect, .GCControllerDidDisconnect,
+                     UIApplication.didBecomeActiveNotification] {
             observations.append(NotificationCenter.default.publisher(for: name)
                 .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() })
         }

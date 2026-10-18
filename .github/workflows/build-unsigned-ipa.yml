@@ -89,7 +89,14 @@ jobs:
           COMPONENT_RUN_ID: ${{ steps.compiled_madeira_native.outputs.run_id }}
         run: python3 ci/compiled-components.py restore madeira-native
       - name: Compile madeira-native
-        run: python3 ci/madeira-frontend.py native
+        env:
+          RESTORED_NATIVE_RUN_ID: ${{ steps.compiled_madeira_native.outputs.run_id }}
+        run: |
+          if [ -n "$RESTORED_NATIVE_RUN_ID" ]; then
+            python3 ci/madeira-frontend.py native --reuse-only
+          else
+            python3 ci/madeira-frontend.py native
+          fi
       - name: Package native compilation
         if: steps.compiled_madeira_native.outputs.run_id == ''
         run: python3 ci/compiled-components.py package madeira-native

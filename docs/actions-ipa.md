@@ -56,10 +56,26 @@ Successful native and i386 builds are uploaded **before** app compilation and
 packaging. Each compiler stage has its own artifact, retained for 14 days.
 Reuse requires a trusted manual producer, matching source pins and recipes,
 matching compiler/SDK details, checksums and workspace paths. The saved
-completion record also checks age and every retained output. A missing, changed
-or expired output triggers a rebuild. Reusing an artifact does not upload another
-copy or extend its lifetime. Set `reuse_assets=false` for a fresh hosted build.
+completion record also checks age and every retained output. The i386 stage
+rebuilds missing, changed or expired outputs. Native reuse requires a complete
+schema-2 receipt; on a miss, existing unverified compiler substages stop before
+bootstrap. Reusing an artifact does not upload another copy or extend its lifetime.
+Set `reuse_assets=false` for a fresh hosted build.
 Local completion records use the same 14-day limit.
+
+Native checkpoint packaging validates the completed receipt and every recorded
+output before creating a producer artifact. Restoration validates the extracted
+native generation against current recipe/tool and complete tracked upstream source
+identities before copying any file
+into the checkout. The following native step uses `--reuse-only` after a restore,
+so a rejected restored generation cannot silently trigger compilation. Receipt
+output paths remain relative; existing producer, toolchain, workspace, checksum
+and retention checks still apply. Legacy native receipts without constituent
+identities and explicit completion state require a complete authorized rebuild.
+Leaf and ancestor destination symlinks, including links to other paths inside the
+checkout, are rejected before any restore copy. A cache miss with existing native
+compiler substages fails closed rather than minting a receipt around intermediates
+whose provenance does not match. No cache cleanup or receipt migration is performed.
 
 The native stage copies rebuilt GnuTLS, Hogweed, Nettle and GMP archives from
 their toolchain prefix into the app's linked paths. Its completion record checks
@@ -72,8 +88,9 @@ App code and docs do not invalidate compiler outputs. In
 are excluded from the compiler comparison. Compiler recipes, shared helpers,
 imports, globals, function signatures and command-line routing still invalidate
 both components. Unrecognized source layouts or dependencies use the stricter
-whole-file comparison. Existing completion records and provenance checks are
-unchanged, so matching retained builds can be reused without recompilation.
+whole-file comparison. The i386 completion-record format and producer trust checks
+are unchanged. Native reuse requires the schema-2 evidence described above;
+matching retained builds can be reused without recompilation.
 
 ## Source and package checks
 

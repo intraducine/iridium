@@ -33,7 +33,7 @@ class PSPBuildTests(unittest.TestCase):
                 audit = psp.audit(binary, 'iphoneos')
                 self.assertEqual(audit['minimumOS'], '18.0')
                 self.assertEqual(set(audit['exports']), {'_ir_native_psp_' + name for name in
-                    ('abi', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames')})
+                    ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames', 'exec_version', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')})
                 for key, value in [
                     ('nm', records['nm'] + '\n_cpp_internal'), ('lipo', 'arm64 x86_64'),
                     ('otool-D', 'component:\n/private/build/component.dylib'),
@@ -53,6 +53,8 @@ class PSPBuildTests(unittest.TestCase):
             for name, file, built in [('core', unit, True),
                     ('adapter', psp.NATIVE / 'IRPPSSPPNative.mm', True),
                     ('codec', psp.NATIVE / 'IRPPSSPPCodecCheck.c', True),
+                    ('probe', psp.NATIVE / 'IRJITExecutionProbe.c', True),
+                    ('memory', psp.NATIVE / 'IRPSPExecutableMemory.cpp', True),
                     ('unused', source / 'absent.cpp', False)]:
                 obj = destination / 'build' / (name + '.o')
                 if built: obj.write_bytes(b'object')
@@ -60,7 +62,7 @@ class PSPBuildTests(unittest.TestCase):
                                 'arguments': ['clang', '-o', str(obj)]})
             manifest = destination / 'build/compile_commands.json'; manifest.write_text(json.dumps(records))
             result = psp.compiled_inputs(source, destination)
-            self.assertEqual(set(result), {'PPSSPP/core.cpp', 'Iridium/IRPPSSPPNative.mm', 'Iridium/IRPPSSPPCodecCheck.c'})
+            self.assertEqual(set(result), {'PPSSPP/core.cpp', 'Iridium/IRPPSSPPNative.mm', 'Iridium/IRPPSSPPCodecCheck.c', 'Iridium/IRJITExecutionProbe.c', 'Iridium/IRPSPExecutableMemory.cpp'})
             outside = root / 'outside.cpp'; outside.write_text('outside')
             records[0]['file'] = str(outside); manifest.write_text(json.dumps(records))
             with self.assertRaises(ValueError): psp.compiled_inputs(source, destination)

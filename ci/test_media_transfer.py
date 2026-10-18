@@ -160,7 +160,9 @@ class MediaTransferTests(unittest.TestCase):
     def test_media_can_run_without_runtime_and_is_retained(self):
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
         self.assertIn('runs-on: xcode-27', workflow)
-        self.assertIn('run: python3 ci/madeira-frontend.py native', workflow)
+        native = workflow.split('      - name: Compile madeira-native\n', 1)[1].split('      - name:', 1)[0]
+        self.assertIn('python3 ci/madeira-frontend.py native', native)
+        self.assertIn('python3 ci/madeira-frontend.py native --reuse-only', native)
         self.assertIn('name: Retain madeira-native compilation', workflow)
         self.assertIn('retention-days: 14', workflow)
         self.assertNotIn('prepare-media-sdk.sh', workflow)

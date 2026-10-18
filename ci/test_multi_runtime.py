@@ -65,13 +65,26 @@ class SameBoyBuildTests(unittest.TestCase):
                 boots.regenerate(self.core, self.root / 'tools', self.manifest)
         command.assert_not_called()
 
-    def test_adapter_change_is_exact_and_public_api_only(self):
+    def test_component_reuse_rejects_recipe_source_archive_and_namespace_changes(self):
         spec = importlib.util.spec_from_file_location('core_builder', ROOT / 'ci/build-sameboy.py')
         builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
-        before = 'GB_set_sample_rate(&gameboy[i], GB_get_clock_rate(&gameboy[i]) / 2);'
-        self.assertEqual(builder.audio_adapter(before), 'GB_set_sample_rate(&gameboy[i], 48000);')
-        for text in ('', before + before):
-            with self.assertRaises(ValueError): builder.audio_adapter(text)
+        folder = self.root / 'output'; folder.mkdir()
+        archive = folder / 'libIridiumSameBoy.a'; archive.write_bytes(b'archive')
+        namespace = folder / 'SameBoyNamespace.h'; namespace.write_bytes(b'namespace')
+        record = {'revision': boots.REVISION, 'buildInputSHA256': {'recipe': 'original'},
+                  'archiveSHA256': boots.digest(archive.read_bytes()), 'namespaceSHA256': boots.digest(namespace.read_bytes())}
+        manifest = folder / 'source-manifest.json'; manifest.write_text(json.dumps(record))
+        with patch.object(builder, 'build_input_hashes', return_value={'recipe': 'original'}):
+            self.assertEqual(builder.verify_component(folder), record)
+            for file in (archive, namespace):
+                old = file.read_bytes(); file.write_bytes(b'changed')
+                with self.assertRaises(ValueError): builder.verify_component(folder)
+                file.write_bytes(old)
+        with patch.object(builder, 'build_input_hashes', return_value={'recipe': 'changed'}):
+            with self.assertRaises(ValueError): builder.verify_component(folder)
+        record['revision'] = '0' * 40; manifest.write_text(json.dumps(record))
+        with patch.object(builder, 'build_input_hashes', return_value={'recipe': 'original'}):
+            with self.assertRaises(ValueError): builder.verify_component(folder)
 
 
 class MultiRuntimeTests(unittest.TestCase):
@@ -102,6 +115,69 @@ class MultiRuntimeTests(unittest.TestCase):
             for flags in ([], ['-D', 'IRIDIUM_PPSSPP']):
                 subprocess.run(['swiftc', *flags, str(source), str(fixture), '-o', str(executable)], check=True)
                 subprocess.run([str(executable)], check=True, timeout=30)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for lifecycle checks')
+    def test_console_launch_guards_execute_with_stopped_wine_flags(self):
+        session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        start = session.index('            guard phase != .restartRequired')
+        end = session.index('            lock.lock(); intent =', start)
+        # Execute the shipping preflight/lease acquisition, with controlled
+        # process liveness endpoints. This is not a Wine teardown simulation.
+        guards = session[start:end]
+        fixture = r'''
+import Foundation
+var wineRunning: Int32 = 0, serverRunning: Int32 = 0
+func wine_process_is_running() -> Int32 { wineRunning }
+func wineserver_is_running() -> Int32 { serverRunning }
+final class LibraryModel {
+    static let shared = LibraryModel()
+    static var sessionsThisRun = 0
+    var current: UUID?
+    var launching = false
+}
+final class Preflight {
+    enum Phase { case idle, restartRequired }
+    var phase = Phase.idle
+    var ownership = IridiumRuntimeOwnership()
+    func acquire(_ game: IridiumConsoleGame) throws -> IridiumRuntimeLease {
+GUARDS
+        return owner
+    }
+}
+let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: .psp,
+    runtimeID: "ppsspp", fileExtension: "elf", importedAt: Date())
+let preflight = Preflight()
+func rejects(_ expected: IridiumRuntimeError) {
+    do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
+    catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }
+    catch { fatalError("Unexpected error") }
+}
+let first = try preflight.acquire(game)
+rejects(.busy)
+preflight.ownership.release(first)
+LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
+LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
+wineRunning = 1; rejects(.busy); wineRunning = 0
+serverRunning = 1; rejects(.busy); serverRunning = 0
+// Zero liveness flags alone cannot authorize a post-Windows console launch.
+LibraryModel.sessionsThisRun = 1; rejects(.restartRequired)
+LibraryModel.sessionsThisRun = 0 // Fixture models a different, fresh process.
+let second = try preflight.acquire(game)
+preflight.ownership.release(first) // Stale stop cannot release the newer owner.
+rejects(.busy)
+preflight.ownership.release(second)
+let third = try preflight.acquire(game)
+preflight.ownership.release(third)
+preflight.phase = .restartRequired; rejects(.restartRequired)
+print("PASS shipping preflight: active Windows/launch/server/owner, prior Windows despite zero flags, repeated clean console leases, stale stop, restart state")
+'''.replace('GUARDS', guards)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
+            binary = folder / 'checks'
+            subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-module-cache-path', str(folder / 'cache'),
+                            str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                            str(source), '-o', str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=20)
 
     def test_psp_session_has_fixed_component_and_drained_ownership(self):
         # Source guards supplement, rather than replace, the executed Swift

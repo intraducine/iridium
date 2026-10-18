@@ -1,5 +1,134 @@
 # Changes from upstream
 
+## Prepared PSP executable arenas and owned helper shutdown
+
+The PSP ARM64 component now negotiates a separate version-3 executable-memory
+interface in addition to component ABI 3. It owns four fixed prepared arenas:
+one 16 MiB CPU slot and 256 KiB vertex, pixel and sampler slots. The probe
+temporarily borrows the CPU slot. Declared overlays replace ARM64 CodeBlock
+allocation with checked RX/RW claims; unregistered executable allocation is
+denied. Backing, handle metadata, roles and generations are bounded. Released
+handles remain finite tombstones, and reuse requires actual reader/writer drain.
+The PPSSPP, Madeira, StikJIT and idevice pins are unchanged.
+
+A version-2 PSP-only protocol uses the app's existing owned BRK, `_M<size>,rx`
+allocation and per-page memory-write operations. Only four exact sequence/size
+pairs are accepted; the version and sequence are explicit registers. The helper
+allocates and prepares RX before the app creates each shared RW alias. It rejects
+caller addresses, malformed/out-of-range/overlapping allocations and mixed wire
+versions. Current attempt/script/PID receipts carry the bounded private allocation
+inventory. A proven allocation is retained for cleanup even when preparation
+fails; ambiguous outcomes retain the owner for restart and never free guessed
+addresses. Exact RX/RW, sentinel/coherence, restored-state and execution checks
+remain mandatory. No app RX mprotect or unchecked SDK batch is used. Windows retains its
+existing script and fault policy. Target detach return, D acknowledgment, the
+original helper response after SDK cleanup, read-only self-task/retained-worker
+exception-route comparison and a successful typed network-restoration result
+are separate gates. Unsupported, incomplete or changed routing declines this
+path. No exception-port repair, new permission, App Group or debugger opcode is
+introduced. Initial observation failures retain a fixed subcheck code, numeric
+errno/Mach result and saturated count in the same bounded journal. Terminal
+interpreter fallback reasons are fixed numeric codes. These observations do not
+change any acceptance gate or establish the unobserved iPhone API return code.
+Durable restoration debt remains owed through relaunch recovery until a
+correlated successful restoration of that input; PSP admission checks that debt.
+Initial attach fields and process-qualified thread IDs are validated before
+readiness. Only SIGTRAP/EXC_BREAKPOINT at the owned BRK immediate can mutate
+protocol registers; other faults keep their existing forwarding path. The pinned
+transport has no hard command timeout/cancellation: a UI watchdog cannot promise
+recovery during all-stop, and uncertain workers retain their context and lease.
+
+Only after teardown and restoration may the actual 42/7 probe promote a drained
+CPU claim to the native generation. Full-width native-IR profiler stores use the
+validated RW view. Checked write scopes, branch fixups and publication failures
+propagate before callable results are exposed. Both generated CPU dispatchers
+recheck core state after compilation, and latched failure prevents native-IR
+cache-pressure retries. Patch translations are checked before arithmetic or
+emitter construction, including cancellation after patch admission. A finished
+probe closes its pass-local writer on every diagnostic failure.
+Vertex exhaustion returns null
+and size zero, keeps prior decoders intact, and uses existing generic decoding.
+The software pixel/sampler ARM64 paths retain generic execution; their upstream
+JIT bodies are AMD64-only. The earlier MOV chunk initialization correction and
+probe byte/TLS checkpoints remain in place.
+
+Host fixtures cover the shipping arena and observation implementations, helper
+request/retrieval and normal export, launch failures and late returns, real
+vertex lookup/compilation/exhaustion/fallback, and decoded far-alias profiler
+stores. The Mac executes copied vertex bytes in its MAP_JIT test harness;
+that does not prove prepared-alias execution after device detach/restoration.
+No new device run establishes routing teardown, gameplay or the original crash
+cause. These remain separate runtime review gates.
+
+## PSP probe lifecycle parity and protection status
+
+The bounded probe uses the pinned `ARM64CodeBlock` allocation, reset,
+`BeginWrite`, cache flush, `EndWrite` and release lifecycle. Each pass changes
+the written/estimated page span rather than the whole allocation. A declared
+`Common/CodeBlock.h` overlay returns existing protection results from
+`BeginWrite` and `EndWrite`; `EndWrite` clears its write state before returning
+even on failure. This is lifecycle parity plus status propagation, not unchanged
+upstream code or a proven device crash fix. Emission and execution decline on
+failed transitions, and explicit release plus the destructor cover failure paths.
+The ordinary non-prepared cleanup transition remains available outside the PSP
+prepared path. The prepared path above owns alias scrubbing and release. The
+execution guards, private breadcrumbs and existing fault policy remain in place.
+
+Native component provenance records the staged CodeBlock header hash and a
+compiler-dependency audit requiring every reference to use that staged header.
+A clean native rebuild is required so Core and the probe share its interface.
+
+## Bounded PSP JIT follow-up observations
+
+The declared native overlay initializes all four `MOVI2R` chunk flags in
+PPSSPP's pinned `Common/Arm64Emitter.cpp`; the unchanged production emitter
+reproduces invalid bool reads under UBSan. Initialization preserves required
+zero chunks when optimization is off. This is not evidence that the defect
+caused the observed phone termination. The dependency revision is unchanged.
+
+The constant-return probe records its emitted length and at most four words,
+and a final checkpoint after resolving/touching its execution TLS. Madeira's
+generated script/helper receive a declared diagnostic overlay: only allowlisted
+setup acknowledgement categories and first stop/fault/exit classifications
+reach a bounded private helper journal. The Windows debugger sequence and existing fault policy are unchanged; the PSP
+strict preparation and shutdown sequence is described above. Generated source
+verification checks both helper and script overlays. JIT permissions are unchanged.
+
+The declared message/host/helper overlay adds read-only diagnostic retrieval
+over Madeira's existing extension requests. App export mirrors bounded,
+revalidated records with matching request IDs and per-enable attempt IDs,
+including records retained after app termination. Retrieval has a deadline,
+preserves earlier mirrors on unavailable or partial results, and never enters
+pairing/JIT preparation. Stop metadata is parsed after the three-byte reply
+prefix so first-field exception/code values retain their numeric classification.
+
+The first non-BRK fault now privately retains a typed PC, second `medata` value,
+field-count category and classification of the instruction read already performed
+by the pinned script. Missing and invalid values are explicit; 64-bit locations
+never pass through JavaScript Number. The helper's system log and app mirror
+omit these locations, and ordinary export redacts private address records.
+The native journal requires the probe allocation base and the app/native image
+bases plus UUIDs before execution. Failure to persist an anchor declines the
+probe. These are diagnostic observations, not a crash fix: cache/RX ordering,
+emitter initialization, TLS checkpoints and debugger commands remain unchanged.
+
+## Optional per-game PSP JIT
+
+Iridium stores an additive, default-off PSP JIT preference in its console
+library. PSP launches share Madeira's existing activation coordinator and
+Launch Support settings. The native adapter checks PPSSPP's upstream code
+allocation, W^X transitions, instruction cache, execution and rewriting before
+advertising JIT. The fault guard is limited to the probe's generated leaf code
+and restores prior signal dispositions. It declines validation before execution
+when any custom fault handler is installed, preserving that handler's mask,
+stack and delivery flags. A PSP activation owns the shared coordinator until the
+native worker acknowledges completion and its network restoration finishes;
+cancelled/stale continuations cannot release another activation. Restoration
+finishes before the player starts, including interpreter fallback. Ordinary activation/validation failures
+use the IR interpreter; a stalled probe retains runtime ownership. The component
+ABI and build receipt require the matching validation entry point. No emulator
+source pin is changed; the prepared PSP allocation boundary is described above.
+
 ## Shared player presentation and diagnostics
 
 Iridium's generated app adapts Madeira's existing touch control model, buttons,
@@ -7,6 +136,11 @@ and mapping editor for console sessions, preserving its Windows input callbacks
 and storing console layouts separately. Shared menu presentation keeps runtime
 capabilities available. Touch pointer modes use viewport coordinates; configurable
 haptics trigger on press transitions. No emulator pin or native engine is changed.
+
+Windows keeps the pinned upstream controller reservation opt-in and synchronous
+launch setup. The controls window uses the pinned upstream visibility, hosting
+and attachment lifecycle. Layouts, input mode, menu suppression and lifecycle
+release rules are preserved; no saved setting is rewritten.
 
 The generated JIT coordinator admits one enable request until its failure cleanup
 finishes. Shortcut callbacks carry a request identifier; late callbacks and open
@@ -39,9 +173,13 @@ records. Existing Windows callbacks, settings, media and saves remain Madeira's.
 
 SameBoy's pinned Libretro C core is compiled as a separate static archive. The
 builder generates upstream replacement boot arrays and a complete private
-symbol namespace; it changes no vendored files. A generated copy of the Libretro
-adapter selects 48 kHz through `GB_set_sample_rate`, leaving the upstream Core
-and APU unchanged. The seven boot images are assembled from the pinned source
+symbol namespace; it changes no vendored files. SameBoy is pinned to 1.0.4 at
+`98da08c3117a7bf39c7329fc662c0d18cb54707d`. Its unchanged Libretro adapter
+accepts the host's 96 kHz target rate. The host supplies standalone iOS model,
+color-correction and high-pass defaults, uses bounded audio prefill and frame
+catch-up, and preserves unused legacy RTC files. Core and APU source are unchanged.
+Build/reuse verification covers source, headers, boot data, recipe, namespace and
+archive bytes. The seven boot images are assembled from the pinned source
 using RGBDS 0.9.4 and stored as reviewed hexadecimal build inputs with source
 and output hashes; ordinary builds verify them without needing an assembler.
 Iridium supplies bounded
@@ -574,3 +712,119 @@ the immutable upstream tree, the transformation and its deterministic race
 tests. No game-specific emulation workaround or backend switch is introduced.
 Host protocol tests do not establish that Ghost of Sparta is fixed on a phone;
 that requires a new run of the delivered patched native component.
+
+### PSP JIT diagnostic boundaries
+
+Iridium's host bridge and native adapter add an ABI-3 diagnostic entry point and
+a bounded, synchronized stage journal around JIT preflight and its launch/
+restoration callbacks. Required records precede loading, protection, emission,
+cache preparation and generated execution; a failed writer cannot authorize
+JIT. The existing signal handler saves only the fault signal and generated-code
+offset before its existing recovery jump. Records and handler-restoration status
+are written after recovery in ordinary C flow. A native error sink is available
+before preflight and keeps only fixed failure codes and explicit upstream errno
+values. The adapter, probe and diagnostic header hashes invalidate stale build
+receipts. No PPSSPP source, allocator, protection, cache implementation, debugger
+policy, Game Boy behavior or runtime-switching guard is changed. See
+`docs/multi-runtime.md` for journal limits and the remaining device evidence gap.
+
+### PSP owned-operation observation contract, version 2
+
+The app/native prepared-memory interface now negotiates version 2. Its shutdown
+proof covers the exact correlated helper operation, readable self-task and
+retained preflight-worker routes, and a successful self P_TRACED query. It makes
+no host-wide or unrelated-thread cleanliness claim. Version-1 native components
+and shutdown receipts are refused. The helper wire protocol is unchanged.
+
+One private thread survives baseline capture, four arena requests, owned BRK/D
+acknowledgment, the original SDK completion, network restoration and the 42/7
+probe. Main-thread networking remains asynchronous. Required getters and exact
+worker identity must succeed both after SDK completion and after restoration,
+before execution. PSP preflight installs no Mach exception handlers, so an
+explicit non-null task/worker route is unknown and refuses admission; matching
+arbitrary routes never establishes ownership. Copied rights stay private and
+are released after their retained work. Cancellation never interrupts a live
+helper call or releases an uncertain native context. The real 42/7 result is
+still required for promotion; future emulator execution remains device evidence.
+
+This removes the incompatible privileged-host query without adding permissions,
+exception-port setters, debugger commands or platform setting changes.
+
+The helper receipt also persists bounded numeric command phases, the latest
+result/rejection and the first anomalous response. Normal diagnostic retrieval
+exports those numbers after a helper/app restart. This diagnoses the build-26
+attach-to-ready gap without recording packet contents, remote field names,
+registers, errors, process identifiers or secrets. Existing receipts without
+these optional members still decode. Telemetry cannot establish readiness or
+replace any owned-operation, ACK, restoration or execution proof.
+
+Command phases are 0 (script setup), 1 (attach), 2 (ignored exceptions), 3 (pass
+signals), 4 (continue), 5 (signal vCont), 6 (signal fallback), 8 (instruction
+read), 10 (existing fault kill), 12 (PC ACK), 13 (legacy zero-register ACK),
+14 (detach ACK), 15 (page preparation), and 16 (preparation return ACK).
+Codes are 0 (command entered), 1 (reply returned), 2 (SDK command threw),
+3 (non-string stop), 4 (stop over 2048 characters), 5 (stop header),
+6 (unterminated stop), 7 (no fields), 8 (field syntax), 9 (duplicate field),
+10 (thread syntax), 11 (foreign thread process), 12 (process mismatch/syntax),
+13 (fork/vfork), 14 (exception type syntax), 15 (missing required register),
+16 (register width), 17 (PC alignment/range), 18 (ACK refusal), 19 (foreign BRK),
+20 (unknown owned command), 21 (ambiguous page reply), 22 (refused extent),
+23 (definitive page error), 24 (empty command reply), 25 (optional setup
+non-OK reply), 26 (script exception), 29 (SDK returned without owned detach),
+and 30 (SDK returned unclean without a typed rejection). Optional setup replies
+remain best-effort. Length is capped at 65535 JavaScript UTF-16 code units;
+field count is capped at 255 separators within the first 2048 characters.
+The 1072-page ACK loop records one entry per arena and anomalies only. Normal
+checkpoints stop after 96 records; one anomaly per fixed command phase and the
+terminal reason remain available. Exhausting that budget changes no command.
+
+LLVM debugserver emits one `memory:` field per expedited stack chunk in
+`AppendExpeditedMemoryToStopReply` and requests up to two chunks for stop replies.
+The PSP validator now permits this repeated field, validates each bounded
+`0x<address>=<whole hex bytes>` shape and otherwise ignores the data. It never
+uses expedited memory as an arena, register, instruction or ownership proof.
+
+The version-2 native interface also exposes additive diagnostic preparation and
+restoration entry points. Fixed records identify identity rejections and each
+arena's allocation, remap, protection, region query, wire range, overlap, helper
+return, sentinel and coherence failure. Syscall records preserve the immediate
+errno or Mach result; they contain no arena address or bytes. Region checks
+accept a containing coalesced VM region only when its complete information,
+exact protection and overflow-safe extent cover the entire owned view. A local
+Mach fixture reproduces the original exact-start rejection; this does not
+establish the cause of a phone failure. Restoration checks and their journal
+writes run on the retained preflight worker. Required journal failure still
+refuses JIT.
+
+An optional typed helper failure record retains the preparation sequence,
+fixed reason and complete `Ehh` reply's numeric byte through detach and SDK
+completion. It survives an earlier optional setup warning and normal app export.
+It is informational and changes no command, ownership or exception policy.
+
+The shared control model adds optional per-button opacity, defaulting to the
+previous appearance for old layouts and presets. The editor saves this value
+for Windows and per-game console layouts. Alpha affects the visual face while
+native touch surfaces and editor handles retain their existing hit behavior;
+pressed feedback remains visible. Console scope changes are observed when
+refreshing the Windows touch registration, including restored layouts with the
+same control IDs. Controller availability is refreshed on app activation using
+the existing observer, without replacing upstream input handlers.
+
+PSP arena records retain
+both full protection masks at allocation/remap/protect/helper/restoration
+checkpoints. A permission mismatch continues to refuse JIT.
+The mandatory region query proves the complete owned view across at most 1024
+contiguous regions, checking exact permissions and complete replies at each
+step. A split allocation is accepted only after its entire range is covered;
+holes, zero progress, overflow, short replies and mismatched permissions fail.
+Rejection flags describe the failing cursor and remaining span. This changes no
+allocation ownership, protection request, helper command or execution gate.
+All other duplicate restrictions remain. This corrects a reproducible valid
+protocol rejection consistent with the build-27 duplicate-field receipt; the
+saved numeric receipt does not establish which actual field was duplicated.
+See the [upstream producer](https://github.com/llvm/llvm-project/blob/main/lldb/tools/debugserver/source/RNBRemote.cpp#L2557).
+
+New numeric duplicate categories are 31 (thread), 32 (thread list), 33 (process),
+34 (exception type), 35 (required registers), 36 (other register), and 37 (other
+metadata). Code 38 refuses malformed expedited-memory metadata. Code 9 remains
+valid for older receipts. These records contain no remote key, address or bytes.

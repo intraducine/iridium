@@ -4,7 +4,6 @@ import SwiftUI
 struct IridiumDiagnosticsSections: View {
     @ObservedObject private var library = LibraryModel.shared
     @ObservedObject private var console = IridiumConsoleSession.shared
-    @ObservedObject private var jit = LibraryJITState.shared
     private func info(_ key: String) -> String { Bundle.main.object(forInfoDictionaryKey: key) as? String ?? "Unknown" }
     private var revisions: [String: String] { Bundle.main.object(forInfoDictionaryKey: "IridiumRuntimeRevisions") as? [String: String] ?? [:] }
     private var session: String {
@@ -27,7 +26,7 @@ struct IridiumDiagnosticsSections: View {
         }
         Section("Current Status") {
             LabeledContent("Session", value: session)
-            LabeledContent("JIT", value: jit.enabled ? "Enabled" : "Not enabled")
+            IridiumExecutionStatusRows()
             ForEach(IridiumRuntimeRegistry.all, id: \.id) { runtime in
                 LabeledContent(runtime.name, value: "Included")
             }
@@ -47,6 +46,21 @@ struct IridiumDiagnosticsSections: View {
             Text(value).font(.footnote.monospaced()).foregroundStyle(.secondary)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+struct IridiumExecutionStatusRows: View {
+    @ObservedObject private var library = LibraryModel.shared
+    @ObservedObject private var console = IridiumConsoleSession.shared
+    private var status: IridiumExecutionStatus {
+        library.current != nil ? .madeira : console.executionStatus
+    }
+    var body: some View {
+        LabeledContent("Runtime", value: status.runtime)
+        LabeledContent("Execution", value: status.mode)
+            .accessibilityIdentifier("currentSessionExecutionMode")
+        Text(status.detail).font(.footnote).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

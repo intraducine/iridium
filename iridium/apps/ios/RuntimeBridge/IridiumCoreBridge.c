@@ -18,9 +18,11 @@ static struct {
     uint32_t pixels[MAX_WIDTH * MAX_HEIGHT];
     int16_t samples[MAX_AUDIO_FRAMES * 2];
     size_t sample_frames;
+    uint64_t dropped_audio_frames;
     char directory[4096];
     void *rom;
     double fps, rate;
+    const char *model;
 } core;
 
 static void core_log(enum retro_log_level level, const char *format, ...)
@@ -53,12 +55,30 @@ static bool environment(unsigned command, void *data)
         case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
             if (!data) return false;
             *(unsigned *)data = 0; return true;
+        case RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE:
+            if (!data) return false;
+            *(unsigned *)data = 96000; return true; // SameBoy iOS renderer rate
         case RETRO_ENVIRONMENT_GET_VARIABLE: {
             if (!data) return false;
             struct retro_variable *variable = data;
-            // Auto selects the actual cartridge model. No external firmware,
-            // SGB border, link cable, real camera, or filesystem-selected BIOS.
             variable->value = NULL;
+            // Match standalone iOS defaults, including CGB boot colorization
+            // for DMG cartridges. These are hardware/settings, not ROM flags.
+            const struct { const char *key, *value; } options[] = {
+                {"sameboy_model", core.model},
+                {"sameboy_color_correction_mode", "emulate hardware"},
+                {"sameboy_high_pass_filter_mode", "accurate"},
+                {"sameboy_light_temperature", "0.0"},
+                {"sameboy_rtc", "sync to system clock"},
+                {"sameboy_border", "never"},
+                {"sameboy_audio_interference", "0"},
+            };
+            if (variable->key) for (size_t i = 0; i < sizeof options / sizeof *options; ++i) {
+                if (!strcmp(variable->key, options[i].key)) {
+                    variable->value = options[i].value;
+                    return variable->value != NULL;
+                }
+            }
             return false;
         }
         case RETRO_ENVIRONMENT_SET_GEOMETRY:
@@ -94,6 +114,7 @@ static size_t audio(const int16_t *samples, size_t frames)
     size_t copy = frames < remaining ? frames : remaining;
     if (samples && copy) memcpy(core.samples + core.sample_frames * 2, samples, copy * 2 * sizeof(int16_t));
     core.sample_frames += copy;
+    core.dropped_audio_frames += frames - copy;
     // SameBoy retries unconsumed samples in a loop. Overflow is dropped, never
     // returned as zero, so a slow audio device cannot stall the emulator.
     return frames;
@@ -118,6 +139,8 @@ bool ir_core_open(const void *rom, size_t length, const char *system_directory)
     core.rom = malloc(length);
     if (!core.rom) return false;
     memcpy(core.rom, rom, length);
+    const uint8_t *header = core.rom;
+    core.model = !(header[0x143] & 0x80) && header[0x146] == 3 ? "Super Game Boy 2" : "Game Boy Color";
     strcpy(core.directory, system_directory);
     retro_set_environment(environment);
     retro_set_video_refresh(video);
@@ -156,8 +179,15 @@ bool ir_core_step(uint16_t buttons, IRCoreFrame *frame)
 size_t ir_core_save_size(bool clock)
 {
     if (!core.opened) return 0;
-    return retro_get_memory_size(clock ? RETRO_MEMORY_RTC : RETRO_MEMORY_SAVE_RAM);
+    unsigned region = clock ? RETRO_MEMORY_RTC : RETRO_MEMORY_SAVE_RAM;
+    size_t size = retro_get_memory_size(region);
+    // Libretro 1.0.4 can report an RTC struct size for a battery cartridge
+    // while correctly returning NULL because that cartridge has no clock.
+    return size && retro_get_memory_data(region) ? size : 0;
 }
+
+uint64_t ir_core_audio_dropped_frames(void) { return core.dropped_audio_frames; }
+const char *ir_core_model(void) { return core.opened ? core.model : "unloaded"; }
 
 bool ir_core_read_save(bool clock, void *bytes, size_t length)
 {

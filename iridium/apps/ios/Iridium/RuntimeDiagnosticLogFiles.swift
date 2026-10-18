@@ -18,6 +18,9 @@ enum RuntimeDiagnosticLogFiles {
             "madeira-log.prev.txt",
             "iridium-runtime.previous.log",
             "iridium-console.log",
+            "iridium-psp-jit-stages.log",
+            "iridium-psp-jit-stages.previous.log",
+            "iridium-jit-helper-mirror.log",
             "iridium-console.previous.log"
         ]
         var result = names.compactMap { name -> URL? in
@@ -142,6 +145,10 @@ enum RuntimeDiagnosticLogFiles {
     ].map { try! NSRegularExpression(pattern: $0) }
 
     static func sanitizedLine(_ line: String) -> String {
+        if line.range(of: #"\bstage=(?:probe\.base|image\.base|app\.image\.base)(?=\s|$)|\b(?:pc|addr)="#,
+                      options: .regularExpression) != nil {
+            return "[Private JIT address entry redacted]"
+        }
         if privateFields.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) != nil {
             return "[Private log entry redacted]"
         }

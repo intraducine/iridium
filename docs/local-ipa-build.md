@@ -35,6 +35,37 @@ use `.build/madeira-frontend-derived/`; generated frontend source lives in
 `.build/madeira-frontend/`. Packaging failures keep these outputs. Do not delete
 them to fix a packaging problem.
 
+To validate native reuse without falling back to compilation, source the prepared
+tool environment and run:
+
+```sh
+source .build/madeira-build-tools.env
+python3 -B ci/madeira-frontend.py native --reuse-only
+```
+
+This reports every recipe/tool/input mismatch, expired or incomplete completion
+record, and missing/changed output, then exits nonzero before bootstrap on a miss.
+It does not refresh a stamp or repair outputs. Ordinary `native` remains a build
+operation: after a miss it requires fresh compiler substage directories before it
+can compile. Existing LLVM, crypto, wineserver or other native intermediate outputs
+without a valid complete receipt stop before bootstrap. Use an independent fresh
+checkout; do not delete shared outputs or reseal them with a new timestamp.
+
+New schema-2 native completion records contain constituent recipe/file digests, individual
+tool versions and resolved executable paths (plus Bison/Flex binary digests), relative
+output digests and explicit completion state. Bison older than 3.0 is rejected
+before bootstrap. Old records without this evidence fail reuse validation; do not
+relabel or reseal partial outputs to migrate them. A successful complete native
+build creates the new record atomically.
+
+Receipts also bind all tracked files and modes in the pinned Madeira dependency
+trees and FreeType, including parser/lexer grammars and build configuration. Tool
+preparation obtains the pinned FreeType source before retained-asset selection.
+Source packages carry `MADEIRA-NATIVE-SOURCES.json` so the same file inventory is
+available without Git; actual working bytes, including applied replacement
+patches, are hashed without reverting or normalizing source edits. Older source
+packages lacking this inventory cannot validate a new native receipt.
+
 Each run saves its full log under `.build/local-build-logs/` and prints the path.
 The output folder contains `Iridium-unsigned.ipa`, `SHA256SUMS`, and
 `ipa-signature-audit.json`. The package needs recipient signing before install.

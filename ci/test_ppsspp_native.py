@@ -15,6 +15,21 @@ spec.loader.exec_module(native)
 
 
 class NativePSPPreparationTests(unittest.TestCase):
+    def test_every_codeblock_dependency_uses_the_staged_status_overlay(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); header = root / 'source/Common/CodeBlock.h'
+            header.parent.mkdir(parents=True); header.write_text('status-propagating template')
+            old = root / 'upstream/CodeBlock.h'; old.parent.mkdir(); old.write_text('void status')
+            with patch.object(native, 'output', return_value='    ' + str(header) + '\n'):
+                audit = native.codeblock_headers(root)
+                self.assertEqual(audit['references'], 1)
+                self.assertEqual(audit['headerSHA256'], native.digest(header))
+            for dependencies in ('', '    ' + str(header) + '\n    ' + str(old) + '\n'):
+                with patch.object(native, 'output', return_value=dependencies):
+                    with self.assertRaises(ValueError): native.codeblock_headers(root)
+            header.unlink(); header.symlink_to(old)
+            with self.assertRaisesRegex(ValueError, 'real staged file'): native.codeblock_headers(root)
+
     def test_every_gl_compiler_dependency_uses_the_adapted_header(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);header=root/'source/Common/GPU/OpenGL/GLRenderManager.h'

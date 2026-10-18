@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-REVISION = '208ba4afabffab9edde416f2dbb8ae459e34adb8'
+REVISION = '98da08c3117a7bf39c7329fc662c0d18cb54707d'
 RGBDS_REVISION = 'd1829ed92327a9f9210ffd45d865331f24dfa4e6'
 RGBDS_VERSION = 'v0.9.4'
 MODELS = {'agb': 2304, 'cgb': 2304, 'cgb0': 2304, 'dmg': 256,

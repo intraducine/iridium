@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRPPSSPPNative.h"
+#include "IRJITExecutionProbe.h"
+#include "IRPSPExecutableMemory.h"
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
 #include <atomic>
 #include <memory>
 #include <signal.h>
+#include <cerrno>
+#include <cstring>
+#include <unistd.h>
 #include "ios/ViewController.h"
 #include "ios/ViewControllerMetal.h"
 #include "ios/iOSCoreAudio.h"
@@ -12,6 +17,8 @@
 #include "Common/System/System.h"
 #include "Common/Input/InputState.h"
 #include "Common/Log/LogManager.h"
+#include "Common/MemoryUtil.h"
+#include "Common/Arm64Emitter.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/Core.h"
@@ -24,6 +31,7 @@
 #ifndef USE_FFMPEG
 #error The native PSP player requires its upstream media decoders
 #endif
+extern "C" int csops(pid_t, unsigned, void *, size_t);
 
 @interface PPSSPPBaseViewController (IridiumLifecycle)
 - (void)iridiumStopRenderLoop:(void (^)(void))completion;
@@ -69,6 +77,7 @@
 
 static __weak IRPPSSPPContainer *container;
 static std::atomic<bool> jitVerified;
+static std::atomic<bool> jitProbeVerified;
 static std::atomic<bool> rendererFailed;
 static std::atomic<uint64_t> frames;
 static std::atomic<uint64_t> generation;
@@ -98,6 +107,42 @@ static void event(unsigned kind, const char *message) {
             if (auto callback = eventSink.load()) callback(kind, copy.c_str());
         }
     });
+}
+
+// Log callbacks are synchronous on the emitting thread. No stack sink is ever
+// stored in userdata or read by another thread, and no native text enters the
+// diagnostic journal. Only the two known upstream memory errno formats do.
+static thread_local const IRJITDiagnosticSink *preflightLogSink;
+static thread_local uint32_t preflightPass;
+static thread_local int preflightErrno = -1;
+static void forwardNativeLog(const LogMessage &message, void *) {
+    if (preflightLogSink) {
+        bool allocation = message.msg.find("Failed to allocate executable memory (") == 0;
+        bool protection = message.msg.find("mprotect failed (") == 0;
+        if (allocation || protection) {
+            int saved = errno;
+            size_t offset = message.msg.find("errno=");
+            int code = -1;
+            if (offset != std::string::npos) {
+                offset += 6;
+                int number = 0; size_t digits = 0;
+                while (offset < message.msg.size() && digits < 5 &&
+                       message.msg[offset] >= '0' && message.msg[offset] <= '9') {
+                    number = number * 10 + message.msg[offset++] - '0'; ++digits;
+                }
+                if (digits && (offset == message.msg.size() || message.msg[offset] < '0' || message.msg[offset] > '9')) code = number;
+            }
+            preflightErrno = code;
+            ir_jit_diagnostic_mark(preflightLogSink, allocation ? IR_JIT_ALLOC_ERROR : IR_JIT_PROTECT_ERROR,
+                preflightPass, 0, code);
+            errno = saved;
+        } else if (message.level <= LogLevel::LERROR) {
+            ir_jit_diagnostic_mark(preflightLogSink, IR_JIT_NATIVE_ERROR, preflightPass, static_cast<int>(message.level), -1);
+        }
+        return;
+    }
+    std::string text = std::string(message.log) + ": " + message.msg;
+    event(0, text.c_str());
 }
 
 @implementation IRPPSSPPContainer
@@ -140,6 +185,7 @@ static void event(unsigned kind, const char *message) {
         g_Config.iInternalResolution = 2;
         g_Config.bSoftwareRendering = false;
     }
+    if (jitVerified.load()) g_Config.iCpuCore = (int)CPUCore::JIT;
     // Presentation and input belong to Iridium even for older per-game settings.
     // Upstream AutoRun=false starts in its debugger, which this frontend does
     // not expose. Iridium's render owner already controls startup and pause.
@@ -150,10 +196,7 @@ static void event(unsigned kind, const char *message) {
     g_Config.bShowDeveloperMenu = false;
     currentResolution = g_Config.iInternalResolution;
     ir_native_psp_rotation_changed(g_Config.iScreenRotation);
-    g_logManager.SetExternalLogCallback([](const LogMessage &message, void *) {
-        std::string text = std::string(message.log) + ": " + message.msg;
-        event(0, text.c_str());
-    }, nullptr);
+    g_logManager.SetExternalLogCallback(forwardNativeLog, nullptr);
     g_logManager.EnableOutput(LogOutput::ExternalCallback);
     NSString *settings = [NSString stringWithFormat:@"release=1.20.4 cpu_core=%d jit_available=%d gpu_backend=%d software_rendering=%d resolution=%d media=FFmpeg H.264/AAC",
         g_Config.iCpuCore, jitVerified.load(), g_Config.iGPUBackend, g_Config.bSoftwareRendering, g_Config.iInternalResolution];
@@ -271,6 +314,15 @@ static void event(unsigned kind, const char *message) {
     // Follow the release-pinned iOS lifecycle contract after asynchronous
     // renderer/sensor drains. Upstream native cleanup itself is synchronous.
     if (self.initialized) NativeShutdown();
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+    int executableClosed = self.restarting && jitVerified.load()
+        ? ir_psp_exec_reuse_native(ir_psp_exec_admission())
+        : ir_native_psp_exec_end(ir_psp_exec_admission());
+    if (executableClosed != IR_PSP_EXEC_OK) {
+        event(9, "PSP executable memory still has live readers or writers; restart required.");
+        return;
+    }
+#endif
     [self completeClose];
 }
 - (void)completeClose {
@@ -297,10 +349,130 @@ static void event(unsigned kind, const char *message) {
 }
 @end
 
-uint32_t ir_native_psp_abi(void) { return 2; }
+static bool debuggerEnabled() {
+    uint32_t flags = 0;
+    return csops(getpid(), 0, &flags, sizeof flags) == 0 && (flags & 0x10000000u);
+}
+
+int ir_native_psp_check_jit(void) { return ir_native_psp_check_jit_diagnostic(nullptr); }
+int ir_native_psp_check_jit_diagnostic(const IRJITDiagnosticSink *sink) {
+    jitProbeVerified = false;
+    auto mark = [&](IRJITDiagnosticStage stage, uint32_t pass, int64_t value, int error = 0) {
+        return ir_jit_diagnostic_mark(sink, stage, pass, value, error);
+    };
+    auto finish = [&](int result) { return mark(IR_JIT_NATIVE_RETURN, 0, result) ? result : -6; };
+    if (!mark(IR_JIT_NATIVE_ENTER, 0, 0)) return -6;
+    if (container) return finish(-5);
+#if TARGET_OS_SIMULATOR || !PPSSPP_ARCH(ARM64)
+    return finish(-1);
+#else
+    struct ErrorSink {
+        LogOutput previous = g_logManager.GetOutputsEnabled();
+        explicit ErrorSink(const IRJITDiagnosticSink *value) {
+            if (!value) return;
+            preflightLogSink = value;
+            g_logManager.SetExternalLogCallback(forwardNativeLog, nullptr);
+            g_logManager.EnableOutput(LogOutput::ExternalCallback);
+        }
+        ~ErrorSink() { preflightLogSink = nullptr; g_logManager.SetOutputsEnabled(previous); }
+    } errors(sink);
+    uint32_t flags = 0;
+    int status = csops(getpid(), 0, &flags, sizeof flags);
+    int statusError = status ? errno : 0;
+    if (!mark(IR_JIT_CSOPS, 0, flags, statusError)) return -6;
+    if (status || !(flags & 0x10000000u)) return finish(-4);
+    // Use the CPU backend's code-block lifecycle, with checked protection results.
+    // A Madeira pool or a successful mprotect alone proves neither execution
+    // nor rewriting here. No debugger allocation/BRK protocol is inferred.
+    constexpr size_t size = 16 * 1024 * 1024;
+    if (!mark(IR_JIT_ALLOC_ENTER, 0, size)) return -6;
+    preflightPass = 0; preflightErrno = -1;
+    Arm64Gen::ARM64CodeBlock block;
+    block.AllocCodeSpace(size, IR_PSP_EXEC_CPU);
+    auto code = block.GetBasePtr();
+    if (!mark(IR_JIT_ALLOC_RETURN, 0, code != nullptr, code ? 0 : preflightErrno)) return -6;
+    if (!code) return finish(-2);
+    if (!mark(IR_JIT_PROBE_BASE, 0, (int64_t)(uintptr_t)code)) {
+        block.FreeCodeSpace(); return finish(-6);
+    }
+    int result = 1;
+    uint32_t pass = 0;
+    for (int value : {42, 7}) {
+        ++pass; preflightPass = pass;
+        size_t estimate = GetMemoryProtectPageSize();
+        if (!mark(IR_JIT_RW_ENTER, pass, estimate)) { result = -6; break; }
+        preflightErrno = -1;
+        block.ResetCodePtr(0);
+        bool writable = block.BeginWrite(estimate);
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+        struct ProbeWriteScope {
+            Arm64Gen::ARM64CodeBlock &block;
+            bool active;
+            ~ProbeWriteScope() { if (active) { block.FailEmission(); block.EndWrite(); } }
+            bool end() { active = false; return block.EndWrite(); }
+        } write{block, writable};
+#endif
+        if (!mark(IR_JIT_RW_RETURN, pass, writable, writable ? 0 : preflightErrno)) { result = -6; break; }
+        if (!writable) { result = -3; break; }
+        if (!mark(IR_JIT_EMIT_ENTER, pass, value)) { result = -6; break; }
+        block.MOVI2R(Arm64Gen::W0, value);
+        block.RET();
+        if (!mark(IR_JIT_EMIT_RETURN, pass, 0)) { result = -6; break; }
+        // Only this constant-return probe's emitted words, never game code,
+        // pointers or unused allocation bytes. The journal has a fixed byte cap.
+        size_t length = block.GetCodePointer() - code;
+        bool recorded = mark(IR_JIT_CODE_LENGTH, pass, length);
+        for (size_t index = 0; recorded && index < 4 && (index + 1) * sizeof(uint32_t) <= length; ++index) {
+            uint32_t word = 0; memcpy(&word, code + index * sizeof word, sizeof word);
+            recorded = mark(static_cast<IRJITDiagnosticStage>(IR_JIT_CODE_WORD_0 + index), pass, word);
+        }
+        if (!recorded || !mark(IR_JIT_CACHE_ENTER, pass, 0)) { result = -6; break; }
+        block.FlushIcache();
+        // Upstream's void cache wrapper does not expose a syscall status.
+        if (!mark(IR_JIT_CACHE_RETURN, pass, 0, -1) ||
+            !mark(IR_JIT_RX_ENTER, pass, length > estimate ? length : estimate)) { result = -6; break; }
+        preflightErrno = -1;
+        bool executable =
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+            write.end();
+#else
+            block.EndWrite();
+#endif
+        if (!mark(IR_JIT_RX_RETURN, pass, executable, executable ? 0 : preflightErrno)) { result = -6; break; }
+        if (!executable) { result = -3; break; }
+        const uint32_t expected[] = {value == 42 ? 0x52800540u : 0x528000e0u, 0xd65f03c0u};
+        const void *writableCode = block.GetWritablePtrFromCodePtr(code);
+        if (length != sizeof expected || !writableCode || memcmp(code, expected, sizeof expected) ||
+            memcmp(writableCode, expected, sizeof expected)) { result = 0; break; }
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+        IRPSPExecReadScope executing((const void *)code);
+        if (!executing) { result = 0; break; }
+#endif
+        if (!ir_jit_probe_execute_diagnostic(code, size, value, sink, pass)) { result = 0; break; }
+    }
+    if (!mark(IR_JIT_FREE_ENTER, 0, 0)) result = -6;
+    block.FreeCodeSpace();
+    if (!mark(IR_JIT_FREE_RETURN, 0, 0, -1)) result = -6;
+    result = finish(result);
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+    ir_psp_exec_probe_proven(result == 1);
+    if (result == 1) {
+        uint64_t previous = ir_psp_exec_generation();
+        if (previous == UINT64_MAX || ir_native_psp_exec_advance(ir_psp_exec_admission(), previous, previous + 1) != IR_PSP_EXEC_OK) result = -7;
+    }
+#endif
+    jitProbeVerified = result == 1;
+    return result;
+#endif
+}
+
+uint32_t ir_native_psp_abi(void) { return 3; }
 void *ir_native_psp_create(const char *game, const char *memoryStick, const char *assets,
                           bool jit, IRNativePSPEvent callback, IRNativePSPInput input) {
     if (!NSThread.isMainThread || container || !game || !memoryStick || !assets || !callback || !input) return nullptr;
+#if defined(IRIDIUM_PSP_PREPARED_JIT)
+    if (jit && !ir_psp_exec_native_ready()) return nullptr;
+#endif
     if (!ir_native_psp_codec_check()) return nullptr;
     IRPPSSPPContainer *owner = [[IRPPSSPPContainer alloc] init];
     owner.inputRestorers = [NSMutableArray array]; owner.capturedControllers = [NSMutableSet set];
@@ -310,7 +482,10 @@ void *ir_native_psp_create(const char *game, const char *memoryStick, const char
     owner.audioCategory = audio.category; owner.audioMode = audio.mode; owner.audioOptions = audio.categoryOptions;
     owner.wantsActive = YES;
     owner.appActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
-    eventSink = callback; inputSource = input; jitVerified = jit; generation.fetch_add(1); container = owner;
+    bool verified = jitProbeVerified.exchange(false);
+    eventSink = callback; inputSource = input;
+    jitVerified = jit && verified && debuggerEnabled();
+    generation.fetch_add(1); container = owner;
     return (__bridge_retained void *)owner;
 }
 void ir_native_psp_pause(void) { container.wantsActive = NO; [container setPlaying:NO]; }

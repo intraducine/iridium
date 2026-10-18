@@ -33,8 +33,19 @@ struct RuntimeDiagnosticsExportSection: View {
         exporting = true; failure = nil
         Task {
             do {
+                #if IRIDIUM_PPSSPP
+                let helperRecords = await MadeiraBuiltInJIT.diagnosticSnapshot()
+                #endif
                 let url = try await Task.detached(priority: .utility) {
-                    try RuntimeDiagnosticLogFiles.export(in: documents)
+                    #if IRIDIUM_PPSSPP
+                    var status = helperRecords == nil ? "unavailable" : "retrieved"
+                    if let helperRecords {
+                        do { try IridiumJITHelperSnapshot.mirror(helperRecords, in: documents) }
+                        catch { status = "mirror_failed" }
+                    }
+                    RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP helper] diagnostic_retrieval=\(status)")
+                    #endif
+                    return try RuntimeDiagnosticLogFiles.export(in: documents)
                 }.value
                 exporting = false
                 exportItem = ExportItem(url: url)
@@ -97,6 +108,11 @@ struct RuntimeDiagnosticsLogContent: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
+            #if IRIDIUM_PPSSPP
+            Text("Current Session").font(.headline)
+            IridiumExecutionStatusRows()
+            Divider()
+            #endif
             if let progress {
                 Text("Runtime & Frames").font(.headline)
                 Text(progress.summary).font(.callout.monospacedDigit())

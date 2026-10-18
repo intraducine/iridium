@@ -13,7 +13,7 @@ import json
 import os
 import time
 import sys
-import madeira_presentation
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
@@ -23,6 +23,7 @@ RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
 REVISION = '279fd0f83170425db002fe25d6bd62f6355f497d'
 PSP_REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
+FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
@@ -68,11 +69,14 @@ HOOKS = {
 
 
 def overlay(name, text):
+    import madeira_presentation
+    import madeira_jit_observability
+    import madeira_psp_jit
     for old, new in HOOKS.get(name, []):
         if text.count(old) != 1:
             raise ValueError(f'Madeira presentation hook changed: {name}: {old}')
         text = text.replace(old, new)
-    return madeira_presentation.apply(name, text)
+    return madeira_psp_jit.apply(name, madeira_jit_observability.apply(name, madeira_presentation.apply(name, text)))
 
 
 def verify_pin():
@@ -95,7 +99,7 @@ def verify_pin():
         repos.append(UPSTREAM / line.split()[1])
     for repo in repos:
         changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
-        if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.pbxproj',
+        if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.js', '.pbxproj', '.y', '.l',
                                      '.sh', '.rs', '.metal', '.S', '.inc', '.in', '.cmake'}
                or Path(name).name == 'CMakeLists.txt' for name in changes):
             raise ValueError(f'Pinned source has changes: {repo}. Preserve them before preparing the overlay.')
@@ -170,6 +174,7 @@ def refresh_generated_tree(source, destination):
 def prepare():
     import ppsspp_gl_sync_overlay as psp_gl_sync
     verify_pin()
+    check_sameboy_component()
     app = OUTPUT / 'app'
     # Only generated presentation files are replaced. Native build outputs are
     # retained at their upstream locations, with the same project link paths.
@@ -193,12 +198,18 @@ def prepare():
     for source in (UPSTREAM / 'app/Madeira').rglob('*.swift'):
         target = app / 'Madeira' / source.relative_to(UPSTREAM / 'app/Madeira')
         target.write_text(overlay(source.name, source.read_text()))
-    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *(p for p in RUNTIME_BRIDGE.glob('*.c') if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c')),
+    gamepad = UPSTREAM / 'app/Madeira/Winios/WiniosGamepad.c'
+    (app / 'Madeira/Winios/WiniosGamepad.c').write_text(overlay(gamepad.name, gamepad.read_text()))
+    import madeira_jit_observability as jit_diagnostics
+    for name in (jit_diagnostics.SCRIPT, jit_diagnostics.HELPER):
+        source = UPSTREAM / 'app' / name
+        (app / name).write_text(overlay(source.name, source.read_text()))
+    sources = sorted([*FRONTEND.glob('*.swift'), *RUNTIME_SUPPORT.glob('*.swift'), *(p for p in RUNTIME_BRIDGE.glob('*.c') if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c')),
                       ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'])
     names = [path.name for path in sources]
     if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
     for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
     header.write_text(header.read_text() + RUNTIME_HEADERS)
@@ -206,12 +217,15 @@ def prepare():
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
         raise ValueError('Build and audit the pinned PSP component before preparing the app')
+    check_psp_jit_interface(psp)
     psp_gl_sync.validate_component(psp, ROOT / 'vendor/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'assets', app / 'Madeira/PSP/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'licenses', app / 'Madeira/licenses/PPSSPP')
     shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')
     api = (ROOT / 'vendor/SameBoy/libretro/libretro.h').read_text()
-    if not api.startswith('/* Copyright') or '*/' not in api:
+    notice = api.split('*/', 1)[0]
+    if (not api.startswith('/*') or '*/' not in api or 'Copyright' not in notice
+            or 'Permission is hereby granted' not in notice or 'THE SOFTWARE IS PROVIDED' not in notice):
         raise ValueError('Missing Libretro API license notice')
     (app / 'Madeira/licenses/LICENSE-SAMEBOY-SUPPORT.txt').write_text(api[:api.index('*/') + 2] + '\n')
     generated = app / 'Madeira.xcodeproj/project.pbxproj'
@@ -231,16 +245,42 @@ def prepare():
     print(generated.parent)
 
 
+def check_sameboy_component():
+    spec = importlib.util.spec_from_file_location('sameboy_builder', ROOT / 'ci/build-sameboy.py')
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    builder.verify_component(ROOT / '.build/sameboy/iphoneos')
+
+
 def verify():
+    check_sameboy_component()
     verify_pin()
     for path in (UPSTREAM / 'app/Madeira').rglob('*'):
-        if not path.is_file() or path.suffix not in {'.swift', '.h', '.c', '.m', '.mm', '.cpp'}: continue
+        if not path.is_file() or path.suffix not in {'.swift', '.h', '.c', '.m', '.mm', '.cpp', '.js'}: continue
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
-        expected = overlay(path.name, path.read_text()).encode() if path.suffix == '.swift' else path.read_bytes()
+        expected = overlay(path.name, path.read_text()).encode() if path.suffix in {'.swift', '.js'} or path.name == 'WiniosGamepad.c' else path.read_bytes()
         if path.name == 'Madeira-Bridging-Header.h': expected += RUNTIME_HEADERS.encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Generated app differs from Madeira outside its presentation hooks: ' + str(path))
+    import madeira_jit_observability as jit_diagnostics
+    helper = UPSTREAM / 'app' / jit_diagnostics.HELPER
+    if (OUTPUT / 'app' / jit_diagnostics.HELPER).read_text() != overlay(helper.name, helper.read_text()):
+        raise ValueError('Generated JIT helper differs from its declared diagnostic overlay')
     print('Madeira app code matches the pin outside declared presentation and runtime ownership hooks.')
+
+
+def check_psp_jit_interface(record):
+    if ('_ir_native_psp_check_jit' not in record.get('exports', [])
+        or '_ir_native_psp_check_jit_diagnostic' not in record.get('exports', [])
+        or not {'_ir_native_psp_exec_version', '_ir_native_psp_exec_prepare', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_detach',
+                '_ir_native_psp_exec_accept_shutdown', '_ir_native_psp_exec_restored', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_exec_advance',
+                '_ir_native_psp_exec_cancel', '_ir_native_psp_exec_end'}.issubset(record.get('exports', []))
+        or record.get('diagnosticHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest()
+        or record.get('executableMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest()
+        or record.get('adapterSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest()
+        or record.get('compiledInputSHA256', {}).get('Iridium/IRPSPExecutableMemory.cpp') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest()
+        or record.get('compiledInputSHA256', {}).get('Iridium/IRJITExecutionProbe.c') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()):
+        raise ValueError('Rebuild the PSP component with the matching JIT validation interface')
 
 
 def check_bundle(app):
@@ -253,6 +293,7 @@ def check_bundle(app):
         raise ValueError('Unexpected PSP source pin in the app')
     component = app / 'Frameworks/libIridiumPPSSPPNative.dylib'
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
+    check_psp_jit_interface(psp)
     if not component.is_file() or component.is_symlink() or hashlib.sha256(component.read_bytes()).hexdigest() != psp['sha256']:
         raise ValueError('The app does not contain the audited PSP component')
     for name, expected in psp['assetSHA256'].items():
@@ -274,15 +315,28 @@ def check_bundle(app):
             raise ValueError('The WoW64 runtime is missing: ' + name)
 
 
-def compiler_identity():
+def compiler_tools():
     tools = (['xcodebuild', '-version'], ['xcrun', '--sdk', 'iphoneos', '--show-sdk-build-version'],
              ['xcrun', '--sdk', 'iphoneos', 'metal', '--version'],
              ['xcrun', '--sdk', 'iphoneos', 'clang', '--version'], ['rustc', '-vV'],
-             ['cmake', '--version'], ['meson', '--version'], ['clang', '--version'])
-    record = [subprocess.check_output(tool, text=True).strip() for tool in tools]
-    # Metal's mount changes after a restart; its version and target are inputs.
-    record[2] = '\n'.join(line for line in record[2].splitlines() if not line.startswith('InstalledDir:'))
-    return hashlib.sha256('\n'.join(record).encode()).hexdigest()
+             ['cmake', '--version'], ['meson', '--version'], ['clang', '--version'],
+             ['bison', '--version'], ['flex', '--version'])
+    record = {}
+    for tool in tools:
+        executable = shutil.which(tool[0])
+        if executable is None: raise ValueError('Missing native build tool: ' + tool[0])
+        version = subprocess.check_output(tool, text=True).strip()
+        # Metal's mount changes after a restart; its version and target are inputs.
+        if 'metal' in tool:
+            version = '\n'.join(line for line in version.splitlines() if not line.startswith('InstalledDir:'))
+        record[' '.join(tool)] = {'executable': str(Path(executable).resolve()), 'version': version}
+        if tool[0] in ('bison', 'flex'):
+            record[' '.join(tool)]['sha256'] = file_digest(Path(executable))
+    return record
+
+
+def compiler_identity():
+    return hashlib.sha256(json.dumps(compiler_tools(), sort_keys=True).encode()).hexdigest()
 
 
 def windows():
@@ -319,7 +373,7 @@ def windows():
 
 
 def toolchains():
-    """Fetch the locked tools even when compiler outputs are restored."""
+    """Prepare locked tools and FreeType source even when outputs are restored."""
     spec = importlib.util.spec_from_file_location('fetch_inputs', ROOT / 'ci/fetch-runtime-inputs.py')
     fetcher = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fetcher)
@@ -327,6 +381,20 @@ def toolchains():
         if entry['name'] not in ('llvm', 'llvm-mingw'): continue
         entry = dict(entry, destination=entry['destination'].replace('testrepos/Madeira/', 'vendor/Madeira/', 1))
         if not (ROOT / entry['destination']).exists(): fetcher.fetch(ROOT, entry)
+    prepare_freetype()
+
+
+def prepare_freetype():
+    """Prepare the pinned source before fingerprinting or restoring native outputs."""
+    source = UPSTREAM / 'research/freetype'
+    if not source.exists():
+        subprocess.run(['git', 'clone', '--depth', '1', '--branch', 'VER-2-13-3',
+                        'https://github.com/freetype/freetype.git', str(source)], check=True)
+    if (source / '.git').exists():
+        revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    else:
+        revision = json.loads((ROOT / 'SOURCE-REVISIONS.json').read_text())['vendor/Madeira/research/freetype']
+    if revision != FREETYPE_REVISION: raise ValueError('Unexpected FreeType revision')
 
 
 def stage_crypto_libraries():
@@ -400,14 +468,6 @@ def build_native():
     run('rustup', 'target', 'add', 'aarch64-apple-ios')
     run('bash', 'build/rppairing-ios/build.sh')
     run('bash', 'build/ffmpeg/build.sh')
-    if not (UPSTREAM / 'research/freetype').exists():
-        run('git', 'clone', '--depth', '1', '--branch', 'VER-2-13-3',
-            'https://github.com/freetype/freetype.git', 'research/freetype')
-    if (UPSTREAM / 'research/freetype/.git').exists():
-        freetype = subprocess.check_output(['git', '-C', str(UPSTREAM / 'research/freetype'), 'rev-parse', 'HEAD'], text=True).strip()
-    else:
-        freetype = json.loads((ROOT / 'SOURCE-REVISIONS.json').read_text())['vendor/Madeira/research/freetype']
-    if freetype != '42608f77f20749dd6ddc9e0536788eaad70ea4b5': raise ValueError('Unexpected FreeType revision')
     run('bash', 'build/freetype-ios/build.sh')
     run('cmake', '-S', 'FEX', '-B', 'FEX/build-ios', '-DCMAKE_SYSTEM_NAME=iOS',
         '-DCMAKE_SYSTEM_PROCESSOR=arm64', '-DCMAKE_OSX_ARCHITECTURES=arm64',
@@ -480,24 +540,193 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
     run('bash', 'build/madeira-dock/build.sh', '--check')
 
 
-def native():
-    verify_pin()
-    stamp = UPSTREAM / '.build/iridium-native.json'
-    key = hashlib.sha256((REVISION + inspect.getsource(build_native) + inspect.getsource(bootstrap)
-                         + inspect.getsource(run_checked_recipe) + inspect.getsource(stage_crypto_libraries)
-                         + repr(CRYPTO_LIBRARIES)).encode()
-                         + (ROOT / 'ci/runtime-inputs.json').read_bytes()
-                         + compiler_identity().encode()).hexdigest()
-    def digest(path):
-        with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
-    try:
-        saved = json.loads(stamp.read_text())
-        if saved['key'] == key and 0 <= time.time() - saved['completed'] < 14 * 86400 and saved['outputs'] and all(
-            (UPSTREAM / name).is_file() and digest(UPSTREAM / name) == value for name, value in saved['outputs'].items()
-        ):
-            print('Reusing the completed Madeira native build. Inputs and archives match; retention is 14 days.')
+def file_digest(path):
+    with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def native_source_inventory():
+    """List tracked source inputs, including initialized dependencies, without changing them."""
+    if not (ROOT / '.git').exists():
+        inventory = json.loads((ROOT / 'MADEIRA-NATIVE-SOURCES.json').read_text())
+        expected = {'vendor/Madeira': REVISION, 'vendor/Madeira/research/freetype': FREETYPE_REVISION}
+        expected.update({'vendor/Madeira/' + name: revision for name, revision in
+                         json.loads((ROOT / 'UPSTREAM-SOURCES.json').read_text())['frontend_runtime']['dependencies'].items()})
+        if (inventory.get('schema') != 1 or not isinstance(inventory.get('files'), dict) or not inventory['files']
+                or any(inventory.get('revisions', {}).get(name) != revision for name, revision in expected.items())):
+            raise ValueError('Missing or invalid native source inventory')
+        return inventory
+    files, revisions = {}, {}
+    def visit(repo, revision, required=False):
+        label = repo.relative_to(ROOT).as_posix()
+        revisions[label] = revision
+        if not (repo / '.git').exists():
+            if required: raise ValueError('Native source is not initialized: ' + label)
             return
-    except (OSError, ValueError, KeyError): pass
+        actual = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        if actual != revision: raise ValueError('Unexpected native source revision: ' + label)
+        rows = subprocess.check_output(['git', '-C', str(repo), 'ls-tree', '-r', '-z', 'HEAD'])
+        for row in filter(None, rows.split(b'\0')):
+            meta, name = row.split(b'\t', 1)
+            mode, kind, blob = meta.decode().split()
+            name = name.decode()
+            if kind == 'commit':
+                child = (repo / name).relative_to(UPSTREAM).as_posix()
+                required_child = child in ('FEX', 'wine', 'dxmt', 'madeira-dock',
+                    'FEX/External/fmt', 'FEX/External/range-v3', 'FEX/External/rpmalloc',
+                    'FEX/External/unordered_dense', 'FEX/External/vixl', 'FEX/External/xxhash',
+                    'FEX/Source/Common/cpp-optparse') or child.startswith('dxmt/')
+                visit(repo / name, blob, required_child)
+            elif kind == 'blob':
+                relative = (repo / name).relative_to(UPSTREAM).as_posix()
+                if relative not in native_required_outputs(): files[label + '/' + name] = mode
+    visit(UPSTREAM, REVISION, True)
+    visit(UPSTREAM / 'research/freetype', FREETYPE_REVISION, True)
+    return {'schema': 1, 'files': files, 'revisions': revisions}
+
+
+def native_source_identity():
+    inventory = native_source_inventory()
+    digest = hashlib.sha256()
+    for name, mode in sorted(inventory['files'].items()):
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts or not relative.is_relative_to('vendor/Madeira'):
+            raise ValueError('Invalid native source path: ' + name)
+        path = ROOT / relative
+        if not path.resolve().is_relative_to(UPSTREAM.resolve()): raise ValueError('Native source escapes its tree: ' + name)
+        if path.is_symlink():
+            payload = os.readlink(path).encode()
+            value = hashlib.sha256(payload).hexdigest()
+            if path.is_file(): value += ':' + file_digest(path)
+            observed_mode = '120000'
+        elif path.is_file():
+            value = file_digest(path)
+            observed_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
+        else:
+            raise ValueError('Missing native source file: ' + name)
+        if mode not in ('100644', '100755', '120000'): raise ValueError('Invalid native source mode: ' + name)
+        digest.update(json.dumps([name, observed_mode, value]).encode() + b'\n')
+    return {'revisions': inventory['revisions'], 'trackedFiles': len(inventory['files']), 'sha256': digest.hexdigest()}
+
+
+def native_inputs():
+    tools = compiler_tools()
+    bison = tools['bison --version']
+    words = bison['version'].splitlines()[0].split() if bison['version'] else []
+    major = words[-1].split('.')[0] if words else ''
+    if not major.isdigit() or int(major) < 3:
+        raise ValueError('Native build requires Bison >= 3.0 before bootstrap: ' + repr(bison))
+    return {'revision': REVISION,
+            'recipes': {name: hashlib.sha256(inspect.getsource(fn).encode()).hexdigest() for name, fn in (
+                ('build_native', build_native), ('bootstrap', bootstrap), ('toolchains', toolchains),
+                ('prepare_freetype', prepare_freetype), ('verify_pin', verify_pin),
+                ('native_source_inventory', native_source_inventory), ('native_source_identity', native_source_identity),
+                ('run_checked_recipe', run_checked_recipe), ('stage_crypto_libraries', stage_crypto_libraries))},
+            'files': {name: file_digest(ROOT / name) for name in (
+                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py')},
+            'cryptoLibraries': list(CRYPTO_LIBRARIES), 'tools': tools, 'upstreamSources': native_source_identity()}
+
+
+def native_key(inputs):
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def native_required_outputs():
+    app = ['app/Madeira/lib' + name + '.a' for name in (
+        'avcodec', 'avformat', 'avutil', 'swresample', 'dxmt_combined', 'madeira_rppairing',
+        'ntdll_unix', 'win32u_unix', 'wineserver', *CRYPTO_LIBRARIES)]
+    fex = ['FEX/build-ios/' + name for name in (
+        'External/SoftFloat-3e/libsoftfloat_3e.a', 'External/cephes/libcephes_128bit.a',
+        'External/fmt/libfmt.a', 'External/xxhash/cmake_unofficial/libxxhash.a',
+        'FEXCore/Source/libFEXCore.a', 'FEXCore/Source/libFEXCore_Base.a', 'FEXCore/Source/libJemallocLibs.a')]
+    return app + fex + ['toolchains/gnutls-ios/lib/lib' + name + '.a' for name in CRYPTO_LIBRARIES] + [
+        'app/Madeira/arm64ec-windows/dockhost.exe', 'app/Madeira/arm64ec-windows/dock-notices.txt',
+        'app/Madeira/legal/LICENSES-rppairing-crates.txt']
+
+
+def native_record_issues(saved, inputs, upstream):
+    """Validate portable relative outputs without touching the stamp or compiler trees."""
+    issues = []
+    if not isinstance(saved, dict): return ['invalid_record: expected an object']
+    if saved.get('schema') != 2 or isinstance(saved.get('schema'), bool) or saved.get('state') != 'complete':
+        issues.append('incomplete_record: schema=' + repr(saved.get('schema')) + ' state=' + repr(saved.get('state')))
+    if saved.get('key') != native_key(inputs):
+        issues.append('key_mismatch saved=' + repr(saved.get('key')) + ' current=' + native_key(inputs))
+    def compare(old, new, label):
+        if isinstance(old, dict) and isinstance(new, dict):
+            for name in sorted(old.keys() | new.keys()):
+                compare(old.get(name), new.get(name), label + '.' + name)
+        elif old != new:
+            issues.append('input_mismatch:' + label + ' saved=' + repr(old) + ' current=' + repr(new))
+    compare(saved.get('inputs'), inputs, 'inputs')
+    completed = saved.get('completed')
+    now = time.time()
+    if (isinstance(completed, bool) or not isinstance(completed, (int, float))
+            or not 0 <= now - completed < 14 * 86400):
+        issues.append('completion_expired_or_invalid completed=' + repr(completed)
+                      + ' now=' + repr(now) + ' retentionSeconds=' + str(14 * 86400))
+    outputs = saved.get('outputs')
+    if not isinstance(outputs, dict) or not outputs: return issues + ['missing_outputs']
+    present = {str(path.relative_to(upstream)) for path in (upstream / 'app/Madeira').glob('*.a')}
+    present.update(str(path.relative_to(upstream)) for path in (upstream / 'FEX/build-ios').rglob('*.a'))
+    for name in sorted((set(native_required_outputs()) | present) - outputs.keys()):
+        issues.append('unrecorded_output:' + name)
+    for name, expected in sorted(outputs.items()):
+        path = Path(name)
+        if path.is_absolute() or '..' in path.parts or path.as_posix() != name:
+            issues.append('invalid_output_path:' + name)
+            continue
+        path = upstream / path
+        try:
+            if path.is_symlink() or not path.resolve().is_relative_to(upstream.resolve()):
+                issues.append('invalid_output_path:' + name)
+            elif not path.is_file() or not path.stat().st_size:
+                issues.append('missing_output:' + name)
+            else:
+                observed = file_digest(path)
+                if observed != expected:
+                    issues.append('changed_output:' + name + ' saved=' + str(expected) + ' current=' + observed)
+        except OSError as error:
+            issues.append('unreadable_output:' + name + ' ' + str(error))
+    return issues
+
+
+def validate_native_reuse(upstream=None, inputs=None):
+    upstream = UPSTREAM if upstream is None else upstream
+    inputs = native_inputs() if inputs is None else inputs
+    stamp = upstream / '.build/iridium-native.json'
+    try:
+        if stamp.is_symlink(): raise ValueError('Completion record must not be a symlink')
+        issues = native_record_issues(json.loads(stamp.read_text()), inputs, upstream)
+    except (OSError, ValueError) as error:
+        issues = ['unreadable_record:' + str(error)]
+    print(json.dumps({'component': 'madeira-native', 'reuse': not issues, 'key': native_key(inputs),
+                      'issues': issues}, sort_keys=True), flush=True)
+    if issues: raise ValueError('Madeira native reuse rejected: ' + '; '.join(issues))
+
+
+def require_fresh_native_substages():
+    # A failed/expired receipt cannot authorize existence-only reuse inside these recipes.
+    paths = ('toolchains/llvm-host-build', 'toolchains/llvm-ios-build', 'toolchains/gnutls-ios',
+             'toolchains/ffmpeg-ios', 'build/ffmpeg/obj', 'build/gnutls-ios/obj', 'build/wineserver/obj',
+             'build/ntdll-unix/obj', 'build/win32u-unix/obj', 'build/dxmt-ios/obj',
+             'build/dxmt-ios/shader-headers', 'build/dxmt-ios/libdxmt_combined.a',
+             'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'build/freetype-ios/build',
+             'wine/build-macos', 'build/rppairing-ios/target')
+    existing = [name for name in paths if (UPSTREAM / name).exists() or (UPSTREAM / name).is_symlink()]
+    if existing:
+        raise ValueError('Unverified native substages exist; use an independent fresh checkout, without deleting or '
+                         'resealing these outputs: ' + ', '.join(existing))
+
+
+def native(reuse_only=False):
+    verify_pin()
+    inputs = native_inputs()
+    try:
+        validate_native_reuse(inputs=inputs)
+        return
+    except ValueError:
+        if reuse_only: raise
+    require_fresh_native_substages()
     bootstrap()
     build_native()
     crypto = stage_crypto_libraries()
@@ -506,9 +735,21 @@ def native():
     outputs += [UPSTREAM / 'app/Madeira' / name for name in (
         'arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
         'legal/LICENSES-rppairing-crates.txt')]
+    if native_inputs() != inputs:
+        raise ValueError('Native inputs changed during compilation; completion record not written')
+    saved = dict(schema=2, state='complete', key=native_key(inputs), inputs=inputs, completed=time.time(),
+                 outputs={str(path.relative_to(UPSTREAM)): file_digest(path) for path in outputs})
+    issues = native_record_issues(saved, inputs, UPSTREAM)
+    if issues: raise ValueError('Native build is incomplete: ' + '; '.join(issues))
+    stamp = UPSTREAM / '.build/iridium-native.json'
     stamp.parent.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(json.dumps(dict(key=key, completed=time.time(),
-                                    outputs={str(path.relative_to(UPSTREAM)): digest(path) for path in outputs}), indent=2) + '\n')
+    with tempfile.NamedTemporaryFile(mode='w', dir=stamp.parent, prefix='iridium-native-', delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(json.dumps(saved, indent=2) + '\n')
+    try:
+        temporary.replace(stamp)
+    finally:
+        temporary.unlink(missing_ok=True)
     print('Saved the completed native build before app compilation and packaging.')
 
 
@@ -539,12 +780,14 @@ if __name__ == '__main__':
     parser.add_argument('action', choices=('prepare', 'verify', 'app', 'native', 'windows', 'toolchains', 'check-bundle'))
     parser.add_argument('app', nargs='?', type=Path)
     parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
+    parser.add_argument('--reuse-only', action='store_true', help='Validate completed native outputs without building or writing')
     args = parser.parse_args()
     if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
+    if args.reuse_only and args.action != 'native': parser.error('--reuse-only requires native')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': native, 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only), 'windows': windows, 'toolchains': toolchains}[args.action]()
