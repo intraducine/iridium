@@ -24,10 +24,14 @@ class Phase3Tests(unittest.TestCase):
     def test_reuse_rejects_changed_abi_generated_and_compiled_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            inputs = builder.fixed_inputs('host')
+            # Source CI deliberately leaves optional engine submodules absent.
+            # Discover the production input paths without reading those files,
+            # then exercise real hashing against a complete temporary fixture.
+            with patch.object(builder, 'digest', return_value='fixture'):
+                inputs = builder.fixed_inputs('host')
             for name in inputs:
                 target = root / name; target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes((ROOT / name).read_bytes())
+                target.write_text('fixture input: ' + name + '\n')
             generated = root / '.build/phase3/host/iphoneos/embedding/native.exports'
             generated.parent.mkdir(parents=True); generated.write_text('_export\n')
             compiled = root / 'generated.c'; compiled.write_text('int value;\n')
@@ -36,7 +40,9 @@ class Phase3Tests(unittest.TestCase):
                     compiledInputs={'generated.c': builder.digest(compiled)},
                     embedding={'native.exports': builder.digest(generated)})
                 builder.verify_inputs(record)
-                for target in (root / 'iridium/apps/ios/RuntimeBridge/IRPhase3.h', generated, compiled):
+                for target in (root / 'iridium/apps/ios/RuntimeBridge/IRPhase3.h',
+                               root / 'vendor/Flycast/core/deps/libretro-common/include/libretro.h',
+                               generated, compiled):
                     original = target.read_bytes(); target.write_bytes(original + b'changed')
                     with self.assertRaises(ValueError): builder.verify_inputs(record)
                     target.write_bytes(original)
