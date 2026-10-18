@@ -1,5 +1,28 @@
 # Changes from upstream
 
+## Phase 3 native runtimes
+
+The optional Phase 3 target adds pinned DolphiniOS Dolphin, Azahar, Play! and
+Flycast. Iridium hosts upstream runtime/Libretro implementations and adapts
+rendering, audio, input, isolated storage and lifecycle through a C boundary.
+It does not replace guest CPU/GPU/media implementations. Pins, build/replacement
+instructions, limitations and the four-engine acceptance checklist are in
+[docs/phase3-acceptance.md](docs/phase3-acceptance.md).
+
+Declared CMake adapters hide C++ symbols. Dolphin uses upstream Metal/iOS with
+cached interpretation and complete Sys resources. Azahar reuses its verified
+official iOS core and matching unified source, with software graphics and
+CPU/shader interpreters. Play!'s generated Libretro entry routes CAppConfig to
+the game's save root; existing CodeGen allocation/protection calls now fail
+before execution when Release assertions would disappear. Flycast's generated
+GLSM advertises ES3 when its target compiles HAVE_OPENGLES3. Play!/Flycast probes
+exercise their own allocators; no PSP JIT protocol is reused.
+
+Dolphin selects bundled dependencies, disables old zlib-ng NEON configuration
+that passes ARM32 flags to arm64, and disables incompatible fmt consteval
+declarations for Apple Clang 21. Original notices are retained. Source collection
+maps all five libraries and includes receipts, dependencies and Azahar's source.
+
 ## Prepared PSP executable arenas and owned helper shutdown
 
 The PSP ARM64 component now negotiates a separate version-3 executable-memory

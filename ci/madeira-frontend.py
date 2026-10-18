@@ -137,6 +137,25 @@ def project(source, names):
     objects[asset_build] = dict(isa='PBXBuildFile', fileRef=asset_ref)
     resources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXResourcesBuildPhase')
     resources['files'].append(asset_build); group['children'].append(asset_ref)
+    if (os.environ.get('IRIDIUM_PHASE3') == '1'):
+        phase3 = [('host', 'libIridiumRetroPlayer.dylib'), ('dolphin', 'libIridiumDolphin.dylib'),
+                  ('azahar', 'azahar_libretro.dylib'), ('play', 'play_libretro_ios.dylib'), ('flycast', 'flycast_libretro.dylib')]
+        embedded = objects[embed]
+        for index, (engine, binary) in enumerate(phase3):
+            ref, build = f'F300000000000000{index:08X}', f'F400000000000000{index:08X}'
+            objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='compiled.mach-o.dylib',
+                path=f'../../phase3/{engine}/$(PLATFORM_NAME)/{binary}', sourceTree='SOURCE_ROOT')
+            objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
+            embedded['files'].append(build); group['children'].append(ref)
+        ref, build = 'F30000000000000000000010', 'F40000000000000000000010'
+        objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='Phase3', sourceTree='<group>')
+        objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
+        resources['files'].append(build); group['children'].append(ref)
+        for index, path in enumerate(('Phase3/dolphin/Sys', 'GameConfig.xml')):
+            ref, build = f'F300000000000001{index:08X}', f'F400000000000001{index:08X}'
+            objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder' if index == 0 else 'text.xml', path=path, sourceTree='<group>')
+            objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
+            resources['files'].append(build); group['children'].append(ref)
     for config in objects[target['buildConfigurationList']]['buildConfigurations']:
         settings = objects[config]['buildSettings']
         settings['PRODUCT_NAME'] = 'Iridium'
@@ -153,6 +172,7 @@ def project(source, names):
         append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
         append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
         append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PPSSPP'])
+        if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
@@ -209,10 +229,10 @@ def prepare():
     names = [path.name for path in sources]
     if len(set(names)) != len(names): raise ValueError('Duplicate runtime source filenames')
     for source in sources: shutil.copy2(source, app / 'Madeira' / source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS)
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -221,6 +241,9 @@ def prepare():
     psp_gl_sync.validate_component(psp, ROOT / 'vendor/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'assets', app / 'Madeira/PSP/PPSSPP')
     refresh_generated_tree(PSP_OUTPUT / 'licenses', app / 'Madeira/licenses/PPSSPP')
+    if (os.environ.get('IRIDIUM_PHASE3') == '1'):
+        from phase3_app import stage_phase3
+        stage_phase3(app / 'Madeira', refresh_generated_tree)
     shutil.copy2(ROOT / 'vendor/SameBoy/LICENSE', app / 'Madeira/licenses/LICENSE-SAMEBOY.txt')
     api = (ROOT / 'vendor/SameBoy/libretro/libretro.h').read_text()
     notice = api.split('*/', 1)[0]
@@ -235,8 +258,15 @@ def prepare():
     data['CFBundleDisplayName'] = 'Iridium'
     data['IridiumMadeiraRevision'] = REVISION
     data['IridiumPPSSPPRevision'] = PSP_REVISION
+    if (os.environ.get('IRIDIUM_PHASE3') == '1'):
+        spec = importlib.util.spec_from_file_location('phase3_identity', ROOT / 'ci/build-phase3.py')
+        builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
+        data['IridiumPhase3Revisions'] = {engine: pin[1] for engine, pin in builder.PINS.items()}
     from build_source_identity import source_identity
     data.update(source_identity(ROOT, PSP_REVISION))
+    if (os.environ.get('IRIDIUM_PHASE3') == '1'):
+        data['IridiumRuntimeRevisions'].update({name: builder.PINS[engine][1]
+            for engine, name in [('dolphin', 'Dolphin'), ('azahar', 'Azahar'), ('play', 'Play!'), ('flycast', 'Flycast')]})
     data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
     icon = ROOT / 'iridium/apps/ios/Iridium/Assets.xcassets/AppIcon.appiconset'
@@ -259,7 +289,7 @@ def verify():
         if not path.is_file() or path.suffix not in {'.swift', '.h', '.c', '.m', '.mm', '.cpp', '.js'}: continue
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = overlay(path.name, path.read_text()).encode() if path.suffix in {'.swift', '.js'} or path.name == 'WiniosGamepad.c' else path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += RUNTIME_HEADERS.encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Generated app differs from Madeira outside its presentation hooks: ' + str(path))
     import madeira_jit_observability as jit_diagnostics
@@ -285,6 +315,11 @@ def check_psp_jit_interface(record):
 
 def check_bundle(app):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
+    if info.get('IridiumPhase3Revisions') is not None:
+        from phase3_app import check_phase3_bundle
+        check_phase3_bundle(app, info['IridiumPhase3Revisions'])
+    elif (os.environ.get('IRIDIUM_PHASE3') == '1'):
+        raise ValueError('Phase 3 capability metadata is missing')
     if any(info.get(name) != value for name, value in PSP_PRIVACY_DESCRIPTIONS.items()):
         raise ValueError('The native PSP platform permission descriptions are missing or changed')
     if info.get('IridiumMadeiraRevision') != REVISION:

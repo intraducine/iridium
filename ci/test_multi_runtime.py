@@ -112,7 +112,7 @@ class MultiRuntimeTests(unittest.TestCase):
             executable = Path(folder) / 'runtime-test'
             # Both shipping configurations execute the same production model:
             # PSP records must survive an installation without that component.
-            for flags in ([], ['-D', 'IRIDIUM_PPSSPP']):
+            for flags in ([], ['-D', 'IRIDIUM_PPSSPP'], ['-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3']):
                 subprocess.run(['swiftc', *flags, str(source), str(fixture), '-o', str(executable)], check=True)
                 subprocess.run([str(executable)], check=True, timeout=30)
 

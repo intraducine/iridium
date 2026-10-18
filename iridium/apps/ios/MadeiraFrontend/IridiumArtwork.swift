@@ -305,6 +305,12 @@ import ImageIO
             case .gameBoy: repository = "Nintendo_-_Game_Boy"
             case .gameBoyColor: repository = "Nintendo_-_Game_Boy_Color"
             case .psp: repository = "Sony_-_PlayStation_Portable"
+            case .gameCube: repository = "Nintendo_-_GameCube"
+            case .wii: repository = "Nintendo_-_Wii"
+            case .nintendo3DS: repository = "Nintendo_-_Nintendo_3DS"
+            case .playStation2: repository = "Sony_-_PlayStation_2"
+            case .dreamcast: repository = "Sega_-_Dreamcast"
+            case .arcade: return []
             case .windows: return []
             }
             let url = URL(string: "https://api.github.com/repos/libretro-thumbnails/\(repository)/git/trees/master?recursive=1")!

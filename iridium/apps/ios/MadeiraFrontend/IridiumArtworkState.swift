@@ -349,6 +349,11 @@ enum IridiumArtworkMatcher {
         case .gameBoy: extensions = ["gb"]
         case .gameBoyColor: extensions = ["gbc"]
         case .psp: extensions = ["iso", "cso", "pbp", "elf"]
+        case .gameCube, .wii: extensions = ["dol", "gcm", "iso", "rvz"]
+        case .nintendo3DS: extensions = ["3dsx", "cci", "cxi", "app"]
+        case .playStation2: extensions = ["elf", "iso", "chd"]
+        case .dreamcast: extensions = ["elf", "cdi", "chd"]
+        case .arcade: extensions = ["zip"]
         }
         if extensions.contains(suffix) { leaf = String(leaf.dropLast(suffix.count + 1)) }
         return leaf.trimmingCharacters(in: .whitespacesAndNewlines)

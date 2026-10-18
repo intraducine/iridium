@@ -33,6 +33,7 @@ struct IridiumLibraryView: View {
     @State private var detail: LibraryEntry?
     @State private var consoleDetail: IridiumConsoleGame?
     @State private var importingFiles = false
+    @State private var consoleImport: URL?
     @State private var features: Int?
     @State private var fileSource: IridiumImportSource?
     @State private var pendingDetail: LibraryEntry?
@@ -75,6 +76,18 @@ struct IridiumLibraryView: View {
     private func options(_ game: IridiumGame) {
         if let windows = game.windows { detail = windows }
         else { consoleDetail = game.console }
+    }
+    private func importChoices(_ url: URL) -> [IridiumPlatform] {
+        #if IRIDIUM_PHASE3
+        switch url.pathExtension.lowercased() {
+        case "chd": return [.playStation2, .dreamcast]
+        case "dol", "rvz": return [.gameCube, .wii]
+        case "zip": return [.arcade]
+        default: return []
+        }
+        #else
+        return []
+        #endif
     }
     private func keepSelection() {
         let target = selection.reconcile(games.map(\.id))
@@ -229,7 +242,8 @@ struct IridiumLibraryView: View {
                 switch result {
                 case .success(let urls):
                     if let url = urls.first {
-                        if IridiumConsoleLibrary.importExtensions.contains(url.pathExtension.lowercased()) {
+                        if !importChoices(url).isEmpty { consoleImport = url }
+                        else if IridiumConsoleLibrary.importExtensions.contains(url.pathExtension.lowercased()) {
                             consoles.importROM(url) { select($0.id) }
                         } else { fileSource = IridiumImportSource(url: url) }
                     }
@@ -237,6 +251,17 @@ struct IridiumLibraryView: View {
                     if (error as NSError).code != NSUserCancelledError { library.error = error.localizedDescription }
                 }
                 restoreKeyboardFocus()
+            }
+            .confirmationDialog("Choose the game system", isPresented: Binding(get: { consoleImport != nil }, set: { if !$0 { consoleImport = nil } }), titleVisibility: .visible) {
+                if let url = consoleImport {
+                    ForEach(importChoices(url), id: \.rawValue) { platform in
+                        Button(platform.title) { consoles.importROM(url, preferredPlatform: platform) { select($0.id) } }
+                    }
+                    if url.pathExtension.lowercased() == "zip" {
+                        Button("Windows Game Files") { fileSource = IridiumImportSource(url: url) }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
             }
             .sheet(item: $detail, onDismiss: restoreKeyboardFocus) { entry in
                 LibraryDetail(entry: entry, play: play)

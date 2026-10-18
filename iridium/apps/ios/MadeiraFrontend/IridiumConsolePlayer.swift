@@ -21,11 +21,16 @@ struct IridiumConsolePlayer: View {
     @State private var helpSection = 0
     @State private var showingLogs = false
     private var isPSP: Bool { session.game?.platform == .psp }
-    private var profile: IridiumPlayerProfile { isPSP ? .psp : .gameBoy }
+    private var profile: IridiumPlayerProfile { .consoleProfile(session.game?.platform.rawValue) }
     private var touchVisible: Bool { controls.visible && !controller.hidesTouchControls }
     private var menuVisible: Bool { !controls.editing && (session.phase == .paused || session.phase == .restartRequired) }
     private var platform: String { session.game?.platform.title ?? "Game" }
     private var keys: [String: UInt16] {
+        if session.game?.platform.isPhase3 == true {
+            return ["z": 1 << 8, "x": 1 << 0, "c": 1 << 9, "v": 1 << 1,
+                    "q": 1 << 10, "e": 1 << 11, "1": 1 << 12, "3": 1 << 13,
+                    " ": 1 << 2, "\r": 1 << 3]
+        }
         if isPSP {
             return ["x": 1 << 0, "z": 1 << 8, "c": 1 << 1, "v": 1 << 9,
                     "q": 1 << 10, "e": 1 << 11, " ": 1 << 2, "\r": 1 << 3]
@@ -114,6 +119,20 @@ struct IridiumConsolePlayer: View {
                 IridiumNativePSPSurface(controller: controller).allowsHitTesting(false)
                     .accessibilityLabel("Game display")
                     .overlay { if !session.pspReady { starting.background(.black) } }
+            } else if let controller = session.phase3Controller {
+                IridiumNativePSPSurface(controller: controller)
+                    .accessibilityLabel("Game display")
+                    .overlay { if !session.phase3Ready { starting.background(.black.opacity(0.8)).allowsHitTesting(false) } }
+                    .overlay {
+                        if session.game?.platform == .nintendo3DS {
+                            GeometryReader { geometry in
+                                Color.clear.contentShape(Rectangle())
+                                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                                        session.setConsolePointer(value.location, size: geometry.size)
+                                    }.onEnded { _ in session.setConsolePointer(nil, size: .zero) })
+                            }
+                        }
+                    }
             } else if let image = session.image {
                 Image(uiImage: image).resizable().interpolation(.none).scaledToFit().accessibilityLabel("Game display")
             } else {
@@ -205,7 +224,7 @@ struct IridiumConsolePlayer: View {
             }.id("help.0")
             VStack(alignment: .leading, spacing: 12) {
                 Label("Keyboard", systemImage: "keyboard").font(.headline)
-                Text(isPSP ? "Arrows: D-pad\nW/A/S/D: analog stick\nX/Z: Cross/Circle\nC/V: Square/Triangle\nQ/E: L/R\nEnter: Start · Space: Select" : "Arrows: D-pad\nZ/X: A/B\nEnter: Start · Space: Select")
+                Text(session.game?.platform.isPhase3 == true ? "Arrows: D-pad\nW/A/S/D: left stick\nZ/X: A/B · C/V: X/Y\nQ/E: L/R · 1/3: L2/R2\nEnter: Start · Space: Select" : isPSP ? "Arrows: D-pad\nW/A/S/D: analog stick\nX/Z: Cross/Circle\nC/V: Square/Triangle\nQ/E: L/R\nEnter: Start · Space: Select" : "Arrows: D-pad\nZ/X: A/B\nEnter: Start · Space: Select")
                 Text("In help, up/down scrolls through sections. Escape returns to the session menu.")
             }.id("help.1")
             VStack(alignment: .leading, spacing: 12) {
@@ -303,7 +322,7 @@ struct IridiumConsolePlayer: View {
             return .handled
         }
         let key = press.characters.lowercased(), pressed = press.phase == .down
-        if isPSP, ["w", "a", "s", "d"].contains(key) {
+        if profile != .gameBoy, ["w", "a", "s", "d"].contains(key) {
             guard session.phase == .running else { return .ignored }
             if pressed { analogKeys.insert(key) } else { analogKeys.remove(key) }
             let x = (analogKeys.contains("d") ? 32767 : 0) - (analogKeys.contains("a") ? 32767 : 0)

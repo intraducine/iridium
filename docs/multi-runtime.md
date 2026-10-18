@@ -1,5 +1,10 @@
 # Runtime architecture
 
+Phase 3's four native engines, reproducible component builds, storage/input
+adapters and device acceptance gates are documented in
+[phase3-acceptance.md](phase3-acceptance.md). It remains a draft until that
+four-engine physical-device checklist passes.
+
 This branch adds a real interpreter core behind the live Madeira frontend. It
 does not revive the excluded legacy Linux backend or duplicate Madeira's Steam,
 JIT or Wine state machines. The original Windows library remains authoritative.

@@ -71,7 +71,12 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         IridiumRuntimeRegistry.compatible(with: .psp).contains { $0.id == "ppsspp" }
     }
     static var importExtensions: [String] {
-        ["gb", "gbc"] + (supportsPSP ? ["elf", "iso", "cso", "pbp"] : [])
+        let original = ["gb", "gbc"] + (supportsPSP ? ["elf", "iso", "cso", "pbp"] : [])
+        #if IRIDIUM_PHASE3
+        return original + ["dol", "gcm", "rvz", "3dsx", "cci", "cxi", "app", "cdi", "chd", "zip"]
+        #else
+        return original
+        #endif
     }
     static var importContentTypes: [UTType] {
         importExtensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
@@ -93,7 +98,7 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func importROM(_ url: URL, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
+    func importROM(_ url: URL, preferredPlatform: IridiumPlatform? = nil, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
         guard !working else { return }
         guard Self.importExtensions.contains(url.pathExtension.lowercased()) else {
             error = IridiumRuntimeError.invalidGame.localizedDescription
@@ -109,7 +114,7 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
                 var coordinatorError: NSError?
                 var result: Result<IridiumConsoleGame, Error>?
                 NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { source in
-                    result = Result { try self.store.importROM(source, into: self.store.load()) }
+                    result = Result { try self.store.importROM(source, into: self.store.load(), preferredPlatform: preferredPlatform) }
                 }
                 if let coordinatorError { throw coordinatorError }
                 guard let result else { throw IridiumRuntimeError.invalidGame }
@@ -192,6 +197,13 @@ struct IridiumConsoleOptions: View {
     }
     private var runtimeDescription: String {
         guard let runtime = resolvedRuntime else { return "This game's selected runtime is not available in this build." }
+        switch runtime.id {
+        case "dolphin": return "DolphiniOS · Metal graphics and cached CPU interpreter. Performance and Wii controller support vary by game. Physical-device acceptance is pending."
+        case "azahar": return "Azahar · Software graphics and CPU interpreter. This mode can be very slow. Use prepared, unencrypted games or homebrew. Physical-device acceptance is pending."
+        case "play": return "Play! · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Restart Iridium after closing a Play! session. Physical-device acceptance is pending."
+        case "flycast": return "Flycast · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Some games need user-supplied firmware. Physical-device acceptance is pending."
+        default: break
+        }
         switch runtime.jit {
         case .none: return "This runtime uses an interpreter. JIT is not required."
         case .optional: return "This runtime can use JIT when it is available."
@@ -199,6 +211,9 @@ struct IridiumConsoleOptions: View {
         }
     }
     private var saveDescription: String {
+        if game.platform.isPhase3 {
+            return "Use the game's own Save command before closing. Saves and configuration stay in Files → Iridium → IridiumRuntimes → Saves. User-supplied firmware belongs in System/\(game.runtimeID). Removing this entry keeps these files."
+        }
         if game.platform == .psp {
             return "PSP saves are files in this game's virtual memory stick. Use the game's own Save command before quitting. Removing this entry keeps the imported game and memory stick in Files → Iridium → IridiumRuntimes."
         }

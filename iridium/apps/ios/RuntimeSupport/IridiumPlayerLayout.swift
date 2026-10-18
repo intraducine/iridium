@@ -6,9 +6,20 @@ import CoreGraphics
 
 /// App-owned presentation profiles. Native runtimes keep ownership of input and rendering.
 enum IridiumPlayerProfile: String, CaseIterable {
-    case windows, psp, gameBoy
+    case windows, psp, gameBoy, console, nintendo3DS
+    static func consoleProfile(_ platform: String?) -> Self {
+        if platform == "psp" { return .psp }
+        if platform == "nintendo3DS" { return .nintendo3DS }
+        return ["gameCube", "wii", "playStation2", "dreamcast", "arcade"].contains(platform ?? "") ? .console : .gameBoy
+    }
     var aspectRatio: CGFloat {
-        switch self { case .psp: return 480.0 / 272.0; case .gameBoy: return 160.0 / 144.0; case .windows: return 16.0 / 9.0 }
+        switch self {
+        case .psp: return 480.0 / 272.0
+        case .gameBoy: return 160.0 / 144.0
+        case .windows: return 16.0 / 9.0
+        case .console: return 4.0 / 3.0
+        case .nintendo3DS: return 400.0 / 480.0
+        }
     }
 }
 
@@ -88,6 +99,10 @@ enum IridiumConsoleControlMapping {
         case .psp: return ["A": UInt16(1), "B": 1 << 8, "X": 1 << 1,
                           "Y": 1 << 9, "LB": 1 << 10, "RB": 1 << 11][action]
         case .gameBoy: return ["A": UInt16(1 << 8), "B": 1][action]
+        case .console, .nintendo3DS:
+            return ["A": UInt16(1 << 8), "B": 1, "X": 1 << 9, "Y": 1 << 1,
+                    "LB": 1 << 10, "RB": 1 << 11, "LT": 1 << 12, "RT": 1 << 13,
+                    "L3": 1 << 14, "R3": 1 << 15][action]
         case .windows: return nil
         }
     }
@@ -142,7 +157,7 @@ struct IridiumPlayerLayout {
         let left = bounds.minX, right = bounds.maxX, bottom = bounds.maxY
         let dpadCenter = CGPoint(x: left + 76, y: bottom - (landscape ? 132 : 166))
         dpad = Self.frame(center: dpadCenter, size: CGSize(width: 132, height: 132))
-        stick = profile == .psp ? Self.frame(
+        stick = profile != .gameBoy && profile != .windows ? Self.frame(
             center: CGPoint(x: landscape ? dpad.maxX + 8 + 44 : left + 76, y: bottom - 54),
             size: CGSize(width: 88, height: 88)) : nil
         var result: [IridiumPlayerButton] = []
@@ -162,6 +177,17 @@ struct IridiumPlayerLayout {
         } else if profile == .gameBoy {
             add("B", bit: 1, x: right - 112, y: bottom - 148)
             add("A", bit: 1 << 8, x: right - 52, y: bottom - 172)
+        } else if profile == .console || profile == .nintendo3DS {
+            let cx = right - 76, cy = bottom - (landscape ? 132 : 166)
+            add("Y", bit: 1 << 1, x: cx - 46, y: cy)
+            add("X", bit: 1 << 9, x: cx, y: cy - 46)
+            add("B", bit: 1, x: cx, y: cy + 46)
+            add("A", bit: 1 << 8, x: cx + 46, y: cy)
+            let shoulderY = landscape ? bounds.minY + 26 : bottom - 264
+            add("L", bit: 1 << 10, x: left + 44, y: shoulderY, width: 60)
+            add("R", bit: 1 << 11, x: right - 44, y: shoulderY, width: 60)
+            add("L2", bit: 1 << 12, x: left + 112, y: shoulderY, width: 60)
+            add("R2", bit: 1 << 13, x: right - 112, y: shoulderY, width: 60)
         }
         let selectX = landscape ? bounds.midX - 84 : right - 116
         let startX = landscape ? bounds.midX + 84 : right - 44

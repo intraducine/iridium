@@ -24,6 +24,7 @@ def load(name, filename):
 build = load('frontend_source_build', 'madeira-frontend.py')
 audit = load('frontend_source_audit', 'collect-app-link-audit.py')
 fetch = load('frontend_source_fetch', 'fetch-runtime-inputs.py')
+phase3 = load('phase3_source_build', 'build-phase3.py')
 
 
 def binary_component(name):
@@ -36,6 +37,12 @@ def binary_component(name):
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
     if name == 'Frameworks/libIridiumPPSSPPNative.dylib': return 'PPSSPP and its selected native dependencies'
+    advanced = {'libIridiumRetroPlayer.dylib': 'Iridium shared Libretro player',
+                'libIridiumDolphin.dylib': 'DolphiniOS Dolphin and selected dependencies',
+                'azahar_libretro.dylib': 'Azahar official iOS core and selected dependencies',
+                'play_libretro_ios.dylib': 'Play! and selected dependencies',
+                'flycast_libretro.dylib': 'Flycast and selected dependencies'}
+    if p.parent.as_posix() == 'Frameworks' and p.name in advanced: return advanced[p.name]
     if name == 'arm64ec-windows/faultrep.dll': return 'Madeira fault-reporting shim'
     if name == 'arm64ec-windows/vulkan-1.dll': return 'Madeira Vulkan stand-in generated from Wine exports'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
@@ -54,7 +61,9 @@ def snapshot(repo, destination, revisions):
     if subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).strip():
         # Generated crate notices are copied separately; source edits need a commit.
         changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).splitlines()
-        if any(Path(name).suffix != '.a' and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt' for name in changed):
+        if changed == ['deps/zlib-1.3.1/zconf.h']:
+            phase3.source_state(repo) # Verify CMake's byte-identical zconf.h.included rename.
+        elif any(Path(name).suffix != '.a' and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt' for name in changed):
             raise ValueError('Commit source changes before collection: ' + str(repo.relative_to(ROOT)))
     with tempfile.TemporaryFile() as stream:
         subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', revision], stdout=stream, check=True)
@@ -179,7 +188,23 @@ def collect(app, output, maps):
         shutil.copytree(app / 'legal', notices / 'legal')
         shutil.copytree(app / 'd3d12', notices / 'd3d12', ignore=shutil.ignore_patterns('*.dylib', '*.dxil'))
         (stage / 'PPSSPP-BUILD-RECEIPT.json').write_text(json.dumps(psp_receipt, indent=2) + '\n')
+        phase3_receipts = {}
+        if any(record['path'] == 'Frameworks/libIridiumRetroPlayer.dylib' for record in records):
+            for engine in ('host', *phase3.PINS):
+                directory = ROOT / '.build/phase3' / engine / 'iphoneos'
+                receipt = json.loads((directory / 'component.json').read_text())
+                phase3.verify_inputs(receipt)
+                phase3_receipts[engine] = receipt
+            for filename, expected in phase3.AZAHAR_DOWNLOADS.items():
+                if not filename.endswith('.tar.xz'): continue
+                source = ROOT / '.build/phase3-downloads' / filename
+                if phase3.digest(source) != expected: raise ValueError('Azahar corresponding source differs')
+                destination = stage / '.build/phase3-downloads' / filename
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+            (stage / 'PHASE3-BUILD-RECEIPTS.json').write_text(json.dumps(phase3_receipts, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
+                    'phase3_build_receipts': 'PHASE3-BUILD-RECEIPTS.json' if phase3_receipts else None,
                     'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage) + psp_atlases['exclusions'],
                     'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external,
                     'psp_atlas_font_inputs': psp_atlases['inputs'], 'binaries': records, 'static_archives': static,

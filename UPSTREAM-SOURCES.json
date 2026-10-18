@@ -163,6 +163,60 @@
       "assets": "Complete native upstream assets; build receipt hashes every delivered file",
       "version": "1.20.4",
       "releaseTag": "v1.20.4"
+    },
+    {
+      "id": "dolphin",
+      "path": "vendor/Dolphin",
+      "upstream": "https://github.com/OatmealDome/dolphin-ios",
+      "revision": "7cac54161659421ed95c2cd1c0b0746539a4cd38",
+      "releaseTag": "v5.0.0b6",
+      "platforms": [
+        "gameCube",
+        "wii"
+      ],
+      "license": "GPL-2.0-or-later and dependency-specific terms",
+      "build": "ci/build-phase3.py",
+      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/phase3-acceptance.md for platform adapters, complete source and unverified limits."
+    },
+    {
+      "id": "azahar",
+      "path": "vendor/Azahar",
+      "upstream": "https://github.com/azahar-emu/azahar",
+      "revision": "219d743a1e698101fe1ab8bef43e6563126c3c27",
+      "releaseTag": "2126.2",
+      "platforms": [
+        "nintendo3DS"
+      ],
+      "license": "GPL-2.0-or-later and dependency-specific terms",
+      "build": "ci/build-phase3.py",
+      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/phase3-acceptance.md for platform adapters, complete source and unverified limits."
+    },
+    {
+      "id": "play",
+      "path": "vendor/Play",
+      "upstream": "https://github.com/jpd002/Play-",
+      "revision": "fa75cea31a33f5ab7a2008ed0d90dc74353e9cef",
+      "releaseTag": "0.77",
+      "platforms": [
+        "playStation2"
+      ],
+      "license": "BSD-2-Clause and dependency-specific terms",
+      "build": "ci/build-phase3.py",
+      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/phase3-acceptance.md for platform adapters, complete source and unverified limits."
+    },
+    {
+      "id": "flycast",
+      "path": "vendor/Flycast",
+      "upstream": "https://github.com/flyinghead/flycast",
+      "revision": "5aa091fde632fb332c8d8c34e280d62dc951954c",
+      "releaseTag": "v2.7",
+      "platforms": [
+        "dreamcast",
+        "arcade"
+      ],
+      "license": "GPL-2.0-or-later and dependency-specific terms",
+      "build": "ci/build-phase3.py",
+      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/phase3-acceptance.md for platform adapters, complete source and unverified limits."
     }
   ]
 }
