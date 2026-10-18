@@ -33,6 +33,7 @@ struct IridiumLibraryView: View {
     @State private var detail: LibraryEntry?
     @State private var consoleDetail: IridiumConsoleGame?
     @State private var importingFiles = false
+    @State private var importPlatform: IridiumPlatform?
     @State private var consoleImport: URL?
     @State private var features: Int?
     @State private var fileSource: IridiumImportSource?
@@ -139,9 +140,7 @@ struct IridiumLibraryView: View {
                                             description: Text("Add favorites through Game Options."))
                                     } else {
                                         ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                            description: Text(IridiumConsoleLibrary.supportsPSP ?
-                                                "Choose Files or Steam from Add Game (+). Windows, Game Boy and PSP games appear together." :
-                                                "Choose Files or Steam from Add Game (+). Windows and Game Boy games appear together."))
+                                            description: Text("Choose Files, Steam or a console system from Add Game (+). Games appear together in this library."))
                                     }
                                 }.frame(maxWidth: .infinity, minHeight: layout.freeSpace)
                             }
@@ -238,11 +237,13 @@ struct IridiumLibraryView: View {
             .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: restoreKeyboardFocus) {
                 IridiumConsolePlayer()
             }
-            .fileImporter(isPresented: $importingFiles, allowedContentTypes: IridiumImportSource.contentTypes, allowsMultipleSelection: false) { result in
+            .fileImporter(isPresented: $importingFiles, allowedContentTypes: importContentTypes, allowsMultipleSelection: false) { result in
+                defer { importPlatform = nil }
                 switch result {
                 case .success(let urls):
                     if let url = urls.first {
-                        if !importChoices(url).isEmpty { consoleImport = url }
+                        if let platform = importPlatform { consoles.importROM(url, preferredPlatform: platform) { select($0.id) } }
+                        else if !importChoices(url).isEmpty { consoleImport = url }
                         else if IridiumConsoleLibrary.importExtensions.contains(url.pathExtension.lowercased()) {
                             consoles.importROM(url) { select($0.id) }
                         } else { fileSource = IridiumImportSource(url: url) }
@@ -285,7 +286,8 @@ struct IridiumLibraryView: View {
                 }
             }
             .sheet(isPresented: $choosingAdd, onDismiss: finishAdding) {
-                IridiumAddGameView { pendingAdd = $0; choosingAdd = false }
+                IridiumAddGameView(choose: { importPlatform = nil; pendingAdd = $0; choosingAdd = false },
+                    chooseSystem: { importPlatform = $0; pendingAdd = .files; choosingAdd = false })
             }
             .fullScreenCover(isPresented: $onboarding.presented, onDismiss: restoreKeyboardFocus) { OnboardingView() }
             .alert("Could not start", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
@@ -531,6 +533,10 @@ struct IridiumLibraryView: View {
         showFocus = true; showHints = false; command(value); return .handled
     }
     private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; fileSource = nil; pendingAdd = nil; choosingAdd = false }
+    private var importContentTypes: [UTType] {
+        guard let platform = importPlatform, let system = IridiumConsoleSystem.system(for: platform) else { return IridiumImportSource.contentTypes }
+        return system.formats(for: platform).compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
+    }
     private func finishAdding() {
         defer { pendingAdd = nil; restoreKeyboardFocus() }
         switch pendingAdd {

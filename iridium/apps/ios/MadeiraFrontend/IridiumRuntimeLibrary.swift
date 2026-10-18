@@ -71,12 +71,8 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         IridiumRuntimeRegistry.compatible(with: .psp).contains { $0.id == "ppsspp" }
     }
     static var importExtensions: [String] {
-        let original = ["gb", "gbc"] + (supportsPSP ? ["elf", "iso", "cso", "pbp"] : [])
-        #if IRIDIUM_PHASE3
-        return original + ["dol", "gcm", "rvz", "3dsx", "cci", "cxi", "app", "cdi", "chd", "zip"]
-        #else
-        return original
-        #endif
+        var seen = Set<String>()
+        return IridiumConsoleSystem.all.flatMap(\.extensions).filter { seen.insert($0).inserted }
     }
     static var importContentTypes: [UTType] {
         importExtensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }

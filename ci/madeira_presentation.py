@@ -103,8 +103,10 @@ def library(text):
     madeira_order = list(settings_pages)
     controls_link = setting('Controls', 'Section { IridiumControlFeedbackSettings() }')
     madeira_link = setting('Madeira', 'Section { ' + '\n'.join(madeira_links) + ' }')
-    psp_link = setting('PPSSPP', 'IridiumSystemGameSettings(platform: .psp, focus: iridiumGuided ? iridiumFocus : nil)')
-    gb_link = setting('Game Boy', 'IridiumSystemGameSettings(platform: .gameBoy, focus: iridiumGuided ? iridiumFocus : nil)')
+    console_links = '''ForEach(IridiumConsoleSystem.all) { system in
+                NavigationLink(system.title, value: system.title).id(system.title)
+                    .listRowBackground(iridiumGuided && iridiumFocus == system.title ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+            }'''
     diagnostics_link = setting('Diagnostics', 'IridiumDiagnosticsSections()\nRuntimeDiagnosticsExportSection()')
     contributors = between(credits, '                    MadeiraCredit', '\n                } header:')
     thanks = credits[credits.index(' footer:'):]
@@ -124,12 +126,12 @@ def library(text):
     IridiumLegalNoticesSection()'''
     credits_view = '\nprivate struct IridiumCreditsSections: View {\n    var body: some View {\n' + credits + '\n    }\n}\n'
     credits_link = setting('Credits', 'IridiumCreditsSections()')
-    root_order = ['Controls', 'Madeira', 'PPSSPP', 'Game Boy', 'Diagnostics', 'Credits']
+    root_order = ['Controls', 'Madeira', 'Diagnostics', 'Credits']
     settings = '''    private var settings: some View {
         Form {
             Section { LibraryStatus() }.iridiumRowSurface()
             Section { ''' + controls_link + ''' }.iridiumRowSurface()
-            Section("Systems") { ''' + madeira_link + '\n' + psp_link + '\n' + gb_link + ''' }.iridiumRowSurface()
+            Section("Systems") { ''' + madeira_link + '\n' + console_links + ''' }.iridiumRowSurface()
             Section { ''' + diagnostics_link + '\n' + credits_link + ''' }.iridiumRowSurface()
         }
 '''
@@ -140,7 +142,16 @@ def library(text):
             .iridiumPageSurface().navigationTitle("Settings")
             .toolbar { settingsToolbar }
             ''' + destination_pages(settings_pages).replace('.navigationBarBackButtonHidden()', '.toolbar { settingsToolbar }.navigationBarBackButtonHidden()').replace('default: EmptyView()', '''default:
-                    if let game = IridiumSystemGameSettings.game(for: page) {
+                    if let system = IridiumConsoleSystem.system(titled: page) {
+                        Form { Group {
+                            IridiumSystemGameSettings(platform: system.primaryPlatform, focus: iridiumGuided ? iridiumFocus : nil)
+                        }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle(system.title)
+                            .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
+                            .toolbar { ToolbarItem(placement: .topBarLeading) {
+                                Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
+                                    .keyboardShortcut(.cancelAction)
+                            } }
+                    } else if let game = IridiumSystemGameSettings.game(for: page) {
                         IridiumConsoleOptions(game: game, embedded: true)
                     } else { EmptyView() }''') + '''
             .onChange(of: iridiumPages) { _, _ in
@@ -153,15 +164,15 @@ def library(text):
 ''')
     text = replace(text, 'struct LibraryView: View {', 'struct LibraryView: View {\n    @Environment(\\.dismiss) private var iridiumDismiss\n' + navigation_state('Controls'))
     settings_navigation = hub_navigation(root_order, 'iridiumDismiss()').replace('guard iridiumPages.isEmpty else { return }', 'guard !iridiumSettingsOrder.isEmpty else { return }')
-    settings_navigation = settings_navigation.replace('let order = ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
+    settings_navigation = settings_navigation.replace('let order = ["Controls", "Madeira", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
     settings_navigation += '''
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]
+        case nil: return ["Controls", "Madeira"] + IridiumConsoleSystem.all.map(\\.title) + ["Diagnostics", "Credits"]
         case "Madeira": return ''' + json.dumps(madeira_order) + '''
-        case "PPSSPP": return IridiumSystemGameSettings.routes(for: .psp)
-        case "Game Boy": return IridiumSystemGameSettings.routes(for: .gameBoy)
-        default: return []
+        default:
+            guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
+            return IridiumSystemGameSettings.routes(for: system.primaryPlatform)
         }
     }
 '''
@@ -384,7 +395,7 @@ def apply(name, text):
         text = text[:start] + re.sub(r'\bMadeira\b(?! (?:Dock|JIT))', 'Iridium', text[start:])
     if name == 'Onboarding.swift':
         text = replace(text, 'Text("Iridium runs Windows games on your \\(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone").")',
-                       'Text(IridiumConsoleLibrary.supportsPSP ? "Play your Windows, PSP, Game Boy and Game Boy Color games in one library." : "Play your Windows, Game Boy and Game Boy Color games in one library.")')
+                       'Text("Play Windows and console games in one library. Find each included emulator and its supported formats in Add Game.")')
         text = replace(text, 'Text("A few optional steps get you ready:")',
                        'Text("These optional steps prepare Windows games. You can skip setup and add console games now.")')
         text = text.replace('Settings › JIT', 'Settings › Madeira › Launch Support')

@@ -316,7 +316,7 @@ var threeDSX = Data(repeating: 0, count: 40); put(Array("3DSX".utf8), in: &three
 putLE(32, in: &threeDSX, at: 4, bytes: 2); putLE(8, in: &threeDSX, at: 6, bytes: 2)
 try inspectPhase3(threeDSX, "3dsx", .nintendo3DS)
 threeDSX[4] = 0xff; try inspectPhase3(threeDSX, "3dsx", nil)
-for (ext, magic) in [("cci", "NCSD"), ("cxi", "NCCH"), ("app", "NCCH")] {
+for (ext, magic) in [("3ds", "NCSD"), ("cci", "NCSD"), ("cxi", "NCCH"), ("app", "NCCH")] {
     var cartridge = Data(repeating: 0, count: 512)
     put(Array(magic.utf8), in: &cartridge, at: 256); putLE(1, in: &cartridge, at: 260, bytes: 4)
     try inspectPhase3(cartridge, ext, .nintendo3DS)
@@ -354,12 +354,40 @@ try inspectPhase3(badZIP, "zip", nil) // Central/local identity mismatch.
 badZIP = arcadeZIP(); putLE(0xa0000000, in: &badZIP, at: 42 + 38, bytes: 4)
 try inspectPhase3(badZIP, "zip", nil) // Unix symbolic-link entry.
 
+check(Set(IridiumConsoleSystem.all.map(\.id)) == Set(IridiumRuntimeRegistry.all.filter { $0.id != "madeira" }.map(\.id)))
+#if IRIDIUM_PPSSPP
+check(IridiumConsoleSystem.system(for: .psp)?.extensions == ["elf", "iso", "cso", "pbp"])
+#else
+check(IridiumConsoleSystem.system(for: .psp) == nil)
+#endif
+for system in IridiumConsoleSystem.all {
+    check(IridiumConsoleSystem.system(titled: system.title)?.id == system.id)
+    for platform in system.platforms {
+        check(IridiumConsoleSystem.system(for: platform)?.id == system.id)
+        check(try IridiumRuntimeRegistry.resolve(platform: platform, preferred: system.id).id == system.id)
+        check(!system.formats(for: platform).isEmpty)
+    }
+}
+
 #if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
 for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.wii, "dolphin"), (.nintendo3DS, "azahar"), (.playStation2, "play"), (.dreamcast, "flycast"), (.arcade, "flycast")] {
     check(try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil).id == runtime)
 }
 rejects { _ = try IridiumRuntimeRegistry.play.executionMode(jitAvailable: false) }
 rejects { _ = try IridiumRuntimeRegistry.flycast.executionMode(jitAvailable: false) }
+check(Set(IridiumConsoleSystem.all.map(\.id)).isSuperset(of: ["dolphin", "azahar", "play", "flycast"]))
+check(IridiumConsoleSystem.system(for: .arcade)?.formats(for: .arcade) == ["zip"])
+check(IridiumConsoleSystem.system(for: .dreamcast)?.formats(for: .dreamcast).contains("zip") == false)
+check(IridiumConsoleSystem.system(for: .nintendo3DS)?.extensions.contains("3ds") == true)
+check(IridiumConsoleSystem.system(for: .wii)?.formats(for: .wii).contains("gcm") == false)
+let chosenStore = IridiumConsoleStore(root: temporary.appendingPathComponent("chosen-system"))
+let chosenSource = temporary.appendingPathComponent("chosen.elf")
+try ps2ELF.write(to: chosenSource)
+rejects { _ = try chosenStore.importROM(chosenSource, into: [], preferredPlatform: .dreamcast) }
+check(try chosenStore.load().isEmpty)
+let chosenPS2 = try chosenStore.importROM(chosenSource, into: [], preferredPlatform: .playStation2)
+check(chosenPS2.platform == .playStation2 && chosenPS2.runtimeID == "play")
+check(try chosenStore.validateROM(chosenPS2) == chosenStore.rom(chosenPS2))
 let advancedStore = IridiumConsoleStore(root: temporary.appendingPathComponent("advanced"))
 let arcadeSource = temporary.appendingPathComponent("legal-fixture.zip")
 try arcadeZIP().write(to: arcadeSource)

@@ -99,6 +99,55 @@ enum IridiumRuntimeError: LocalizedError {
     }
 }
 
+/// One catalog drives system discovery, setup guidance and Files filtering.
+/// Availability follows the shipping registry, including builds without Phase 3.
+struct IridiumConsoleSystem: Identifiable {
+    let runtime: IridiumRuntimeDescriptor
+    let title: String
+    let primaryPlatform: IridiumPlatform
+    let extensions: [String]
+    let guidance: String
+    var id: String { runtime.id }
+    var platforms: [IridiumPlatform] { IridiumPlatform.allCases.filter { runtime.platforms.contains($0) } }
+    var subtitle: String { platforms.map(\.title).joined(separator: " · ") }
+    var importPlatforms: [IridiumPlatform] { platforms.filter { $0 != .gameBoyColor } }
+    var storageGuidance: String {
+        let root = "Files → Iridium → IridiumRuntimes. "
+        switch id {
+        case "azahar": return root + "Each game's Saves/azahar folder contains its Azahar user tree. Supply any required NAND/system data in that per-game Azahar tree."
+        case "flycast": return root + "Per-game saves are in Saves/flycast. User-supplied BIOS and supporting system files go in System/flycast/dc, with their required upstream filenames."
+        default: return root + "Saves/\(id) contains each game's saves and configuration. Removing a library entry keeps these files."
+        }
+    }
+    func formats(for platform: IridiumPlatform) -> [String] {
+        if platform == .wii { return extensions.filter { $0 != "gcm" } }
+        if platform == .arcade { return ["zip"] }
+        if platform == .dreamcast { return extensions.filter { $0 != "zip" } }
+        return extensions
+    }
+    static var all: [Self] {
+        IridiumRuntimeRegistry.all.compactMap { runtime in
+            switch runtime.id {
+            case "sameboy": return Self(runtime: runtime, title: "Game Boy", primaryPlatform: .gameBoy,
+                extensions: ["gb", "gbc"], guidance: "Game Boy and Game Boy Color use SameBoy. JIT is not required. Battery saves are kept automatically; touch layouts are saved per game.")
+            case "ppsspp": return Self(runtime: runtime, title: "PPSSPP", primaryPlatform: .psp,
+                extensions: ["elf", "iso", "cso", "pbp"], guidance: "PSP games use PPSSPP. JIT is optional and off by default in each game's options. Graphics, CPU status and save states are in the running game's menu.")
+            case "dolphin": return Self(runtime: runtime, title: "Dolphin", primaryPlatform: .gameCube,
+                extensions: ["dol", "gcm", "iso", "rvz"], guidance: "GameCube and Wii use Dolphin with Metal graphics and the CPU interpreter. JIT is not required in this build. Choose the system for DOL homebrew and RVZ discs. Motion, Wii controls and interpreter performance vary by game; phone testing is pending.")
+            case "azahar": return Self(runtime: runtime, title: "Azahar", primaryPlatform: .nintendo3DS,
+                extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS uses Azahar. Choose homebrew or prepared, unencrypted cartridge/content files. CIA installation and encrypted games are not supported by this import flow. CPU and graphics use interpreters and can be very slow; phone testing is pending.")
+            case "play": return Self(runtime: runtime, title: "Play!", primaryPlatform: .playStation2,
+                extensions: ["elf", "iso", "chd"], guidance: "PlayStation 2 uses Play! with its built-in BIOS replacement. Enable Launch Support in Settings → Madeira, then check Play!'s own executable-memory result at launch. Availability depends on iOS. Use an ELF or single-file disc image. Fully close and reopen Iridium after using Play!. Phone testing is pending.")
+            case "flycast": return Self(runtime: runtime, title: "Flycast", primaryPlatform: .dreamcast,
+                extensions: ["elf", "cdi", "chd", "zip"], guidance: "Dreamcast and supported arcade games use Flycast. Enable Launch Support in Settings → Madeira; Flycast must pass its own executable-memory check. Arcade imports require a standalone complete set with its original ZIP name and any required user-supplied BIOS. GDI/CUE multi-file sets need preparation as a supported single-file image. Phone testing is pending.")
+            default: return nil
+            }
+        }
+    }
+    static func system(for platform: IridiumPlatform) -> Self? { all.first { $0.runtime.platforms.contains(platform) } }
+    static func system(titled title: String) -> Self? { all.first { $0.title == title } }
+}
+
 enum IridiumRuntimeState: Sendable { case idle, starting, running, paused, stopping, restartRequired }
 
 /// The session protects this value with its lock, including while boot is in
@@ -172,7 +221,7 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
         case .gameCube, .wii:
             guard runtimeID == "dolphin", ["dol", "gcm", "iso", "rvz"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .nintendo3DS:
-            guard runtimeID == "azahar", ["3dsx", "cci", "cxi", "app"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
+            guard runtimeID == "azahar", ["3dsx", "3ds", "cci", "cxi", "app"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .playStation2:
             guard runtimeID == "play", ["elf", "iso", "chd"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .dreamcast:
@@ -292,6 +341,11 @@ struct IridiumConsoleStore {
         let ext = source.pathExtension.lowercased()
         let inspected = try IridiumROMInspection.inspect(source, fileExtension: ext, preferredPlatform: preferredPlatform)
         let platform = inspected.platform
+        if let preferredPlatform {
+            let gameBoy = Set([IridiumPlatform.gameBoy, .gameBoyColor])
+            guard platform == preferredPlatform || (gameBoy.contains(platform) && gameBoy.contains(preferredPlatform))
+            else { throw IridiumRuntimeError.invalidGame }
+        }
         let runtime = try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil)
         var game = IridiumConsoleGame(id: UUID(), title: String(source.deletingPathExtension().lastPathComponent.prefix(128)),
             platform: platform, runtimeID: runtime.id, fileExtension: ext, importedAt: Date())
@@ -332,7 +386,7 @@ struct IridiumROMInspection: Equatable {
     }
 
     static func inspect(_ source: URL, fileExtension ext: String, preferredPlatform: IridiumPlatform? = nil) throws -> Self {
-        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "3dsx", "cci", "cxi", "app", "cdi", "chd", "zip"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
+        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
         let url = try checkedFile(source)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -395,10 +449,10 @@ struct IridiumROMInspection: Equatable {
             guard header.prefix(4).elementsEqual("3DSX".utf8), little(header, 4, 2) >= 32,
                   little(header, 4, 2) <= size, little(header, 6, 2) >= 8 else { throw IridiumRuntimeError.invalidGame }
             platform = .nintendo3DS
-        case "cci", "cxi", "app":
+        case "3ds", "cci", "cxi", "app":
             let header = try reader.read(0x100, 0x100)
             let magic = String(decoding: header.prefix(4), as: UTF8.self)
-            guard magic == (ext == "cci" ? "NCSD" : "NCCH"), little(header, 4, 4) > 0,
+            guard magic == (["3ds", "cci"].contains(ext) ? "NCSD" : "NCCH"), little(header, 4, 4) > 0,
                   little(header, 4, 4) <= size / 512 else { throw IridiumRuntimeError.invalidGame }
             platform = .nintendo3DS
         case "cdi":

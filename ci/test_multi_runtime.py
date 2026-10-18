@@ -213,7 +213,7 @@ print("PASS shipping preflight: active Windows/launch/server/owner, prior Window
         self.assertNotIn('IridiumSameBoyDriver', view + library)
         self.assertIn('descriptor = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)', library)
         self.assertIn('IridiumRuntimeRegistry.compatible(with: .psp)', library)
-        self.assertIn('supportsPSP ? ["elf", "iso", "cso", "pbp"] : []', library)
+        self.assertIn('IridiumConsoleSystem.all.flatMap(\\.extensions)', library)
 
     @unittest.skipUnless(os.environ.get('IRIDIUM_TEST_CORE') == '1',
                          'Native core execution is explicit; source CI must not trigger emulator builds')

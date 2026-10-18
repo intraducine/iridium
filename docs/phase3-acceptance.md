@@ -38,6 +38,15 @@ continues to require restart before another runtime.
 
 ## Inputs and user-supplied files
 
+Add Game (+) lists the included systems by emulator. Each system opens its
+format/setup guide and a Files picker filtered for the selected system. Choose
+GameCube/Wii or Dreamcast/Arcade before picking an ambiguous file; the generic
+Files route still offers system selection for DOL, RVZ and CHD. Settings →
+Systems uses the same shipping registry, with setup guidance and each engine's
+imported games, including both platforms for Dolphin and Flycast. Builds without
+Phase 3 do not advertise unavailable engines. Existing records and saves are
+retained.
+
 Use games/firmware you are entitled to use. The build downloads no games or
 console BIOS. Bounded structural validation does not establish compatibility
 or decrypt content.
@@ -45,7 +54,7 @@ or decrypt content.
 | System | Imports | Limits |
 | --- | --- | --- |
 | GameCube/Wii | `.dol`, `.gcm`, `.iso`, `.rvz` | Choose the system for DOL/RVZ; raw ISO uses disc magic. No WAD installation, real Wiimote, motion/gyro or NAND-management UI. |
-| Nintendo 3DS | `.3dsx`, `.cci`, `.cxi`, `.app` | Prepared unencrypted single files/homebrew. No CIA installer or `.3ds` encrypted-dump importer. Upstream top/bottom display layout and lower-screen touch mapping. |
+| Nintendo 3DS | `.3dsx`, `.3ds`, `.cci`, `.cxi`, `.app` | Prepared unencrypted single files/homebrew. `.3ds` and `.cci` use the same NCSD checks. No CIA installer or encrypted-game preparation. Upstream top/bottom display layout and lower-screen touch mapping. |
 | PlayStation 2 | `.elf`, `.iso`, `.chd` | R5900 ELF flags identify PS2; ISO uses PLAYSTATION. Choose PS2 for CHD. Play! supplies its own high-level system implementation. |
 | Dreamcast | `.elf`, `.cdi`, `.chd` | SH ELF/CDI identify Dreamcast; choose Dreamcast for CHD. No multi-file GDI/CUE importer. |
 | Flycast arcade | `.zip` | Choose Arcade instead of Windows files. Original set filename is retained. Flat stored/deflated ZIPs without archive comments; no encrypted, directory, link or traversal entries. Standalone complete sets only. |
