@@ -10,7 +10,7 @@ instructions, limitations and the four-engine acceptance checklist are in
 [docs/phase3-acceptance.md](docs/phase3-acceptance.md).
 
 Declared CMake adapters hide C++ symbols. Dolphin uses upstream Metal/iOS with
-cached interpretation and complete Sys resources. Azahar reuses its verified
+plain interpretation and complete Sys resources. Azahar reuses its verified
 official iOS core and matching unified source, with software graphics and
 CPU/shader interpreters. Play!'s generated Libretro entry routes CAppConfig to
 the game's save root; existing CodeGen allocation/protection calls now fail
@@ -18,10 +18,23 @@ before execution when Release assertions would disappear. Flycast's generated
 GLSM advertises ES3 when its target compiles HAVE_OPENGLES3. Play!/Flycast probes
 exercise their own allocators; no PSP JIT protocol is reused.
 
+Generated Play!/Flycast session hooks call their upstream VM pause/resume paths
+when the shared menu or an audio interruption pauses a game. Play! drains its
+owner-thread GS mailbox without destroying the renderer. Flycast stops and
+restarts its execution thread. The Azahar touch adapter accepts only the lower
+screen of the selected top-bottom layout, excluding the top screen and bars.
+
 Dolphin selects bundled dependencies, disables old zlib-ng NEON configuration
 that passes ARM32 flags to arm64, and disables incompatible fmt consteval
 declarations for Apple Clang 21. Original notices are retained. Source collection
 maps all five libraries and includes receipts, dependencies and Azahar's source.
+
+The consumer importer detects supported systems from existing format headers,
+asks only for ambiguous containers, and retains GDI/CUE manifests with named
+tracks instead of requiring conversion. Each source file is coordinated during
+copy. RVZ uses its upstream uncompressed disc header; ISO SYSTEM.CNF BOOT/BOOT2
+separates known PS1 from PS2. Shared Launch Support, system settings, onboarding
+and import errors use contextual consumer copy. Runtime pins are unchanged.
 
 ## Prepared PSP executable arenas and owned helper shutdown
 

@@ -77,13 +77,19 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var jitDiagnostic: IridiumJITDiagnostic? // main-thread reference; workers retain their own owner
     private var displayedImageCount: UInt64 = 0 // protected by lock
 
+    func validateLaunchAdmission() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
+        guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
+              wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
+        guard LibraryModel.sessionsThisRun == 0 else { throw IridiumRuntimeError.restartRequired }
+        guard ownership.lease == nil else { throw IridiumRuntimeError.busy }
+    }
+
     func start(_ game: IridiumConsoleGame, store: IridiumConsoleStore) {
         dispatchPrecondition(condition: .onQueue(.main))
         do {
-            guard phase != .restartRequired else { throw IridiumRuntimeError.restartRequired }
-            guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
-                  wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
-            guard LibraryModel.sessionsThisRun == 0 else { throw IridiumRuntimeError.restartRequired }
+            try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
             if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
@@ -610,11 +616,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
     func setConsolePointer(_ point: CGPoint?, size: CGSize) {
         lock.lock(); defer { lock.unlock() }
-        guard intent.request == .play, let point, size.width > 0, size.height > 0 else {
+        guard intent.request == .play, let point,
+              let projected = Iridium3DSTouchProjection.project(point: point, size: size) else {
             consolePointer = (0, 0, false); return
         }
-        consolePointer = (Int16(clamping: Int((min(1, max(0, point.x / size.width)) * 65534 - 32767).rounded())),
-                          Int16(clamping: Int((min(1, max(0, point.y / size.height)) * 65534 - 32767).rounded())), true)
+        consolePointer = (projected.0, projected.1, true)
     }
     private func fillPhase3Input(_ value: UnsafeMutablePointer<IRPhase3Input>) {
         let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad

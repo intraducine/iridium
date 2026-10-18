@@ -104,7 +104,7 @@ def generated(engine, destination):
     directory = destination / 'embedding'
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'native.exports').write_text('\n'.join(sorted(NATIVE_EXPORTS)) + '\n')
-    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else ''))
+    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else ''))
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
     if engine == 'dolphin':
         # Supported mbedTLS user configuration: its public self-test keys are
@@ -127,7 +127,27 @@ def generated(engine, destination):
             raise ValueError('Play configuration hook changed')
         replacement = '''extern "C" const char *ir_play_save_root();
 fs::path CAppConfig::GetBasePath() const { return fs::path(ir_play_save_root()); }'''
-        (directory / 'main_libretro.cpp').write_text(main.replace(hook, replacement))
+        # Pause the independently running VM while pumping its owner-thread GS
+        # mailbox. Release() is teardown and must not be used for a pause.
+        pause = '''
+extern "C" bool ir_phase3_core_pause(bool paused) {
+    if (!m_virtualMachine || !first_run) return true;
+    if (!paused) {
+        m_virtualMachine->Resume();
+        return m_virtualMachine->GetStatus() == CVirtualMachine::RUNNING;
+    }
+    m_virtualMachine->PauseAsync();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    auto gs = static_cast<CGSH_OpenGL_Libretro*>(m_virtualMachine->GetGSHandler());
+    while (m_virtualMachine->GetStatus() != CVirtualMachine::PAUSED) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        if (gs) gs->FlushMailBox();
+        std::this_thread::yield();
+    }
+    return true;
+}
+'''
+        (directory / 'main_libretro.cpp').write_text('#include <chrono>\n' + main.replace(hook, replacement) + pause)
         memory = (source / 'deps/CodeGen/src/MemoryFunction.cpp').read_text()
         allocation = 'vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);'
         if memory.count(allocation) != 1:
@@ -141,6 +161,17 @@ fs::path CAppConfig::GetBasePath() const { return fs::path(ir_play_save_root());
         memory = memory.replace('assert(result == 0);', 'if (result != KERN_SUCCESS) throw std::runtime_error("Executable protection failed");')
         (directory / 'MemoryFunction.cpp').write_text(memory)
     if engine == 'flycast':
+        main = (ROOT / 'vendor/Flycast/shell/libretro/libretro.cpp').read_text()
+        if main.count('static bool first_run = true;') != 1:
+            raise ValueError('Flycast session hook changed')
+        (directory / 'libretro.cpp').write_text(main + '''
+extern "C" bool ir_phase3_core_pause(bool paused) {
+    if (first_run) return true;
+    if (paused) emu.stop();
+    else emu.start();
+    return emu.running() != paused;
+}
+''')
         glsm = (ROOT / 'vendor/Flycast/core/deps/libretro-common/glsm/glsm.c').read_text()
         hook = '#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;'
         if glsm.count(hook) != 1: raise ValueError('Flycast GLES context hook changed')
@@ -156,7 +187,7 @@ def audit(binary, sdk, native=False):
     if native:
         if symbols != NATIVE_EXPORTS:
             raise ValueError('Native player exports differ: ' + str(symbols ^ NATIVE_EXPORTS))
-    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare'} for s in symbols):
+    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause'} for s in symbols):
         raise ValueError('Upstream C++ symbols escape the core boundary')
     if not native and '_retro_run' not in symbols:
         raise ValueError('Missing upstream core interface')

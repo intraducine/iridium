@@ -48,6 +48,27 @@ precondition(gb.stick == nil && gb.buttons.count == 4, "No unsupported GB contro
 precondition(IridiumPlayerLayout.aspectFit(0, in: bounds[0]) == .zero)
 precondition(IridiumPlayerLayout.aspectFit(.infinity, in: bounds[0]) == .zero)
 precondition(IridiumPlayerLayout.aspectFit(1, in: .zero) == .zero)
+for size in [CGSize(width: 400, height: 480), CGSize(width: 800, height: 480), CGSize(width: 400, height: 800)] {
+    let canvas = IridiumPlayerLayout.aspectFit(400.0 / 480.0, in: CGRect(origin: .zero, size: size))
+    func touch(_ x: CGFloat, _ y: CGFloat) -> (Int16, Int16)? {
+        Iridium3DSTouchProjection.project(point: CGPoint(x: canvas.minX + canvas.width * x,
+                                                          y: canvas.minY + canvas.height * y), size: size)
+    }
+    let lowerCenter = touch(0.5, 0.75)!
+    func pixel(_ value: Int16, _ dimension: Int) -> Int { Int((Float(value) + 32767) / 65534 * Float(dimension)) }
+    precondition(pixel(lowerCenter.0, 400) == 200 && pixel(lowerCenter.1, 480) == 360, "Use full-canvas libretro coordinates")
+    precondition(touch(0.1, 0.5) != nil, "Lower touchscreen starts below the top screen")
+    for point in [(0.1, 0.5), (0.899999, 0.999999), (0.5, 0.75)] {
+        let value = touch(point.0, point.1)!
+        precondition((40..<360).contains(pixel(value.0, 400)) && (240..<480).contains(pixel(value.1, 480)),
+                     "Upstream pointer decoding must stay inside the lower screen")
+    }
+    for point in [(0.5, 0.25), (0.09, 0.75), (0.91, 0.75), (0.5, 1.01), (-0.1, 0.75)] {
+        precondition(touch(point.0, point.1) == nil, "Top screen and black bars must release the touch")
+    }
+}
+precondition(Iridium3DSTouchProjection.project(point: .zero, size: .zero) == nil)
+precondition(Iridium3DSTouchProjection.project(point: CGPoint(x: CGFloat.nan, y: 0), size: CGSize(width: 400, height: 480)) == nil)
 precondition(IridiumControlGeometry.directionVector(-1) == .zero)
 close(IridiumControlGeometry.directionVector(0).y, 1, "Keyboard stick up")
 close(IridiumControlGeometry.directionVector(2).x, 1, "Keyboard stick right")

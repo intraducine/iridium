@@ -119,7 +119,8 @@ class MultiRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for lifecycle checks')
     def test_console_launch_guards_execute_with_stopped_wine_flags(self):
         session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
-        start = session.index('            guard phase != .restartRequired')
+        admission = session[session.index('    func validateLaunchAdmission() throws {'):session.index('    func start(_ game:')]
+        start = session.index('            try validateLaunchAdmission()')
         end = session.index('            lock.lock(); intent =', start)
         # Execute the shipping preflight/lease acquisition, with controlled
         # process liveness endpoints. This is not a Wine teardown simulation.
@@ -139,6 +140,7 @@ final class Preflight {
     enum Phase { case idle, restartRequired }
     var phase = Phase.idle
     var ownership = IridiumRuntimeOwnership()
+ADMISSION
     func acquire(_ game: IridiumConsoleGame) throws -> IridiumRuntimeLease {
 GUARDS
         return owner
@@ -147,6 +149,9 @@ GUARDS
 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: .psp,
     runtimeID: "ppsspp", fileExtension: "elf", importedAt: Date())
 let preflight = Preflight()
+// Prompt-time admission never claims a lease; confirmation must recheck it.
+try preflight.validateLaunchAdmission()
+precondition(preflight.ownership.lease == nil)
 func rejects(_ expected: IridiumRuntimeError) {
     do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
     catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }
@@ -169,8 +174,11 @@ preflight.ownership.release(second)
 let third = try preflight.acquire(game)
 preflight.ownership.release(third)
 preflight.phase = .restartRequired; rejects(.restartRequired)
+preflight.phase = .idle
+let last = try preflight.acquire(game)
+preflight.ownership.release(last, restart: true); rejects(.restartRequired)
 print("PASS shipping preflight: active Windows/launch/server/owner, prior Windows despite zero flags, repeated clean console leases, stale stop, restart state")
-'''.replace('GUARDS', guards)
+'''.replace('GUARDS', guards).replace('ADMISSION', admission)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'checks'

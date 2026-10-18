@@ -94,31 +94,32 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func importROM(_ url: URL, preferredPlatform: IridiumPlatform? = nil, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
+    func importROM(_ url: URL, preferredPlatform: IridiumPlatform? = nil, selectedFiles: [URL] = [],
+                   failed: ((String) -> Void)? = nil, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
         guard !working else { return }
         guard Self.importExtensions.contains(url.pathExtension.lowercased()) else {
-            error = IridiumRuntimeError.invalidGame.localizedDescription
+            let message = IridiumRuntimeError.invalidGame.localizedDescription
+            if let failed { failed(message) } else { error = message }
             return
         }
         working = true
-        let scoped = url.startAccessingSecurityScopedResource()
+        let inputs = selectedFiles.isEmpty ? [url] : selectedFiles
+        let scopes = inputs.filter { $0.startAccessingSecurityScopedResource() }
         queue.async {
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            defer { scopes.forEach { $0.stopAccessingSecurityScopedResource() } }
             do {
                 // Coordinate Files/iCloud provider reads; do not keep an
                 // external security-scoped path as the game's persistent ID.
-                var coordinatorError: NSError?
-                var result: Result<IridiumConsoleGame, Error>?
-                NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinatorError) { source in
-                    result = Result { try self.store.importROM(source, into: self.store.load(), preferredPlatform: preferredPlatform) }
+                let game = try IridiumFilesAccess.readGame(url, selectedFiles: inputs) { source, selected in
+                    try self.store.importROM(source, into: self.store.load(), preferredPlatform: preferredPlatform, selectedFiles: selected)
                 }
-                if let coordinatorError { throw coordinatorError }
-                guard let result else { throw IridiumRuntimeError.invalidGame }
-                let game = try result.get()
                 let games = try self.store.load()
                 DispatchQueue.main.async { self.games = games; self.working = false; imported(game) }
             } catch {
-                DispatchQueue.main.async { self.error = error.localizedDescription; self.working = false }
+                DispatchQueue.main.async {
+                    self.working = false
+                    if let failed { failed(error.localizedDescription) } else { self.error = error.localizedDescription }
+                }
             }
         }
     }
@@ -194,26 +195,14 @@ struct IridiumConsoleOptions: View {
     private var runtimeDescription: String {
         guard let runtime = resolvedRuntime else { return "This game's selected runtime is not available in this build." }
         switch runtime.id {
-        case "dolphin": return "DolphiniOS · Metal graphics and CPU interpreter. Performance and Wii controller support vary by game. Physical-device acceptance is pending."
-        case "azahar": return "Azahar · Software graphics and CPU interpreter. This mode can be very slow. Use prepared, unencrypted games or homebrew. Physical-device acceptance is pending."
-        case "play": return "Play! · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Restart Iridium after closing a Play! session. Physical-device acceptance is pending."
-        case "flycast": return "Flycast · Launch Support and a successful executable-memory check are required. It may be unavailable on this iOS version. Some games need user-supplied firmware. Physical-device acceptance is pending."
-        default: break
-        }
-        switch runtime.jit {
-        case .none: return "This runtime uses an interpreter. JIT is not required."
-        case .optional: return "This runtime can use JIT when it is available."
-        case .required: return "This runtime requires JIT before it can start."
+        case "dolphin": return "Some GameCube and Wii games may run slowly."
+        case "azahar": return "Some 3DS games may run slowly."
+        case "play": return "Fully close and reopen Iridium after finishing a PlayStation 2 game."
+        default: return ""
         }
     }
     private var saveDescription: String {
-        if game.platform.isPhase3 {
-            return "Use the game's own Save command before closing. Saves and configuration stay in Files → Iridium → IridiumRuntimes → Saves. User-supplied firmware belongs in System/\(game.runtimeID). Removing this entry keeps these files."
-        }
-        if game.platform == .psp {
-            return "PSP saves are files in this game's virtual memory stick. Use the game's own Save command before quitting. Removing this entry keeps the imported game and memory stick in Files → Iridium → IridiumRuntimes."
-        }
-        return "Battery saves are stored separately for each game. Removing this entry keeps the ROM and saves in Files → Iridium → IridiumRuntimes."
+        "Use the game's Save command before closing. Removing a game from the library keeps its files and saves."
     }
     var body: some View {
         if embedded { content } else { NavigationStack { content } }
@@ -233,14 +222,15 @@ struct IridiumConsoleOptions: View {
                             }
                         }.disabled(library.working)
                     }
-                    Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary)
+                    if !runtimeDescription.isEmpty { Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary) }
+                    if resolvedRuntime?.jit == .required { Button("Set Up Launch Support", systemImage: "bolt") { JITCoordinator.shared.showSetup = true } }
                     if game.platform == .psp {
                         Toggle("Use JIT", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
                             var changed = currentGame; changed.pspJIT = value; library.update(changed)
                         }))
                         .disabled(library.working || IridiumConsoleSession.shared.isActive)
                         .accessibilityIdentifier("psp-use-jit")
-                        Text("Off by default. Uses the shared Launch Support setup. If PPSSPP cannot use JIT, this game starts with the IR interpreter.")
+                        Text("May improve performance. If unavailable, the game starts without it.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }

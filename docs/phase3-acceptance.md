@@ -36,27 +36,48 @@ after upstream unload/deinit and audio/video cleanup return. Partial init/load
 exceptions or uncertain shutdown retain the lease and require restart. Windows
 continues to require restart before another runtime.
 
+Pause stops the libretro frame pump and explicitly pauses the independently
+running Play!/Flycast VMs through upstream methods. Play! pumps the GS mailbox
+while waiting for its asynchronous pause; it keeps renderer resources intact.
+Flycast's stop path joins its execution thread and flushes nonvolatile storage
+before resume starts it again. Audio interruptions use this same transition.
+Azahar touch is restricted to the lower 320×240 screen within its selected
+400×480 top-bottom canvas; touches on the top screen or bars release the stylus.
+This build fixes that layout and does not forward Azahar's L3 screen-swap hotkey;
+other engines retain thumb clicks. A selectable 3DS layout is not yet exposed.
+
 ## Inputs and user-supplied files
 
-Add Game (+) lists the included systems by emulator. Each system opens its
-format/setup guide and a Files picker filtered for the selected system. Choose
-GameCube/Wii or Dreamcast/Arcade before picking an ambiguous file; the generic
-Files route still offers system selection for DOL, RVZ and CHD. Settings →
-Systems uses the same shipping registry, with setup guidance and each engine's
-imported games, including both platforms for Dolphin and Flycast. Builds without
-Phase 3 do not advertise unavailable engines. Existing records and saves are
-retained.
+Add Game → Choose Files accepts game files or a complete game folder. Headers
+identify the system whenever possible: ELF architecture/flags, cartridge and
+disc signatures, and RVZ's uncompressed disc header. Unknown MIPS executables,
+DOL and CHD require a system choice. PlayStation discs use SYSTEM.CNF BOOT2 to
+identify PS2; known PS1 ISOs are rejected, and unidentified PLAYSTATION ISO/CUE
+files require confirmation. ZIPs ask before treating a set as arcade content;
+Windows archives should be extracted into a game folder.
 
+GDI/CUE imports retain the manifest and its named tracks with their relative
+paths. Choose the containing folder or select all files together. Import reads
+and copies each concrete file under coordinated access, checks names and
+symlinks, and revalidates the private copy before registering it. A missing or
+unsupported track layout produces a contextual action rather than demanding
+conversion of every disc. Mixed selections retain readable candidates and
+report rejected files. Existing records and saves are retained.
+
+Settings has one shared Launch Support destination. Per-system and per-game
+pages link directly to setup when needed. Consumer screens omit development
+status and allocator details; engineering evidence remains in logs and this
+acceptance document.
 Use games/firmware you are entitled to use. The build downloads no games or
 console BIOS. Bounded structural validation does not establish compatibility
 or decrypt content.
 
 | System | Imports | Limits |
 | --- | --- | --- |
-| GameCube/Wii | `.dol`, `.gcm`, `.iso`, `.rvz` | Choose the system for DOL/RVZ; raw ISO uses disc magic. No WAD installation, real Wiimote, motion/gyro or NAND-management UI. |
+| GameCube/Wii | `.dol`, `.gcm`, `.iso`, `.rvz` | Choose the system for DOL; ISO/RVZ use disc headers. No WAD installation, real Wiimote, motion/gyro or NAND-management UI. |
 | Nintendo 3DS | `.3dsx`, `.3ds`, `.cci`, `.cxi`, `.app` | Prepared unencrypted single files/homebrew. `.3ds` and `.cci` use the same NCSD checks. No CIA installer or encrypted-game preparation. Upstream top/bottom display layout and lower-screen touch mapping. |
-| PlayStation 2 | `.elf`, `.iso`, `.chd` | R5900 ELF flags identify PS2; ISO uses PLAYSTATION. Choose PS2 for CHD. Play! supplies its own high-level system implementation. |
-| Dreamcast | `.elf`, `.cdi`, `.chd` | SH ELF/CDI identify Dreamcast; choose Dreamcast for CHD. No multi-file GDI/CUE importer. |
+| PlayStation 2 | `.elf`, `.iso`, `.chd`, `.cue` | R5900 ELF flags identify PS2; ISO uses PLAYSTATION. Choose PS2 for CHD. Play! supplies its own high-level system implementation. Its CUE reader requires one track per binary file; unsupported shared-track layouts are rejected before launch. |
+| Dreamcast | `.elf`, `.cdi`, `.chd`, `.gdi`, `.cue` | SH ELF/CDI/GDI identify Dreamcast; choose the system for ambiguous CHD/CUE. Include every named track. |
 | Flycast arcade | `.zip` | Choose Arcade instead of Windows files. Original set filename is retained. Flat stored/deflated ZIPs without archive comments; no encrypted, directory, link or traversal entries. Standalone complete sets only. |
 
 Copies use `Files → Iridium → IridiumRuntimes/Games/<game ID>`. Saves/configuration

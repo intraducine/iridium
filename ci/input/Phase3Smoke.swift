@@ -13,6 +13,9 @@ private var buttons: UInt16 = 0
     private var engine = ""
     private var output: URL!
     private var monitor: Timer?
+    private var checks: [[String: Any]] = []
+    private var pausedFrames: UInt64 = 0
+    private var resumedFrames: UInt64 = 0
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         Self.active = self
@@ -75,10 +78,34 @@ private var buttons: UInt16 = 0
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) {
             inputLock.lock(); buttons = 0; inputLock.unlock()
         }
+        if args.contains("--start-paused") {
+            ir_phase3_pause(true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                self.check("pause before first frame", ir_phase3_frames() == 0)
+                ir_phase3_pause(false)
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { ir_phase3_pause(true) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.3) { ir_phase3_pause(false) }
-        let seconds = min(120, max(8, Double(argument("--seconds") ?? "12") ?? 12))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) { self.pausedFrames = ir_phase3_frames() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.5) {
+            self.check("frames stopped while paused", self.pausedFrames > 0 && ir_phase3_frames() == self.pausedFrames)
+            self.resumedFrames = ir_phase3_frames(); ir_phase3_pause(false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            self.check("frames resumed", ir_phase3_frames() > self.resumedFrames)
+            ir_phase3_pause(true)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) { self.pausedFrames = ir_phase3_frames() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9.5) {
+            self.check("second pause stopped frames", ir_phase3_frames() == self.pausedFrames)
+            ir_phase3_pause(false)
+        }
+        let seconds = min(120, max(11, Double(argument("--seconds") ?? "12") ?? 12))
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { self.record(0, "Stop requested."); ir_phase3_stop() }
+    }
+
+    private func check(_ name: String, _ passed: Bool) {
+        checks.append(["check": name, "passed": passed, "frames": ir_phase3_frames()]); persist()
     }
 
     private func record(_ kind: UInt32, _ message: String) {
@@ -89,7 +116,7 @@ private var buttons: UInt16 = 0
     }
     private func persist() {
         guard let output else { return }
-        let result: [String: Any] = ["engine": engine, "frames": ir_phase3_frames(), "events": events]
+        let result: [String: Any] = ["engine": engine, "frames": ir_phase3_frames(), "events": events, "checks": checks]
         do { try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]).write(to: output, options: .atomic) }
         catch { print("Phase3 result could not be persisted.") }
     }

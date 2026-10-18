@@ -36,6 +36,7 @@ struct RetroAPI {
     decltype(&retro_unload_game) unload;
     decltype(&retro_run) run;
     decltype(&retro_set_controller_port_device) controller;
+    bool (*pause)(bool);
 };
 
 @interface IRRetroPlayer : UIViewController {
@@ -66,7 +67,7 @@ struct RetroAPI {
     GLint width, height;
     unsigned maxWidth, maxHeight;
     bool initialized, initializationEntered, loaded, loadEntered, loadReturned, paused, jit, failed;
-    bool starting, finishing, audioSessionOwned;
+    bool starting, finishing, audioSessionOwned, cleanupUncertain;
     NSString *previousAudioCategory, *previousAudioMode;
     AVAudioSessionCategoryOptions previousAudioOptions;
     id audioConfigurationObserver, audioInterruptionObserver;
@@ -83,6 +84,7 @@ struct RetroAPI {
 - (bool)updateGeometry:(retro_game_geometry)geometry;
 - (bool)updateTiming:(retro_system_timing)timing;
 - (bool)restartAudio;
+- (bool)setPaused:(bool)value;
 @end
 static IRRetroPlayer *active;
 static constexpr uint32_t audioCapacity = 16384;
@@ -181,7 +183,13 @@ static bool environment(unsigned command, void *data) {
     default: return false;
     }
 }
-static void pollInput() { if (active && active->input) active->input(&active->sampled); }
+static void pollInput() {
+    if(!active||!active->input)return;
+    active->input(&active->sampled);
+    // L3 is Azahar's screen-swap hotkey, not a 3DS gameplay button. Keep the
+    // selected top-bottom layout consistent with the lower-screen touch map.
+    if(active->engine=="azahar")active->sampled.buttons &= ~(1u << RETRO_DEVICE_ID_JOYPAD_L3);
+}
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
     if (!active || port != 0) return 0;
     const auto &v = active->sampled;
@@ -236,6 +244,26 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     }
     return true;
 }
+- (bool)setPaused:(bool)value {
+    if(paused==value)return true;
+    if(!value && ![self restartAudio])return false;
+    muted.store(true);
+    [EAGLContext setCurrentContext:context];
+    bool accepted=true;
+    try { if(api.pause)accepted=api.pause(value); }
+    catch (...) {
+        // Play's mailbox flush can retain a stack-capturing marker if an
+        // earlier GS call throws. Never execute that queue again via deinit.
+        cleanupUncertain=true;paused=true;accepted=false;
+        if(clock){dispatch_source_cancel(clock);clock=nil;}
+        report(3,"The game could not pause or resume. Fully close and reopen Iridium.");
+    }
+    [EAGLContext setCurrentContext:nil];
+    if(!accepted)return false;
+    paused=value;muted.store(value);
+    if(api.pause)report(0,value?"The upstream virtual machine paused.":"The upstream virtual machine resumed.");
+    return true;
+}
 - (void)loadView {
     UIView *root = [[UIView alloc] initWithFrame:CGRectZero]; root.backgroundColor = UIColor.blackColor;
     surface = [[IRRetroSurface alloc] initWithFrame:root.bounds];
@@ -271,7 +299,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 - (void)start {
     try { [self startCore]; }
     catch (...) {
-        report(3,"The upstream core failed while opening this game. Its saved files have been retained.");
+        report(3,"This game could not open. Your saves have been kept.");
         [self finish];
     }
 }
@@ -279,26 +307,28 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     if (starting || finishing || stopped.load()) return;
     starting = true;
     if(engine=="play" || engine=="flycast") {
+        api.pause=(bool(*)(bool))dlsym(coreImage,"ir_phase3_core_pause");
+        if(!api.pause) {report(3,"This emulator is unavailable. Reinstall Iridium and try again.");[self finish];return;}
 #if TARGET_OS_SIMULATOR
         // Flycast deliberately compiles every CPU/DSP recompiler out for the
         // simulator. Its iOS entry point still asks the host for this flag.
         if(engine=="flycast")jit=true;
 #endif
-        if(!jit) { report(3,"This engine requires JIT. Enable Launch Support, then retry. Its upstream allocator must also pass this session's execution check."); [self finish]; return; }
+        if(!jit) { report(3,"Enable Launch Support, then try this game again."); [self finish]; return; }
         auto probe=(bool(*)(void))dlsym(coreImage,"ir_phase3_core_check_jit");
 #if TARGET_OS_SIMULATOR
         bool verified=engine=="flycast" || (probe && probe());
 #else
         bool verified=probe && probe();
 #endif
-        if(!verified) { report(3,"This engine's upstream JIT allocator could not execute and rewrite its own code. The engine is unavailable in this session.");[self finish];return; }
+        if(!verified) { report(3,"This emulator cannot start on this device right now. Check Launch Support and try again.");[self finish];return; }
 #if TARGET_OS_SIMULATOR
         if(engine!="flycast")
 #endif
             report(5,"The engine's upstream executable-memory allocator executed 42, then rewrote and executed 7.");
         if(engine=="play") {
             auto prepare=(bool(*)(const char *))dlsym(coreImage,"ir_phase3_core_prepare");
-            if(!prepare || !prepare(saves.c_str())) { report(3,"Play! needs an app restart before another session can use a different configuration root.");[self finish];return; }
+            if(!prepare || !prepare(saves.c_str())) { report(3,"Fully close and reopen Iridium before starting another PlayStation 2 game.");[self finish];return; }
         }
     }
     NSError *sessionError=nil;
@@ -314,7 +344,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     initializationEntered=true;api.init();initialized=true;
     retro_game_info content{}; content.path = game.c_str();
     loadEntered=true;bool accepted=api.load(&content);loadReturned=true;
-    if (!accepted) { report(3, "The upstream core declined this game or its required graphics/JIT/firmware support."); failed = true; [self finish]; return; }
+    if (!accepted) { report(3, "This game could not start. Check its files and any required system files."); failed = true; [self finish]; return; }
     loaded = true;
     retro_system_av_info info{}; api.av(&info);
     if(![self updateGeometry:info.geometry]||![self updateTiming:info.timing]) {report(3,"The core reported invalid geometry or timing.");[self finish];return;}
@@ -377,7 +407,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         if(!began)return;
         dispatch_async(p->owner, ^{
             if(p->finishing||p->stopped.load())return;
-            p->paused=true;p->muted.store(true);
+            if(![p setPaused:true]) {report(3,"The upstream virtual machine could not pause after an audio interruption.");[p finish];return;}
             report(4,"Audio was interrupted. Resume the game when ready.");
         });
     }];
@@ -386,14 +416,14 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     dispatch_source_set_timer(clock, dispatch_time(DISPATCH_TIME_NOW, 0), (uint64_t)(NSEC_PER_SEC / fps), NSEC_PER_MSEC);
     dispatch_source_set_event_handler(clock, ^{
         @autoreleasepool {
-        if (self->stopped.load() || self->finishing) return;
+        if (self->stopped.load() || self->finishing || self->cleanupUncertain) return;
         if (self->shutdownRequested) { [self finish]; return; }
         if (self->paused) return;
         [EAGLContext setCurrentContext:self->context];
         if (self->frameTime.callback) self->frameTime.callback((retro_usec_t)(1000000 / self->currentFPS));
         try { self->api.run(); }
         catch (...) {
-            report(3,"The upstream core failed while running this game. Its saved files have been retained.");
+            report(3,"This game stopped unexpectedly. Your saves have been kept.");
             [self finish];
         }
         [EAGLContext setCurrentContext:nil];
@@ -438,7 +468,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     if (frameCount.fetch_add(1)==0) report(1,"The upstream core produced its first video frame.");
 }
 - (void)finish {
-    if (finishing || stopped.load()) return;
+    if (finishing || stopped.load() || cleanupUncertain) return;
     finishing = true; muted.store(true);
     if(audioConfigurationObserver)[NSNotificationCenter.defaultCenter removeObserver:audioConfigurationObserver];
     if(audioInterruptionObserver)[NSNotificationCenter.defaultCenter removeObserver:audioInterruptionObserver];
@@ -446,7 +476,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     [EAGLContext setCurrentContext:context];
     if(clock) { dispatch_source_cancel(clock); clock=nil; }
     if((initializationEntered&&!initialized)||(loadEntered&&!loadReturned)) {
-        report(3,"The upstream core failed during partial initialization or loading. Restart Iridium before launching another game.");
+        report(3,"Fully close and reopen Iridium before trying another game.");
         return;
     }
     try {
@@ -458,7 +488,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     } catch (...) {
         // An upstream worker may still own this image/context. The frontend's
         // stop deadline retains its lease and requires a process restart.
-        report(3,"The upstream core could not confirm shutdown. Restart Iridium before launching another game.");
+        report(3,"Fully close and reopen Iridium before trying another game.");
         return;
     }
     loaded=false;initialized=false;
@@ -493,6 +523,7 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
     if(p->engine=="azahar") {
         p->options["citra_graphics_api"]="Software";p->options["citra_use_cpu_jit"]="disabled";
         p->options["citra_use_shader_jit"]="disabled";
+        p->options["citra_layout_option"]="default";p->options["citra_swap_screen"]="Top";
     }
     p->frameCount.store(0);p->muted.store(true);p->imagePending.store(false);p->resizeQueued.store(false);p->stopped.store(false);
     p->readAudio.store(0);p->writeAudio.store(0);p->samples.resize(audioCapacity*2);
@@ -511,9 +542,8 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
 extern "C" void ir_native_engine_pause(bool paused) {
     IRRetroPlayer *p=active;if(!p)return;
     dispatch_async(p->owner, ^{
-        if(p->finishing||p->stopped.load())return;
-        if(!paused && ![p restartAudio]) {report(3,"The engine audio output could not resume.");[p finish];return;}
-        p->paused=paused;p->muted.store(paused);
+        if(p->finishing||p->stopped.load()||p->cleanupUncertain)return;
+        if(![p setPaused:paused] && !p->cleanupUncertain) {report(3,"The game could not pause or resume. Close it and try again.");[p finish];return;}
     });
 }
 extern "C" void ir_native_engine_stop() {

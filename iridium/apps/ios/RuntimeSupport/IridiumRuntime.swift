@@ -91,7 +91,7 @@ enum IridiumRuntimeError: LocalizedError {
         case .jitRequired: return "This runtime needs JIT. Enable it before launching this game."
         case .busy: return "Another runtime is starting or running. Stop it before launching another game."
         case .restartRequired: return "A runtime is still loaded. Fully close and reopen Iridium before changing runtimes."
-        case .invalidGame: return "The game file is unsupported, damaged, or too large. Choose a supported ROM, executable or single-file disc image. Encrypted 3DS files, installed-content packages and multi-track manifests require preparation outside Iridium."
+        case .invalidGame: return "This game file could not be read. Choose the original game file or its complete game folder."
         case .unsafePath: return "The game or save path is outside its runtime folder or uses a symbolic link."
         case .newerLibrary: return "This runtime library uses a newer format. Its original file has been preserved."
         case .unreadableLibrary: return "The runtime library could not be read. Its original file has been preserved."
@@ -129,17 +129,17 @@ struct IridiumConsoleSystem: Identifiable {
         IridiumRuntimeRegistry.all.compactMap { runtime in
             switch runtime.id {
             case "sameboy": return Self(runtime: runtime, title: "Game Boy", primaryPlatform: .gameBoy,
-                extensions: ["gb", "gbc"], guidance: "Game Boy and Game Boy Color use SameBoy. JIT is not required. Battery saves are kept automatically; touch layouts are saved per game.")
+                extensions: ["gb", "gbc"], guidance: "Game Boy and Game Boy Color games use SameBoy.")
             case "ppsspp": return Self(runtime: runtime, title: "PPSSPP", primaryPlatform: .psp,
-                extensions: ["elf", "iso", "cso", "pbp"], guidance: "PSP games use PPSSPP. JIT is optional and off by default in each game's options. Graphics, CPU status and save states are in the running game's menu.")
+                extensions: ["elf", "iso", "cso", "pbp"], guidance: "PSP games use PPSSPP. Open a game's menu for display and save-state options.")
             case "dolphin": return Self(runtime: runtime, title: "Dolphin", primaryPlatform: .gameCube,
-                extensions: ["dol", "gcm", "iso", "rvz"], guidance: "GameCube and Wii use Dolphin with Metal graphics and the CPU interpreter. JIT is not required in this build. Choose the system for DOL homebrew and RVZ discs. Motion, Wii controls and interpreter performance vary by game; phone testing is pending.")
+                extensions: ["dol", "gcm", "iso", "rvz"], guidance: "GameCube and Wii games use Dolphin. Some games may run slowly.")
             case "azahar": return Self(runtime: runtime, title: "Azahar", primaryPlatform: .nintendo3DS,
-                extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS uses Azahar. Choose homebrew or prepared, unencrypted cartridge/content files. CIA installation and encrypted games are not supported by this import flow. CPU and graphics use interpreters and can be very slow; phone testing is pending.")
+                extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
             case "play": return Self(runtime: runtime, title: "Play!", primaryPlatform: .playStation2,
-                extensions: ["elf", "iso", "chd"], guidance: "PlayStation 2 uses Play! with its built-in BIOS replacement. Enable Launch Support in Settings → Madeira, then check Play!'s own executable-memory result at launch. Availability depends on iOS. Use an ELF or single-file disc image. Fully close and reopen Iridium after using Play!. Phone testing is pending.")
+                extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Reopen Iridium after finishing a game.")
             case "flycast": return Self(runtime: runtime, title: "Flycast", primaryPlatform: .dreamcast,
-                extensions: ["elf", "cdi", "chd", "zip"], guidance: "Dreamcast and supported arcade games use Flycast. Enable Launch Support in Settings → Madeira; Flycast must pass its own executable-memory check. Arcade imports require a standalone complete set with its original ZIP name and any required user-supplied BIOS. GDI/CUE multi-file sets need preparation as a supported single-file image. Phone testing is pending.")
+                extensions: ["elf", "cdi", "chd", "gdi", "cue", "zip"], guidance: "Dreamcast and arcade games use Flycast.")
             default: return nil
             }
         }
@@ -223,14 +223,18 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
         case .nintendo3DS:
             guard runtimeID == "azahar", ["3dsx", "3ds", "cci", "cxi", "app"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .playStation2:
-            guard runtimeID == "play", ["elf", "iso", "chd"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
+            guard runtimeID == "play", ["elf", "iso", "chd", "cue"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .dreamcast:
-            guard runtimeID == "flycast", ["elf", "cdi", "chd"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
+            guard runtimeID == "flycast", ["elf", "cdi", "chd", "gdi", "cue"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .arcade:
             guard runtimeID == "flycast", fileExtension == "zip", let name = originalFilename,
                   name.utf8.count <= 255, !name.contains("/"), !name.contains("\\"),
                   !name.hasPrefix("."), name.lowercased().hasSuffix(".zip") else { throw IridiumRuntimeError.invalidGame }
         case .windows: throw IridiumRuntimeError.invalidGame
+        }
+        if let name = originalFilename {
+            guard !name.isEmpty, name.utf8.count <= 255, !name.hasPrefix("."), !name.contains("/"),
+                  !name.contains("\\"), !name.contains("\0") else { throw IridiumRuntimeError.unsafePath }
         }
     }
 }
@@ -283,7 +287,7 @@ struct IridiumConsoleStore {
 
     func rom(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
-        return try checked(["Games", game.id.uuidString, game.platform == .arcade ? game.originalFilename! : "game." + game.fileExtension])
+        return try checked(["Games", game.id.uuidString, game.originalFilename ?? "game." + game.fileExtension])
     }
 
     /// Recheck the private copy at each launch. This is bounded structural
@@ -336,9 +340,11 @@ struct IridiumConsoleStore {
         return directory
     }
 
-    func importROM(_ source: URL, into games: [IridiumConsoleGame], preferredPlatform: IridiumPlatform? = nil) throws -> IridiumConsoleGame {
+    func importROM(_ source: URL, into games: [IridiumConsoleGame], preferredPlatform: IridiumPlatform? = nil,
+                   selectedFiles: [URL] = []) throws -> IridiumConsoleGame {
         _ = try load()
         let ext = source.pathExtension.lowercased()
+        let disc = ["gdi", "cue"].contains(ext) ? try IridiumDiscSet(source, selectedFiles: selectedFiles) : nil
         let inspected = try IridiumROMInspection.inspect(source, fileExtension: ext, preferredPlatform: preferredPlatform)
         let platform = inspected.platform
         if let preferredPlatform {
@@ -349,7 +355,7 @@ struct IridiumConsoleStore {
         let runtime = try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil)
         var game = IridiumConsoleGame(id: UUID(), title: String(source.deletingPathExtension().lastPathComponent.prefix(128)),
             platform: platform, runtimeID: runtime.id, fileExtension: ext, importedAt: Date())
-        if platform == .arcade { game.originalFilename = source.lastPathComponent }
+        if platform == .arcade || disc != nil { game.originalFilename = source.lastPathComponent }
         let directory = try checked(["Games", game.id.uuidString], createDirectory: true)
         let target = try rom(game)
         // Copy without overwrite; the source and its parent directories remain
@@ -357,6 +363,14 @@ struct IridiumConsoleStore {
         // path ancestry and every inspected header in the copied file.
         let checkedSource = try IridiumROMInspection.checkedFile(source)
         try manager.copyItem(at: checkedSource, to: target)
+        if let disc {
+            for name in disc.filenames {
+                let components = name.split(separator: "/").map(String.init)
+                _ = try checked(["Games", game.id.uuidString] + Array(components.dropLast()), createDirectory: true)
+                try manager.copyItem(at: IridiumROMInspection.checkedFile(source.deletingLastPathComponent().appendingPathComponent(name)),
+                                     to: checked(["Games", game.id.uuidString] + components))
+            }
+        }
         let copied = try IridiumROMInspection.inspect(try rom(game), fileExtension: ext, preferredPlatform: platform)
         guard copied == inspected else {
             throw IridiumRuntimeError.invalidGame
@@ -386,7 +400,7 @@ struct IridiumROMInspection: Equatable {
     }
 
     static func inspect(_ source: URL, fileExtension ext: String, preferredPlatform: IridiumPlatform? = nil) throws -> Self {
-        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
+        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip", "gdi", "cue"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
         let url = try checkedFile(source)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -407,7 +421,9 @@ struct IridiumROMInspection: Equatable {
                 platform = .dreamcast
             } else {
                 try reader.validateELF(at: 0, length: size)
-                platform = little(header, 36, 4) & 0x00ff0000 == 0x00920000 ? .playStation2 : .psp
+                let flags = little(header, 36, 4)
+                let ps2 = flags & 0x00ff0000 == 0x00920000, psp = flags & 0xffff0000 == 0x10a20000
+                platform = ps2 || (!psp && preferredPlatform == .playStation2) ? .playStation2 : .psp
             }
         case "iso":
             guard size % 2048 == 0 else { throw IridiumRuntimeError.invalidGame }
@@ -440,10 +456,19 @@ struct IridiumROMInspection: Equatable {
             platform = .gameCube
         case "rvz":
             let header = try reader.read(0, 0x48)
-            guard header.prefix(4).elementsEqual([0x52, 0x56, 0x5a, 1]) else { throw IridiumRuntimeError.invalidGame }
-            // The import choice labels compressed discs; Dolphin validates
-            // the actual disc and console before booting it.
-            platform = preferredPlatform == .wii ? .wii : .gameCube
+            guard header.prefix(4).elementsEqual([0x52, 0x56, 0x5a, 1]), big(header, 12, 4) >= 0xc4 else { throw IridiumRuntimeError.invalidGame }
+            let disc = try reader.read(0x48, 48)
+            if big(disc, 0, 4) == 1, big(disc, 44, 4) == 0xc2339f3d { platform = .gameCube }
+            else if big(disc, 0, 4) == 2, big(disc, 40, 4) == 0x5d1c9ea3 { platform = .wii }
+            else { throw IridiumRuntimeError.invalidGame }
+        case "gdi", "cue":
+            let disc = try IridiumDiscSet(url)
+            let choices = try disc.platforms()
+            if let preferredPlatform, choices.contains(preferredPlatform) { platform = preferredPlatform }
+            else if choices.count == 1 { platform = choices[0] }
+            else { throw IridiumRuntimeError.invalidGame }
+            if platform == .playStation2, disc.hasSharedTracks { throw IridiumDiscSet.Failure.sharedPS2Tracks }
+            _ = try reader.read(0, Int(min(size, 4096)))
         case "3dsx":
             let header = try reader.read(0, 32)
             guard header.prefix(4).elementsEqual("3DSX".utf8), little(header, 4, 2) >= 32,
@@ -603,5 +628,198 @@ struct IridiumROMInspection: Equatable {
             }
             guard hasLoadSegment else { throw IridiumRuntimeError.invalidGame }
         }
+    }
+}
+
+/// A disc manifest and only its named tracks. Native Flycast/Play! read these
+/// files directly, so retain their relative names instead of converting them.
+struct IridiumDiscSet {
+    enum Failure: LocalizedError {
+        case missingTracks, invalidManifest, sharedPS2Tracks
+        var errorDescription: String? {
+            switch self {
+            case .missingTracks: return "Some disc tracks are missing. Choose the folder containing the GDI or CUE file and all its tracks, or select those files together."
+            case .invalidManifest: return "This disc's track list could not be read. Choose the original GDI or CUE file with all its tracks."
+            case .sharedPS2Tracks: return "Play! cannot read this CUE layout. Use a CHD copy of this PlayStation 2 disc."
+            }
+        }
+    }
+    let source: URL
+    let filenames: [String]
+    let hasSharedTracks: Bool
+    private let dataFiles: [String]
+
+    init(_ source: URL, selectedFiles: [URL]? = nil, validateFiles: Bool = true) throws {
+        self.source = try IridiumROMInspection.checkedFile(source)
+        let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size > 0, size < 65536, let text = String(data: try Data(contentsOf: source), encoding: .utf8) else { throw Failure.invalidManifest }
+        let lines = text.split(whereSeparator: \.isNewline).map(String.init)
+        var names: [String] = [], dataNames: [String] = [], tracks: [String: Int] = [:]
+        var current: String?, trackCount = 0
+        let gdi = source.pathExtension.lowercased() == "gdi"
+        let expected = gdi ? Int(lines.first?.trimmingCharacters(in: .whitespaces) ?? "") : nil
+        if gdi { guard let expected, (3...99).contains(expected) else { throw Failure.invalidManifest } }
+        for line in gdi ? Array(lines.dropFirst()) : lines {
+            let tokens = try Self.tokens(line)
+            if tokens.isEmpty { continue }
+            if gdi {
+                guard tokens.count == 6, Int(tokens[0]) == trackCount + 1,
+                      let fad = UInt32(tokens[1]), let control = Int(tokens[2]), [0, 4].contains(control),
+                      let sector = Int(tokens[3]), [2048, 2352].contains(sector), UInt32(tokens[5]) != nil,
+                      trackCount != 0 || control == 4, trackCount != 1 || control == 0,
+                      trackCount != 2 || (control == 4 && fad == 45000) else { throw Failure.invalidManifest }
+                current = tokens[4]; trackCount += 1
+                names.append(tokens[4]); tracks[tokens[4], default: 0] += 1
+                if control == 4 { dataNames.append(tokens[4]) }
+            } else if tokens[0].uppercased() == "FILE" {
+                guard tokens.count == 3, tokens[2].uppercased() == "BINARY" else { throw Failure.invalidManifest }
+                current = tokens[1]; names.append(tokens[1])
+            } else if tokens[0].uppercased() == "TRACK" {
+                guard tokens.count == 3, Int(tokens[1]) == trackCount + 1, let current,
+                      ["AUDIO", "MODE1/2048", "MODE1/2352", "MODE2/2336", "MODE2/2352", "CDI/2336", "CDI/2352"].contains(tokens[2].uppercased()) else { throw Failure.invalidManifest }
+                trackCount += 1; tracks[current, default: 0] += 1
+                if tokens[2].uppercased() != "AUDIO" { dataNames.append(current) }
+            } else if tokens[0].uppercased() == "INDEX" {
+                guard tokens.count == 3, Int(tokens[1]) != nil,
+                      tokens[2].split(separator: ":").count == 3,
+                      tokens[2].split(separator: ":").allSatisfy({ UInt32($0) != nil }) else { throw Failure.invalidManifest }
+            }
+            guard trackCount <= 99, names.count <= 99 else { throw Failure.invalidManifest }
+        }
+        guard trackCount > 0, !dataNames.isEmpty, !gdi || trackCount == expected else { throw Failure.invalidManifest }
+        var seen = Set<String>(), total: UInt64 = 0
+        var unique: [String] = []
+        for name in names {
+            let parts = name.split(separator: "/", omittingEmptySubsequences: false)
+            guard !name.isEmpty, name.utf8.count <= 512, !name.contains("\\"), !name.contains("\0"),
+                  parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") }),
+                  name != source.lastPathComponent else { throw IridiumRuntimeError.unsafePath }
+            let url = source.deletingLastPathComponent().appendingPathComponent(name).standardizedFileURL
+            if let selectedFiles {
+                let authorized = selectedFiles.contains { selected in
+                    let selected = selected.standardizedFileURL
+                    if selected == url { return true }
+                    return (try? selected.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true && url.path.hasPrefix(selected.path + "/")
+                }
+                guard authorized else { throw Failure.missingTracks }
+            }
+            if validateFiles {
+                guard FileManager.default.fileExists(atPath: url.path) else { throw Failure.missingTracks }
+                _ = try IridiumROMInspection.checkedFile(url)
+                let bytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard bytes > 0 else { throw Failure.missingTracks }
+                total += UInt64(bytes)
+                guard total <= 64 * 1024 * 1024 * 1024 else { throw Failure.invalidManifest }
+            }
+            if seen.insert(name).inserted { unique.append(name) }
+        }
+        filenames = unique; dataFiles = Array(Set(dataNames)); hasSharedTracks = tracks.values.contains { $0 > 1 }
+    }
+    func platforms() throws -> [IridiumPlatform] {
+        if source.pathExtension.lowercased() == "gdi" { return [.dreamcast] }
+        var detected = Set<IridiumPlatform>()
+        for name in dataFiles {
+            let handle = try FileHandle(forReadingFrom: source.deletingLastPathComponent().appendingPathComponent(name))
+            defer { try? handle.close() }
+            // Cover cooked and raw CD sector headers without loading a track.
+            for offset: UInt64 in [0, 8, 16, 24, 16 * 2048, 16 * 2336 + 8, 16 * 2352 + 16, 16 * 2352 + 24] {
+                try handle.seek(toOffset: offset)
+                let bytes = try handle.read(upToCount: 64) ?? Data()
+                if bytes.starts(with: "SEGA SEGAKATANA".utf8) { detected.insert(.dreamcast) }
+                if bytes.count >= 40, bytes[1..<6].elementsEqual("CD001".utf8),
+                   String(decoding: bytes[8..<40], as: UTF8.self).contains("PLAYSTATION") { detected.insert(.playStation2) }
+            }
+        }
+        if detected.count == 1 { return Array(detected) }
+        if detected.count > 1 { throw Failure.invalidManifest }
+        return [.dreamcast, .playStation2]
+    }
+    private static func tokens(_ line: String) throws -> [String] {
+        var values: [String] = [], value = "", quoted = false, started = false
+        for character in line {
+            if character == "\"" { quoted.toggle(); started = true }
+            else if character.isWhitespace && !quoted {
+                if started { values.append(value); value = ""; started = false }
+            } else { value.append(character); started = true }
+        }
+        guard !quoted else { throw Failure.invalidManifest }
+        if started { values.append(value) }
+        return values
+    }
+}
+
+/// File contents choose the system whenever a supported format identifies it.
+/// Ambiguous executable/disc containers require an explicit user choice.
+enum IridiumGameFileDetection {
+    enum Failure: LocalizedError {
+        case playStation1
+        var errorDescription: String? { "PlayStation games are not supported yet. Choose a PlayStation 2 game instead." }
+    }
+    static func platforms(_ source: URL, selectedFiles: [URL]) throws -> [IridiumPlatform] {
+        _ = try IridiumROMInspection.checkedFile(source)
+        let ext = source.pathExtension.lowercased()
+        if ["gdi", "cue"].contains(ext) { return try IridiumDiscSet(source, selectedFiles: selectedFiles).platforms() }
+        if ext == "exe" { return [.windows] } // Madeira's PE validator runs before import.
+        if ext == "zip" { return [.arcade] } // Ask before treating an archive as an arcade set.
+        if ext == "dol" {
+            _ = try IridiumROMInspection.inspect(source, fileExtension: ext)
+            return [.gameCube, .wii]
+        }
+        if ext == "chd" {
+            _ = try IridiumROMInspection.inspect(source, fileExtension: ext, preferredPlatform: .dreamcast)
+            return [.dreamcast, .playStation2]
+        }
+        let inspected = try IridiumROMInspection.inspect(source, fileExtension: ext)
+        if ext == "elf", inspected.platform != .dreamcast {
+            let handle = try FileHandle(forReadingFrom: source); defer { try? handle.close() }
+            let header = try handle.read(upToCount: 52) ?? Data()
+            let flags = header[36..<40].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << ($1.offset * 8) }
+            if flags & 0x00ff0000 != 0x00920000 && flags & 0xffff0000 != 0x10a20000 { return [.psp, .playStation2] }
+        }
+        if ext == "iso", inspected.platform == .playStation2, try playStationGeneration(source) == 1 { throw Failure.playStation1 }
+        return [inspected.platform]
+    }
+    static func needsConfirmation(_ source: URL, platforms: [IridiumPlatform]) throws -> Bool {
+        if platforms.count > 1 || source.pathExtension.lowercased() == "zip" { return true }
+        if platforms == [.playStation2] {
+            if source.pathExtension.lowercased() == "cue" { return true }
+            if source.pathExtension.lowercased() == "iso" { return try playStationGeneration(source) == nil }
+        }
+        return false
+    }
+    /// ISO9660's system ID is shared by PS1 and PS2. BOOT2 in SYSTEM.CNF
+    /// distinguishes PS2; do not silently label an unidentified disc as PS2.
+    private static func playStationGeneration(_ source: URL) throws -> Int? {
+        let handle = try FileHandle(forReadingFrom: source); defer { try? handle.close() }
+        func read(_ offset: UInt64, _ count: Int) throws -> Data {
+            try handle.seek(toOffset: offset); return try handle.read(upToCount: count) ?? Data()
+        }
+        func little(_ bytes: Data, _ offset: Int) -> UInt64 {
+            (0..<4).reduce(0) { $0 | UInt64(bytes[offset + $1]) << ($1 * 8) }
+        }
+        let descriptor = try read(16 * 2048, 2048)
+        guard descriptor.count == 2048, descriptor[156] >= 34 else { return nil }
+        let length = little(descriptor, 166), extent = little(descriptor, 158)
+        guard length > 0, length <= 65536, extent > 0 else { return nil }
+        let directory = try read(extent * 2048, Int(length))
+        var offset = 0
+        while offset < directory.count {
+            let count = Int(directory[offset])
+            if count == 0 { offset = ((offset / 2048) + 1) * 2048; continue }
+            guard count >= 34, count <= directory.count - offset else { return nil }
+            let nameCount = Int(directory[offset + 32])
+            guard 33 + nameCount <= count else { return nil }
+            let name = String(decoding: directory[(offset + 33)..<(offset + 33 + nameCount)], as: UTF8.self).uppercased()
+            if name == "SYSTEM.CNF;1" || name == "SYSTEM.CNF" {
+                let record = directory.subdata(in: offset..<(offset + count))
+                let bytes = try read(little(record, 2) * 2048, Int(min(4096, little(record, 10))))
+                let text = String(decoding: bytes, as: UTF8.self)
+                if text.range(of: #"(?im)^\s*BOOT2\s*="# , options: .regularExpression) != nil { return 2 }
+                if text.range(of: #"(?im)^\s*BOOT\s*="# , options: .regularExpression) != nil { return 1 }
+                return nil
+            }
+            offset += count
+        }
+        return nil
     }
 }

@@ -91,8 +91,8 @@ def library(text):
     # The settings hub reuses the complete upstream sections, including callbacks.
     original = between(text, '    private var settings: some View {', '        .alert("Restart Madeira"')
     credits = between(original, '                Section {\n                    MadeiraCredit', '\n            }\n        }')
+    launch_support_link = setting('Launch Support', 'JITSettingsSection()')
     madeira_links = [
-        setting('Launch Support', 'JITSettingsSection()'),
         setting('Pointer', 'Section { LibraryPointerSettings() }.iridiumRowSurface()'),
         setting('Display & Runtime', 'DisplayRateSettings()\nif MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh) }'),
         setting('Files & Saves', 'SavesSection()'),
@@ -126,11 +126,11 @@ def library(text):
     IridiumLegalNoticesSection()'''
     credits_view = '\nprivate struct IridiumCreditsSections: View {\n    var body: some View {\n' + credits + '\n    }\n}\n'
     credits_link = setting('Credits', 'IridiumCreditsSections()')
-    root_order = ['Controls', 'Madeira', 'Diagnostics', 'Credits']
+    root_order = ['Controls', 'Launch Support', 'Madeira', 'Diagnostics', 'Credits']
     settings = '''    private var settings: some View {
         Form {
             Section { LibraryStatus() }.iridiumRowSurface()
-            Section { ''' + controls_link + ''' }.iridiumRowSurface()
+            Section { ''' + controls_link + '\n' + launch_support_link + ''' }.iridiumRowSurface()
             Section("Systems") { ''' + madeira_link + '\n' + console_links + ''' }.iridiumRowSurface()
             Section { ''' + diagnostics_link + '\n' + credits_link + ''' }.iridiumRowSurface()
         }
@@ -164,11 +164,11 @@ def library(text):
 ''')
     text = replace(text, 'struct LibraryView: View {', 'struct LibraryView: View {\n    @Environment(\\.dismiss) private var iridiumDismiss\n' + navigation_state('Controls'))
     settings_navigation = hub_navigation(root_order, 'iridiumDismiss()').replace('guard iridiumPages.isEmpty else { return }', 'guard !iridiumSettingsOrder.isEmpty else { return }')
-    settings_navigation = settings_navigation.replace('let order = ["Controls", "Madeira", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
+    settings_navigation = settings_navigation.replace('let order = ["Controls", "Launch Support", "Madeira", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
     settings_navigation += '''
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Controls", "Madeira"] + IridiumConsoleSystem.all.map(\\.title) + ["Diagnostics", "Credits"]
+        case nil: return ["Controls", "Launch Support", "Madeira"] + IridiumConsoleSystem.all.map(\\.title) + ["Diagnostics", "Credits"]
         case "Madeira": return ''' + json.dumps(madeira_order) + '''
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -395,14 +395,23 @@ def apply(name, text):
         text = text[:start] + re.sub(r'\bMadeira\b(?! (?:Dock|JIT))', 'Iridium', text[start:])
     if name == 'Onboarding.swift':
         text = replace(text, 'Text("Iridium runs Windows games on your \\(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone").")',
-                       'Text("Play Windows and console games in one library. Find each included emulator and its supported formats in Add Game.")')
+                       'Text("Your Windows and console games, together.")')
         text = replace(text, 'Text("A few optional steps get you ready:")',
-                       'Text("These optional steps prepare Windows games. You can skip setup and add console games now.")')
-        text = text.replace('Settings › JIT', 'Settings › Madeira › Launch Support')
+                       'Text("Choose a game file or folder to get started. Iridium identifies the system for you.")')
+        offered = between(text, '            let pages = model.steps', '\n        }\n    }\n\n    /// LocalDevVPN')
+        text = replace(text, offered, '\n'.join([
+            '            primary("Add Games", symbol: "plus") { model.skip() }.padding(.top, 8)',
+            '            secondary("Set Up Launch Support") { model.next() }']))
+        text = text.replace('Settings › JIT', 'Settings › Launch Support')
         text = text.replace('Settings › Steam › Madeira Dock', 'Settings › Madeira › Steam Account & Dock')
         text = text.replace('Settings › .NET Framework', 'Settings › Madeira › Windows Components')
         text = text.replace(' or Settings › Steam.', '.')
     if name == 'JITSetup.swift':
+        text = text.replace('Label("JIT setup",', 'Label("Set Up Launch Support",')
+        text = text.replace('Picker("JIT method",', 'Picker("Connection method",')
+        text = text.replace('Text("JIT method")', 'Text("Connection method")')
+        text = text.replace('Text("JIT")', 'Text("Launch Support")')
+        text = text.replace('When LocalDevVPN can\'t reach this device, Enable JIT runs your \\(JITNetworkShortcut.name) shortcut: it turns Cellular Data off when there\'s no Wi-Fi and connects LocalDevVPN, then puts both back once the game has started. Each run opens Shortcuts for a moment.', 'The shortcut connects LocalDevVPN for you. Without Wi-Fi it temporarily turns off cellular data, then restores your network settings after launch.')
         text = replace(text, 'Automatic uses StikDebug when it is installed. Iridium does not silently change methods after a failure.',
                        'Automatic opens StikDebug when it is installed. Otherwise, it uses the built-in helper.')
     if name == 'SteamGames.swift':

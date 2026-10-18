@@ -54,6 +54,25 @@ enum IridiumMenuPlacement {
     }
 }
 
+enum Iridium3DSTouchProjection {
+    /// Azahar's selected top-bottom layout is a 400x480 canvas. Its lower
+    /// 320x240 touchscreen is centered below the top screen. Rejecting other
+    /// taps also prevents upstream from pressing the last valid touch point.
+    static func project(point: CGPoint, size: CGSize) -> (Int16, Int16)? {
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        let canvas = IridiumPlayerLayout.aspectFit(400.0 / 480.0, in: CGRect(origin: .zero, size: size))
+        guard canvas.width > 0, canvas.height > 0 else { return nil }
+        let x = (point.x - canvas.minX) / canvas.width
+        let y = (point.y - canvas.minY) / canvas.height
+        guard x >= 0.1, x < 0.9, y >= 0.5, y < 1 else { return nil }
+        // Encode pixel centers so upstream's truncating conversion cannot
+        // round an edge onto the adjacent non-touch area.
+        let px = min(359, max(40, floor(x * 400))) + 0.5
+        let py = min(479, max(240, floor(y * 480))) + 0.5
+        return (Int16((px / 400 * 65534 - 32767).rounded()), Int16((py / 480 * 65534 - 32767).rounded()))
+    }
+}
+
 enum IridiumPointerProjection {
     static func frame(point: CGPoint, guest: CGSize, host: CGRect, image: CGSize, hotspot: CGPoint) -> CGRect {
         let width = max(1, guest.width), height = max(1, guest.height)

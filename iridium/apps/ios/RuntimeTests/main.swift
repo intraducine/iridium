@@ -310,7 +310,9 @@ putBE(0x80003100, in: &dol, at: 0xe0, bytes: 4)
 try inspectPhase3(dol, "dol", .gameCube); try inspectPhase3(dol, "dol", .wii, preferred: .wii)
 var badDOL = dol; putBE(5, in: &badDOL, at: 0x90, bytes: 4)
 try inspectPhase3(badDOL, "dol", nil)
-var rvz = Data(repeating: 0, count: 0x48); put([0x52,0x56,0x5a,1], in: &rvz, at: 0)
+var rvz = Data(repeating: 0, count: 0x48 + 0xdc); put([0x52,0x56,0x5a,1], in: &rvz, at: 0)
+putBE(0xdc, in: &rvz, at: 12, bytes: 4); putBE(2, in: &rvz, at: 0x48, bytes: 4)
+putBE(0x5d1c9ea3, in: &rvz, at: 0x48 + 40, bytes: 4)
 try inspectPhase3(rvz, "rvz", .wii, preferred: .wii)
 var threeDSX = Data(repeating: 0, count: 40); put(Array("3DSX".utf8), in: &threeDSX, at: 0)
 putLE(32, in: &threeDSX, at: 4, bytes: 2); putLE(8, in: &threeDSX, at: 6, bytes: 2)
@@ -406,3 +408,71 @@ rejects { _ = try advancedStore.systemDirectory(arcade) }
 check(IridiumRuntimeRegistry.compatible(with: .playStation2).isEmpty)
 #endif
 print("Runtime registry, JIT policy, lifecycle intent, exclusive ownership, bounded headers, import, persistence and save isolation passed")
+
+// The selected manifest's exact track names survive import and relaunch.
+let discFolder = temporary.appendingPathComponent("Disc Set")
+try fm.createDirectory(at: discFolder, withIntermediateDirectories: true)
+for name in ["track 01.bin", "track02.raw", "track03.bin"] {
+    try Data(repeating: 0, count: 2352).write(to: discFolder.appendingPathComponent(name))
+}
+let gdiSource = discFolder.appendingPathComponent("Homebrew.gdi")
+try Data("3\n1 0 4 2352 \"track 01.bin\" 0\n2 450 0 2352 track02.raw 0\n3 45000 4 2352 track03.bin 0\n".utf8).write(to: gdiSource)
+check(try IridiumGameFileDetection.platforms(gdiSource, selectedFiles: [discFolder]) == [.dreamcast])
+rejects { _ = try IridiumDiscSet(gdiSource, selectedFiles: [gdiSource]) }
+let selectedTracks = try fm.contentsOfDirectory(at: discFolder, includingPropertiesForKeys: nil)
+check(try IridiumDiscSet(gdiSource, selectedFiles: selectedTracks).filenames.count == 3)
+#if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
+let discStore = IridiumConsoleStore(root: temporary.appendingPathComponent("disc-library"))
+let importedDisc = try discStore.importROM(gdiSource, into: [], selectedFiles: [discFolder])
+check(importedDisc.platform == .dreamcast && importedDisc.originalFilename == "Homebrew.gdi")
+check(try discStore.validateROM(importedDisc) == discStore.rom(importedDisc))
+for name in ["track 01.bin", "track02.raw", "track03.bin"] {
+    let copied = try discStore.rom(importedDisc).deletingLastPathComponent().appendingPathComponent(name)
+    check(try Data(contentsOf: copied) == Data(contentsOf: discFolder.appendingPathComponent(name)))
+}
+#endif
+let cueSource = discFolder.appendingPathComponent("Homebrew.cue")
+try Data("FILE \"track 01.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n".utf8).write(to: cueSource)
+check(try IridiumGameFileDetection.platforms(cueSource, selectedFiles: [discFolder]) == [.dreamcast, .playStation2])
+var dcBoot = Data(repeating: 0, count: 2352); put(Array("SEGA SEGAKATANA".utf8), in: &dcBoot, at: 16)
+try dcBoot.write(to: discFolder.appendingPathComponent("track 01.bin"))
+check(try IridiumGameFileDetection.platforms(cueSource, selectedFiles: [discFolder]) == [.dreamcast])
+try Data("FILE \"../Test.gb\" BINARY\n TRACK 01 MODE1/2352\n".utf8).write(to: cueSource)
+rejects { _ = try IridiumDiscSet(cueSource, selectedFiles: [discFolder]) }
+try Data("FILE \"track 01.bin\" BINARY\n TRACK 01 MODE1/2352\n TRACK 02 AUDIO\n".utf8).write(to: cueSource)
+check(try IridiumDiscSet(cueSource).hasSharedTracks)
+let trackLink = discFolder.appendingPathComponent("track03.bin")
+try fm.removeItem(at: trackLink); try fm.createSymbolicLink(at: trackLink, withDestinationURL: input)
+rejects { _ = try IridiumDiscSet(gdiSource, selectedFiles: [discFolder]) }
+let rvzSource = temporary.appendingPathComponent("Autodetect.rvz"); try rvz.write(to: rvzSource)
+check(try IridiumGameFileDetection.platforms(rvzSource, selectedFiles: [rvzSource]) == [.wii])
+print("Content detection and complete-disc import passed")
+
+var identifiedPS2 = ps2ISO
+identifiedPS2.append(Data(repeating: 0, count: 3 * 2048))
+putLE(20, in: &identifiedPS2, at: 16 * 2048 + 80, bytes: 4)
+putBE(20, in: &identifiedPS2, at: 16 * 2048 + 84, bytes: 4)
+identifiedPS2[16 * 2048 + 156] = 34
+putLE(18, in: &identifiedPS2, at: 16 * 2048 + 158, bytes: 4)
+putLE(2048, in: &identifiedPS2, at: 16 * 2048 + 166, bytes: 4)
+identifiedPS2[18 * 2048] = 45
+putLE(19, in: &identifiedPS2, at: 18 * 2048 + 2, bytes: 4)
+putLE(64, in: &identifiedPS2, at: 18 * 2048 + 10, bytes: 4)
+identifiedPS2[18 * 2048 + 32] = 12
+put(Array("SYSTEM.CNF;1".utf8), in: &identifiedPS2, at: 18 * 2048 + 33)
+put(Array("BOOT2 = cdrom0:GAME.ELF;1\n".utf8), in: &identifiedPS2, at: 19 * 2048)
+let psDisc = temporary.appendingPathComponent("Identify.iso")
+try identifiedPS2.write(to: psDisc)
+check(try IridiumGameFileDetection.platforms(psDisc, selectedFiles: [psDisc]) == [.playStation2])
+check(try !IridiumGameFileDetection.needsConfirmation(psDisc, platforms: [.playStation2]))
+put(Array("BOOT  = cdrom:GAME.EXE;1\n".utf8), in: &identifiedPS2, at: 19 * 2048)
+try identifiedPS2.write(to: psDisc)
+rejects { _ = try IridiumGameFileDetection.platforms(psDisc, selectedFiles: [psDisc]) }
+try ps2ISO.write(to: psDisc)
+check(try IridiumGameFileDetection.needsConfirmation(psDisc, platforms: [.playStation2]))
+let ambiguousELF = temporary.appendingPathComponent("MIPS.elf");try elfFixture().write(to: ambiguousELF)
+check(try IridiumGameFileDetection.platforms(ambiguousELF, selectedFiles: [ambiguousELF]) == [.psp, .playStation2])
+var identifiedPSP = elfFixture();putLE(0x10a23001, in: &identifiedPSP, at: 36, bytes: 4);try identifiedPSP.write(to: ambiguousELF)
+check(try IridiumGameFileDetection.platforms(ambiguousELF, selectedFiles: [ambiguousELF]) == [.psp])
+check(try IridiumROMInspection.inspect(ambiguousELF, fileExtension: "elf", preferredPlatform: .playStation2).platform == .psp)
+print("Ambiguous containers and PlayStation generation detection passed")

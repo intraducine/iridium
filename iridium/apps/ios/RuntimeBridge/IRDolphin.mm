@@ -51,7 +51,7 @@ static IRDolphinPlayer *active;
 static void uncertainShutdown(IRDolphinPlayer *p) {
     p->cleanupUncertain=true;
     if(p->watcher){dispatch_source_cancel(p->watcher);p->watcher=nil;}
-    p->event(p->generation,3,"Dolphin could not confirm a safe runtime transition. Restart Iridium before launching another game.");
+    p->event(p->generation,3,"Dolphin could not pause or close this game. Fully close and reopen Iridium.");
 }
 
 static void sampleController(IRDolphinPlayer *p) {
@@ -85,7 +85,7 @@ static void sampleController(IRDolphinPlayer *p) {
     try { [self bootCore]; }
     catch (...) {
         cleanupUncertain=true;
-        event(generation,3,"Dolphin failed during initialization. Restart Iridium before launching another game.");
+        event(generation,3,"Dolphin could not start. Fully close and reopen Iridium.");
     }
 }
 - (void)bootCore {
@@ -119,7 +119,7 @@ static void sampleController(IRDolphinPlayer *p) {
     sampling=VIEndFieldEvent::Register([p]{sampleController(p);},"Iridium shared input");
     auto boot=BootParameters::GenerateFromFile({game},BootSessionData());
     if(!boot||!BootManager::BootCore(system,std::move(boot),wsi)) {
-        event(generation,3,"Dolphin could not boot this game. Check the dump and any user-supplied Wii prerequisites.");[self finish];return;
+        event(generation,3,"This game could not start. Check its game files and any required Wii system files.");[self finish];return;
     }
     event(generation,0,"DolphiniOS upstream runtime loaded; Metal; interpreter; no executable memory requested.");
     watcher=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,DOLHostQueueGetUnderlyingQueue());
@@ -144,7 +144,7 @@ static void sampleController(IRDolphinPlayer *p) {
         if(initialized){Config::Save();UICommon::ShutdownControllers();UICommon::Shutdown();initialized=false;}
     } catch (...) {
         cleanupUncertain=true;
-        event(generation,3,"Dolphin could not confirm shutdown. Restart Iridium before launching another game.");return;
+        event(generation,3,"Dolphin could not close this game. Fully close and reopen Iridium.");return;
     }
     ended.store(true);
     event(generation,2,"Dolphin stopped and saved its isolated configuration and memory cards.");

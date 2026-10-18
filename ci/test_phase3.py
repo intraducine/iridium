@@ -2,6 +2,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +22,55 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 
 class Phase3Tests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for native session adapter tests')
+    def test_generated_vm_pause_pumps_without_destroying_graphics(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'vendor/Play/Source/ui_libretro/main_libretro.cpp'
+            source.parent.mkdir(parents=True)
+            source.write_text('''#include <filesystem>
+#include <thread>
+#include <cassert>
+namespace fs = std::filesystem;
+struct CAppConfig { fs::path GetBasePath() const; };
+#include "DefaultAppConfig.h"
+struct CVirtualMachine { enum { PAUSED, RUNNING }; };
+static int status = CVirtualMachine::RUNNING, flushes = 0;
+static bool pauseRequested = false;
+struct CGSH_OpenGL_Libretro {
+    void FlushMailBox() { assert(pauseRequested); if (++flushes == 2) status = CVirtualMachine::PAUSED; }
+};
+struct CPS2VM {
+    CGSH_OpenGL_Libretro gs;
+    int GetStatus() { return status; }
+    void* GetGSHandler() { return &gs; }
+    void PauseAsync() { pauseRequested = true; }
+    void Resume() { status = CVirtualMachine::RUNNING; }
+};
+static CPS2VM vm;
+static CPS2VM* m_virtualMachine = &vm;
+static bool first_run = false;
+extern "C" const char* ir_play_save_root() { return "isolated-root"; }
+''')
+            memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'
+            memory.parent.mkdir(parents=True)
+            memory.write_text('vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);\n' + 'assert(result == 0);\n' * 3)
+            with patch.object(builder, 'ROOT', root): generated = builder.generated('play', root / 'output')
+            main = generated / 'main_libretro.cpp'
+            main.write_text(main.read_text() + '''
+int main() {
+    assert(ir_phase3_core_pause(true) && !pauseRequested);
+    first_run = true;
+    assert(ir_phase3_core_pause(true));
+    assert(status == CVirtualMachine::PAUSED && flushes == 2);
+    assert(ir_phase3_core_pause(false) && status == CVirtualMachine::RUNNING);
+    assert(CAppConfig().GetBasePath() == "isolated-root");
+}
+''')
+            executable = root / 'pause-test'
+            subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
+
     def test_reuse_rejects_changed_abi_generated_and_compiled_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -94,9 +144,12 @@ class Phase3Tests(unittest.TestCase):
             root = Path(folder); source = root / 'vendor/Flycast/core/deps/libretro-common/glsm/glsm.c'
             source.parent.mkdir(parents=True)
             source.write_text('#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;\n#endif\n')
+            main = root / 'vendor/Flycast/shell/libretro/libretro.cpp'
+            main.parent.mkdir(parents=True); main.write_text('static bool first_run = true;\n')
             with patch.object(builder, 'ROOT', root):
                 generated = builder.generated('flycast', root / 'output')
                 self.assertIn('#ifdef HAVE_OPENGLES3', (generated / 'glsm.c').read_text())
+                self.assertIn('emu.stop()', (generated / 'libretro.cpp').read_text())
                 source.write_text('upstream changed\n')
                 with self.assertRaises(ValueError): builder.generated('flycast', root / 'output')
 

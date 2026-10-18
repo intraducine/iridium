@@ -33,13 +33,15 @@ struct IridiumLibraryView: View {
     @State private var detail: LibraryEntry?
     @State private var consoleDetail: IridiumConsoleGame?
     @State private var importingFiles = false
-    @State private var importPlatform: IridiumPlatform?
-    @State private var consoleImport: URL?
     @State private var features: Int?
     @State private var fileSource: IridiumImportSource?
     @State private var pendingDetail: LibraryEntry?
     @State private var choosingAdd = false
     @State private var pendingAdd: IridiumAddGameSource?
+    @State private var supportPrompt = false
+    @State private var pendingSupportGame: IridiumConsoleGame?
+    @State private var supportLaunchRequested = false
+    @State private var lastLaunchNeedsSupport = false
     @State private var artworkDetail: IridiumGame?
     @State private var showHints = false
     @State private var showFocus = false
@@ -66,10 +68,17 @@ struct IridiumLibraryView: View {
         favoriteIDs.split(separator: ",").contains(Substring(entry.id.uuidString))
     }
     private func launch(_ game: IridiumGame) {
+        lastLaunchNeedsSupport = false
         do {
             if game.windows != nil {
                 try IridiumWindowsDriver(start: play).launch(gameID: game.id)
             } else if let console = game.console {
+                try consoleSession.validateLaunchAdmission()
+                let runtime = try IridiumRuntimeRegistry.resolve(platform: console.platform, preferred: console.runtimeID)
+                lastLaunchNeedsSupport = runtime.jit == .required
+                if lastLaunchNeedsSupport && !jitState.enabled {
+                    supportLaunchRequested = false; pendingSupportGame = console; supportPrompt = true; return
+                }
                 try IridiumConsoleDriver(game: console).launch(gameID: game.id)
             }
         } catch { library.error = error.localizedDescription }
@@ -77,18 +86,6 @@ struct IridiumLibraryView: View {
     private func options(_ game: IridiumGame) {
         if let windows = game.windows { detail = windows }
         else { consoleDetail = game.console }
-    }
-    private func importChoices(_ url: URL) -> [IridiumPlatform] {
-        #if IRIDIUM_PHASE3
-        switch url.pathExtension.lowercased() {
-        case "chd": return [.playStation2, .dreamcast]
-        case "dol", "rvz": return [.gameCube, .wii]
-        case "zip": return [.arcade]
-        default: return []
-        }
-        #else
-        return []
-        #endif
     }
     private func keepSelection() {
         let target = selection.reconcile(games.map(\.id))
@@ -185,11 +182,23 @@ struct IridiumLibraryView: View {
                 }
             }
             .onChange(of: library.current) { _, value in if value != nil { closePages() } }
-            .onChange(of: library.error) { _, value in if value != nil { closePages() } }
+            .onChange(of: library.error) { _, value in if value != nil { pendingSupportGame = nil; closePages() } }
             .onChange(of: library.restartNotice) { _, value in if value != nil { closePages() } }
             .onChange(of: library.jitNotice) { _, value in if value != nil { closePages() } }
             .onChange(of: library.cloudNotice) { _, value in if value != nil { closePages() } }
-            .onChange(of: jit.showSetup) { _, value in if value { closePages() } else { restoreKeyboardFocus() } }
+            .onChange(of: jit.showSetup) { _, value in
+                if value { closePages() }
+                else {
+                    if jitState.enabled, let game = pendingSupportGame { pendingSupportGame = nil; launch(IridiumGame(console: game)) }
+                    else { pendingSupportGame = nil }
+                    supportLaunchRequested = false; restoreKeyboardFocus()
+                }
+            }
+            .onChange(of: jitState.enabled) { _, enabled in
+                if enabled, !jit.showSetup, let game = pendingSupportGame {
+                    pendingSupportGame = nil; supportLaunchRequested = false; launch(IridiumGame(console: game))
+                }
+            }
             .onChange(of: library.showDetail) { _, id in
                 guard let id else { return }
                 library.showDetail = nil; features = nil; fileSource = nil
@@ -237,32 +246,14 @@ struct IridiumLibraryView: View {
             .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: restoreKeyboardFocus) {
                 IridiumConsolePlayer()
             }
-            .fileImporter(isPresented: $importingFiles, allowedContentTypes: importContentTypes, allowsMultipleSelection: false) { result in
-                defer { importPlatform = nil }
+            .fileImporter(isPresented: $importingFiles, allowedContentTypes: IridiumImportSource.contentTypes, allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
-                    if let url = urls.first {
-                        if let platform = importPlatform { consoles.importROM(url, preferredPlatform: platform) { select($0.id) } }
-                        else if !importChoices(url).isEmpty { consoleImport = url }
-                        else if IridiumConsoleLibrary.importExtensions.contains(url.pathExtension.lowercased()) {
-                            consoles.importROM(url) { select($0.id) }
-                        } else { fileSource = IridiumImportSource(url: url) }
-                    }
+                    if !urls.isEmpty { fileSource = IridiumImportSource(urls: urls) }
                 case .failure(let error):
                     if (error as NSError).code != NSUserCancelledError { library.error = error.localizedDescription }
                 }
                 restoreKeyboardFocus()
-            }
-            .confirmationDialog("Choose the game system", isPresented: Binding(get: { consoleImport != nil }, set: { if !$0 { consoleImport = nil } }), titleVisibility: .visible) {
-                if let url = consoleImport {
-                    ForEach(importChoices(url), id: \.rawValue) { platform in
-                        Button(platform.title) { consoles.importROM(url, preferredPlatform: platform) { select($0.id) } }
-                    }
-                    if url.pathExtension.lowercased() == "zip" {
-                        Button("Windows Game Files") { fileSource = IridiumImportSource(url: url) }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                }
             }
             .sheet(item: $detail, onDismiss: restoreKeyboardFocus) { entry in
                 LibraryDetail(entry: entry, play: play)
@@ -280,20 +271,41 @@ struct IridiumLibraryView: View {
                 }
             }
             .sheet(item: $fileSource, onDismiss: restoreKeyboardFocus) { source in
-                IridiumFilesImportView(source: source) { entry in
+                IridiumGameImportView(source: source, importedConsole: { game in
+                    guard IridiumFilesImport.shouldPresentCompletion(of: source.id, currentSourceID: fileSource?.id) else { return }
+                    select(game.id); fileSource = nil
+                }) { entry in
                     guard IridiumFilesImport.shouldPresentCompletion(of: source.id, currentSourceID: fileSource?.id) else { return }
                     select(entry.id); fileSource = nil
                 }
             }
             .sheet(isPresented: $choosingAdd, onDismiss: finishAdding) {
-                IridiumAddGameView(choose: { importPlatform = nil; pendingAdd = $0; choosingAdd = false },
-                    chooseSystem: { importPlatform = $0; pendingAdd = .files; choosingAdd = false })
+                IridiumAddGameView(choose: { pendingAdd = $0; choosingAdd = false })
             }
             .fullScreenCover(isPresented: $onboarding.presented, onDismiss: restoreKeyboardFocus) { OnboardingView() }
+            .confirmationDialog("Launch Support Needed", isPresented: Binding(get: { supportPrompt }, set: { value in
+                supportPrompt = value
+                if !value && !supportLaunchRequested { pendingSupportGame = nil }
+            }), titleVisibility: .visible) {
+                if let game = pendingSupportGame {
+                    Button("Enable & Play") {
+                        do {
+                            try consoleSession.validateLaunchAdmission()
+                            pendingSupportGame = game; supportLaunchRequested = true; enableJIT()
+                        } catch {
+                            pendingSupportGame = nil; lastLaunchNeedsSupport = false
+                            library.error = error.localizedDescription
+                        }
+                    }
+                }
+                Button("Set Up Launch Support") { pendingSupportGame = nil; jit.showSetup = true }
+                Button("Cancel", role: .cancel) { pendingSupportGame = nil }
+            } message: { Text("Enable Launch Support to play this game.") }
             .alert("Could not start", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 if let problem = JITCoordinator.shared.connectionProblem, library.error == problem.message {
                     jitConnectionActions(problem, retry: enableJIT) { library.error = nil }
                 }
+                if lastLaunchNeedsSupport { Button("Set Up Launch Support") { library.error = nil; jit.showSetup = true } }
                 Button("OK", role: .cancel) { library.error = nil }
             } message: { Text(library.error ?? "") }
     }
@@ -484,16 +496,15 @@ struct IridiumLibraryView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(artwork.title(entry)).font(.title2.weight(.semibold)).lineLimit(1).truncationMode(.tail)
                 .accessibilityIdentifier("libraryGameTitle").accessibilityAddTraits(.isHeader)
-            Text(entry.platform.title + " · " + readiness(entry)).lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+            Text(entry.platform.title + (readiness(entry).isEmpty ? "" : " · " + readiness(entry))).lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 .font(.caption).foregroundStyle(.white.opacity(0.75))
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func readiness(_ game: IridiumGame) -> String {
-        guard let runtime = try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.console?.runtimeID) else { return "Runtime unavailable" }
-        if LibraryModel.sessionsThisRun > 0 || consoleSession.phase == .restartRequired { return "Restart required" }
-        if runtime.jit == .required { return jitState.enabled ? "JIT ready" : "JIT setup required" }
-        if runtime.jit == .optional { return jitState.enabled ? "JIT ready" : "Interpreter available" }
-        return "JIT not required"
+        guard let runtime = try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.console?.runtimeID) else { return "Unavailable" }
+        if LibraryModel.sessionsThisRun > 0 || consoleSession.phase == .restartRequired { return "Reopen Iridium" }
+        if runtime.jit == .required && !jitState.enabled { return "Launch Support needed" }
+        return ""
     }
     private func actions(_ entry: IridiumGame) -> some View {
         HStack(spacing: 18) {
@@ -533,10 +544,6 @@ struct IridiumLibraryView: View {
         showFocus = true; showHints = false; command(value); return .handled
     }
     private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; fileSource = nil; pendingAdd = nil; choosingAdd = false }
-    private var importContentTypes: [UTType] {
-        guard let platform = importPlatform, let system = IridiumConsoleSystem.system(for: platform) else { return IridiumImportSource.contentTypes }
-        return system.formats(for: platform).compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
-    }
     private func finishAdding() {
         defer { pendingAdd = nil; restoreKeyboardFocus() }
         switch pendingAdd {
