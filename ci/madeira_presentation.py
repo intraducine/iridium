@@ -180,6 +180,14 @@ def library(text):
     text = replace(text, '    @State private var selected: LibraryEntry?', '    @State private var selected: LibraryEntry?\n    @State private var iridiumDetailPage: String?')
     text = replace(text, '            LibraryDetail(entry: entry, play: { profile in', '            LibraryDetail(iridiumInitialPage: iridiumDetailPage, entry: entry, play: { profile in')
     text = replace(text, '.sheet(item: $selected) { entry in', '.sheet(item: $selected, onDismiss: { iridiumDetailPage = nil }) { entry in')
+    # The legacy library page is no longer mounted in the settings-only root.
+    # Present per-game Display from the live root, with its existing launch/notices.
+    detail_start = text.index('        .sheet(item: $selected, onDismiss: { iridiumDetailPage = nil }) { entry in')
+    detail_end = text.index('        .onChange(of: scenePhase)', detail_start)
+    detail_presentation = text[detail_start:detail_end]
+    text = text[:detail_start] + text[detail_end:]
+    text = replace(text, '        .fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }',
+                   detail_presentation + '        .fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }')
     text = replace(text, '.fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }', '.fullScreenCover(isPresented: onboarding.binding(for: .settings)) { OnboardingView() }')
     text = replace(text, '            onboarding.presentIfNeeded()', '            onboarding.presentIfNeeded(owner: .settings)')
 
@@ -472,7 +480,15 @@ def apply(name, text):
                        'Automatic opens StikDebug when it is installed. Otherwise, it uses the built-in helper.')
     if name == 'Library.swift':
         text = text.replace("Off by default. On a 120 Hz display, keeps the panel at 120 Hz during a game's 60 FPS limit so a frame that misses one refresh waits 8 ms instead of 17 ms. Uses more power.", "Keeps supported displays at their highest refresh rate during games. Uses more power.")
-        text = text.replace("Reduced-precision x87 can make older games faster at some cost in accuracy; it is off by default. Turn on AVX and AVX2 (off by default, 64-bit games) when a game built for AVX processors quits at start with an illegal instruction (c000001d); FEX then emulates AVX, which is slower. Report an NVIDIA GPU is for games that stop with \"no graphics card\" or \"failed to get GPU driver info\". Wine's C++ runtime replaces Microsoft's concrt140/msvcp140_* for a game that crashes right after loading them. With Fastsync, fast synchronization (on by default) handles events without a server round trip, and fast semaphore waits (off by default) does the same for semaphores. Settings apply to the next launch; a precision change may still require restarting Madeira.", "Use these options when a game needs them. Changes apply next launch.")
+        concise = {
+            "Reduced-precision x87 can make older games faster": "Use compatibility options when a game needs them. Changes apply next launch; precision changes may require restarting Iridium.",
+            "Directly: the game is Wine's first program": "Start the game on its own, or use the Wine desktop for launchers and desktop windows.",
+            "The working folder is a C:": "Use a Windows path for the working folder. Enable Windows services only if your launcher needs them.",
+            "Lines in madeira.cfg's format for this game only.": "Keys here override shared settings for this game. Changes apply next launch.",
+        }
+        for prefix, copy in concise.items():
+            original = next(line for line in text.splitlines() if ('Text("' + prefix) in line)
+            text = replace(text, original, original[:len(original) - len(original.lstrip())] + 'Text(' + json.dumps(copy) + ')')
         text = text.replace('Arrange buttons and choose XInput, mouse, or keyboard actions from the in-game menu.', 'Edit layouts and reusable profiles above.')
         text = text.replace("XInput and DirectInput: for games older than XInput, which read the pad through DirectInput. The same pad is offered through both APIs, so a game that reads both may list two controllers. Applies to the next launch.", "DirectInput supports older games. Changes apply next launch.")
         text = text.replace("Keyboard and mouse: for games without controller support. The controller presses keys and moves the mouse (left stick WASD, right stick mouse, triggers click, D-pad arrows, Start Esc, Select Tab) and the game sees no controller. Change what each button does under Controller binds, here or in the in-game menu.", "Map the controller to keys and pointer movement under Controller Binds.")

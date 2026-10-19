@@ -62,4 +62,19 @@ print("PASS routes: all four destinations, exact script/PID request preserved, f
             root=Path(folder);source=root/'main.swift';binary=root/'check';source.write_text(code)
             subprocess.run(['swiftc',*(['-parse-as-library'] if library else []),'-module-cache-path',str(root/'cache'),str(source),'-o',str(binary)],check=True,timeout=90)
             subprocess.run([str(binary)],check=True,timeout=20)
-if __name__=='__main__':unittest.main()
+
+
+class DisplayPresentationOwnershipTests(unittest.TestCase):
+    def test_settings_root_owns_its_per_game_display_sheet(self):
+        import importlib.util, sys
+        sys.path.insert(0, str(ROOT / "ci"))
+        spec = importlib.util.spec_from_file_location("display_frontend", ROOT / "ci/madeira-frontend.py")
+        frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
+        generated = frontend.overlay("Library.swift", (ROOT / "vendor/Madeira/app/Madeira/Library.swift").read_text())
+        settings = generated[generated.index("struct LibraryView: View"):generated.index("private func iridiumNavigate", generated.index("struct LibraryView: View"))]
+        self.assertIn(".sheet(item: $selected, onDismiss:", settings)
+        self.assertIn("LibraryDetail(iridiumInitialPage: iridiumDetailPage", settings)
+        self.assertEqual(generated.count(".sheet(item: $selected,"), 1)
+
+if __name__ == '__main__':
+    unittest.main()
