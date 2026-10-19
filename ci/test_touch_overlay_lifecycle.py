@@ -14,7 +14,7 @@ class TouchOverlayLifecycleTests(unittest.TestCase):
     def test_generated_registration_keeps_same_id_a_and_stick_controls_working(self):
         spec = importlib.util.spec_from_file_location('overlay_lifecycle_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
-        text = frontend.overlay('ContentView.swift', (frontend.UPSTREAM/'app/Madeira/ContentView.swift').read_text())
+        text = frontend.overlay('ContentView.swift', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text())
         self.assertIn('@Published var iridiumConsoleScope: UUID?', text)
         self.assertIn('.onChange(of: m.iridiumConsoleScope) { _, _ in configureGamepad(landscape: landscape) }', text)
         self.assertIn('.onChange(of: iridiumController.hidesTouchControls)', text)
@@ -23,7 +23,7 @@ class TouchOverlayLifecycleTests(unittest.TestCase):
         model = text[text.index('enum ControlAction:'):text.index('final class TouchControlsModel:')]
         start = text.index('    private func configureGamepad(landscape: Bool) {')
         method = text[start:text.index('\n    /// ml1970:', start)].replace('private func', 'func')
-        touch = (frontend.UPSTREAM/'app/Madeira/TouchGamepad.swift').read_text()
+        touch = (ROOT / 'iridium/apps/ios/App/Controls/TouchGamepad.swift').read_text()
         touch = touch[touch.index('struct GamepadSample:'):touch.index('// MARK: - UIKit touch lifetime')]
         fixture = r'''
 enum TouchMouseGate { static var padOverlay = false }

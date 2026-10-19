@@ -1,4 +1,6 @@
-"""Presentation-only edits to the pinned SwiftUI views. Native actions stay upstream."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Presentation-only edits to the pinned SwiftUI views. Native actions stay upstream."""
 import json
 import re
 import madeira_player_presentation

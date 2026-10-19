@@ -1,4 +1,6 @@
-"""Settings access to the shipping control canvas; native dispatch stays owned by the player."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Settings access to the shipping control canvas; native dispatch stays owned by the player."""
 
 
 def replace(text, old, new):

@@ -70,7 +70,7 @@ class DisplayPresentationOwnershipTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "ci"))
         spec = importlib.util.spec_from_file_location("display_frontend", ROOT / "ci/madeira-frontend.py")
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
-        generated = frontend.overlay("Library.swift", (ROOT / "vendor/Madeira/app/Madeira/Library.swift").read_text())
+        generated = frontend.overlay("Library.swift", (ROOT / "ci/fixtures/madeira-build43/app/Madeira/Library.swift").read_text())
         settings = generated[generated.index("struct LibraryView: View"):generated.index("private func iridiumNavigate", generated.index("struct LibraryView: View"))]
         self.assertIn(".sheet(item: $iridiumDetailSelection)", settings)
         self.assertIn("LibraryDetail(iridiumInitialPage: route.page", settings)

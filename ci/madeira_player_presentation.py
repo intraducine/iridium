@@ -1,4 +1,6 @@
-"""Shared Iridium player primitives over Madeira's unchanged native input owners."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Shared Iridium player primitives over Madeira's unchanged native input owners."""
 
 
 def replace(text, old, new):

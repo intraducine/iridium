@@ -14,7 +14,7 @@ import ppsspp_native_overlay as psp
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/PPSSPP'
-MADEIRA = ROOT / 'vendor/Madeira/app'
+MADEIRA = ROOT / 'ci/fixtures/madeira-build43/app'
 
 
 @unittest.skipUnless(platform.system() == 'Darwin' and shutil.which('clang++'), 'Darwin C++ compiler required')

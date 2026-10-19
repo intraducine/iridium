@@ -1,4 +1,6 @@
-"""Route Windows appearance editing through the runtime-neutral frontend editor."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Route Windows appearance editing through the runtime-neutral frontend editor."""
 
 
 def apply(name, text):

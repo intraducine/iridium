@@ -1,4 +1,6 @@
-"""Single-flight JIT and correlated Shortcut callbacks over the pinned frontend."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Single-flight JIT and correlated Shortcut callbacks over the pinned frontend."""
 
 
 def replace(text, old, new):

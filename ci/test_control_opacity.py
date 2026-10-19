@@ -14,13 +14,13 @@ SPEC.loader.exec_module(FRONTEND)
 
 class ControlOpacityTests(unittest.TestCase):
     def generated(self):
-        return FRONTEND.overlay('ContentView.swift', (FRONTEND.UPSTREAM / 'app/Madeira/ContentView.swift').read_text())
+        return FRONTEND.overlay('ContentView.swift', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text())
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_shipping_schema_legacy_presets_and_visual_state(self):
         generated = self.generated()
         model = generated[generated.index('enum ControlAction:'):generated.index('final class TouchControlsModel:')]
-        presets = (FRONTEND.UPSTREAM / 'app/Madeira/TouchControlPresets.swift').read_text()
+        presets = (ROOT / 'iridium/apps/ios/App/Controls/TouchControlPresets.swift').read_text()
         preset = presets[presets.index('struct ControlPreset:'):presets.index('struct ControlPresetScreen:')]
         fixture = r'''
 let encoder = JSONEncoder(), decoder = JSONDecoder()

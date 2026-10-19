@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-UPSTREAM = ROOT / 'vendor/Madeira/app/Madeira/ContentView.swift'
+UPSTREAM = ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift'
 PLAYER = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsolePlayer.swift'
 CONTROLS = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleControls.swift'
 

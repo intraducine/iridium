@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'vendor/Madeira/app/Madeira/ContentView.swift'
+SOURCE = ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift'
 
 
 def production_fragment():

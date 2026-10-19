@@ -168,7 +168,7 @@ class MediaTransferTests(unittest.TestCase):
         self.assertNotIn('prepare-media-sdk.sh', workflow)
         builder = (ROOT / 'ci/madeira-frontend.py').read_text()
         self.assertIn("'build/ffmpeg/build.sh'", builder)
-        self.assertIn('libavcodec.a', (ROOT / 'vendor/Madeira/app/Madeira.xcodeproj/project.pbxproj').read_text())
+        self.assertIn('libavcodec.a', (ROOT / 'iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj').read_text())
 
     def test_media_config_tracks_app_target_and_preserves_user_config(self):
         script = (ROOT / 'ci/prepare-media-sdk.sh').read_text()

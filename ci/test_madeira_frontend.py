@@ -87,7 +87,7 @@ class FrontendImportTests(unittest.TestCase):
 
     def test_settings_copy_changes_only_notes(self):
         import re
-        folder = ROOT / 'vendor/Madeira/app/Madeira'
+        folder = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
         original = (folder / 'ConfigCatalog.generated.swift').read_text()
         changed = madeira_presentation.apply('ConfigCatalog.generated.swift', original)
         notes = r'note: "(?:[^"\\]|\\.)*"'
@@ -350,7 +350,7 @@ class FrontendImportTests(unittest.TestCase):
                 self.assertEqual(run.call_count, 4)
 
     def test_presentation_keeps_upstream_runtime_and_save_actions(self):
-        folder = ROOT / 'vendor/Madeira/app/Madeira'
+        folder = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
         if not folder.exists(): self.skipTest('Initialize vendor/Madeira first')
         original = (folder / 'Library.swift').read_text()
         rendered = madeira_presentation.apply('Library.swift', original)
@@ -413,7 +413,7 @@ class FrontendImportTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler is required')
     def test_updated_library_preserves_per_game_storage_and_reset(self):
-        folder = ROOT / 'vendor/Madeira/app/Madeira'
+        folder = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
         if not (folder / 'Library.swift').is_file(): self.skipTest('Pinned Madeira source required')
         original = (folder / 'Library.swift').read_text()
         rendered = BUILD.overlay('Library.swift', original)

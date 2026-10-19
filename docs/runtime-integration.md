@@ -54,8 +54,9 @@ still come from their pinned engine checkouts and are validated separately.
 it returns maintained shipping source by its old logical unit name. It performs
 no text substitution. The historical `madeira_presentation*`, player, control and
 JIT overlay modules remain as build 43 migration fixtures for existing behavioral
-regression tests. They are not invoked by preparation, verification or packaging
-and are not an upgrade requirement. New changes belong in maintained Swift/JS.
+regression tests. Their original inputs are frozen under `ci/fixtures/madeira-build43/`, with
+licenses and source hashes. They are not invoked by preparation, verification or
+packaging and never read a future engine pin’s UI; they are not an upgrade requirement. New changes belong in maintained Swift/JS.
 
 ## Updating an engine
 

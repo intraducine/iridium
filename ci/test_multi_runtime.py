@@ -92,7 +92,7 @@ class MultiRuntimeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('runtime_overlay', ROOT / 'ci/madeira-frontend.py')
         overlay = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(overlay)
-        upstream = ROOT / 'vendor/Madeira/app/Madeira'
+        upstream = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
         if not upstream.is_dir():
             self.skipTest('Pinned Madeira source not initialized')
         source = (upstream / 'ContentView.swift').read_text()

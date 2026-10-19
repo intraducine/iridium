@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('player_frontend', ROOT / 'ci/madeira-frontend.py')
 FRONTEND = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FRONTEND)
-UPSTREAM = Path(os.environ.get('IRIDIUM_MADEIRA_SOURCE', ROOT / 'vendor/Madeira/app/Madeira'))
+UPSTREAM = Path(os.environ.get('IRIDIUM_MADEIRA_SOURCE', ROOT / 'ci/fixtures/madeira-build43/app/Madeira'))
 
 
 class PlayerPresentationTests(unittest.TestCase):

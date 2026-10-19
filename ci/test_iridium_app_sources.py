@@ -1,5 +1,7 @@
 """App staging uses maintained sources and rejects stale or modified output."""
 from pathlib import Path
+import hashlib
+import json
 import tempfile
 import unittest
 import iridium_app_sources as app
@@ -32,6 +34,14 @@ class OwnedAppTests(unittest.TestCase):
         self.assertIn('struct LibraryEntry: Codable', source)
         self.assertIn('extension LibraryEntry', source)
         self.assertIn('final class LibraryModel', source)
+
+    def test_historical_migration_inputs_have_fixed_provenance(self):
+        fixture = app.ROOT / 'ci/fixtures/madeira-build43'
+        record = json.loads((fixture / 'source.json').read_text())
+        self.assertEqual(record['revision'], app.ownership()['derivedFrom']['revision'])
+        for name, digest in record['sha256'].items():
+            self.assertEqual(hashlib.sha256((fixture / name).read_bytes()).hexdigest(), digest, name)
+        self.assertFalse(any('fixtures' in path.parts for path in app.main_sources()))
 
 
 if __name__ == '__main__': unittest.main()
