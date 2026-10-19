@@ -1,11 +1,12 @@
-// Unified presentation; Windows behavior remains owned by Madeira.
+// Iridium-owned library presentation; engine operations use explicit services.
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct IridiumLibraryView: View {
-    var play: (LibraryEntry) -> Void
-    var enableJIT: () -> Void
-    var startDock: (DockGame, Bool) -> Void
+    let services: IridiumLibraryServices
+    private var play: (LibraryEntry) -> Void { services.windows.launch }
+    private var enableJIT: () -> Void { services.jit.enableForPlaying }
+    private var startDock: (DockGame, Bool) -> Void { { services.windows.launchSteam($0, compactPool: $1) } }
     @ObservedObject private var library = LibraryModel.shared
     @ObservedObject private var consoles = IridiumConsoleLibrary.shared
     @ObservedObject private var consoleSession = IridiumConsoleSession.shared
@@ -173,16 +174,16 @@ struct IridiumLibraryView: View {
                 showHints = true; showFocus = true; command(value)
             }
             .onAppear {
-                library.refreshFlag(); keepSelection(); steamGames.refresh(); keyboardFocus = true
+                library.refreshFlag(); keepSelection(); services.steam.refreshInstalledGames(); keyboardFocus = true
                 pageArtwork = selected?.id.uuidString ?? ""
                 EndedSessionSurface.install(); EndedSessionSurface.hide(reason: "library-appeared")
                 onboarding.presentIfNeeded()
-                if SteamOwnedLibrary.enabled { steam.start(); steam.reconcileSession() }
+                services.steam.connectAndReconcile()
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active && !consoleSession.isActive {
-                    library.refreshFlag(); steamGames.refresh()
-                    if SteamOwnedLibrary.enabled { steam.reconcileSession() }
+                    library.refreshFlag(); services.steam.refreshInstalledGames()
+                    services.steam.reconcileIfEnabled()
                 }
             }
             .onChange(of: library.current) { _, value in if value != nil { closePages() } }

@@ -1,0 +1,514 @@
+{
+  "schema": 1,
+  "derivedFrom": {
+    "repository": "https://github.com/willfaust/Madeira",
+    "revision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+    "iridiumBuild43Source": "645067b2b594a346983af9fafa1ff1f7bf5c8bec"
+  },
+  "logicalUnits": {
+    "ConfigCatalog.generated.swift": [
+      {
+        "path": "Windows/ConfigCatalog.generated.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "ConfigCatalog.swift": [
+      {
+        "path": "Windows/ConfigCatalog.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "ContentView.swift": [
+      {
+        "path": "Adapters/Madeira/ContentView.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "DockInstallers.swift": [
+      {
+        "path": "Steam/DockInstallers.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "DockReset.swift": [
+      {
+        "path": "Steam/DockReset.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "DockStartScreen.swift": [
+      {
+        "path": "Steam/DockStartScreen.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "EntitlementChecker.swift": [
+      {
+        "path": "JIT/EntitlementChecker.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "FPSOverlay.swift": [
+      {
+        "path": "Diagnostics/FPSOverlay.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GameProfiles.swift": [
+      {
+        "path": "Models/GameProfiles.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GameRecommendations.swift": [
+      {
+        "path": "Library/GameRecommendations.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GameRecommendationsApply.swift": [
+      {
+        "path": "Library/GameRecommendationsApply.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GamepadInput.swift": [
+      {
+        "path": "Controls/GamepadInput.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GlassSkin.swift": [
+      {
+        "path": "Library/GlassSkin.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "GuestDisplay.swift": [
+      {
+        "path": "Adapters/Madeira/GuestDisplay.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "HardwareInput.swift": [
+      {
+        "path": "Controls/HardwareInput.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "JITBuiltInHost.swift": [
+      {
+        "path": "JIT/JITBuiltInHost.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "JITBuiltInMessages.swift": [
+      {
+        "path": "JIT/JITBuiltInMessages.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "JITNetwork.swift": [
+      {
+        "path": "JIT/JITNetwork.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "JITPairing.swift": [
+      {
+        "path": "JIT/JITPairing.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "JITSetup.swift": [
+      {
+        "path": "JIT/JITSetup.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "Library.swift": [
+      {
+        "path": "Library/IridiumLibraryInfrastructure.swift",
+        "stripImportPrefix": false
+      },
+      {
+        "path": "Models/IridiumWindowsLibrary.swift",
+        "stripImportPrefix": true
+      },
+      {
+        "path": "Adapters/Madeira/IridiumMadeiraLaunchProfile.swift"
+      },
+      {
+        "path": "Adapters/Madeira/IridiumWindowsLibraryService.swift"
+      },
+      {
+        "path": "Library/IridiumWindowsScreens.swift",
+        "stripImportPrefix": true
+      }
+    ],
+    "LibraryBCD.swift": [
+      {
+        "path": "Models/LibraryBCD.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "LibraryPrefs.swift": [
+      {
+        "path": "Models/LibraryPrefs.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "LogPattern.swift": [
+      {
+        "path": "Diagnostics/LogPattern.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "LogStore.swift": [
+      {
+        "path": "Diagnostics/LogStore.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "LogTail.swift": [
+      {
+        "path": "Diagnostics/LogTail.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "MadeiraApp.swift": [
+      {
+        "path": "IridiumApp.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "MadeiraConfig.swift": [
+      {
+        "path": "Adapters/Madeira/MadeiraConfig.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "MadeiraDock.swift": [
+      {
+        "path": "Steam/MadeiraDock.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "MadeiraDockView.swift": [
+      {
+        "path": "Steam/MadeiraDockView.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "Onboarding.swift": [
+      {
+        "path": "Library/Onboarding.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "PadKeyboardMouse.swift": [
+      {
+        "path": "Controls/PadKeyboardMouse.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SavesAndShortcuts.swift": [
+      {
+        "path": "Windows/SavesAndShortcuts.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamCloud.swift": [
+      {
+        "path": "Steam/SteamCloud.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamDownloadBackground.swift": [
+      {
+        "path": "Steam/SteamDownloadBackground.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamGames.swift": [
+      {
+        "path": "Steam/SteamGames.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamInstall.swift": [
+      {
+        "path": "Steam/SteamInstall.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamKeyValues.swift": [
+      {
+        "path": "Steam/SteamKeyValues.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamOwnedLibrary.swift": [
+      {
+        "path": "Steam/SteamOwnedLibrary.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamRuntime.swift": [
+      {
+        "path": "Steam/SteamRuntime.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "StikJITHelper.swift": [
+      {
+        "path": "JIT/StikJITHelper.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamAuthAPI.swift": [
+      {
+        "path": "Steam/Transport/Auth/SteamAuthAPI.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamCredentialAuth.swift": [
+      {
+        "path": "Steam/Transport/Auth/SteamCredentialAuth.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamQRAuth.swift": [
+      {
+        "path": "Steam/Transport/Auth/SteamQRAuth.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamTokenStore.swift": [
+      {
+        "path": "Steam/Transport/Auth/SteamTokenStore.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "ContentDecryptor.swift": [
+      {
+        "path": "Steam/Transport/Content/ContentDecryptor.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "DepotDownloader.swift": [
+      {
+        "path": "Steam/Transport/Content/DepotDownloader.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "DepotManifest.swift": [
+      {
+        "path": "Steam/Transport/Content/DepotManifest.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "CMServerList.swift": [
+      {
+        "path": "Steam/Transport/Core/CMServerList.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "LicenseListBox.swift": [
+      {
+        "path": "Steam/Transport/Core/LicenseListBox.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamCMSession.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamCMSession.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamConnection.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamConnection.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamError.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamError.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamMessageCodec.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamMessageCodec.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamProtocol.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamProtocol.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamSession.swift": [
+      {
+        "path": "Steam/Transport/Core/SteamSession.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamDevice.swift": [
+      {
+        "path": "Steam/Transport/Helpers/SteamDevice.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamLog.swift": [
+      {
+        "path": "Steam/Transport/Helpers/SteamLog.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "AppManifestWriter.swift": [
+      {
+        "path": "Steam/Transport/Install/AppManifestWriter.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamAppInfo.swift": [
+      {
+        "path": "Steam/Transport/Library/SteamAppInfo.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamLibraryFetcher.swift": [
+      {
+        "path": "Steam/Transport/Library/SteamLibraryFetcher.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamProtoMessages.swift": [
+      {
+        "path": "Steam/Transport/Proto/SteamProtoMessages.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamSignIn.swift": [
+      {
+        "path": "Steam/Transport/SteamSignIn.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "SteamSignInView.swift": [
+      {
+        "path": "Steam/Transport/SteamSignInView.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "TouchControlPresets.swift": [
+      {
+        "path": "Controls/TouchControlPresets.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "TouchGamepad.swift": [
+      {
+        "path": "Controls/TouchGamepad.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "WineMono.swift": [
+      {
+        "path": "Adapters/Madeira/WineMono.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "MadeiraJITHelper.swift": [
+      {
+        "path": "JIT/Helper/MadeiraJITHelper.swift",
+        "stripImportPrefix": false
+      }
+    ],
+    "madeira-jit.js": [
+      {
+        "path": "Resources/madeira-jit.js",
+        "stripImportPrefix": false
+      }
+    ],
+    "WiniosGamepad.c": [
+      {
+        "path": "Windows/WiniosGamepad.c",
+        "stripImportPrefix": false
+      }
+    ]
+  },
+  "baselineSHA256": {
+    "ConfigCatalog.generated.swift": "25cd92b271c80526a09e1c301fbb0c3a0be1090a30a381e5c494582de31fcd43",
+    "ConfigCatalog.swift": "0b5449be6cf79c98b92dee13307037c04886077918955539818b23015f96169b",
+    "ContentView.swift": "c7f077a2ba9af3689c9445d223ebf69c1067fa41b8c12a023197793ae6d6333a",
+    "DockInstallers.swift": "8ee7989bbac7fa2e20de04be80057854595a30122bf64db8107030cd7c359250",
+    "DockReset.swift": "3f76fd94b4ab0b7894eabb2110dd39798627ead511d9df57829fd5b254724b9b",
+    "DockStartScreen.swift": "7bfcd761fcc881785b8c2d4e5ba515a7ceeecfb40a0e497a28b4d46a43164559",
+    "EntitlementChecker.swift": "0df2bda410974b5e2b99334917fe4a152681a354e3e1f4db4eb5a34e08937b5a",
+    "FPSOverlay.swift": "358057445494c48a2f7c4f9eac7393cf729ccba793fc7959b61063707a1cb193",
+    "GameProfiles.swift": "57d6153efe61c052c6f896bd0ea5b7ffa4651e0a2d205feb6442081a3eff0bc8",
+    "GameRecommendations.swift": "b38766accce921ffa68eaec243b84b116ca0ea975f813ef881d6d502e6885685",
+    "GameRecommendationsApply.swift": "ed24bc89c57e8088618055c7beacf247ec21928ac81dab0b47bb57f1a93721de",
+    "GamepadInput.swift": "bba5b7f21eb9ad1ea78008eb220abd77cf5332d92ae8473a32ca14f90aefff32",
+    "GlassSkin.swift": "35b70dfa83f6c5762a54de9da85f5bd4e7d4dea6e3f07261776e4fa0b8389c9c",
+    "GuestDisplay.swift": "4df255562f962cb9864270411b97bf1552e518cc1c51ea3720643b47456edb1c",
+    "HardwareInput.swift": "c864eb853e11b688760954dc8e9b03cf3b3596e7e9a6f2a4a4595c2977315d6a",
+    "JITBuiltInHost.swift": "b8e578ed115d3321805302904a8f30f66e6deefc54f980e74fb4a1004d537313",
+    "JITBuiltInMessages.swift": "57fb809abd60aeb158d470c68399b829bbd1f624dbc7df8f38f3ae855d5d94c9",
+    "JITNetwork.swift": "bdce7965dc75caec9ff376c4bd0671ddbdee59f84ba1d0917e99ebecb44ecf2e",
+    "JITPairing.swift": "63d6d052f6bc393a07ff5aaa36482c8f2a4df0f98c66bd004b0e80f3df9e6f02",
+    "JITSetup.swift": "2c71365ef2c5504a587ec183c52aa354c04826c93f4b4893425f393350d9efd8",
+    "Library.swift": "f750d9d12b4ecd231b3aef82cb73c881d32311d09873310d0b42ed02815233a9",
+    "LibraryBCD.swift": "2a222d72c40490ab27d51df1d2a764aeec9402a24f1afa7cd925156d5fe79838",
+    "LibraryPrefs.swift": "0579d14ab60ef2ef8432f462ba7e8050c72edde76a7ae6b1145f0b40a1372a1b",
+    "LogPattern.swift": "e9bda2d881761df1b6f627b0ff556485e804f7b79b6d9facafaded22eff4f2bf",
+    "LogStore.swift": "2b64fd0a6e0589acdc4f3a5bfcdf3f15cc22500b16c47d16cf7cbf0e0127f848",
+    "LogTail.swift": "e8bb421ee454d1cf24b9925c86fc9836091f75cc2e9df0626ffba7458f913289",
+    "MadeiraApp.swift": "e945b639ed24a956e9ecb8a681bf38f11a1126a226364d3f2b80b1ff69fe62d7",
+    "MadeiraConfig.swift": "59bc1b251c7a40388a3d62ecd886cc2d8687d495ddb8577af4ae18417473ebdd",
+    "MadeiraDock.swift": "c5abd7b4587cc93d79a83aac42c1b3527ced05d7a4807d20c4f036a406dcdb73",
+    "MadeiraDockView.swift": "6b4be6fda35b4d4bcfbea62bae16e80391ff2dc94e9f24f6127c7074c9d0e728",
+    "Onboarding.swift": "63ae2af8de1f22b5f77f1f725c041d2968271f3c7fc27a4acf93353941fdcba2",
+    "PadKeyboardMouse.swift": "4f095336dc3ac1883f53f4f384f7ea70d64753bb53b7b3a80300ca240052adfa",
+    "SavesAndShortcuts.swift": "7065b8f01e8ac818b5a5a22b8f2884afe4438876345847c0eb1730b53f76bd23",
+    "SteamCloud.swift": "a119c034002c43540370e2d549eaf6660dbc4e8fc973dd4f252b60b5fb4eb14e",
+    "SteamDownloadBackground.swift": "ed59b0bce8e08ab52028ffaf87e404458eed8cf29e097c3d04b2e96ee50bd782",
+    "SteamGames.swift": "7f7fb5e7defbf651b819a823ca2f4f9916cb545f5d753a6ad449c6465f388f79",
+    "SteamInstall.swift": "5d3d0c55420514ca0c82e6d3679f920760a9400078e97f85e6b761879c28ba23",
+    "SteamKeyValues.swift": "8e4d9e0da3c5111d8314cb3110f8462ff06a0906cab7f124ecd607741ca567cf",
+    "SteamOwnedLibrary.swift": "22b9b3bcb15c72551d8cd30da7974c5cebabef171148a40a0564d24aad63daef",
+    "SteamRuntime.swift": "ec069431eb295a5610ae1beacc40ddcf57033dc55e6f3f4f566e620998d7df6a",
+    "StikJITHelper.swift": "0f0384791fef72dc25ddeecf1d707f4403f4223bc502746ed0bc06048f637b2b",
+    "SwiftSteam/Auth/SteamAuthAPI.swift": "29e022d509c6db284ec1332b645b5f61371856a3b502d75dfe5a59d0b8e9996a",
+    "SwiftSteam/Auth/SteamCredentialAuth.swift": "05fbca74eb8dc515daefdf0878cc7532b894b7c5403437d74599e00e1dca9dc3",
+    "SwiftSteam/Auth/SteamQRAuth.swift": "a3a700e0187093504e8387314687ed2e136e4a8b3850df9a0d3fc34b1078acd5",
+    "SwiftSteam/Auth/SteamTokenStore.swift": "f325b9a465a13a52f833fd4e6a41b10af0e71852af47ad1b7cd3b3eba8cf67f2",
+    "SwiftSteam/Content/ContentDecryptor.swift": "a48f79959f73542a79880ef7acd241f95f6d6098d51e3011f727d6c0131f28b1",
+    "SwiftSteam/Content/DepotDownloader.swift": "7c8e05ee746dcf350a7950fb9ad0c278992ce2c842ba53c597f498c37c27a9ed",
+    "SwiftSteam/Content/DepotManifest.swift": "f108b6289034ad08d2310f93ef04a5d176c1a5a820485344b4f63e1929c86e1a",
+    "SwiftSteam/Core/CMServerList.swift": "37c309af745aa4d692dad7df3a8af2d7267f877152e12a7d7f45c3e6a5d6bf43",
+    "SwiftSteam/Core/LicenseListBox.swift": "9f8d2333d933966c1de5f3108424ae9de2f83300a43f753fb3f87a828b65761c",
+    "SwiftSteam/Core/SteamCMSession.swift": "3568528a9946539eb43796dbb459aa2ef27e1baeb1524a422c226eba3ab06647",
+    "SwiftSteam/Core/SteamConnection.swift": "b29e4b529c702598cb889148d5eee72f64c57d6010b836bffb8dc71d10ea3683",
+    "SwiftSteam/Core/SteamError.swift": "72315f2b564cb6d08b76583ac4203dcf6012dddd943869f7d1f0f4db64144838",
+    "SwiftSteam/Core/SteamMessageCodec.swift": "ee9fdf6431cdb96d2880070f8dabe01fcc96ad37e403804a5fa10a00daf12a11",
+    "SwiftSteam/Core/SteamProtocol.swift": "ce6747794995df34e07d1cf622d5ca65ef5ce67938ce0b4f9b01f4f38c4a0420",
+    "SwiftSteam/Core/SteamSession.swift": "b6365b672b8bafb1fedfaf5c6a33ebfc5b71960b3f054cf3fb3a1d397224ce1a",
+    "SwiftSteam/Helpers/SteamDevice.swift": "3f7b45a3eab7937d20160bd6379f47ecd5fe191601135752ba4a28e76eb84b62",
+    "SwiftSteam/Helpers/SteamLog.swift": "35d9cb1c3affed21bfd2eeb83848d745431866d3d3d576cbda1b57bad31a7d2f",
+    "SwiftSteam/Install/AppManifestWriter.swift": "dc4ef26dde41e4fea581bba0b781c38756a9c6ef336123b6809d83fc1dea2212",
+    "SwiftSteam/Library/SteamAppInfo.swift": "7ab29dbfe74aff64b494cdbf59d0622421e6f072ab0ea1e316945028312d5467",
+    "SwiftSteam/Library/SteamLibraryFetcher.swift": "8cda4d7fe9efff415b20d9b1195ae28fe996d828fa8b19f6fd86f723e03a85da",
+    "SwiftSteam/Proto/SteamProtoMessages.swift": "c698999d114e1c4a53173bc0f7b39a114199a044d0876e352f7c36f55a217c6f",
+    "SwiftSteam/SteamSignIn.swift": "c95b55a7517bc0eaf53caba5a6b8a226b2e8351a5f7182ba70b9971893f4c13e",
+    "SwiftSteam/SteamSignInView.swift": "778c6a20ba27aeca6c427122e22e30a6129bda04d8da865e9b23b5ae62f2b5d9",
+    "TouchControlPresets.swift": "4d140ba08fe6964fe8589263a6a64fa7c7e635549effc2233bcc669e5c168921",
+    "TouchGamepad.swift": "d8db4817052bc8fbed23108c6d39f0074c6158328efc426b4afdb86771960f79",
+    "WineMono.swift": "f158dd71dbdde7b093848a62af37742701a0607ee82374a355fd3c3a9c6417cf"
+  },
+  "helper": "JIT/Helper/MadeiraJITHelper.swift"
+}

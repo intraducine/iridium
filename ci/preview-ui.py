@@ -23,6 +23,7 @@ def prepare():
     # Only source and UI resources: no emulator binaries, Wine prefix or games.
     destination = app / 'Madeira'
     destination.mkdir(exist_ok=True)
+    for stale in destination.rglob('*.swift'): stale.unlink()
     for file in (source / 'Madeira').rglob('*'):
         relative = file.relative_to(source / 'Madeira')
         if file.is_file() and (file.suffix in {'.swift', '.h', '.c', '.metal'} or
@@ -67,7 +68,7 @@ def prepare():
     info = plistlib.load(open(destination / 'Info.plist', 'rb'))
     info.update(CFBundleDisplayName='Iridium', IridiumBuildVariant='Simulator')
     (destination / 'Info.plist').write_bytes(plistlib.dumps(info))
-    (destination / 'MadeiraApp.swift').write_text('''import SwiftUI
+    (destination / 'IridiumApp.swift').write_text('''import SwiftUI
 @main struct MadeiraApp: App {
     init() {
         UserDefaults.standard.set("new", forKey: FrontendChoice.key)

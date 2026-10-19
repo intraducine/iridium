@@ -25,11 +25,9 @@ class CompiledComponentsTests(unittest.TestCase):
                 header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
                 changed = source.replace(header + '\n', header + '\n    print("app-only edit")\n')
                 self.assertEqual(original, reuse.frontend_compiler_source(changed))
-        # The actual diagnostics-staging edit that unnecessarily rebuilt both
-        # components changed prepare(), not either native compiler recipe.
-        before = source.replace(
-            "ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'",
-            "ROOT / 'fixture-without-diagnostics.swift'")
+        # App source staging belongs to preparation, never native compilation.
+        before = source.replace('names = app_sources.stage(app)',
+                                'names = fixture_stage(app)')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
 

@@ -1,7 +1,7 @@
 # Build a sideloading IPA
 
-Local builds and **Actions → Build sideloading IPA** build the pinned Madeira
-app with Iridium's presentation overlay. Both use `ci/madeira-frontend.py`.
+Local builds and **Actions → Build sideloading IPA** build the Iridium-owned app
+against the pinned native runtime. Both use `ci/madeira-frontend.py`.
 The source revision is recorded in `UPSTREAM-SOURCES.json` and in the app.
 
 ## Local build

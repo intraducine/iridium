@@ -2,8 +2,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Iridium's frontend model contains either backend's record without moving
-/// Windows games, rewriting Madeira models, or inventing Windows paths for ROMs.
+/// Iridium's unified model preserves each platform's owned record and storage.
+/// Console records never invent Windows paths or migrate existing game files.
 struct IridiumGame: Identifiable {
     let windows: LibraryEntry?
     let console: IridiumConsoleGame?
@@ -17,8 +17,8 @@ struct IridiumGame: Identifiable {
     var steamAppID: Int? { windows?.steamAppID }
 }
 
-/// Madeira keeps its existing launch/JIT/Steam/session implementation. Driver
-/// state is read from Madeira, not a competing "ready" flag in Iridium's UI.
+/// The owned Windows adapter retains the established launch/JIT/Steam lifecycle.
+/// Driver state comes from its shared service, without a competing ready flag.
 @MainActor struct IridiumWindowsDriver: IridiumRuntimeDriver {
     let start: (LibraryEntry) -> Void
     var descriptor: IridiumRuntimeDescriptor { IridiumRuntimeRegistry.madeira }

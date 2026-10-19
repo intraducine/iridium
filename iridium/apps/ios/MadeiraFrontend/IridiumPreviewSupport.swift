@@ -90,7 +90,9 @@ struct IridiumPreviewRoot: View {
                 case "capabilities": NavigationStack { IridiumCapabilitiesView() }
                 case "diagnostics": NavigationStack { Form { Group { IridiumDiagnosticsSections() }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Diagnostics") }
                 case "layout": IridiumTouchLayoutEditor(target: .init(platform: .psp, title: "PSP"))
-                default: IridiumLibraryView(play: play, enableJIT: enableJIT, startDock: { _, _ in unavailableWindows() })
+                default: IridiumLibraryView(services: .init(
+                    windows: IridiumMadeiraLaunchAdapter(start: play, startDock: { _, _ in unavailableWindows() }),
+                    jit: IridiumMadeiraJITAdapter(enable: enableJIT), steam: IridiumMadeiraSteamAdapter()))
                 }
             } else if let error { ContentUnavailableView("Library Could Not Open", systemImage: "exclamationmark.triangle", description: Text(error)) }
             else { ProgressView("Loading Library…") }

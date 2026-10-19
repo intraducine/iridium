@@ -154,6 +154,7 @@ private struct IridiumWindowsMappingEditor: View {
 }
 
 struct IridiumTouchLayoutEditor: View {
+    var editing: any IridiumControlEditing = IridiumMadeiraControlAdapter()
     let target: IridiumControlTarget
     @ObservedObject private var model = TouchControlsModel.shared
     @ObservedObject private var profiles = IridiumControlProfileStore.shared
@@ -241,7 +242,7 @@ struct IridiumTouchLayoutEditor: View {
             .onReceive(LibraryController.shared.commands) { command($0) }
             .onKeyPress(.escape) { close(); return .handled }
         }.preferredColorScheme(.dark).tint(IridiumTheme.accent).interactiveDismissDisabled()
-            .onDisappear { model.iridiumEndSettings(owner: owner) }
+            .onDisappear { editing.end(owner: owner) }
     }
     private var profileName: String {
         if let id = selectedProfile, let profile = profiles.profiles(for: target.platform).first(where: { $0.id == id }) { return profile.name }
@@ -266,10 +267,7 @@ struct IridiumTouchLayoutEditor: View {
             inherited = selection == .inherit && (target.gameID == nil || !profiles.hasGameOverride(target.gameID!))
             if target.platform == .windows, let game = target.gameID,
                profiles.document.games[game.uuidString] == nil, target.windowsLayout != nil { inherited = false }
-            let admission = LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
-                !IridiumConsoleSession.shared.isActive && !JITCoordinator.shared.busy &&
-                wine_process_is_running() == 0 && wineserver_is_running() == 0
-            try model.iridiumBeginSettings(owner: owner, platform: target.platform, state: resolved, admission: admission)
+            try editing.begin(owner: owner, platform: target.platform, layout: resolved)
             initial = state; ready = true
         } catch { failure = error.localizedDescription }
     }
@@ -285,10 +283,7 @@ struct IridiumTouchLayoutEditor: View {
         guard let builtIn else { return }
         do {
             let resolved = try profiles.resolve(platform: target.platform, gameID: nil, builtIn: builtIn)
-            let admission = LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
-                !IridiumConsoleSession.shared.isActive && !JITCoordinator.shared.busy &&
-                wine_process_is_running() == 0 && wineserver_is_running() == 0
-            try model.iridiumBeginSettings(owner: owner, platform: target.platform, state: resolved, admission: admission)
+            try editing.begin(owner: owner, platform: target.platform, layout: resolved)
             inherited = true; selectedProfile = nil; initial = state; failure = nil; ready = true
         } catch { failure = error.localizedDescription }
     }
@@ -326,7 +321,7 @@ struct IridiumTouchLayoutEditor: View {
             close()
         }
     }
-    private func close() { model.iridiumEndSettings(owner: owner); dismiss() }
+    private func close() { editing.end(owner: owner); dismiss() }
     private func perform(_ action: () throws -> Void) { do { try action(); failure = nil } catch { failure = error.localizedDescription } }
     private func command(_ value: String) {
         guard ready, !naming, failure == nil else { return }

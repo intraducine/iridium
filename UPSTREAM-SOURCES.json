@@ -10,8 +10,11 @@
       "madeira-dock": "72558e416a390f3669457930f09a389e54f49556"
     },
     "presentation": "iridium/apps/ios/MadeiraFrontend",
-    "hooks": "ci/madeira-frontend.py",
-    "native_build": "ci/build-madeira-ipa.sh"
+    "native_build": "ci/build-madeira-ipa.sh",
+    "app_sources": "iridium/apps/ios/App",
+    "app_project": "iridium/apps/ios/AppProject",
+    "native_contract": "ci/engine-integrations/madeira-api.json",
+    "staging": "ci/madeira-frontend.py"
   },
   "snapshots": [
     {

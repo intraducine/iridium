@@ -99,10 +99,9 @@ class MultiRuntimeTests(unittest.TestCase):
         result = overlay.overlay('ContentView.swift', source)
         self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'), 4)
         self.assertIn('guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }', result)
-        # A changed entry point must fail the declared overlay rather than
-        # silently removing the exclusive-runtime check.
-        with self.assertRaises(ValueError):
-            overlay.overlay('ContentView.swift', source.replace('private func startLibraryEntry(', 'private func renamedEntry('))
+        # Upstream UI names no longer control maintained admission guards.
+        self.assertEqual(result, overlay.overlay('ContentView.swift',
+            source.replace('private func startLibraryEntry(', 'private func renamedEntry(')))
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for runtime model execution')
     def test_runtime_model_and_store(self):
