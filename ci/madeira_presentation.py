@@ -169,20 +169,31 @@ def library(text):
             DisplayRateSettings()
             Section {
                 ForEach(model.entries.filter { $0.desktop != true }) { entry in
-                    Button(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))) { iridiumDetailPage = "Display"; selected = entry }
+                    Button(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))) { iridiumDetailSelection = .init(entry: entry, page: "Display") }
                 }
-                Button("Windows Desktop") { iridiumDetailPage = "Display"; selected = model.entries.first { $0.id == LibraryEntry.desktopID } ?? LibraryEntry.desktopEntry }
+                Button("Windows Desktop") { iridiumDetailSelection = .init(entry: model.entries.first { $0.id == LibraryEntry.desktopID } ?? LibraryEntry.desktopEntry, page: "Display") }
             } header: { Text("Games") } footer: { Text("Resolution, aspect and scaling, MetalFX, FPS limit and frame generation are set per game.") }
         }.iridiumRowSurface() }.iridiumPageSurface()
     }
 '''
     text = replace(text, '    @ToolbarContentBuilder private var libraryToolbar:', display_view + '    @ToolbarContentBuilder private var libraryToolbar:')
-    text = replace(text, '    @State private var selected: LibraryEntry?', '    @State private var selected: LibraryEntry?\n    @State private var iridiumDetailPage: String?')
-    text = replace(text, '            LibraryDetail(entry: entry, play: { profile in', '            LibraryDetail(iridiumInitialPage: iridiumDetailPage, entry: entry, play: { profile in')
-    text = replace(text, '.sheet(item: $selected) { entry in', '.sheet(item: $selected, onDismiss: { iridiumDetailPage = nil }) { entry in')
+    text = replace(text, 'struct LibraryView: View {', '''struct LibraryView: View {
+    private struct IridiumLibraryDetailSelection: Identifiable {
+        let entry: LibraryEntry
+        var page: String? = nil
+        var id: UUID { entry.id }
+    }
+''')
+    text = replace(text, '    @State private var selected: LibraryEntry?', '''    @State private var iridiumDetailSelection: IridiumLibraryDetailSelection?
+    private var selected: LibraryEntry? {
+        get { iridiumDetailSelection?.entry }
+        nonmutating set { iridiumDetailSelection = newValue.map { .init(entry: $0) } }
+    }''')
+    text = replace(text, '            LibraryDetail(entry: entry, play: { profile in', '            LibraryDetail(iridiumInitialPage: route.page, entry: entry, play: { profile in')
+    text = replace(text, '.sheet(item: $selected) { entry in', '.sheet(item: $iridiumDetailSelection) { route in\n            let entry = route.entry')
     # The legacy library page is no longer mounted in the settings-only root.
     # Present per-game Display from the live root, with its existing launch/notices.
-    detail_start = text.index('        .sheet(item: $selected, onDismiss: { iridiumDetailPage = nil }) { entry in')
+    detail_start = text.index('        .sheet(item: $iridiumDetailSelection) { route in')
     detail_end = text.index('        .onChange(of: scenePhase)', detail_start)
     detail_presentation = text[detail_start:detail_end]
     text = text[:detail_start] + text[detail_end:]
@@ -251,8 +262,8 @@ def library(text):
     body += '                if entry.desktop != true { Section { IridiumFavoriteButton(entry: entry).id("Favorites") }.iridiumRowSurface() }\n' + reset + '                if let error { Section { Text(error).foregroundStyle(.red) } }\n            }\n' + destination_pages(detail_pages) + '\n'
     text = replace(text, form, body)
     text = replace(text, '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)', '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)\n            ' + keyboard_navigation())
-    text = replace(text, 'struct LibraryDetail: View {', 'struct LibraryDetail: View {\n    var iridiumInitialPage: String? = nil\n' + navigation_state('Controls'))
-    text = replace(text, '                reloadBCD()\n            }\n            .onDisappear { if !leaving', '                reloadBCD()\n                if let iridiumInitialPage, iridiumPages.isEmpty { iridiumPages = [iridiumInitialPage] }\n            }\n            .onDisappear { if !leaving')
+    text = replace(text, 'struct LibraryDetail: View {', 'struct LibraryDetail: View {\n    var iridiumInitialPage: String? = nil\n    @State private var iridiumInitialPageOpened = false\n' + navigation_state('Controls'))
+    text = replace(text, '                reloadBCD()\n            }\n            .onDisappear { if !leaving', '                reloadBCD()\n                if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }\n            }\n            .onDisappear { if !leaving')
     game_navigation = hub_navigation([*detail_pages, 'Favorites'], 'model.save(entry); dismiss()')
     game_navigation = game_navigation.replace('\n        let index =', '.filter { entry.desktop != true || !["Rename & Artwork", "Favorites"].contains($0) }\n        let index =')
     game_navigation = game_navigation.replace('iridiumPages.append(iridiumFocus)', 'if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) } else { iridiumPages.append(iridiumFocus) }')

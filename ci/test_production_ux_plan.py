@@ -72,9 +72,11 @@ class DisplayPresentationOwnershipTests(unittest.TestCase):
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         generated = frontend.overlay("Library.swift", (ROOT / "vendor/Madeira/app/Madeira/Library.swift").read_text())
         settings = generated[generated.index("struct LibraryView: View"):generated.index("private func iridiumNavigate", generated.index("struct LibraryView: View"))]
-        self.assertIn(".sheet(item: $selected, onDismiss:", settings)
-        self.assertIn("LibraryDetail(iridiumInitialPage: iridiumDetailPage", settings)
-        self.assertEqual(generated.count(".sheet(item: $selected,"), 1)
+        self.assertIn(".sheet(item: $iridiumDetailSelection)", settings)
+        self.assertIn("LibraryDetail(iridiumInitialPage: route.page", settings)
+        self.assertEqual(generated.count(".sheet(item: $iridiumDetailSelection)"), 1)
+        self.assertIn('iridiumDetailSelection = .init(entry: entry, page: "Display")', generated)
+        self.assertIn("if !iridiumInitialPageOpened", generated)
 
 if __name__ == '__main__':
     unittest.main()

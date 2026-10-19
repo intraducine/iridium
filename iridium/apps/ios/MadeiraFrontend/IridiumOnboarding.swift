@@ -86,12 +86,15 @@ struct OnboardingView: View {
             Form {
                 Group {
                     Section {
-                        Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                        if let index = model.steps.firstIndex(of: model.step) { Text("Step \(index + 1) of \(model.steps.count)").font(.caption).foregroundStyle(.secondary) }
-                    }.listRowBackground(Color.clear)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                            if let index = model.steps.firstIndex(of: model.step) { Text("Step \(index + 1) of \(model.steps.count)").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }.listRowSeparator(.hidden).listRowBackground(Color.clear)
                     page
                 }.iridiumRowSurface()
-            }.iridiumPageSurface().navigationTitle("Getting Started")
+            }.contentMargins(.top, 8, for: .scrollContent).listSectionSpacing(16)
+                .iridiumPageSurface().navigationTitle("Getting Started")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Skip") { skip = true } } }
                 .safeAreaInset(edge: .bottom) {
                     HStack {
