@@ -27,7 +27,7 @@ class PlayerPresentationTests(unittest.TestCase):
     def test_shipping_windows_adopts_shared_faces_without_replacing_input(self):
         before = (UPSTREAM / 'ContentView.swift').read_text()
         result = FRONTEND.overlay('ContentView.swift', before)
-        self.assertIn('IridiumControlFace(label: label, symbol: console.isActive ? IridiumConsoleControlMapping.symbol', result)
+        self.assertIn('IridiumControlFace(label: label, symbol: m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows ? IridiumConsoleControlMapping.symbol', result)
         self.assertIn('IridiumDPadFace(vector: padVector, pressed: isDown)', result)
         self.assertIn('IridiumControlFace(label: control.action.label', result)
         self.assertIn('m.visible && !(GamepadInput.enabled && iridiumController.hidesTouchControls)', result)

@@ -29,6 +29,7 @@ struct IridiumGame: Identifiable {
         return LibraryModel.sessionsThisRun > 0 ? .restartRequired : .idle
     }
     func launch(gameID: UUID) throws {
+        guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
         guard !IridiumConsoleSession.shared.isActive else { throw IridiumRuntimeError.busy }
         guard let game = LibraryModel.shared.entries.first(where: { $0.id == gameID }) else { throw IridiumRuntimeError.invalidGame }
         start(game) // Madeira may enable JIT and continue asynchronously.
@@ -151,14 +152,15 @@ struct IridiumGameArtwork: View {
     let game: IridiumGame
     var backdrop = false
     var featured = false
+    var forceCrop = false
     @ObservedObject private var artwork = IridiumArtworkModel.shared
     @State private var image: UIImage?
     var body: some View {
         ZStack {
             IridiumArtworkImage(image: image,
                 position: backdrop ? artwork.appearance(game.id).backgroundY : artwork.appearance(game.id).coverY,
-                fit: !backdrop && !featured && !artwork.appearance(game.id).customCover &&
-                    (game.coverFile == nil || artwork.appearance(game.id).ignoreLegacyCover == true))
+                fit: !backdrop && !forceCrop && IridiumArtworkImagePolicy.fitsCover(featured: featured, windows: game.windows != nil,
+                    width: Double(image?.size.width ?? 0), height: Double(image?.size.height ?? 0)))
             if image == nil {
                 VStack(spacing: 12) {
                     Image(systemName: "gamecontroller").font(.largeTitle)
@@ -193,7 +195,7 @@ struct IridiumConsoleOptions: View {
         try? IridiumRuntimeRegistry.resolve(platform: currentGame.platform, preferred: currentGame.runtimeID)
     }
     private var runtimeDescription: String {
-        guard let runtime = resolvedRuntime else { return "This game's selected runtime is not available in this build." }
+        guard let runtime = resolvedRuntime else { return "This game’s emulator is unavailable." }
         switch runtime.id {
         case "dolphin": return "Some GameCube and Wii games may run slowly."
         case "azahar": return "Some 3DS games may run slowly."
@@ -209,10 +211,26 @@ struct IridiumConsoleOptions: View {
     }
     private var content: some View {
             Form {
+                Group {
+
+                Section {
+                    IridiumGameOptionsHeader(game: IridiumGame(console: currentGame))
+                    if let play {
+                        Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
+                            .disabled(library.working || resolvedRuntime == nil)
+                    }
+                }
                 Section("Runtime") {
                     LabeledContent("Platform", value: game.platform.title)
                     if compatibleRuntimes.isEmpty {
-                        LabeledContent("Runtime", value: "Unavailable in this build")
+                        LabeledContent("Runtime", value: "Unavailable")
+                    } else if compatibleRuntimes.count == 1 {
+                        let runtime = compatibleRuntimes[0]
+                        if resolvedRuntime == nil {
+                            Button("Use \(runtime.name)") {
+                                var changed = currentGame; changed.runtimeID = runtime.id; library.update(changed)
+                            }.disabled(library.working || IridiumConsoleSession.shared.isActive)
+                        } else { LabeledContent("Emulator", value: runtime.name) }
                     } else {
                         Picker("Preferred runtime", selection: Binding(get: {
                             currentGame.runtimeID
@@ -223,23 +241,23 @@ struct IridiumConsoleOptions: View {
                         }.disabled(library.working)
                     }
                     if !runtimeDescription.isEmpty { Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary) }
-                    if resolvedRuntime?.jit == .required { Button("Set Up Launch Support", systemImage: "bolt") { JITCoordinator.shared.showSetup = true } }
+                    if resolvedRuntime?.jit == .required { IridiumJITSetupButton() }
                     if game.platform == .psp {
-                        Toggle("Use JIT", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
+                        Toggle("Faster CPU (JIT)", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
                             var changed = currentGame; changed.pspJIT = value; library.update(changed)
                         }))
                         .disabled(library.working || IridiumConsoleSession.shared.isActive)
                         .accessibilityIdentifier("psp-use-jit")
-                        Text("May improve performance. If unavailable, the game starts without it.")
+                        Text("Off by default. If JIT is unavailable, this game uses the interpreter.")
                             .font(.footnote).foregroundStyle(.secondary)
+                        if currentGame.pspJITEnabled { IridiumJITSetupButton() }
                     }
+                }
+                Section("Controls") {
+                    IridiumGameControlsButton(target: .init(platform: game.platform, title: artwork.title(IridiumGame(console: currentGame)), gameID: game.id))
                 }
                 Section {
                     Button("Rename & Artwork", systemImage: "photo") { editingArtwork = true }
-                    if let play {
-                        Button("Play", systemImage: "play.fill") { dismiss(); play(currentGame) }
-                            .disabled(library.working || resolvedRuntime == nil)
-                    }
                     Button(isFavorite ? "Remove from Favorites" : "Add to Favorites",
                            systemImage: isFavorite ? "heart.fill" : "heart") {
                         var ids = Set(favorites.split(separator: ",").map(String.init))
@@ -248,7 +266,9 @@ struct IridiumConsoleOptions: View {
                     }
                     Button("Remove from Library", role: .destructive) { removing = true }
                 } footer: { Text(saveDescription) }
-            }.iridiumPageSurface().navigationTitle(artwork.title(IridiumGame(console: currentGame)))
+
+                }.iridiumRowSurface()
+}.iridiumPageSurface().navigationTitle("Game Options")
                 .sheet(isPresented: $editingArtwork) { IridiumArtworkEditor(game: IridiumGame(console: currentGame)) }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
                 .confirmationDialog("Remove this library entry? Its files and saves will stay on this device.", isPresented: $removing) {

@@ -15,7 +15,7 @@ struct IridiumSystemGameSettings: View {
         }
     }
     static func routes(for platform: IridiumPlatform) -> [String] {
-        let setup = IridiumConsoleSystem.system(for: platform)?.runtime.jit == .required ? ["Launch Support"] : []
+        let setup = IridiumConsoleSystem.system(for: platform)?.runtime.jit == .required ? ["Performance & Compatibility"] : []
         return setup + games(for: platform).map { "console:" + $0.id.uuidString }
     }
     static func game(for route: String) -> IridiumConsoleGame? {

@@ -79,6 +79,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func validateLaunchAdmission() throws {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
         guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
         guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
               wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }

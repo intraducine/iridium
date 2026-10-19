@@ -210,13 +210,8 @@ import ImageIO
         return nil
     }
     func portraitBackdrop(for game: IridiumGame) async -> (image: UIImage?, position: Double) {
-        let legacyBackground = await legacyBackground(for: game.id)
         let item = appearance(game.id)
-        if IridiumArtworkSourcePolicy.prefersPortraitCover(item, legacyBackground: legacyBackground),
-           let cover = await image(for: game, backdrop: false) {
-            return (cover, item.coverY)
-        }
-        return (await image(for: game, backdrop: true), item.backgroundY)
+        return (await image(for: game, backdrop: false), item.coverY)
     }
 
     private func legacyBackground(for id: UUID) async -> String? {

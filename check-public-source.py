@@ -30,6 +30,9 @@ PUBLIC_SELF_TEST = {
         # Reused producer cache: its 11 complete PEM blocks exactly match the
         # pinned upstream archive's self-test block multiset, byte for byte.
         'cbcc2d7a0a6e9aa9b1a78013f00f9ff9ffe7102bf3074106511f2a07908a30e9',
+        # Xcode 27.1 rebuild: every complete PEM block is byte-identical
+        # to the pinned public crypto-selftests-pk.c source fixture.
+        '791f856b68f4f5d8af72f2198712cec7b5d7e7ee4e90658a1f76f23cb16a8e17',
     },
 }
 # Only reviewed public upstream bytes may bypass the signing-file suffix check.

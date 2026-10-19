@@ -32,11 +32,8 @@ def apply(name, text):
     if last <= first:
         raise ValueError('Madeira artwork destination order changed')
     detail = detail[:first] + replacement + detail[last:]
-    old = 'Text(entry.title).font(.title2.bold()).lineLimit(2)'
-    new = 'Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))).font(.title2.bold()).lineLimit(2)'
-    if detail.count(old) != 1:
-        raise ValueError('Madeira artwork detail title changed')
-    detail = detail.replace(old, new)
+    if detail.count('IridiumGameOptionsHeader(game: IridiumGame(windows: entry))') != 1:
+        raise ValueError('Madeira shared game identity header changed')
     old = '''    @ViewBuilder private func artwork(backdrop: Bool) -> some View {
         if let appID = entry.steamAppID, entry.coverFile == nil {
             SteamGameArtwork(appID: appID)

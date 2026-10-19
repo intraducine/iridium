@@ -27,13 +27,24 @@ struct IridiumPageBackdrop: View {
 
 }
 
+enum IridiumTheme {
+    static let accent = Color(red: 0.66, green: 0.82, blue: 0.76)
+}
+
+struct IridiumSettingsRowSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var opaque
+    func body(content: Content) -> some View {
+        content.listRowBackground(opaque ? Color(uiColor: .secondarySystemGroupedBackground) : Color.white.opacity(0.07))
+    }
+}
+
 struct IridiumPageSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
             .background { IridiumPageBackdrop() }
             .preferredColorScheme(.dark)
-            .tint(Color(red: 0.66, green: 0.82, blue: 0.76))
+            .tint(IridiumTheme.accent)
             .toolbar(.visible, for: .navigationBar)
             .toolbarBackground(.hidden, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
@@ -53,7 +64,7 @@ struct IridiumGlassSurface: ViewModifier {
 
 extension View {
     func iridiumPageSurface() -> some View { modifier(IridiumPageSurface()) }
-    func iridiumRowSurface() -> some View { listRowBackground(Color.white.opacity(0.07)) }
+    func iridiumRowSurface() -> some View { modifier(IridiumSettingsRowSurface()) }
 }
 
 struct IridiumFavoriteButton: View {
@@ -70,5 +81,21 @@ struct IridiumFavoriteButton: View {
         Button { Self.toggle(entry) } label: {
             Label(favorite ? "Remove from Favorites" : "Add to Favorites", systemImage: favorite ? "heart.fill" : "heart")
         }
+    }
+}
+
+struct IridiumGameOptionsHeader: View {
+    let game: IridiumGame
+    @ObservedObject private var artwork = IridiumArtworkModel.shared
+    var body: some View {
+        HStack(spacing: 16) {
+            IridiumGameArtwork(game: game).frame(width: 56, height: 84)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(artwork.title(game)).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                Text(game.platform.title).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }.padding(.vertical, 4).accessibilityIdentifier("gameOptionsHeader")
     }
 }

@@ -35,12 +35,6 @@ enum IridiumArtworkSourcePolicy {
         return result
     }
 
-    /// The portrait cover may stand in for automatic background art, but a
-    /// deliberately selected (or removed) background keeps precedence.
-    static func prefersPortraitCover(_ item: IridiumArtworkAppearance, legacyBackground: String?) -> Bool {
-        !item.customBackground && (item.ignoreLegacyBackground == true || legacyBackground == nil)
-    }
-
     static func needsAutomaticCover(_ item: IridiumArtworkAppearance, legacyCover: String?) -> Bool {
         !item.customCover && (item.ignoreLegacyCover == true || legacyCover == nil)
     }
@@ -90,5 +84,16 @@ enum IridiumArtworkBackPolicy {
             }
         }
         throw failure
+    }
+}
+
+/// Regular tiles and console packaging retain the complete cover. Unusual
+/// Windows art also fits the wide tile; the usual poster keeps its featured crop.
+enum IridiumArtworkImagePolicy {
+    static func fitsCover(featured: Bool, windows: Bool, width: Double, height: Double) -> Bool {
+        guard featured && windows else { return true }
+        guard width > 0, height > 0 else { return false }
+        let ratio = width / height
+        return ratio < 0.5 || ratio > 0.8
     }
 }

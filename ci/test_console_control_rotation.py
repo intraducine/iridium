@@ -21,12 +21,25 @@ def production_geometry():
     start = upstream.index('enum ControlAction:')
     end = upstream.index('final class TouchControlsModel:', start)
     controls = CONTROLS.read_text()
-    return ('import Foundation\n' + upstream[start:end]
+    profiles = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumControlProfiles.swift').read_text()
+    profiles = profiles.replace('import Combine', '').replace(': ObservableObject', '').replace('@Published ', '')
+    runtime = (ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift').read_text()
+    platform = runtime[runtime.index('enum IridiumPlatform:'):runtime.index('struct IridiumRuntimeDescriptor:')]
+    return ('import Foundation\n' + platform + upstream[start:end] + profiles
             + '\nenum TouchControlsModel { static let baseDiameter: CGFloat = 64 }\n'
             + controls[controls.index('enum IridiumConsoleControlLayout {'):])
 
 
 CASES = r'''
+// Fresh editor defaults must pass the actual persistence schema even on
+// the initial zero/short navigation measurement, for every console system.
+for platform in IridiumPlatform.allCases where platform != .windows {
+    for size in [CGSize.zero, CGSize(width: 240, height: 240), CGSize(width: 402, height: 560), CGSize(width: 874, height: 180)] {
+        let controls = IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(platform.rawValue), size: size)
+        let state = IridiumControlLayoutState(controls: controls, visible: true, size: 1, automatic: true, opacity: 0.78)
+        try state.validate(for: platform)
+    }
+}
 func frame(_ control: TouchControl, screen: CGSize, scale: Double) -> CGRect {
     let size = control.action.controlSize(diameter: 64 * CGFloat(control.scale * scale))
     return CGRect(x: CGFloat(control.nx) * screen.width - size.width / 2,

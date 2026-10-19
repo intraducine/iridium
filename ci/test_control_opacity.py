@@ -66,7 +66,7 @@ print("PASS shipping optional opacity schema, legacy default, preset round-trip,
         self.assertIn('LabeledContent("Button opacity"', text)
         self.assertIn('m.controls[i].opacity = IridiumControlOpacity.normalized(value)', text)
         self.assertNotIn('.opacity(session && !m.editing', text)
-        self.assertIn('iridiumLayoutOpacity: session && !m.editing', text)
+        self.assertIn('iridiumLayoutOpacity: iridiumSettings ? m.iridiumSettingsOpacity : session && !m.editing', text)
         button = text[text.index('struct TouchControlButton:'):text.index('    /// 8-way snap. Screen y grows downward')]
         alpha = button.index('.opacity(IridiumControlOpacity.visual(')
         self.assertLess(alpha, button.index('.overlay(outline.stroke'))

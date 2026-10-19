@@ -48,7 +48,7 @@ final class IridiumPSPExecutableLaunch: @unchecked Sendable {
         guard !finished, !startRequested else { return }
         startRequested = true
         guard !JITCoordinator.shared.pspRecoveryPending else {
-            finish(.restart("An earlier network restoration is still pending. Complete Launch Support recovery and reopen Iridium before playing.")); return
+            finish(.restart("An earlier network restoration is still pending. Restore the network settings in JIT setup, then reopen Iridium before playing.")); return
         }
         changed("Inspecting PSP debugger teardown routes…")
         onWorker { [self] in

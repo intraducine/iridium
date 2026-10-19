@@ -17,23 +17,50 @@ import Combine
     }
 }
 
+struct IridiumConnectedDevice: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let symbol: String
+}
+
 /// Observe availability only; never replace the runtime's GameController handlers.
 final class IridiumPhysicalController: ObservableObject {
     static let shared = IridiumPhysicalController()
     @Published private(set) var isActive = false
+    @Published private(set) var connectedDevices: [IridiumConnectedDevice] = []
     @Published var forceTouchVisible = false
     var hidesTouchControls: Bool { isActive && !forceTouchVisible }
     private var observations: [AnyCancellable] = []
     private init() {
         refresh()
         for name in [Notification.Name.GCControllerDidConnect, .GCControllerDidDisconnect,
+                     .GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
+                     .GCMouseDidConnect, .GCMouseDidDisconnect,
                      UIApplication.didBecomeActiveNotification] {
             observations.append(NotificationCenter.default.publisher(for: name)
                 .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() })
         }
     }
     func refresh() {
-        let active = GCController.controllers().contains { $0.extendedGamepad != nil }
+        let controllers = GCController.controllers()
+        var devices = controllers.map { device in
+            IridiumConnectedDevice(id: String(describing: ObjectIdentifier(device)), name: device.vendorName ?? "Controller", symbol: "gamecontroller")
+        }
+        // iOS exposes all keyboards as one coalesced device; it cannot identify each keyboard or distinguish trackpads.
+        if let keyboard = GCKeyboard.coalesced {
+            devices.append(.init(id: "keyboard", name: keyboard.vendorName ?? "Keyboard", symbol: "keyboard"))
+        }
+        devices += GCMouse.mice().compactMap { device in
+            var name = device.vendorName ?? "Mouse / Pointer"
+            #if targetEnvironment(simulator)
+            // CoreDevice exposes synthetic touch bridges as mice; they are not pointer devices.
+            if name.hasPrefix("CoreDevice touchscreenGesture") { return nil }
+            if name.hasPrefix("CD-") { name.removeFirst(3) }
+            #endif
+            return IridiumConnectedDevice(id: String(describing: ObjectIdentifier(device)), name: name, symbol: "computermouse")
+        }
+        connectedDevices = devices
+        let active = controllers.contains { $0.extendedGamepad != nil }
         if active != isActive { forceTouchVisible = false }
         isActive = active
     }

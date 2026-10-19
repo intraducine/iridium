@@ -256,6 +256,7 @@ def prepare():
     info = app / 'Madeira/Info.plist'
     data = plistlib.loads(info.read_bytes())
     data['CFBundleDisplayName'] = 'Iridium'
+    data['LSApplicationQueriesSchemes'] = list(dict.fromkeys(data.get('LSApplicationQueriesSchemes', []) + ['livecontainer', 'livecontainer2', 'livecontainer3']))
     data['IridiumMadeiraRevision'] = REVISION
     data['IridiumPPSSPPRevision'] = PSP_REVISION
     if (os.environ.get('IRIDIUM_PHASE3') == '1'):

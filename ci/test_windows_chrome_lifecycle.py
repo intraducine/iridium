@@ -34,7 +34,9 @@ class WindowsChromeSourceTests(unittest.TestCase):
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
         guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
-        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, ''),
+        settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
+        self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
+        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, ''),
                          original[original.index(start):original.index(end)])
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):

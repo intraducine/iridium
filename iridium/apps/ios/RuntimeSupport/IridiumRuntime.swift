@@ -128,17 +128,17 @@ struct IridiumConsoleSystem: Identifiable {
     static var all: [Self] {
         IridiumRuntimeRegistry.all.compactMap { runtime in
             switch runtime.id {
-            case "sameboy": return Self(runtime: runtime, title: "Game Boy", primaryPlatform: .gameBoy,
+            case "sameboy": return Self(runtime: runtime, title: "SameBoy · Game Boy / Color", primaryPlatform: .gameBoy,
                 extensions: ["gb", "gbc"], guidance: "Game Boy and Game Boy Color games use SameBoy.")
-            case "ppsspp": return Self(runtime: runtime, title: "PPSSPP", primaryPlatform: .psp,
+            case "ppsspp": return Self(runtime: runtime, title: "PPSSPP · PSP", primaryPlatform: .psp,
                 extensions: ["elf", "iso", "cso", "pbp"], guidance: "PSP games use PPSSPP. Open a game's menu for display and save-state options.")
-            case "dolphin": return Self(runtime: runtime, title: "Dolphin", primaryPlatform: .gameCube,
+            case "dolphin": return Self(runtime: runtime, title: "Dolphin · GameCube / Wii", primaryPlatform: .gameCube,
                 extensions: ["dol", "gcm", "iso", "rvz"], guidance: "GameCube and Wii games use Dolphin. Some games may run slowly.")
-            case "azahar": return Self(runtime: runtime, title: "Azahar", primaryPlatform: .nintendo3DS,
+            case "azahar": return Self(runtime: runtime, title: "Azahar · Nintendo 3DS", primaryPlatform: .nintendo3DS,
                 extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
-            case "play": return Self(runtime: runtime, title: "Play!", primaryPlatform: .playStation2,
+            case "play": return Self(runtime: runtime, title: "Play! · PlayStation 2", primaryPlatform: .playStation2,
                 extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Reopen Iridium after finishing a game.")
-            case "flycast": return Self(runtime: runtime, title: "Flycast", primaryPlatform: .dreamcast,
+            case "flycast": return Self(runtime: runtime, title: "Flycast · Dreamcast / Arcade", primaryPlatform: .dreamcast,
                 extensions: ["elf", "cdi", "chd", "gdi", "cue", "zip"], guidance: "Dreamcast and arcade games use Flycast.")
             default: return nil
             }

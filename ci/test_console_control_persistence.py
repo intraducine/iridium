@@ -19,13 +19,18 @@ def production_fragment():
     frontend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(frontend)
     generated = frontend.overlay('ContentView.swift', SOURCE.read_text())
-    start = generated.index('    @Published var iridiumConsoleScope: UUID?')
+    start = generated.index('    struct SettingsContext {')
     end = generated.index('    private static var url: URL {', start)
     return generated[start:end].replace('@Published ', '')
 
 
 STUBS = r'''
 import Foundation
+
+enum IridiumPlatform: String, Codable { case windows, gameBoy, gameBoyColor, psp, gameCube, wii, nintendo3DS, playStation2, dreamcast, arcade }
+enum IridiumRuntimeError: Error { case busy }
+struct Game { var platform: IridiumPlatform }
+final class IridiumConsoleSession { static let shared = IridiumConsoleSession(); var game: Game? }
 
 enum ControlAction: Codable, Equatable {
     case pad(String)
@@ -49,6 +54,7 @@ final class Model {
     var layoutID: String? { didSet { iridiumSaveConsole() } }
     var selected: UUID?
     var editing = false
+    var needsDefaultLayout = false
 '''
 
 CASES = r'''
@@ -256,6 +262,84 @@ model.iridiumResizeConsole(defaults: initial)
 model.iridiumEndConsole(); assertWindows()
 precondition(defaults.data(forKey: key(games[14])) == customBytes)
 print("PASS: console persistence preserves Windows, per-game edits and no-edit bytes across repeated rotation")
+
+do {
+func verify(_ condition: @autoclosure () throws -> Bool) throws { let value = try condition(); precondition(value) }
+// A Settings editor stages another platform without a runtime session. Only its
+// owner can restore the singleton, and a denied/nested begin changes nothing.
+let owner = UUID(), stale = UUID()
+let staged = IridiumControlLayoutState(controls: initial, visible: true, size: 0.75, opacity: 0.4)
+do { try model.iridiumBeginSettings(owner: owner, platform: .psp, state: staged, admission: false); preconditionFailure() } catch {}
+assertWindows()
+try model.iridiumBeginSettings(owner: owner, platform: .psp, state: staged, admission: true)
+try verify(model.iridiumSettingsContext?.platform == .psp && model.editing)
+model.controls[0].nx = 0.83; model.visible = false; model.sizeScale = 1.9
+try verify(!model.iridiumEndSettings(owner: stale))
+do { try model.iridiumBeginSettings(owner: stale, platform: .gameBoy, state: staged, admission: true); preconditionFailure() } catch {}
+model.iridiumBeginConsole(UUID(), defaults: initial, visible: true)
+try verify(model.iridiumConsoleScope == nil)
+try verify(model.iridiumEndSettings(owner: owner)); assertWindows()
+try verify(!model.iridiumEndSettings(owner: owner))
+
+// Exercise the shipping versioned profile store with isolated disk/defaults.
+let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: root) }
+let suite = "IridiumProfileTests." + UUID().uuidString
+let preferences = UserDefaults(suiteName: suite)!
+defer { preferences.removePersistentDomain(forName: suite) }
+let url = root.appendingPathComponent("profiles.json")
+let store = IridiumControlProfileStore(url: url, defaults: preferences)
+let game = UUID(), other = UUID()
+let built = IridiumControlLayoutState(controls: initial, visible: true, size: 1, automatic: true, opacity: 0.78)
+var custom = built; custom.controls[0].nx = 0.8; custom.automatic = nil
+let profile = try store.saveProfile(name: "PSP custom", platform: .psp, layout: custom)
+try store.set(.init(profileID: profile), platform: .psp, gameID: nil)
+try verify(try store.resolve(platform: .psp, gameID: game, builtIn: built) == custom)
+// Preference-only legacy records inherit geometry without making custom system
+// positions responsive to the player's built-in rotation defaults.
+var legacy = built; legacy.visible = false; legacy.size = 1.25
+let legacyBytes = try JSONEncoder().encode(legacy)
+preferences.set(legacyBytes, forKey: key(game))
+let inherited = try store.resolve(platform: .psp, gameID: game, builtIn: built)
+try verify(inherited.controls == custom.controls && inherited.automatic == nil && !inherited.visible && inherited.size == 1.25)
+try store.set(.init(layout: built), platform: .gameBoy, gameID: other)
+try store.set(.inherit, platform: .psp, gameID: game)
+try verify(try store.resolve(platform: .psp, gameID: game, builtIn: built) == custom)
+try verify(preferences.data(forKey: key(game)) == legacyBytes)
+try store.set(.init(profileID: profile), platform: .psp, gameID: game)
+try store.deleteProfile(profile)
+try verify(try store.resolve(platform: .psp, gameID: game, builtIn: built) == custom)
+try verify(try store.resolve(platform: .gameBoy, gameID: other, builtIn: built) == built)
+let reopened = IridiumControlProfileStore(url: url, defaults: preferences)
+try verify(reopened.document == store.document)
+// Atomic write failure cannot publish an unsaved selection.
+let failing = IridiumControlProfileStore(url: url, defaults: preferences, write: { _, _ in throw CocoaError(.fileWriteNoPermission) })
+let disk = try Data(contentsOf: url), before = failing.document
+do { try failing.set(.inherit, platform: .psp, gameID: game); preconditionFailure() } catch {}
+try verify(failing.document == before && (try Data(contentsOf: url)) == disk)
+// Corrupt/future documents and external replacement/deletion are read-only.
+for data in [Data("broken".utf8), Data("{\"version\":999,\"profiles\":[],\"systems\":{},\"games\":{}}".utf8)] {
+    try data.write(to: url)
+    let rejected = IridiumControlProfileStore(url: url, defaults: preferences)
+    do { try rejected.set(.inherit, platform: .psp, gameID: game); preconditionFailure() } catch {}
+    try verify((try Data(contentsOf: url)) == data)
+}
+try disk.write(to: url)
+let deleted = IridiumControlProfileStore(url: url, defaults: preferences)
+try FileManager.default.removeItem(at: url)
+do { try deleted.set(.inherit, platform: .psp, gameID: game); preconditionFailure() } catch {}
+try verify(!FileManager.default.fileExists(atPath: url.path))
+// Bad legacy bytes stay unchanged until an explicit additive reset shadows them.
+let recovery = IridiumControlProfileStore(url: root.appendingPathComponent("recovery.json"), defaults: preferences)
+let bad = Data("legacy damaged".utf8); preferences.set(bad, forKey: key(game))
+do { _ = try recovery.resolve(platform: .psp, gameID: game, builtIn: built); preconditionFailure() } catch {}
+try recovery.set(.inherit, platform: .psp, gameID: game)
+try verify(try recovery.resolve(platform: .psp, gameID: game, builtIn: built) == built)
+try verify(preferences.data(forKey: key(game)) == bad)
+print("PASS: staged ownership/cancel, profile inheritance/reset/delete, rotation, atomic failure, corrupt/future and external disk changes")
+}
+
 '''
 
 
@@ -272,7 +356,7 @@ class ConsoleControlPersistenceTests(unittest.TestCase):
 
     def test_no_edit_guard_applies_to_all_records(self):
         code = production_fragment()
-        self.assertIn('if value == iridiumConsoleBaseline { return }', code)
+        self.assertIn('if value == iridiumConsoleBaseline &&', code)
         save = code[code.index('    func iridiumSaveConsole()'):code.index('    func iridiumEndConsole()')]
         self.assertIn('iridiumConsoleBaseline = value', save)
         self.assertLess(save.index('if value == iridiumConsoleBaseline'), save.index('JSONEncoder().encode'))
@@ -282,9 +366,11 @@ class ConsoleControlPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='iridium-console-persistence-') as directory:
             root = Path(directory)
             source = root / 'main.swift'
-            source.write_text(STUBS + production_fragment() + CASES)
+            profiles = (ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumControlProfiles.swift').read_text()
+            profiles = profiles.replace('import Combine', '').replace(': ObservableObject', '').replace('@Published ', '')
+            source.write_text(STUBS.split('final class Model {')[0] + profiles + '\nfinal class Model {' + STUBS.split('final class Model {')[1] + production_fragment() + CASES)
             executable = root / ('ConsolePersistence' + root.name.replace('-', ''))
-            subprocess.run(['swiftc', '-swift-version', '5', str(source), '-o', str(executable)],
+            subprocess.run(['swiftc', '-module-cache-path', str(root/'cache'), '-swift-version', '5', str(source), '-o', str(executable)],
                            check=True, timeout=90)
             subprocess.run([str(executable)], check=True, timeout=30)
 

@@ -10,7 +10,7 @@ struct IridiumConsolePlayer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var keyboardFocus: Bool
     @AppStorage("IridiumConsoleTouchControls") private var touchEnabled = true
-    @AppStorage("IridiumConsoleControlOpacity") private var controlOpacity = 0.78
+    private var controlOpacity: Binding<Double> { Binding(get: { controls.iridiumConsoleOpacity }, set: { controls.iridiumConsoleOpacity = $0; controls.iridiumSaveConsole() }) }
     @State private var analogKeys: Set<String> = []
     @State private var inputGeneration = 0
     @State private var menuPage = "Session"
@@ -75,7 +75,8 @@ struct IridiumConsolePlayer: View {
                 .onAppear {
                     if let game = session.game {
                         controls.iridiumBeginConsole(game.id,
-                            defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds), visible: touchEnabled)
+                            defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds), visible: touchEnabled, platform: game.platform)
+                        controls.iridiumConsoleSaveFailure = { LibraryModel.shared.error = $0 }
                     }
                 }
         }
@@ -174,7 +175,7 @@ struct IridiumConsolePlayer: View {
                                     Text(controller.forceTouchVisible ? "Touch controls stay visible until the controller disconnects." : "Touch controls hide automatically with a controller. Choose Use Touch Controls to show them temporarily.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
-                                HStack { Text("Opacity"); Slider(value: $controlOpacity, in: 0.35...1) }.padding(.vertical, 12)
+                                HStack { Text("Opacity"); Slider(value: controlOpacity, in: 0.15...1); Text("\(Int(controls.iridiumConsoleOpacity * 100))%").monospacedDigit() }.padding(.vertical, 12)
                                 menuRow("Edit Controls", "slider.horizontal.3")
                                 IridiumControlFeedbackSettings()
                                 if controller.isActive {
@@ -286,8 +287,8 @@ struct IridiumConsolePlayer: View {
                 controller: controller.isActive, overrideEnabled: controller.forceTouchVisible) + ["Edit Controls"]
             if value == "up" || value == "down" { menuGuided = true; menuFocus = IridiumPlayerMenuNavigation.next(menuFocus, order: order, command: value) }
             if value == "accept" { activate(order.contains(menuFocus) ? menuFocus : order[0]) }
-            if value == "left" { controlOpacity = max(0.35, controlOpacity - 0.1) }
-            if value == "right" { controlOpacity = min(1, controlOpacity + 0.1) }
+            if value == "left" { controlOpacity.wrappedValue = max(0.15, controlOpacity.wrappedValue - 0.1) }
+            if value == "right" { controlOpacity.wrappedValue = min(1, controlOpacity.wrappedValue + 0.1) }
             return
         }
         if menuPage == "Help" {

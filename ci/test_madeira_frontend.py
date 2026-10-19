@@ -359,7 +359,11 @@ class FrontendImportTests(unittest.TestCase):
         artwork = 'struct LibraryArtwork: View'
         after_artwork = '/// A pseudo-random sequence'
         library_view = 'struct LibraryView: View'
-        self.assertEqual(original[:original.index(artwork)],
+        # The profile-store integration intentionally updates the control
+        # snapshot/apply/save methods. The page overlay may change nothing else.
+        import madeira_control_settings
+        controls = madeira_control_settings.library_model(original)
+        self.assertEqual(controls[:controls.index(artwork)],
                          rendered[:rendered.index(artwork)])
         self.assertEqual(original[original.index(after_artwork):original.index(library_view)],
                          rendered[rendered.index(after_artwork):rendered.index(library_view)])
@@ -377,10 +381,14 @@ class FrontendImportTests(unittest.TestCase):
             # The JIT request lifecycle is an explicit overlay. Providers,
             # pairing storage and all other non-view code must remain exact.
             expected = madeira_jit_lifecycle.apply(name, text)
+            if name == 'JITSetup.swift':
+                expected = expected.replace('let message = "StikDebug is not installed. Install it or choose Built-in StikJIT."', 'let message = IridiumStikDebugRoute.current.unavailableMessage')
+                expected = expected.replace('StikDebug is installed, so Madeira will open it directly.', 'The selected StikDebug route is detected.').replace('StikDebug was not detected, so Madeira will use its built-in helper.', 'The selected StikDebug route was not detected. Automatic will use the built-in helper.')
             self.assertEqual(expected[:expected.index(boundary)], changed[:changed.index(boundary)])
             if name == 'JITSetup.swift':
                 start = '    private func enableResolved('
                 end = '    func prepareBuiltIn('
+                text = text.replace('let message = "StikDebug is not installed. Install it or choose Built-in StikJIT."', 'let message = IridiumStikDebugRoute.current.unavailableMessage')
                 self.assertEqual(madeira_presentation.between(text, start, end),
                                  madeira_presentation.between(changed, start, end))
         for name in ['GamepadInput.swift', 'HardwareInput.swift', 'SteamCloud.swift', 'SteamInstall.swift', 'SavesAndShortcuts.swift']:
@@ -414,7 +422,7 @@ class FrontendImportTests(unittest.TestCase):
             self.assertEqual(madeira_presentation.between(original, start, end),
                              madeira_presentation.between(rendered, start, end))
         form = madeira_presentation.between(rendered, 'struct LibraryDetail: View {', 'struct BCDGameValues {')
-        self.assertEqual(form.count('Button("Reset to Recommended"'), 1)
+        self.assertEqual(form.count('Button(recommended == nil ? "Clear Game Configuration" : "Restore Game Configuration"'), 1)
         self.assertIn('GameRecommendations.question(recommended', form)
         self.assertIn('LibraryPrefs.setAVX(on, for: entry.windowsPath)', form)
         self.assertIn('LibraryPrefs.setWineVCRT(on, for: entry.windowsPath)', form)
@@ -423,14 +431,18 @@ class FrontendImportTests(unittest.TestCase):
         self.assertIn('static func suppressing(touchpad: Bool, desktop: Bool)', pointer)
         self.assertIn('case .auto: return padOverlay && !touchpad && !desktop', pointer)
         self.assertIn('Section("Systems")', rendered)
-        self.assertIn('case "Madeira": return ["Launch Support"', rendered)
+        self.assertIn('case "Madeira · Windows": return ["Display"', rendered)
         self.assertIn('ForEach(IridiumConsoleSystem.all) { system in', rendered)
         self.assertIn('IridiumConsoleSystem.all.map(\\.title)', rendered)
         self.assertIn('IridiumConsoleSystem.system(titled: page)', rendered)
         self.assertIn('return IridiumSystemGameSettings.routes(for: system.primaryPlatform)', rendered)
         self.assertIn('IridiumConsoleOptions(game: game, embedded: true)', rendered)
         self.assertIn('.toolbar { settingsToolbar }.navigationBarBackButtonHidden()', rendered)
-        self.assertIn('if iridiumPages.first == "Madeira" { ToolbarItem', rendered)
+        toolbar = madeira_presentation.between(rendered, '    @ToolbarContentBuilder private var settingsToolbar:', '    private func switchTab(')
+        self.assertNotIn('Enable JIT', toolbar)
+        self.assertIn('ToolbarItem(placement: .confirmationAction)', toolbar)
+        self.assertIn('.navigationTitle("Madeira")', rendered)
+        self.assertIn('.navigationTitle(system.runtime.name)', rendered)
         hardware = BUILD.overlay('HardwareInput.swift', (folder / 'HardwareInput.swift').read_text())
         self.assertIn('iridiumTrackpadActive && baseFocused', hardware)
         self.assertIn('&& cursorState.shown != 0', hardware)

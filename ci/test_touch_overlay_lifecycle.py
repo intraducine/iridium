@@ -38,6 +38,7 @@ final class Model {
     var controls = [TouchControl(action: .pad("A")), TouchControl(action: .pad("LS"))]
     var visible = true, editing = false
     var iridiumConsoleScope: UUID?
+    var iridiumSettingsContext: UUID?
 }
 final class Console { var isActive = false }
 final class Library { var blocksGameplayTouch = true }
@@ -69,6 +70,8 @@ precondition(pad.state.connected && !TouchMouseGate.padOverlay)
 overlay.iridiumController.hidesTouchControls = false; refresh(); press(true) // Use touch controls.
 overlay.m.editing = true; refresh(); press(false)
 overlay.m.editing = false; refresh(); press(true)
+overlay.m.iridiumSettingsContext = UUID(); refresh(); press(false)
+overlay.m.iridiumSettingsContext = nil; refresh(); press(true)
 overlay.console.isActive = true; overlay.m.iridiumConsoleScope = UUID(); refresh(); press(false)
 overlay.console.isActive = false; refresh(); press(false) // Retained scope still owns controls.
 overlay.m.iridiumConsoleScope = nil; refresh(); press(true) // Published scope hook refreshes unchanged IDs.

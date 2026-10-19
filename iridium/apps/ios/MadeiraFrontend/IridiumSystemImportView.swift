@@ -6,10 +6,15 @@ struct IridiumSystemSetupSections: View {
     var platform: IridiumPlatform? = nil
     var body: some View {
         Section {
-            LabeledContent("System", value: system.subtitle)
+            LabeledContent("Platforms", value: system.subtitle)
             LabeledContent("Emulator", value: system.runtime.name)
             if system.runtime.jit == .required {
-                Button("Set Up Launch Support", systemImage: "bolt") { JITCoordinator.shared.showSetup = true }
+                IridiumJITSetupButton()
+            }
+        }
+        Section("Default Controls") {
+            ForEach(system.platforms.filter { $0 != .gameBoyColor }, id: \.self) { platform in
+                IridiumGameControlsButton(target: .init(platform: platform, title: platform.title), label: platform.title + " Layout & Profiles")
             }
         }
         Section {

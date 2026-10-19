@@ -85,6 +85,16 @@ enum IridiumConsoleControlLayout {
         return value
     }
 
+    /// Navigation can first measure the editor at zero or at a short transition
+    /// size. Generate normalized defaults in a usable reference canvas; fitting
+    /// still follows the actual canvas without rewriting the saved layout.
+    static func editorDefaults(profile: IridiumPlayerProfile, size: CGSize) -> [TouchControl] {
+        let wide = size.width > size.height
+        let reference = CGSize(width: max(wide ? 667 : 320, size.width),
+                               height: max(wide ? 320 : 548, size.height))
+        return defaults(profile: profile, bounds: CGRect(origin: .zero, size: reference))
+    }
+
     static func defaults(profile: IridiumPlayerProfile, bounds: CGRect) -> [TouchControl] {
         let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: true)
         func control(_ action: String, _ frame: CGRect) -> TouchControl {

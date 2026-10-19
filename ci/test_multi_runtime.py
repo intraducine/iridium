@@ -98,7 +98,7 @@ class MultiRuntimeTests(unittest.TestCase):
         source = (upstream / 'ContentView.swift').read_text()
         result = overlay.overlay('ContentView.swift', source)
         self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'), 4)
-        self.assertIn('guard !IridiumConsoleSession.shared.isActive else { return nil }', result)
+        self.assertIn('guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }', result)
         # A changed entry point must fail the declared overlay rather than
         # silently removing the exclusive-runtime check.
         with self.assertRaises(ValueError):
@@ -136,6 +136,10 @@ final class LibraryModel {
     var current: UUID?
     var launching = false
 }
+final class TouchControlsModel {
+    static let shared = TouchControlsModel()
+    var iridiumSettingsContext: UUID?
+}
 final class Preflight {
     enum Phase { case idle, restartRequired }
     var phase = Phase.idle
@@ -162,6 +166,8 @@ rejects(.busy)
 preflight.ownership.release(first)
 LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
 LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
+TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)
+TouchControlsModel.shared.iridiumSettingsContext = nil
 wineRunning = 1; rejects(.busy); wineRunning = 0
 serverRunning = 1; rejects(.busy); serverRunning = 0
 // Zero liveness flags alone cannot authorize a post-Windows console launch.
