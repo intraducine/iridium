@@ -7,7 +7,7 @@ class ProductionUXTests(unittest.TestCase):
     def test_setup_navigation_resume_and_conditional_capabilities(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumOnboarding.swift').read_text()
         core=source[source.index('enum OnboardingRules'):source.index('struct OnboardingView:')].replace('UserDefaults.standard','fixtureDefaults')
-        fixture='''import SwiftUI\nimport Combine\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static func flag(_ key:String)->Bool {true} }\nenum SteamSignIn { static let isEnabled=true }\nenum MadeiraDock { static let enabled=true }\nenum WineMonoModel { static let available=false }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String? }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nfunc wine_process_is_running()->Int32 {0}\n'''
+        fixture='''import SwiftUI\nimport Combine\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static func flag(_ key:String)->Bool {true} }\nenum SteamSignIn { static let isEnabled=true }\nenum MadeiraDock { static let enabled=true }\nenum WineMonoModel { static var available=false }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String?;var launching=false }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nfunc wine_process_is_running()->Int32 {0}\nvar serverRunning:Int32=0\nfunc wineserver_is_running()->Int32 {serverRunning}\n'''
         checks='''
 @main struct Checks {
  @MainActor static func main() {
@@ -28,7 +28,33 @@ class ProductionUXTests(unittest.TestCase):
   resumed.back();precondition(resumed.step == .options);resumed.finish()
   precondition(fixtureDefaults.string(forKey:"iridium.setup.step")==nil)
   let completed=OnboardingModel();completed.presentIfNeeded();precondition(!completed.presented)
-  IridiumConsoleSession.shared.isActive=true;completed.rerun();precondition(!completed.presented)
+  let context=OnboardingModel();context.go(.library);context.chooseSteam()
+  precondition(context.step == .signIn && context.steam && context.steps.contains(.dockClient) && context.steps.contains(.jit))
+  let gameID="11111111-2222-3333-4444-555555555555"
+  context.recordGame(id:gameID,title:"Homebrew PSP",platform:"psp",requiredJIT:false,optionalJIT:true)
+  precondition(!context.steps.contains(.jit) && !context.steam && context.optionalJIT)
+  context.pspJIT=true;precondition(context.steps.contains(.jit));context.pspJIT=false
+  context.recordGame(id:gameID,title:"PS2 game",platform:"playStation2",requiredJIT:true,optionalJIT:false)
+  precondition(context.steps.contains(.jit) && context.consoleJIT && !context.pspJIT)
+  context.go(.options);context.skip()
+  let persisted=OnboardingModel();persisted.rerun()
+  precondition(persisted.step == .options && persisted.firstGameID==gameID && persisted.firstGameTitle=="PS2 game" && persisted.requiresJIT)
+  persisted.finishOpeningLibrary();precondition(persisted.takeLibraryAction() == .game(gameID) && persisted.takeLibraryAction()==nil)
+  persisted.finishOpeningLibrary(gameAvailable:false);precondition(persisted.takeLibraryAction() == .files)
+  persisted.chooseFiles();persisted.recordGame(id:gameID,title:"Game Boy game",platform:"gameBoy",requiredJIT:false,optionalJIT:false)
+  precondition(!persisted.steps.contains(.jit))
+  let source=OnboardingModel();source.go(.library);source.chooseSteam();source.finishOpeningLibrary()
+  precondition(source.takeLibraryAction() == .steam && source.takeLibraryAction()==nil)
+  source.chooseFiles();source.finishOpeningLibrary();precondition(source.takeLibraryAction() == .files)
+  fixtureDefaults.set(true,forKey:"iridium.setup.windows");fixtureDefaults.set(false,forKey:"iridium.setup.needsMono")
+  fixtureDefaults.set("wineMono",forKey:"iridium.setup.step")
+  let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .wineMono && legacy.needsMono)
+  WineMonoModel.available=true
+  let installed=OnboardingModel();installed.rerun();precondition(installed.step == .wineMono)
+  WineMonoModel.available=false
+  LibraryModel.shared.launching=true;completed.rerun();precondition(!completed.presented)
+  LibraryModel.shared.launching=false;serverRunning=1;completed.rerun();precondition(!completed.presented)
+  serverRunning=0;IridiumConsoleSession.shared.isActive=true;completed.rerun();precondition(!completed.presented)
   print("PASS setup: every option combination, Back/Next boundaries, Skip/resume, one presentation owner and session admission")
  }
 }

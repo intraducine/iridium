@@ -78,3 +78,18 @@ packaging and never read a future engine pin’s UI; they are not an upgrade req
 A compatible upstream UI redesign requires no source rewriting. A native API,
 resource layout, build recipe or integration patch change can still require
 adapter/build work; this is not a plug-and-play engine upgrade guarantee.
+
+## First-game setup
+
+Onboarding is maintained in `MadeiraFrontend/IridiumOnboarding.swift`. It opens
+existing Files import, Steam sign-in/library, controls and JIT screens rather
+than implementing parallel services. A successful import records its game ID and
+runtime capability for guidance. PSP's optional JIT choice writes the existing
+per-game setting. Windows controls keep their legacy layout fallback.
+
+Setup preferences use the existing `iridium.setup` namespace. Revision 2 retains
+raw step identifiers and exact skip/resume positions, including the former .NET
+step. Completion queues one library action and consumes it after the owning modal
+has dismissed; missing game records return to Files rather than selecting a stale
+ID. Native game/launch/server admission remains authoritative. No library schema,
+save path, JIT readiness flag or engine pin changes as part of this flow.

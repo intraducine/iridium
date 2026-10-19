@@ -265,7 +265,7 @@ struct IridiumLibraryView: View {
             }
             .sheet(isPresented: Binding(get: { features != nil }, set: { if !$0 { features = nil } }), onDismiss: {
                 if let entry = pendingDetail { detail = entry; pendingDetail = nil }
-                restoreKeyboardFocus()
+                completeOnboardingAction(); restoreKeyboardFocus()
             }) {
                 if features == 0 {
                         IridiumSteamView(startDock: startDock) { entry in
@@ -287,7 +287,14 @@ struct IridiumLibraryView: View {
             .sheet(isPresented: $choosingAdd, onDismiss: finishAdding) {
                 IridiumAddGameView(choose: { pendingAdd = $0; choosingAdd = false })
             }
-            .fullScreenCover(isPresented: onboarding.binding(for: .library), onDismiss: restoreKeyboardFocus) { OnboardingView() }
+            .fullScreenCover(isPresented: onboarding.binding(for: .library), onDismiss: {
+                onboarding.presentationDidDismiss(); restoreKeyboardFocus()
+            }) { OnboardingView() }
+            .onChange(of: onboarding.dismissalGeneration) { _, _ in
+                guard onboarding.libraryAction != nil else { return }
+                if features != nil { pendingDetail = nil; features = nil }
+                else { completeOnboardingAction() }
+            }
             .confirmationDialog("Enable JIT to Play", isPresented: Binding(get: { supportPrompt }, set: { value in
                 supportPrompt = value
                 if !value && !supportLaunchRequested { pendingSupportGame = nil }
@@ -564,6 +571,15 @@ struct IridiumLibraryView: View {
         case .steam: features = 0
         case .files: importingFiles = true
         default: break
+        }
+    }
+    private func completeOnboardingAction() {
+        guard !onboarding.presented else { return }
+        switch onboarding.takeLibraryAction() {
+        case .files: importingFiles = true
+        case .steam: features = 0
+        case .game(let id): if let id = UUID(uuidString: id) { select(id) }
+        case nil: break
         }
     }
     private func restoreKeyboardFocus() {

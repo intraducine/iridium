@@ -1344,7 +1344,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             model.showDetail = nil
             selected = model.entries.first { $0.id == id }
         }
-        .fullScreenCover(isPresented: onboarding.binding(for: .settings)) { OnboardingView() }
+        .fullScreenCover(isPresented: onboarding.binding(for: .settings), onDismiss: { onboarding.presentationDidDismiss() }) { OnboardingView() }
         .onAppear {
             // An ended desktop session's surface never stays over the library.
             EndedSessionSurface.install(); EndedSessionSurface.hide(reason: "library-appeared")
