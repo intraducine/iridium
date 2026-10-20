@@ -16,6 +16,50 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / '.build/iridium-ui-preview'
 
 
+def prepare_catalog_preview(destination):
+    """Isolate screenshot data in generated Simulator copies, before account IO.
+
+    IridiumSteamView/SteamGamesSection remain the production views. Only the
+    --screen steam-preview route gets sample catalog state, with no credentials,
+    downloads, persisted account cache, installed records or background session.
+    """
+    owned = destination / 'SteamOwnedLibrary.swift'
+    text = owned.read_text()
+    enabled = 'static var enabled: Bool {'
+    assert text.count(enabled) == 1
+    text = text.replace(enabled, enabled + '\n        if IridiumPreviewSupport.isSteamPreview { return true }\n        return')
+    for signature in ['func start() {', 'func reconcileSession() {',
+                      'func refreshLibrary(interactive: Bool = true) async {']:
+        assert text.count(signature) == 1
+        text = text.replace(signature, signature + '\n        if IridiumPreviewSupport.isSteamPreview { return }')
+    # This extension is in the generated model's own file so private setters
+    # stay private in production. No production backend/model source is edited.
+    text += '''
+#if IRIDIUM_UX_PREVIEW
+extension SteamOwnedLibrary {
+    func applyIridiumPreview(_ games: [SteamOwnedGame]) {
+        guard IridiumPreviewSupport.isSteamPreview else { return }
+        signedIn = true
+        owned = games
+        libraryUpdated = Date()
+    }
+}
+#endif
+'''
+    owned.write_text(text)
+    games = destination / 'SteamGames.swift'
+    text = games.read_text()
+    signature = 'func refresh() {'
+    assert text.count(signature) == 1
+    text = text.replace(signature, signature + '\n        if IridiumPreviewSupport.isSteamPreview { return }')
+    # The Simulator bundle intentionally has no dockhost.exe. Show the same
+    # production catalog section without pretending a runtime is installed.
+    signature = '@MainActor static var shown: Bool {'
+    assert text.count(signature) == 1
+    text = text.replace(signature, signature + '\n        if IridiumPreviewSupport.isSteamPreview { return true }')
+    games.write_text(text)
+
+
 def prepare():
     source = ROOT / '.build/madeira-frontend/app'
     app = OUTPUT / 'app'
@@ -28,7 +72,7 @@ def prepare():
         relative = file.relative_to(source / 'Madeira')
         if file.is_file() and (file.suffix in {'.swift', '.h', '.c', '.metal'} or
                               relative.parts[0] in {'Assets.xcassets', 'licenses', 'legal'} or
-                              str(relative) in {'Info.plist', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut'}):
+                              str(relative) in {'Info.plist', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut', 'madeira-jit.js'}):
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(file, target)
@@ -52,7 +96,7 @@ def prepare():
         elif phase['isa'] == 'PBXFrameworksBuildPhase':
             phase['files'] = [b for b in phase['files'] if objects[objects[b]['fileRef']].get('sourceTree') == 'SDKROOT' and 'MetalFX' not in path(b)]
         else:
-            phase['files'] = [b for b in phase['files'] if path(b) in {'Assets.xcassets', 'licenses', 'legal', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut'}]
+            phase['files'] = [b for b in phase['files'] if path(b) in {'Assets.xcassets', 'licenses', 'legal', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut', 'madeira-jit.js'}]
             if (OUTPUT / 'PreviewSamples/samples.json').is_file():
                 objects['ABC000000000000000000003'] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='../PreviewSamples', sourceTree='SOURCE_ROOT')
                 objects['ABC000000000000000000004'] = dict(isa='PBXBuildFile', fileRef='ABC000000000000000000003')
@@ -84,6 +128,7 @@ def prepare():
         assert text.count(signature) == 1
         text = text.replace(signature, signature + '\n        error = "JIT is only available on an iPhone or iPad."\n        completion(.failure(NSError(domain: "IridiumPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "JIT is only available on an iPhone or iPad."])))\n        return\n')
     jit.write_text(text)
+    prepare_catalog_preview(destination)
     # Generated from the real bridging declarations, so C ABI signatures stay exact.
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], text=True).strip()
     ast = subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', 'clang', '-fmodules', '-x', 'objective-c',

@@ -369,6 +369,7 @@ struct OnDevicePairingPanel: View {
 
     private var cancel: some View {
         Button("Cancel pairing", role: .cancel) { pairing.cancel() }
+            .setupControllerTarget("jit.pair.cancel", order: 45, action: { pairing.cancel() })
             .font(.subheadline.weight(.semibold))
     }
 }

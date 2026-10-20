@@ -62,6 +62,26 @@ struct IridiumGlassSurface: ViewModifier {
     }
 }
 
+/// Floating actions share native materials; content surfaces and system pickers keep their own styles.
+struct IridiumFloatingActionStyle: ViewModifier {
+    var enabled = true
+    var primary = false
+    @Environment(\.accessibilityReduceTransparency) private var opaque
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled {
+            Group {
+                if #available(iOS 26, *), !opaque {
+                    if primary { content.buttonStyle(.glass).foregroundStyle(.white).fontWeight(.bold) }
+                    else { content.buttonStyle(.glass) }
+                } else {
+                    if primary { content.buttonStyle(.borderedProminent).foregroundStyle(.black).fontWeight(.bold) }
+                    else { content.buttonStyle(.bordered) }
+                }
+            }.buttonBorderShape(.capsule)
+        } else { content }
+    }
+}
+
 extension View {
     func iridiumPageSurface() -> some View { modifier(IridiumPageSurface()) }
     func iridiumRowSurface() -> some View { modifier(IridiumSettingsRowSurface()) }

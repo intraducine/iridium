@@ -664,14 +664,29 @@ struct JITSetupContent: View {
     @ObservedObject private var pairing = OnDevicePairing.shared
     @State private var importing = false
     @State private var importError: String?
+    @State private var alternateContainerExpanded = false
     @AppStorage(IridiumStikDebugRoute.settingsKey) private var iridiumStikRoute = IridiumStikDebugRoute.standalone.rawValue
+    // These choices select instructions. The StikDebug route above selects the helper app's location.
+    @AppStorage("iridium.setup.installation") private var installation =
+        ProcessInfo.processInfo.environment["LC_HOME_PATH"] == nil ? "standalone" : "liveContainer"
+    @AppStorage("iridium.setup.container") private var container = "livecontainer"
     @Binding private var modalPresented: Bool
     @Environment(\.scenePhase) private var scenePhase
     private let inline: Bool
+    private let includeShortcut: Bool
 
-    init(inline: Bool = true, modalPresented: Binding<Bool> = .constant(false)) {
+    init(inline: Bool = true, modalPresented: Binding<Bool> = .constant(false), includeShortcut: Bool = false) {
         self.inline = inline
         _modalPresented = modalPresented
+        self.includeShortcut = includeShortcut
+    }
+
+    private var containerName: String {
+        switch container {
+        case "livecontainer2": "LC2"
+        case "livecontainer3": "LC3"
+        default: "LC"
+        }
     }
 
     private var pairingLabel: String {
@@ -685,7 +700,7 @@ struct JITSetupContent: View {
     var body: some View {
         Group {
             if inline {
-                VStack(alignment: .leading) { sections }
+                VStack(alignment: .leading, spacing: 24) { sections }
                     .buttonStyle(.bordered)
             } else {
                 sections.iridiumRowSurface()
@@ -703,25 +718,93 @@ struct JITSetupContent: View {
     }
 
     @ViewBuilder private var sections: some View {
+        JITSetupGroup("How is Iridium installed?", inline: inline) {
+            Picker("How is Iridium installed?", selection: $installation) {
+                Text("LiveContainer").tag("liveContainer")
+                Text("Standalone").tag("standalone")
+            }.pickerStyle(.segmented)
+                .setupControllerValue("jit.installation", order: 10, selection: $installation, values: ["liveContainer", "standalone"])
+                .disabled(coordinator.busy || pairing.active)
+        }
+        if installation == "liveContainer" {
+            liveContainerSetup
+        } else {
+            standaloneSetup
+            if includeShortcut { JITShortcutSetupContent(inline: inline) }
+        }
+    }
+
+    @ViewBuilder private var liveContainerSetup: some View {
+        JITSetupGroup("Which container?", inline: inline) {
+            Picker("Which container?", selection: $container) {
+                Text("LC").tag("livecontainer")
+                Text("LC2").tag("livecontainer2")
+                Text("LC3").tag("livecontainer3")
+            }.pickerStyle(.segmented)
+                .setupControllerValue("jit.container", order: 20, selection: $container, values: ["livecontainer", "livecontainer2", "livecontainer3"])
+                .disabled(coordinator.busy || pairing.active)
+        }
+        JITSetupGroup("Set up \(containerName)", inline: inline) {
+            Text("1. In \(containerName) Settings → JIT, choose StikDebug. Import this device’s pairing file in StikDebug.")
+                .font(.subheadline)
+            if let script = Bundle.main.url(forResource: "madeira-jit", withExtension: "js") {
+                SetupControllerShare(title: "Save JIT Script", url: script, id: "jit.script", order: 30)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .disabled(coordinator.busy || pairing.active)
+                Text("2. In \(containerName), hold Iridium and open Settings. Turn on Launch with JIT and Use LiveContainer’s Bundle ID, then set JIT Launch Script to the saved file.")
+                    .font(.subheadline)
+            } else {
+                Label("The JIT script is missing. Reinstall Iridium before setting up LiveContainer.",
+                      systemImage: "exclamationmark.triangle").font(.subheadline).foregroundStyle(.red)
+            }
+            Text("3. Connect LocalDevVPN, then fully close Iridium and reopen it from \(containerName).")
+                .font(.subheadline)
+            Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                .setupControllerTarget("jit.container.vpn", order: 40, action: LocalDevVPN.open)
+                .disabled(coordinator.busy || pairing.active)
+            DisclosureGroup(isExpanded: $alternateContainerExpanded) {
+                Text("In LiveContainer, hold StikDebug and choose Settings → Convert to Shared App. Leave a different container free. In \(containerName) Settings → JIT, choose StikDebug (Another LiveContainer).")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } label: {
+                Text("StikDebug in another container")
+                    .setupControllerToggle("jit.container.alternate", order: 50, value: $alternateContainerExpanded)
+            }
+            SetupControllerLink("Get StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!, id: "jit.container.stik", order: 60)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+            SetupControllerLink("Create a Pairing File", destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!, id: "jit.container.pairingGuide", order: 70)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+            SetupControllerLink("LiveContainer JIT Guide", destination: URL(string: "https://livecontainer.github.io/docs/guides/jit-support")!, id: "jit.container.guide", order: 80)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+        }
+    }
+
+    @ViewBuilder private var standaloneSetup: some View {
         connectionMethod
         if coordinator.method != .builtIn {
-            JITSetupGroup("StikDebug route", footer: IridiumStikDebugRoute.current == .standalone
+            JITSetupGroup("StikDebug Location", footer: IridiumStikDebugRoute.current == .standalone
                           ? nil : "Install StikDebug inside the selected container.", inline: inline) {
                 Picker("Open StikDebug In", selection: $iridiumStikRoute) {
                     ForEach(IridiumStikDebugRoute.allCases) { route in Text(route.title).tag(route.rawValue) }
-                }.disabled(coordinator.busy || pairing.active)
+                }.setupControllerValue("jit.stik.location", order: 30, selection: $iridiumStikRoute, values: IridiumStikDebugRoute.allCases.map(\.rawValue))
+                    .disabled(coordinator.busy || pairing.active)
             }
         }
         if coordinator.resolvedMethod == .builtIn {
             builtInPairing
             JITSetupGroup("Check and enable", inline: inline) {
                 Button("Check setup") { coordinator.prepareBuiltIn() }
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .setupControllerTarget("jit.check", order: 80, action: { coordinator.prepareBuiltIn() })
                     .disabled(coordinator.busy || pairing.active || !coordinator.pairingImported)
                 Button("Enable JIT") { coordinator.enable { _ in } }
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .setupControllerTarget("jit.enable", order: 90, action: { coordinator.enable { _ in } })
                     .disabled(coordinator.busy || pairing.active || !coordinator.pairingImported)
                 Button("Reset Developer Disk Image", role: .destructive) {
                     coordinator.resetDDI()
-                }.disabled(coordinator.busy || pairing.active)
+                }.modifier(IridiumFloatingActionStyle(enabled: inline)).setupControllerTarget("jit.resetDDI", order: 100, action: { coordinator.resetDDI() })
+                    .disabled(coordinator.busy || pairing.active)
             }
         } else {
             stikDebugSetup
@@ -735,7 +818,8 @@ struct JITSetupContent: View {
                       inline: inline) {
             Picker("Method", selection: $coordinator.method) {
                 ForEach(JITMethod.allCases) { method in Text(method.title).tag(method) }
-            }.disabled(coordinator.busy || pairing.active)
+            }.setupControllerValue("jit.method", order: 20, selection: $coordinator.method, values: JITMethod.allCases)
+                .disabled(coordinator.busy || pairing.active)
             if coordinator.method == .automatic {
                 Text(inline
                      ? (coordinator.resolvedMethod == .stikDebug ? "Automatic uses StikDebug." : "Automatic uses Built-in StikJIT.")
@@ -748,7 +832,7 @@ struct JITSetupContent: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             } else {
-                LabeledContent(IridiumStikDebugRoute.current == .standalone ? "StikDebug" : "Container route",
+                LabeledContent(IridiumStikDebugRoute.current == .standalone ? "StikDebug" : "Container",
                                value: StikJITHelper.isAvailable ? "Detected" : "Not detected")
                 LabeledContent("Built-in helper", value: MadeiraBuiltInJIT.isAvailable ? "Available" : "Unavailable")
             }
@@ -757,8 +841,8 @@ struct JITSetupContent: View {
 
     private var builtInPairing: some View {
         JITSetupGroup("Built-in StikJIT", footer: OnDevicePairing.isSupported
-                      ? (inline ? "Stored in this device’s Keychain." : "The pairing file stays in this device’s Keychain.")
-                      : (inline ? "Stored in this device’s Keychain. Pairing here requires iOS 27."
+                      ? (inline ? "Pairing files stay on this device." : "The pairing file stays in this device’s Keychain.")
+                      : (inline ? "Pairing files stay on this device. Pairing here requires iOS 27."
                          : "The pairing file stays in this device’s Keychain. Pairing in Iridium needs iOS 27 or later."), inline: inline) {
             Text(OnDevicePairing.isSupported
                  ? (inline ? "Pair here or import this device’s pairing file."
@@ -768,19 +852,23 @@ struct JITSetupContent: View {
                 .font(.subheadline)
             LabeledContent("Pairing", value: pairingLabel)
             if OnDevicePairing.isSupported {
-                Button(coordinator.pairingSource == .onDevice ? "Pair in Iridium again" : "Pair in Iridium") {
-                    importError = nil
-                    pairing.start()
-                }.disabled(coordinator.busy || pairing.active)
-                OnDevicePairingPanel()
+                Button(coordinator.pairingSource == .onDevice ? "Pair in Iridium again" : "Pair in Iridium", action: pair)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .setupControllerTarget("jit.pair", order: 40, action: pair)
+                    .disabled(coordinator.busy || pairing.active)
+                OnDevicePairingPanel().modifier(IridiumFloatingActionStyle(enabled: inline))
             }
             Button("Import pairing file", action: beginImport)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                .setupControllerTarget("jit.import", order: 50, action: beginImport)
                 .disabled(coordinator.busy || pairing.active)
-            Link("How to create a pairing file",
-                 destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!)
+            SetupControllerLink("How to create a pairing file", destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!, id: "jit.builtIn.guide", order: 60)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
             Text(inline ? "Then connect LocalDevVPN and enable JIT."
                  : "2. Connect LocalDevVPN, then check setup and enable JIT.").font(.subheadline)
             Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                .setupControllerTarget("jit.builtIn.vpn", order: 70, action: LocalDevVPN.open)
         }
     }
 
@@ -791,24 +879,32 @@ struct JITSetupContent: View {
                 .font(.subheadline)
             if StikJITHelper.isAvailable {
                 Button("Enable JIT with StikDebug") { coordinator.enable() { _ in } }
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .setupControllerTarget("jit.stik.enable", order: 90, action: { coordinator.enable { _ in } })
                     .disabled(coordinator.busy || pairing.active)
             } else if IridiumStikDebugRoute.current == .standalone {
-                Link("Install StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!)
+                SetupControllerLink("Install StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!, id: "jit.stik.install", order: 40)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
             } else {
                 Text(IridiumStikDebugRoute.current.unavailableMessage).foregroundStyle(.secondary)
-                Link("Get LiveContainer", destination: URL(string: "https://github.com/LiveContainer/LiveContainer/releases/latest")!)
+                SetupControllerLink("Get LiveContainer", destination: URL(string: "https://github.com/LiveContainer/LiveContainer/releases/latest")!, id: "jit.stik.container", order: 40)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
             }
-            Link("How to create a pairing file",
-                 destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!)
+            SetupControllerLink("How to create a pairing file", destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!, id: "jit.stik.guide", order: 60)
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
             Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
+                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                .setupControllerTarget("jit.stik.vpn", order: 70, action: LocalDevVPN.open)
         }
     }
 
     @ViewBuilder private var statusContent: some View {
-        if let importError {
+        if let importError, coordinator.resolvedMethod == .builtIn {
             JITSetupGroup("Pairing file import", inline: inline) {
                 Label(importError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                 Button("Import another pairing file", action: beginImport)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .setupControllerTarget("jit.import.retry", order: 110, action: beginImport)
                     .disabled(coordinator.busy || pairing.active)
             }
         }
@@ -818,20 +914,29 @@ struct JITSetupContent: View {
             JITSetupGroup(inline: inline) {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                 if let problem = coordinator.connectionProblem {
-                    if problem == .pairing {
+                    if problem == .pairing, coordinator.resolvedMethod == .builtIn {
                         if OnDevicePairing.isSupported {
-                            Button("Pair again") {
-                                importError = nil
-                                coordinator.method = .builtIn
-                                pairing.start()
-                            }.disabled(pairing.active)
+                            Button("Pair again", action: pairAgain)
+                                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                                .setupControllerTarget("jit.pair.retry", order: 110, action: pairAgain)
+                                .disabled(pairing.active)
                         } else {
                             Button("Import pairing file", action: beginImport)
+                                .modifier(IridiumFloatingActionStyle(enabled: inline))
+                                .setupControllerTarget("jit.import.recovery", order: 110, action: beginImport)
                                 .disabled(coordinator.busy || pairing.active)
                         }
                     }
                     // Already in setup: recover here instead of opening another setup sheet.
-                    jitConnectionActions(.vpn)
+                    if JITNetworkShortcut.shared.enabled {
+                        Button("Connect with \(JITNetworkShortcut.name)") { coordinator.connectWithShortcut() }
+                            .modifier(IridiumFloatingActionStyle(enabled: inline))
+                            .setupControllerTarget("jit.connection.retry", order: 120, action: { coordinator.connectWithShortcut() })
+                    } else {
+                        Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
+                            .modifier(IridiumFloatingActionStyle(enabled: inline))
+                            .setupControllerTarget("jit.connection.vpn", order: 120, action: LocalDevVPN.open)
+                    }
                 }
             }
         } else if let status = coordinator.status {
@@ -843,6 +948,9 @@ struct JITSetupContent: View {
             JITSetupGroup(inline: inline) { LabeledContent("TXM/SPTM", value: txm ? "Present" : "Not present") }
         }
     }
+
+    private func pair() { importError = nil; pairing.start() }
+    private func pairAgain() { coordinator.method = .builtIn; pair() }
 
     private func beginImport() {
         guard allowPairingImport() else { return }
@@ -884,6 +992,10 @@ struct JITSetupContent: View {
 struct JITShortcutSetupContent: View {
     @ObservedObject private var shortcut = JITNetworkShortcut.shared
     var inline = true
+    private func addShortcut() {
+        LogStore.shared.log("[jit-shortcut] add: iCloud link")
+        UIApplication.shared.open(JITShortcutFile.iCloudLink)
+    }
 
     var body: some View {
         JITSetupGroup("\(JITNetworkShortcut.name) shortcut", footer:
@@ -892,17 +1004,13 @@ struct JITShortcutSetupContent: View {
                       inline: inline) {
             if JITShortcutFile.supported {
                 if !inline { Text("Add the shortcut in Shortcuts, then turn it on here.").font(.subheadline) }
-                Button {
-                    LogStore.shared.log("[jit-shortcut] add: iCloud link")
-                    UIApplication.shared.open(JITShortcutFile.iCloudLink)
-                } label: {
+                Button(action: addShortcut) {
                     Label("Add the \(JITNetworkShortcut.name) shortcut", systemImage: "plus.square.on.square")
-                }
+                }.modifier(IridiumFloatingActionStyle(enabled: inline)).setupControllerTarget("jit.shortcut.online", order: 130, action: addShortcut)
                 if let url = JITShortcutFile.url {
-                    ShareLink(item: url) {
-                        Label(inline ? "Add local copy (offline)" : "No internet connection? Add local copy",
-                              systemImage: "square.and.arrow.up")
-                    }
+                    SetupControllerShare(title: inline ? "Add local copy (offline)" : "No internet connection? Add local copy",
+                                         url: url, id: "jit.shortcut.offline", order: 140)
+                        .modifier(IridiumFloatingActionStyle(enabled: inline))
                 }
             } else {
                 Text(inline ? "Requires iOS 27. Connect LocalDevVPN manually."
@@ -910,6 +1018,7 @@ struct JITShortcutSetupContent: View {
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             Toggle("Use \(JITNetworkShortcut.name) shortcut", isOn: $shortcut.enabled)
+                .setupControllerToggle("jit.shortcut.use", order: 150, value: $shortcut.enabled)
                 .disabled(!JITShortcutFile.supported && !shortcut.enabled)
         }
     }

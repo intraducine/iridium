@@ -6,6 +6,13 @@
 import SwiftUI
 
 @MainActor enum IridiumPreviewSupport {
+    static var screen: String {
+        let args = ProcessInfo.processInfo.arguments
+        return args.firstIndex(of: "--screen").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } ?? "library"
+    }
+    static var isSteamPreview: Bool {
+        Bundle.main.bundleIdentifier == "software.iridium.uipreview" && screen == "steam-preview"
+    }
     struct Sample: Decodable {
         let id: UUID
         let title: String
@@ -15,6 +22,41 @@ import SwiftUI
         let steamID: Int?
         let cover: String
         let background: String?
+    }
+    /// Catalog metadata only. No account, credentials, ownership proof or game
+    /// files are created. The preview generator supplies the model boundary.
+    static func steamGames() throws -> [SteamOwnedGame] {
+        guard let root = Bundle.main.url(forResource: "PreviewSamples", withExtension: nil) else { return [] }
+        let samples = try JSONDecoder().decode([Sample].self, from: Data(contentsOf: root.appendingPathComponent("samples.json")))
+        let catalog: [[String: Any]] = samples.compactMap { sample in
+            guard sample.platform == .windows, let id = sample.steamID else { return nil }
+            return ["id": id, "name": sample.title, "installDir": "", "buildID": 0]
+        }
+        return try JSONDecoder().decode([SteamOwnedGame].self, from: JSONSerialization.data(withJSONObject: catalog))
+    }
+    /// Uses the same inert PE-header data as the importer tests. There are no
+    /// sections, instructions or assets; these files cannot run a game. The
+    /// real scanner reads them, and preview UI disables the import buttons.
+    static func selectedImportFolder(empty: Bool = false) throws -> IridiumImportSource {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("IridiumScreenshotFixtures", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(empty ? "Preview Empty Folder" : "Preview Windows Game", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("Screenshot fixture only. No game files or executable code.\n".utf8).write(to: root.appendingPathComponent("README.txt"))
+        if !empty {
+            var header = Data(repeating: 0, count: 512)
+            header[0] = 0x4d; header[1] = 0x5a; header[60] = 0x80
+            header[128] = 0x50; header[129] = 0x45
+            header[132] = 0x64; header[133] = 0x86
+            header[148] = 240; header[150] = 2
+            header[152] = 0x0b; header[153] = 2
+            for name in ["Preview Game Header.exe", "Preview Settings Header.exe"] {
+                let url = root.appendingPathComponent(name)
+                try header.write(to: url)
+                try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: url.path)
+            }
+        }
+        return IridiumImportSource(url: root)
     }
     static func seed() async throws {
         guard Bundle.main.bundleIdentifier == "software.iridium.uipreview" else { return }
@@ -75,10 +117,8 @@ struct IridiumPreviewRoot: View {
     @State private var error: String?
     @State private var locating = false
     @State private var source: IridiumImportSource?
-    private var screen: String {
-        let args = ProcessInfo.processInfo.arguments
-        return args.firstIndex(of: "--screen").flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } ?? "library"
-    }
+    @State private var previewImport: IridiumImportSource?
+    private var screen: String { IridiumPreviewSupport.screen }
     var body: some View {
         Group {
             if ready {
@@ -90,6 +130,19 @@ struct IridiumPreviewRoot: View {
                 case "capabilities": NavigationStack { IridiumCapabilitiesView() }
                 case "diagnostics": NavigationStack { Form { Group { IridiumDiagnosticsSections() }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Diagnostics") }
                 case "layout": IridiumTouchLayoutEditor(target: .init(platform: .psp, title: "PSP"))
+                case "import-preview", "import-empty-preview":
+                    if let previewImport {
+                        IridiumGameImportView(source: previewImport, importedConsole: { _ in }) { _ in }
+                            .disabled(true)
+                            .safeAreaInset(edge: .bottom, spacing: 0) {
+                                previewNotice(screen == "import-empty-preview" ? "Preview folder · No game files · Actions disabled" :
+                                    "Preview folder · Header-only files · Import disabled")
+                            }
+                    }
+                case "steam-preview":
+                    IridiumSteamView(startDock: { _, _ in unavailableWindows() }, open: { _ in })
+                        .disabled(true)
+                        .safeAreaInset(edge: .bottom, spacing: 0) { previewNotice("Preview account · Sample games · Actions disabled") }
                 default: IridiumLibraryView(services: .init(
                     windows: IridiumMadeiraLaunchAdapter(start: play, startDock: { _, _ in unavailableWindows() }),
                     jit: IridiumMadeiraJITAdapter(enable: enableJIT), steam: IridiumMadeiraSteamAdapter()))
@@ -98,7 +151,15 @@ struct IridiumPreviewRoot: View {
             else { ProgressView("Loading Library…") }
         }.preferredColorScheme(.dark)
             .task {
-                do { try await IridiumPreviewSupport.seed(); ready = true }
+                do {
+                    if screen == "import-preview" || screen == "import-empty-preview" {
+                        previewImport = try IridiumPreviewSupport.selectedImportFolder(empty: screen == "import-empty-preview")
+                    } else if IridiumPreviewSupport.isSteamPreview {
+                        UserDefaults.standard.set(true, forKey: "madeiraSteamShowUninstalled")
+                        SteamOwnedLibrary.shared.applyIridiumPreview(try IridiumPreviewSupport.steamGames())
+                    } else { try await IridiumPreviewSupport.seed() }
+                    ready = true
+                }
                 catch { self.error = error.localizedDescription }
             }
             .alert("Game File Not Found", isPresented: Binding(get: { launch.missingGame != nil }, set: { if !$0 { launch.missingGame = nil } })) {
@@ -117,6 +178,11 @@ struct IridiumPreviewRoot: View {
             .sheet(isPresented: $jit.showSetup) { JITSetupView() }
     }
     private func play(_ entry: LibraryEntry) { launch.attempt(IridiumGame(windows: entry)) }
+    private func previewNotice(_ text: String) -> some View {
+        Text(text).font(.caption.weight(.semibold)).multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity).padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.regularMaterial)
+    }
     private func enableJIT() { jit.enable { _ in } }
     private func unavailableWindows() { LibraryModel.shared.error = "Playing Windows games requires an iPhone or iPad." }
 }

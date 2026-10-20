@@ -32,21 +32,23 @@ struct IridiumFilesImportView: View {
     var body: some View {
         NavigationStack {
             List {
-                if working { ProgressView(finishing ? "Finishing import…" : candidates.isEmpty ? "Reading game files…" : "Importing game…") }
-                if let failure { Text(failure).foregroundStyle(.red) }
-                if !working {
-                    Section(folder ? "Choose the game's executable" : "Windows game") {
-                        ForEach(candidates, id: \.self) { path in
-                            Button { begin(path) } label: {
-                                Label(folder ? path : source.url.lastPathComponent, systemImage: "app.dashed")
+                Group {
+                    if working { ProgressView(finishing ? "Finishing import…" : candidates.isEmpty ? "Reading game files…" : "Importing game…") }
+                    if let failure { Text(failure).foregroundStyle(.red) }
+                    if !working {
+                        Section(folder ? "Choose the game's executable" : "Windows game") {
+                            ForEach(candidates, id: \.self) { path in
+                                Button { begin(path) } label: {
+                                    Label(folder ? path : source.url.lastPathComponent, systemImage: "app.dashed")
+                                }
                             }
                         }
+                        if candidates.isEmpty && failure == nil { Text("No supported Windows executables were found.") }
+                        Text(folder ? "The selected folder and its dependencies are copied into Iridium. Original files stay where they are." :
+                            "Only this EXE will be copied. If the game needs DLLs or other files, cancel and choose its game folder instead.")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                    if candidates.isEmpty && failure == nil { Text("No supported Windows executables were found.") }
-                    Text(folder ? "The selected folder and its dependencies are copied into Iridium. Original files stay where they are." :
-                        "Only this EXE will be copied. If the game needs DLLs or other files, cancel and choose its game folder instead.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+                }.iridiumRowSurface()
             }.iridiumPageSurface().navigationTitle("Import from Files")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: cancel).disabled(finishing) } }
                 .interactiveDismissDisabled(working)
@@ -245,15 +247,15 @@ struct IridiumGameImportView: View {
                 NavigationStack {
                   ScrollViewReader { proxy in
                     List {
-                        if busy { ProgressView("Adding game…") }
+                        if busy { ProgressView("Adding game…").iridiumRowSurface() }
                         if let failure {
                             Section {
                                 Text(failure).foregroundStyle(.secondary)
                                 Button("Choose Game Folder") { choosingFolder = true }
-                            }
+                            }.iridiumRowSurface()
                         } else if let choosing {
                             Section {
-                                Text(choosing.url.lastPathComponent).lineLimit(2)
+                                Text(choosing.url.lastPathComponent).lineLimit(2).iridiumRowSurface()
                                 ForEach(Array(choosing.platforms.enumerated()), id: \.element.rawValue) { index, platform in
                                     Button(platform.title) { begin(choosing, platform: platform) }
                                         .id(index)
@@ -261,12 +263,12 @@ struct IridiumGameImportView: View {
                                 }
                             } header: { Text("Which system is this game for?") }
                             if choosing.platforms == [.playStation2] {
-                                Text("Only PlayStation 2 discs are supported. PlayStation discs cannot be played.").font(.footnote).foregroundStyle(.secondary)
+                                Text("Only PlayStation 2 discs are supported. PlayStation discs cannot be played.").font(.footnote).foregroundStyle(.secondary).iridiumRowSurface()
                             }
                             if choosing.url.pathExtension.lowercased() == "zip" {
                                 Section {
                                     Text("For an arcade game, keep the original ZIP name. For a Windows game, extract the archive and choose its folder.")
-                                        .font(.footnote).foregroundStyle(.secondary)
+                                        .font(.footnote).foregroundStyle(.secondary).iridiumRowSurface()
                                     Button("Choose Windows Game Folder") { choosingFolder = true }
                                         .id(choosing.platforms.count)
                                         .listRowBackground(focus == choosing.platforms.count ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
@@ -281,7 +283,7 @@ struct IridiumGameImportView: View {
                                 }
                             }
                             if !warnings.isEmpty {
-                                Section("Other Files") { ForEach(warnings, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) } }
+                                Section("Other Files") { ForEach(warnings, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) } }.iridiumRowSurface()
                             }
                         }
                     }.iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)

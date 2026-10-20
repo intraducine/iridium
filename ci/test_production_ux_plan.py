@@ -12,22 +12,30 @@ class ProductionUXTests(unittest.TestCase):
 @main struct Checks {
  @MainActor static func main() {
   let steps=OnboardingRules.steps
-  precondition(steps == [.library,.options] && OnboardingRules.Step.allCases == steps)
+  precondition(steps == [.library,.downloads,.jit] && OnboardingRules.Step.allCases == steps)
   for (i,step) in steps.enumerated() {
    precondition(OnboardingRules.previous(before:step,in:steps)==(i>0 ? steps[i-1]:nil))
    precondition(OnboardingRules.next(after:step,in:steps)==(i+1<steps.count ? steps[i+1]:nil))
   }
   let model=OnboardingModel();model.presentIfNeeded();precondition(model.presented && model.step == .library)
   model.back();precondition(model.step == .library)
-  model.next();precondition(model.step == .options);model.skip();precondition(!model.presented && model.takeLibraryAction()==nil)
-  let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .options)
+  model.next();precondition(model.step == .downloads);model.skip();precondition(!model.presented && model.takeLibraryAction()==nil)
+  let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .downloads)
   precondition(resumed.binding(for:.settings).wrappedValue && !resumed.binding(for:.library).wrappedValue)
   resumed.binding(for:.library).wrappedValue=false;precondition(resumed.presented)
-  resumed.back();precondition(resumed.step == .library);resumed.next();precondition(resumed.step == .options)
+  resumed.back();precondition(resumed.step == .library);resumed.next();precondition(resumed.step == .downloads)
+  resumed.next();precondition(resumed.presented && resumed.step == .jit && resumed.takeLibraryAction()==nil)
+  resumed.back();precondition(resumed.step == .downloads);resumed.next()
   resumed.next();precondition(!resumed.presented && resumed.takeLibraryAction() == .library && resumed.takeLibraryAction()==nil)
   precondition(resumed.dismissalGeneration == 0);resumed.presentationDidDismiss();precondition(resumed.dismissalGeneration == 1)
   precondition(fixtureDefaults.string(forKey:"iridium.setup.step")==nil)
   let completed=OnboardingModel();completed.presentIfNeeded();precondition(!completed.presented)
+  precondition(fixtureDefaults.integer(forKey:OnboardingRules.revisionKey)==2)
+  for step in steps {
+   let skipped=OnboardingModel();skipped.rerun();skipped.go(step);skipped.skip()
+   precondition(!skipped.presented && skipped.takeLibraryAction()==nil)
+   let restored=OnboardingModel();restored.rerun();precondition(restored.step==step)
+  }
   let context=OnboardingModel();context.go(.library);context.chooseSteam()
   precondition(context.step == .library && context.steam && context.steps == steps)
   let gameID="11111111-2222-3333-4444-555555555555"
@@ -39,9 +47,9 @@ class ProductionUXTests(unittest.TestCase):
   context.setPSPMode(false)
   context.recordGame(id:gameID,title:"PS2 game",platform:"playStation2",requiredJIT:true,optionalJIT:false)
   precondition(context.step == .library && context.consoleJIT && !context.pspJIT)
-  context.go(.options);context.skip()
+  context.go(.jit);context.skip()
   let persisted=OnboardingModel();persisted.rerun()
-  precondition(persisted.step == .options && persisted.firstGameID==gameID && persisted.firstGameTitle=="PS2 game" && persisted.requiresJIT)
+  precondition(persisted.step == .jit && persisted.firstGameID==gameID && persisted.firstGameTitle=="PS2 game" && persisted.requiresJIT)
   persisted.finishOpeningLibrary();precondition(persisted.takeLibraryAction() == .library && persisted.takeLibraryAction()==nil)
   for windows in [false,true] {for steam in [false,true] {for psp in [false,true] {for console in [false,true] {for mono in [false,true] {
    let capabilities=OnboardingModel()
@@ -49,18 +57,23 @@ class ProductionUXTests(unittest.TestCase):
    precondition(capabilities.steps == steps && capabilities.requiresJIT == (windows || steam || console))
    capabilities.finishOpeningLibrary();precondition(capabilities.takeLibraryAction() == .library)
   }}}}}
-  for saved in ["welcome","library","signIn","dockClient","unknown"] {
+  for saved in ["welcome","library","signIn","unknown"] {
    fixtureDefaults.set(saved,forKey:"iridium.setup.step")
    let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .library)
   }
-  for saved in ["controls","options","jit","wineMono","done"] {
+  for saved in ["controls","options","jit","done"] {
    fixtureDefaults.set(saved,forKey:"iridium.setup.step")
-   let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .options)
-   legacy.skip();let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .options)
+   let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .jit)
+   legacy.skip();let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .jit)
+  }
+  for saved in ["downloads","wineMono","dockClient","steamComponents"] {
+   fixtureDefaults.set(saved,forKey:"iridium.setup.step")
+   let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .downloads)
+   legacy.skip();let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .downloads)
   }
   fixtureDefaults.set(true,forKey:"iridium.setup.windows");fixtureDefaults.set(false,forKey:"iridium.setup.needsMono")
   fixtureDefaults.set("wineMono",forKey:"iridium.setup.step")
-  let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .options && legacy.needsMono)
+  let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .downloads && legacy.needsMono)
   legacy.binding(for:.settings).wrappedValue=false;precondition(!legacy.presented && legacy.takeLibraryAction()==nil)
   LibraryModel.shared.current="active";completed.rerun();precondition(!completed.presented)
   LibraryModel.shared.current=nil
