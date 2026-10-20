@@ -143,17 +143,23 @@ struct OnboardingView: View {
     }
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    heading
-                    page
+            TabView(selection: Binding(get: { model.step }, set: { model.go($0) })) {
+                ForEach(model.steps, id: \.self) { step in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 28) {
+                            heading(for: step)
+                            page(for: step)
+                        }
+                        .padding(.horizontal, 24).padding(.top, heightClass == .compact ? 12 : 28).padding(.bottom, 24)
+                        .frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .tag(step).accessibilityHidden(model.step != step)
                 }
-                .padding(.horizontal, 24).padding(.top, heightClass == .compact ? 12 : 28).padding(.bottom, 24)
-                .frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .id(model.step).scrollBounceBehavior(.basedOnSize)
+            .tabViewStyle(.page(indexDisplayMode: .never))
             .background { IridiumPageBackdrop() }
-            .navigationTitle("Iridium")
+            .navigationTitle("Iridium Setup")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Skip") { skip = true }.foregroundStyle(.primary) } }
@@ -218,8 +224,9 @@ struct OnboardingView: View {
             }
         }.tint(IridiumTheme.accent).preferredColorScheme(.dark).interactiveDismissDisabled()
     }
-    private var title: String {
-        switch model.step {
+    private var title: String { title(for: model.step) }
+    private func title(for step: OnboardingRules.Step) -> String {
+        switch step {
         case .welcome, .library: "Add Games"
         case .controls: "Controls"
         case .options: "Game Setup"
@@ -230,53 +237,58 @@ struct OnboardingView: View {
         case .done: "Finish Setup"
         }
     }
-    private var subtitle: String {
-        switch model.step {
-        case .welcome, .library: "Choose a game file or connect Steam."
-        case .controls: "Use touch controls, or connect a controller before playing."
-        case .options: game == nil ? "Required setup depends on the game’s system." : "Check what this game needs before playing."
-        case .jit: hosted ? "Open Iridium with JIT enabled in LiveContainer." : "JIT lets Iridium run translated game code on this device."
-        case .signIn: "Sign in to choose games from your Steam account."
-        case .dockClient: "Download Valve’s client files to start Steam games."
-        case .wineMono: "Wine Mono runs Windows games that require .NET Framework."
-        case .done: game == nil ? "Add games from the library using the + button." : "Your game is saved in the library."
+    private func subtitle(for step: OnboardingRules.Step) -> String {
+        switch step {
+        case .welcome, .library, .options, .done: ""
+        case .controls: "Use touch controls or connect a controller."
+        case .jit: hosted ? "Enable JIT for Iridium in LiveContainer." : "JIT enables this game to run on your device."
+        case .signIn: "Sign in to choose downloads."
+        case .dockClient: "Required to start Steam games."
+        case .wineMono: "Wine Mono adds .NET support. Install only if your game asks for it."
         }
     }
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let index = model.steps.firstIndex(of: model.step) {
-                HStack {
-                    Text("Setup")
-                    Spacer()
-                    Text("\(index + 1) of \(model.steps.count)").monospacedDigit()
-                }.font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("onboardingProgress")
-            }
-            Text(title).font(.title2.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+    private func heading(for step: OnboardingRules.Step) -> some View {
+        let subtitle = subtitle(for: step)
+        return VStack(alignment: .leading, spacing: 12) {
+            Text(title(for: step)).font(.title2.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader).accessibilityIdentifier("onboardingTitle")
-            Text(subtitle).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if !subtitle.isEmpty {
+                Text(subtitle).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
     private var footer: some View {
-        HStack(spacing: 20) {
-            if OnboardingRules.previous(before: model.step, in: model.steps) != nil {
-                Button { model.back() } label: {
-                    if typeSize.isAccessibilitySize { Image(systemName: "chevron.backward").font(.title2.weight(.semibold)).frame(width: 44, height: 48) }
-                    else { Label("Back", systemImage: "chevron.backward").font(.headline).frame(minHeight: 44) }
-                }.accessibilityLabel("Back")
-                    .accessibilityShowsLargeContentViewer { Label("Back", systemImage: "chevron.backward") }
+        VStack(spacing: 12) {
+            if let index = model.steps.firstIndex(of: model.step) {
+                Text("\(index + 1) of \(model.steps.count)").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .accessibilityLabel("Step \(index + 1) of \(model.steps.count)").accessibilityIdentifier("onboardingProgress")
             }
-            Button { advance() } label: {
-                Text(typeSize.isAccessibilitySize && model.step == .done ? (game != nil ? "Library" : model.steam ? "Steam" : "Add Game") : primaryTitle)
-                    .font(.headline).multilineTextAlignment(.center).foregroundStyle(.black)
-                    .padding(.horizontal, 20).padding(.vertical, 14).frame(maxWidth: .infinity, minHeight: 48)
-                    .background(.white, in: Capsule())
-            }.buttonStyle(.plain).accessibilityLabel(primaryTitle).accessibilityIdentifier("onboardingNext")
-                .accessibilityShowsLargeContentViewer { Text(primaryTitle) }
+            HStack(spacing: 12) {
+                Button { model.back() } label: {
+                    navigationLabel("Back")
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                        .overlay { Capsule().strokeBorder(.white.opacity(0.12)) }
+                }.foregroundStyle(.white)
+                    .disabled(OnboardingRules.previous(before: model.step, in: model.steps) == nil)
+                    .opacity(OnboardingRules.previous(before: model.step, in: model.steps) == nil ? 0.35 : 1)
+                    .accessibilityIdentifier("onboardingBack")
+                    .accessibilityShowsLargeContentViewer { Text("Back") }
+                Button { advance() } label: {
+                    navigationLabel(typeSize.isAccessibilitySize && model.step == .done ? (game != nil ? "Library" : model.steam ? "Steam" : "Add Game") : primaryTitle)
+                        .foregroundStyle(.black).background(.white, in: Capsule())
+                }.accessibilityLabel(primaryTitle).accessibilityIdentifier("onboardingNext")
+                    .accessibilityShowsLargeContentViewer { Text(primaryTitle) }
+            }.buttonStyle(.plain).fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 24).padding(.vertical, heightClass == .compact ? 8 : 12)
-        .frame(maxWidth: 600)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: 600).frame(maxWidth: .infinity)
         .background { Color.black.opacity(opaque || typeSize.isAccessibilitySize ? 1 : 0.74).ignoresSafeArea(edges: .bottom) }
+    }
+    private func navigationLabel(_ title: String) -> some View {
+        Text(title).font(.headline).multilineTextAlignment(.center)
+            .padding(.horizontal, 12).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity).frame(minHeight: 48)
+            .contentShape(Capsule())
     }
     private func advance() {
         if model.step == .done { model.finishOpeningLibrary(gameAvailable: game != nil) }
@@ -286,7 +298,7 @@ struct OnboardingView: View {
     private func note(_ title: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.headline)
-            Text(text).font(.subheadline).foregroundStyle(.secondary)
+            if !text.isEmpty { Text(text).font(.subheadline).foregroundStyle(.secondary) }
         }.fixedSize(horizontal: false, vertical: true)
     }
     private func action(_ title: String, _ text: String, symbol: String, perform: @escaping () -> Void) -> some View {
@@ -295,12 +307,13 @@ struct OnboardingView: View {
                 if !typeSize.isAccessibilitySize { Image(systemName: symbol).font(.title3).frame(width: 24).accessibilityHidden(true) }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.headline)
-                    Text(text).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if !text.isEmpty { Text(text).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
                 }
                 Spacer(minLength: 0)
                 if !typeSize.isAccessibilitySize { Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary).accessibilityHidden(true) }
             }.padding(16).frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                 .modifier(IridiumGlassSurface(radius: 20))
+                .contentShape(Rectangle())
         }.buttonStyle(.plain).foregroundStyle(.primary)
     }
     private var pspMode: Binding<Bool> {
@@ -317,9 +330,9 @@ struct OnboardingView: View {
             runtime.platforms.sorted { $0.rawValue < $1.rawValue }.map(\.title).joined(separator: " / ")
         }.joined(separator: " · ")
     }
-    @ViewBuilder private var page: some View {
+    @ViewBuilder private func page(for step: OnboardingRules.Step) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            switch model.step {
+            switch step {
             case .welcome, .library:
                 if let game {
                     IridiumGameOptionsHeader(game: game)
@@ -328,10 +341,10 @@ struct OnboardingView: View {
                 VStack(spacing: 10) {
                     action("Choose Files", "Game files or folders", symbol: "folder") { model.chooseFiles(); importing = true }
                     if SteamSignIn.isEnabled || MadeiraDock.enabled {
-                        action("Use Steam", "Your Steam library", symbol: "network") { model.chooseSteam() }
+                        action("Use Steam", "Steam library", symbol: "network") { model.chooseSteam() }
                     }
                 }
-                Text("Iridium detects the system. For disc games, choose the whole folder to keep all tracks together.")
+                Text("Disc games: choose the complete folder.")
                     .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Supported Systems") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -341,27 +354,21 @@ struct OnboardingView: View {
                 }.font(.subheadline)
             case .controls:
                 if let game { IridiumGameOptionsHeader(game: game) }
-                action("Edit Touch Controls", "Layouts for each system or game", symbol: "slider.horizontal.3") { controls = true }
-                Text("Move buttons, adjust their size and opacity, or save a layout to reuse.")
-                    .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if game == nil || model.windows {
-                    Text("Keyboard, mouse and controller mappings for Windows games are also in Controls.")
-                        .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
+                action("Edit Touch Controls", "Size, position and saved layouts", symbol: "slider.horizontal.3") { controls = true }
             case .options:
                 if let game { IridiumGameOptionsHeader(game: game) }
                 if model.requiresJIT {
-                    note("JIT Required", "Enable JIT before this game can run. Choose a method on the next screen.")
+                    note("JIT Required", "Choose a JIT method next.")
                 } else if model.pspJIT {
-                    note("PSP JIT", "This mode needs JIT enabled. Turn it off to use the default mode.")
+                    note("PSP JIT", "Enable JIT to use this mode.")
                 } else if !model.firstGameID.isEmpty {
-                    note("No JIT Required", "You can leave JIT off for this system.")
+                    note("No JIT Required", "Leave JIT off.")
                 } else {
-                    Text("When you choose Play, Iridium shows any setup still needed for that game.")
+                    Text("Play shows any setup still needed.")
                         .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Which systems need JIT?") {
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("JIT lets Iridium run translated game code on this device.").font(.subheadline).foregroundStyle(.secondary)
+                            Text("JIT enables games to run on this device.").font(.subheadline).foregroundStyle(.secondary)
                             note("JIT Required", systems(using: .required))
                             note("No JIT Required", systems(using: .none))
                             if !systems(using: .optional).isEmpty { note("Optional JIT", systems(using: .optional)) }
@@ -370,45 +377,42 @@ struct OnboardingView: View {
                 }
                 if model.optionalJIT || model.pspJIT {
                     Toggle("Use JIT for PSP", isOn: pspMode).disabled(consoles.working)
-                    Text("Optional. Leave off to play without JIT.").font(.footnote).foregroundStyle(.secondary)
                 }
                 if model.windows {
-                    Toggle("Game Requires .NET Framework", isOn: $model.needsMono)
-                    Text("Enable only if the game asks for .NET. Wine Mono can also be installed later in Settings.")
+                    Toggle("Requires .NET Framework", isOn: $model.needsMono)
+                    Text("Only if the game asks for .NET.")
                         .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             case .jit:
-                note(jit.enabled ? "Enabled for This Session" : "Not Enabled", hosted ? "Use the host’s JIT launch for Iridium." : "Enable JIT again after closing Iridium.")
-                action("Choose JIT Method", "Open setup instructions", symbol: "bolt") { jitSetup = true }
+                note(jit.enabled ? "Enabled for This Session" : "Not Enabled", hosted ? "" : "Enable again after closing Iridium.")
+                action("Choose JIT Method", "Setup instructions", symbol: "bolt") { jitSetup = true }
             case .signIn:
                 if let name = signIn.accountName { note("Signed In", name) }
-                action(signIn.accountName == nil ? "Sign In to Steam" : "Manage Steam Account", "Open Steam’s sign-in screen", symbol: "person.crop.circle") { steamSignIn = true }
-                Text("Steam is optional. You can also add game files without an account.")
-                    .font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                action(signIn.accountName == nil ? "Sign In to Steam" : "Manage Steam Account", "", symbol: "person.crop.circle") { steamSignIn = true }
             case .dockClient:
                 if dock.clientInstalled { Label("Components Installed", systemImage: "checkmark").foregroundStyle(IridiumTheme.accent) }
                 else if dock.preparing { ProgressView(dock.progress) }
-                else { action("Download Steam Components", "Required for Steam games", symbol: "arrow.down.circle") { dock.prepareClient() } }
+                else { action("Download Steam Components", "", symbol: "arrow.down.circle") { dock.prepareClient() } }
                 if let error = dock.error { Text(error).font(.subheadline).foregroundStyle(.red) }
-                Text("Available later in Settings → Steam.").font(.footnote).foregroundStyle(.secondary)
+                Text("Also in Settings → Steam.").font(.footnote).foregroundStyle(.secondary)
             case .wineMono:
                 if mono.installed { Label("Wine Mono Installed", systemImage: "checkmark").foregroundStyle(IridiumTheme.accent) }
                 else {
                     switch mono.phase {
-                    case .idle: action("Install Wine Mono", ".NET support for Windows games", symbol: "arrow.down.circle") { mono.install() }
+                    case .idle: action("Install Wine Mono", "", symbol: "arrow.down.circle") { mono.install() }
                     case .downloading(let progress), .installing(let progress): ProgressView(value: progress); Text(mono.status).font(.subheadline)
                     }
                 }
                 if let error = mono.error { Text(error).foregroundStyle(.red) }
-                Text("Most games do not need this. Available later in Settings.").font(.footnote).foregroundStyle(.secondary)
+                Text("Also available in Settings.").font(.footnote).foregroundStyle(.secondary)
             case .done:
                 if let game { IridiumGameOptionsHeader(game: game) }
                 if (model.requiresJIT || model.pspJIT) && !jit.enabled {
                     action("Set Up JIT", model.requiresJIT ? "Required before this game can start" : "Required for your selected PSP mode", symbol: "bolt") { jitSetup = true }
                 }
-                Text("Open a game’s Options to change its cover, name or settings.")
+                Text("Game Options: covers, names and settings.")
                     .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Text("Revisit setup in Settings → Getting Started.").font(.footnote).foregroundStyle(.secondary)
+                Text("Revisit in Settings → Getting Started.").font(.footnote).foregroundStyle(.secondary)
             }
         }
     }
