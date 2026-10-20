@@ -700,6 +700,7 @@ struct JITSetupContent: View {
     @AppStorage("iridium.setup.installationOverrideHost") private var installationOverrideHost = ""
     @Binding private var modalPresented: Bool
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var typeSize
     private let inline: Bool
     private let includeShortcut: Bool
 
@@ -710,6 +711,11 @@ struct JITSetupContent: View {
     }
 
     private var detectedInstallation: JITInstallation { .detected() }
+    private var installationLayout: AnyLayout {
+        typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
+    }
     private var installation: JITInstallation {
         .resolved(installationOverride, host: installationOverrideHost, detected: detectedInstallation)
     }
@@ -756,18 +762,18 @@ struct JITSetupContent: View {
 
     @ViewBuilder private var sections: some View {
         JITSetupGroup(inline: inline) {
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
+            installationLayout {
                 Text("Installation: \(installation.title)")
                     .font(.subheadline).fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("jitInstallationStatus")
-                Spacer(minLength: 0)
+                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
                 Menu {
                     Picker("Installation", selection: installationSelection) {
                         Text("Automatic").tag("automatic")
                         Text("LiveContainer").tag("liveContainer")
                         Text("Standalone").tag("standalone")
                     }
-                } label: { Text("Change") }
+                } label: { Text("Change").fixedSize(horizontal: true, vertical: false) }
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
                     .accessibilityLabel("Change installation")
                     .accessibilityIdentifier("jitInstallationMenu")
