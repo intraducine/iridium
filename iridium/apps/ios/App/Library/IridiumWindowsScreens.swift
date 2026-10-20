@@ -1224,7 +1224,7 @@ Section { Toggle("Desktop reflections", isOn: $liquidMetal.on) } header: { Text(
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Controls": IridiumControlsSettingsView().iridiumPageSurface().navigationTitle("Controls")
+case "Controls": IridiumControlsSettingsView(back: { iridiumNavigate("back") }).iridiumPageSurface().navigationTitle("Controls")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
@@ -1360,8 +1360,9 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         // on either tab (start() does nothing while liquid metal is off).
         .onAppear {}
         .onDisappear { GlassSkin.shared.stop() }
-        .onReceive(controller.commands) { command in
+        .onReceive(controller.commands) { [controlsOwnsCommands = iridiumPages.last == "Controls"] command in
             guard selected == nil, !browser, !onboarding.presented, settingsSheet == nil else { return }
+            guard !controlsOwnsCommands else { return }
             iridiumNavigate(command)
         }
     }
@@ -2255,16 +2256,54 @@ struct ControllerBindsPage: View {
                         Text("\(Int(((mouseVertical ?? 1) * 100).rounded()))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                     }
                 }
+                .id("controls.mapping.vertical")
+                .setupControllerTarget("controls.mapping.vertical", order: 900, action: { changeMouseVertical(1) }, adjust: changeMouseVertical)
                 Text("Relative to horizontal. Games scale the camera's pitch and yaw differently from a mouse; lower this if the view climbs faster than it turns.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         Section {
             Button("Reset all to defaults", role: .destructive) { reset() }
+                .id("controls.mapping.reset")
+                .setupControllerTarget("controls.mapping.reset", order: 1000, action: reset)
                 .disabled(!changed)
             Text("Defaults: left stick WASD, right stick mouse, RT and LT click, D-pad arrows, A Space, B Ctrl, X E, Y R, LB Q, RB F, L3 Shift, R3 C, Start Esc, Select Tab. A touch control's own controller binding (control editor) applies when a row is at its default.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    func controllerTargets(page: String, reveal: @escaping (String) -> Void) -> [SetupControllerTarget] {
+        func row(_ id: String, _ order: Int, enabled: Bool = true, action: @escaping () -> Void, adjust: ((Int) -> Void)? = nil) -> SetupControllerTarget {
+            .init(id: id, page: page, order: order, frame: .zero, enabled: enabled, action: action, adjust: adjust, reveal: { reveal(id) })
+        }
+        var rows = Self.groups.flatMap(\.1).enumerated().map { index, name in
+            row("controls.bind.\(name)", 100 + index, action: { cycleBinding(name, direction: 1) }, adjust: { cycleBinding(name, direction: $0) })
+        }
+        if effective("RS").stickKeys == nil {
+            rows.append(row("controls.mapping.vertical", 900, action: { changeMouseVertical(1) }, adjust: changeMouseVertical))
+        }
+        rows.append(row("controls.mapping.reset", 1000, enabled: changed, action: reset))
+        return rows
+    }
+    private func changeMouseVertical(_ direction: Int) {
+        let value = min(1.5, max(0.25, (mouseVertical ?? 1) + Double(direction) * 0.05))
+        mouseVertical = abs(value - 1) < 0.01 ? nil : value
+    }
+    private func cycleBinding(_ name: String, direction: Int) {
+        let actions: [ControlAction]
+        if name == "LS" || name == "RS" { actions = [.none, .joystickWASD, .joystickArrows] }
+        else {
+            let keys = Array(0x41...0x5A) + Array(0x30...0x39) + Array(0x70...0x7B)
+                + [0x1B, 0x09, 0x10, 0x11, 0x12, 0x20, 0x0D, 0x08, 0x14,
+                   0x26, 0x28, 0x25, 0x27, 0x2D, 0x2E, 0x24, 0x23, 0x21, 0x22,
+                   0xBD, 0xBB, 0xDB, 0xDD, 0xDC, 0xBA, 0xDE, 0xBC, 0xBE, 0xBF, 0xC0]
+                + Array(0x60...0x69) + [0x6A, 0x6B, 0x6D, 0x6E, 0x6F]
+            actions = [.mouseLeft, .mouseRight] + keys.map { .key(Int32($0)) } + [.keyboardToggle, .none]
+        }
+        let values: [ControlAction?] = [nil] + actions.map { Optional.some($0) }
+        var table = binds ?? [:]
+        table[name] = SetupControllerPolicy.cycled(table[name], in: values, direction: direction)
+        binds = table.isEmpty ? nil : table
     }
 
     /// Anything to reset: a bound row or a vertical speed other than 1.
@@ -2327,6 +2366,9 @@ struct ControllerBindsPage: View {
                 }
             }
         }
+        .id("controls.bind.\(name)")
+        .setupControllerTarget("controls.bind.\(name)", order: 100 + (Self.groups.flatMap(\.1).firstIndex(of: name) ?? 0),
+            action: { cycleBinding(name, direction: 1) }, adjust: { cycleBinding(name, direction: $0) })
     }
 
     private func pick(_ name: String, _ title: String, _ action: ControlAction) -> some View {
@@ -2442,6 +2484,17 @@ struct ControllerModeChoice: View {
                 Text("Keyboard and mouse").tag("keys")
             }.pickerStyle(.menu).labelsHidden()
         }
+        .id("controls.mapping.mode")
+        .setupControllerValue("controls.mapping.mode", order: 0,
+            selection: Binding(get: { mode ?? "" }, set: { mode = $0.isEmpty ? nil : $0 }), values: ["", "dinput", "keys"])
+    }
+    func controllerTarget(page: String, reveal: @escaping (String) -> Void) -> SetupControllerTarget {
+        let change: (Int) -> Void = { direction in
+            let value = SetupControllerPolicy.cycled(mode ?? "", in: ["", "dinput", "keys"], direction: direction)
+            mode = value.isEmpty ? nil : value
+        }
+        return .init(id: "controls.mapping.mode", page: page, order: 0, frame: .zero, enabled: true,
+            action: { change(1) }, adjust: change, reveal: { reveal("controls.mapping.mode") })
     }
 }
 
@@ -2712,6 +2765,8 @@ struct LibraryPointerSettings: View {
             Text("Trackpad").tag(IridiumTouchMouseMode.trackpad.rawValue)
             Text("Direct").tag(IridiumTouchMouseMode.direct.rawValue)
         }.pickerStyle(.segmented)
+            .id("controls.mouse.mode")
+            .setupControllerTarget("controls.mouse.mode", order: 300, action: { changeMode(1) }, adjust: changeMode)
             .onChange(of: mode) { _, _ in MetalBackedView.keyboardTarget?.iridiumReleasePointer() }
         Text(mode == IridiumTouchMouseMode.off.rawValue ? "Touch gestures do not send mouse input. Controller and hardware pointer input remain available." : mode == IridiumTouchMouseMode.direct.rawValue
             ? "Tap where you want to click. Hold and move to drag. Two fingers right-click or scroll."
@@ -2719,7 +2774,20 @@ struct LibraryPointerSettings: View {
             .font(.caption).foregroundStyle(.secondary)
         if mode == IridiumTouchMouseMode.trackpad.rawValue {
             LabeledContent("Pointer speed") { Slider(value: $sensitivity, in: 0.25...4) }
+                .id("controls.mouse.speed")
+                .setupControllerTarget("controls.mouse.speed", order: 310, action: { changeSpeed(1) }, adjust: changeSpeed)
         }
+    }
+    private func changeMode(_ direction: Int) { mode = SetupControllerPolicy.cycled(mode, in: IridiumTouchMouseMode.allCases.map(\.rawValue), direction: direction) }
+    private func changeSpeed(_ direction: Int) { sensitivity = min(4, max(0.25, sensitivity + Double(direction) * 0.25)) }
+    func controllerTargets(page: String, reveal: @escaping (String) -> Void) -> [SetupControllerTarget] {
+        var rows = [SetupControllerTarget(id: "controls.mouse.mode", page: page, order: 300, frame: .zero, enabled: true,
+            action: { changeMode(1) }, adjust: changeMode, reveal: { reveal("controls.mouse.mode") })]
+        if mode == IridiumTouchMouseMode.trackpad.rawValue {
+            rows.append(.init(id: "controls.mouse.speed", page: page, order: 310, frame: .zero, enabled: true,
+                action: { changeSpeed(1) }, adjust: changeSpeed, reveal: { reveal("controls.mouse.speed") }))
+        }
+        return rows
     }
 }
 

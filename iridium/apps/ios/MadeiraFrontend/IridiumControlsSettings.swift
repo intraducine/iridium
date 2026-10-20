@@ -11,11 +11,11 @@ struct IridiumControlTarget: Identifiable {
 }
 
 struct IridiumControlsSettingsView: View {
+    var back: () -> Void = {}
     @State private var target: IridiumControlTarget?
     @State private var pending: IridiumControlTarget?
     @State private var pickingGame = false
-    @State private var focus = 0
-    @State private var guided = false
+    @State private var mapping = false
     @ObservedObject private var devices = IridiumPhysicalController.shared
     @ObservedObject private var library = LibraryModel.shared
     @ObservedObject private var consoles = IridiumConsoleLibrary.shared
@@ -37,12 +37,15 @@ struct IridiumControlsSettingsView: View {
                     ForEach(Array(systems.enumerated()), id: \.element) { index, platform in
                         Button { target = .init(platform: platform, title: platform.title) } label: {
                             HStack { Text(platform == .gameBoy ? "Game Boy / Color" : platform.title); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
-                        }.id(index).listRowBackground(guided && focus == index ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        }.id("controls.layout.\(platform.rawValue)").setupControllerTarget("controls.layout.\(platform.rawValue)", order: index, action: {
+                            target = .init(platform: platform, title: platform.title)
+                        })
                     }
                 } header: { Text("Default Touch Layouts") } footer: { Text("Set a layout for a system, or save reusable profiles. Games can have their own controls.") }
                 Section {
                     Button("Game Overrides", systemImage: "gamecontroller") { pickingGame = true }
-                        .id(systems.count).listRowBackground(guided && focus == systems.count ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        .id("controls.games")
+                        .setupControllerTarget("controls.games", order: 100, action: { pickingGame = true })
                 }
                 Section {
                     if devices.connectedDevices.isEmpty { Text("No devices connected").foregroundStyle(.secondary) }
@@ -59,45 +62,121 @@ struct IridiumControlsSettingsView: View {
                     }
                 } header: { Text("Connected Devices") } footer: { Text("Connect a controller, keyboard or mouse to use it here.") }
                 Section("Controller Mapping") {
-                    NavigationLink("Windows Games") { IridiumWindowsControllerSettings() }
+                    Button { mapping = true } label: {
+                        HStack { Text("Windows Games"); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+                    }.id("controls.mapping").setupControllerTarget("controls.mapping", order: 200, action: { mapping = true })
                 }
                 Section("Touch Mouse · Windows") { LibraryPointerSettings() }
                 Section("Haptics") { IridiumControlFeedbackSettings() }
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle("Controls")
-                .onChange(of: focus) { _, value in proxy.scrollTo(value, anchor: .center) }
+        .modifier(IridiumControlsNavigation(page: "controls", suspended: target != nil || pickingGame || mapping, back: back,
+            knownTargets: { targets(reveal: { proxy.scrollTo($0, anchor: .center) }) }))
         }
-        .onReceive(LibraryController.shared.commands) { command($0) }
-        .onKeyPress(.upArrow) { command("up"); return .handled }
-        .onKeyPress(.downArrow) { command("down"); return .handled }
-        .onKeyPress(.return) { command("accept"); return .handled }
+        .navigationDestination(isPresented: $mapping) { IridiumWindowsControllerSettings() }
         .sheet(isPresented: $pickingGame, onDismiss: { target = pending; pending = nil }) {
             NavigationStack {
+              ScrollViewReader { proxy in
                 List {
                 Group {
 
                     if choices.isEmpty { ContentUnavailableView("No Games Yet", systemImage: "gamecontroller", description: Text("Add a game to customize its controls. System defaults are available now.")) }
-                    ForEach(choices) { choice in
-                        Button { pending = choice; pickingGame = false } label: {
+                    ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
+                        Button { selectGame(choice.id) } label: {
                             VStack(alignment: .leading) { Text(choice.title); Text(choice.platform.title).font(.caption).foregroundStyle(.secondary) }
                         }
+                        .id("controls.game.\(choice.id)")
+                        .setupControllerTarget("controls.game.\(choice.id)", order: index, action: { selectGame(choice.id) })
                     }
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle("Game Controls")
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { pickingGame = false } } }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { pickingGame = false }
+                        .setupControllerTarget("controls.games.done", order: Int.max, action: { pickingGame = false })
+                    } }
+                    .modifier(IridiumControlsNavigation(page: "controlGames", suspended: !pickingGame, back: { pickingGame = false },
+                        knownTargets: { choices.enumerated().map { index, choice in
+                            .init(id: "controls.game.\(choice.id)", page: "controlGames", order: index, frame: .zero, enabled: true,
+                                action: { selectGame(choice.id) }, reveal: { proxy.scrollTo("controls.game.\(choice.id)", anchor: .center) })
+                        } + [.init(id: "controls.games.done", page: "controlGames", order: Int.max, frame: .zero, enabled: true,
+                            action: { pickingGame = false })] }))
+              }
             }
         }
         .fullScreenCover(item: $target) { IridiumTouchLayoutEditor(target: $0) }
     }
-    private func command(_ value: String) {
-        guard target == nil, !pickingGame else { return }
-        if value == "up" || value == "down" { guided = true; focus = min(systems.count, max(0, focus + (value == "up" ? -1 : 1))) }
-        if value == "accept" {
-            if focus < systems.count { target = .init(platform: systems[focus], title: systems[focus].title) }
-            else { pickingGame = true }
+    private func selectGame(_ id: String) {
+        guard let current = choices.first(where: { $0.id == id }) else { return }
+        pending = current; pickingGame = false
+    }
+    private func targets(reveal: @escaping (String) -> Void) -> [SetupControllerTarget] {
+        func row(_ id: String, _ order: Int, action: @escaping () -> Void, adjust: ((Int) -> Void)? = nil) -> SetupControllerTarget {
+            .init(id: id, page: "controls", order: order, frame: .zero, enabled: true, action: action, adjust: adjust, reveal: { reveal(id) })
         }
+        var rows = systems.enumerated().map { index, platform in
+            row("controls.layout.\(platform.rawValue)", index, action: { target = .init(platform: platform, title: platform.title) })
+        }
+        rows += [row("controls.games", 100, action: { pickingGame = true }), row("controls.mapping", 200, action: { mapping = true })]
+        rows += LibraryPointerSettings().controllerTargets(page: "controls", reveal: reveal)
+        rows.append(IridiumControlFeedbackSettings().controllerTarget(page: "controls", reveal: reveal))
+        return rows
+    }
+}
+
+/// Lists realize only nearby rows. Data supplies the complete order and current
+/// actions; realized preferences supply geometry without dropping offscreen IDs.
+enum IridiumControlsRows {
+    static func merged(known: [SetupControllerTarget], rendered: [SetupControllerTarget], page: String) -> [SetupControllerTarget] {
+        let geometry = Dictionary(rendered.filter { $0.page == page }.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        let rows = known.isEmpty ? rendered : known
+        var seen = Set<String>()
+        return rows.filter { $0.page == page && seen.insert($0.id).inserted }.map { row in
+            .init(id: row.id, page: page, order: row.order, frame: geometry[row.id] ?? row.frame, enabled: row.enabled,
+                role: row.role, action: row.action, adjust: row.adjust, reveal: row.reveal)
+        }
+    }
+}
+
+/// Each visible Controls page routes only its own live registrations. Child
+/// navigation and presented editors suspend the page behind them.
+private struct IridiumControlsNavigation: ViewModifier {
+    let page: String
+    let suspended: Bool
+    let back: () -> Void
+    var knownTargets: () -> [SetupControllerTarget] = { [] }
+    @StateObject private var focus = SetupControllerFocus()
+    @State private var rendered: [SetupControllerTarget] = []
+    @State private var visible = false
+    @FocusState private var keyboard: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    private var ownsCommands: Bool { visible && !suspended && scenePhase == .active }
+    func body(content: Content) -> some View {
+        content
+            .environment(\.setupControllerFocus, focus)
+            .environment(\.setupControllerPage, page)
+            .onPreferenceChange(SetupControllerTargetsKey.self) { rendered = $0; updateTargets() }
+            .focusable().focusEffectDisabled().focused($keyboard)
+            .onAppear { visible = true; keyboard = true; updateTargets() }
+            .onChange(of: knownTargets()) { _, _ in updateTargets() }
+            .onDisappear { visible = false }
+            .onReceive(LibraryController.shared.commands) { receive($0) }
+            .onKeyPress(.upArrow) { key("up") }
+            .onKeyPress(.downArrow) { key("down") }
+            .onKeyPress(.leftArrow) { key("left") }
+            .onKeyPress(.rightArrow) { key("right") }
+            .onKeyPress(.return) { key("accept") }
+            .onKeyPress(.escape) { key("back") }
+            .modifier(SetupControllerReviewPad(focus: focus, suspended: !ownsCommands))
+    }
+    private func updateTargets() { focus.update(IridiumControlsRows.merged(known: knownTargets(), rendered: rendered, page: page), page: page) }
+    private func receive(_ command: String) {
+        updateTargets()
+        focus.receive(command, page: page, suspended: !ownsCommands, back: back)
+    }
+    private func key(_ command: String) -> KeyPress.Result {
+        guard ownsCommands else { return .ignored }
+        receive(command); return .handled
     }
 }
 
@@ -113,13 +192,20 @@ struct IridiumGameControlsButton: View {
 
 struct IridiumWindowsControllerSettings: View {
     @ObservedObject private var library = LibraryModel.shared
+    @State private var selection: UUID?
+    @Environment(\.dismiss) private var dismiss
+    private var entries: [LibraryEntry] { library.entries.filter { $0.desktop != true } }
     var body: some View {
+      ScrollViewReader { proxy in
         List {
                 Group {
 
             Section {
-                ForEach(library.entries.filter { $0.desktop != true }) { entry in
-                    NavigationLink(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))) { IridiumWindowsMappingEditor(entry: entry) }
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    Button { selectGame(entry.id) } label: {
+                        HStack { Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+                    }.id("controls.mapping.\(entry.id)")
+                        .setupControllerTarget("controls.mapping.\(entry.id)", order: index, action: { selectGame(entry.id) })
                 }
                 if library.entries.filter({ $0.desktop != true }).isEmpty {
                     Text("Add a Windows game to customize its controller mapping.").foregroundStyle(.secondary)
@@ -128,12 +214,27 @@ struct IridiumWindowsControllerSettings: View {
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle("Controller Mapping")
+        .modifier(IridiumControlsNavigation(page: "controlMapping", suspended: selection != nil, back: { dismiss() },
+            knownTargets: { entries.enumerated().map { index, entry in
+                .init(id: "controls.mapping.\(entry.id)", page: "controlMapping", order: index, frame: .zero, enabled: true,
+                    action: { selectGame(entry.id) }, reveal: { proxy.scrollTo("controls.mapping.\(entry.id)", anchor: .center) })
+            } }))
+      }
+        .navigationDestination(item: $selection) { id in
+            if let entry = library.entries.first(where: { $0.id == id }) { IridiumWindowsMappingEditor(entry: entry) }
+        }
+    }
+    private func selectGame(_ id: UUID) {
+        guard entries.contains(where: { $0.id == id }) else { return }
+        selection = id
     }
 }
 
 private struct IridiumWindowsMappingEditor: View {
     @State var entry: LibraryEntry
+    @Environment(\.dismiss) private var dismiss
     var body: some View {
+      ScrollViewReader { proxy in
         Form {
                 Group {
 
@@ -145,11 +246,20 @@ private struct IridiumWindowsMappingEditor: View {
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle(IridiumArtworkModel.shared.title(IridiumGame(windows: entry)))
+            .modifier(IridiumControlsNavigation(page: "controlMappingEditor", suspended: false, back: { dismiss() },
+                knownTargets: { mappingTargets(reveal: { proxy.scrollTo($0, anchor: .center) }) }))
+      }
             .onDisappear {
                 guard var latest = LibraryModel.shared.entries.first(where: { $0.id == entry.id }) else { return }
                 latest.controllerMode = entry.controllerMode; latest.controllerBinds = entry.controllerBinds
                 latest.padMouseVertical = entry.padMouseVertical; LibraryModel.shared.save(latest)
             }
+    }
+    private func mappingTargets(reveal: @escaping (String) -> Void) -> [SetupControllerTarget] {
+        let mode = ControllerModeChoice(mode: $entry.controllerMode).controllerTarget(page: "controlMappingEditor", reveal: reveal)
+        guard entry.controllerMode == "keys" else { return [mode] }
+        return [mode] + ControllerBindsPage(binds: $entry.controllerBinds, mouseVertical: $entry.padMouseVertical)
+            .controllerTargets(page: "controlMappingEditor", reveal: reveal)
     }
 }
 
