@@ -126,6 +126,7 @@ struct OnboardingView: View {
     @State private var source: IridiumImportSource?
     @State private var failure: String?
     private var game: IridiumGame? { findGame(model.firstGameID) }
+    private var scrollsFooter: Bool { typeSize.isAccessibilitySize && heightClass == .compact }
     private func findGame(_ id: String) -> IridiumGame? {
         if let entry = library.entries.first(where: { $0.id.uuidString == id }) { return IridiumGame(windows: entry) }
         return consoles.games.first(where: { $0.id.uuidString == id }).map(IridiumGame.init(console:))
@@ -137,19 +138,23 @@ struct OnboardingView: View {
                 TabView(selection: Binding(get: { model.step }, set: { model.go($0) })) {
                     ForEach(model.steps, id: \.self) { step in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 28) {
-                                heading(for: step)
-                                page(for: step)
+                            VStack(spacing: 0) {
+                                VStack(alignment: .leading, spacing: 28) {
+                                    heading(for: step)
+                                    page(for: step)
+                                }
+                                .padding(.horizontal, 24).padding(.top, heightClass == .compact ? 12 : 28).padding(.bottom, 24)
+                                .frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
+                                // Large text in a short window needs the full viewport for setup controls.
+                                if scrollsFooter { footer }
                             }
-                            .padding(.horizontal, 24).padding(.top, heightClass == .compact ? 12 : 28).padding(.bottom, 24)
-                            .frame(maxWidth: 600, alignment: .leading).frame(maxWidth: .infinity)
                         }
                         .scrollBounceBehavior(.basedOnSize)
                         .tag(step).accessibilityHidden(model.step != step)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+                .safeAreaInset(edge: .bottom, spacing: 0) { if !scrollsFooter { footer } }
             }
             .navigationTitle("Iridium Setup")
             .navigationBarTitleDisplayMode(.inline)
