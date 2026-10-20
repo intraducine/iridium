@@ -13,6 +13,7 @@ class ProductionUXTests(unittest.TestCase):
  @MainActor static func main() {
   for windows in [false,true] {for steam in [false,true] {for psp in [false,true] {for console in [false,true] {
    let steps=OnboardingRules.steps(windows:windows,steam:steam,pspJIT:psp,consoleJIT:console,signIn:true,dock:true,mono:true)
+   precondition(steps.first == .library && !steps.contains(.welcome))
    precondition(steps.contains(.jit)==(windows || steam || psp || console))
    precondition(steps.contains(.signIn)==steam && steps.contains(.dockClient)==steam && steps.contains(.wineMono)==windows)
    for (i,step) in steps.enumerated() {
@@ -20,8 +21,8 @@ class ProductionUXTests(unittest.TestCase):
     precondition(OnboardingRules.next(after:step,in:steps)==(i+1<steps.count ? steps[i+1]:nil))
    }
   }}}}
-  let model=OnboardingModel();model.presentIfNeeded();precondition(model.presented && model.step == .welcome)
-  model.next();model.next();precondition(model.step == .controls);model.skip();precondition(!model.presented)
+  let model=OnboardingModel();model.presentIfNeeded();precondition(model.presented && model.step == .library)
+  model.next();precondition(model.step == .controls);model.skip();precondition(!model.presented)
   let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .controls)
   precondition(resumed.binding(for:.settings).wrappedValue && !resumed.binding(for:.library).wrappedValue)
   resumed.next();precondition(resumed.step == .options);resumed.windows=true;resumed.next();precondition(resumed.step == .jit)
@@ -52,6 +53,10 @@ class ProductionUXTests(unittest.TestCase):
   WineMonoModel.available=true
   let installed=OnboardingModel();installed.rerun();precondition(installed.step == .wineMono)
   WineMonoModel.available=false
+  fixtureDefaults.set("welcome",forKey:"iridium.setup.step")
+  let oldIntro=OnboardingModel();oldIntro.rerun();precondition(oldIntro.step == .library)
+  oldIntro.next();precondition(oldIntro.step == .controls)
+  oldIntro.skip();let skippedControls=OnboardingModel();skippedControls.rerun();precondition(skippedControls.step == .controls)
   LibraryModel.shared.launching=true;completed.rerun();precondition(!completed.presented)
   LibraryModel.shared.launching=false;serverRunning=1;completed.rerun();precondition(!completed.presented)
   serverRunning=0;IridiumConsoleSession.shared.isActive=true;completed.rerun();precondition(!completed.presented)
