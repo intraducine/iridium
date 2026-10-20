@@ -4,67 +4,124 @@ import shutil,subprocess,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
 class ProductionUXTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
-    def test_setup_navigation_resume_and_conditional_capabilities(self):
+    def test_setup_navigation_resume_and_library_completion(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumOnboarding.swift').read_text()
         core=source[source.index('enum OnboardingRules'):source.index('struct OnboardingView:')].replace('UserDefaults.standard','fixtureDefaults')
-        fixture='''import SwiftUI\nimport Combine\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static func flag(_ key:String)->Bool {true} }\nenum SteamSignIn { static let isEnabled=true }\nenum MadeiraDock { static let enabled=true }\nenum WineMonoModel { static var available=false }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String?;var launching=false }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nfunc wine_process_is_running()->Int32 {0}\nvar serverRunning:Int32=0\nfunc wineserver_is_running()->Int32 {serverRunning}\n'''
+        fixture='''import SwiftUI\nimport Combine\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static var enabled=true;static func flag(_ key:String)->Bool {enabled} }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String?;var launching=false }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nvar wineRunning:Int32=0\nfunc wine_process_is_running()->Int32 {wineRunning}\nvar serverRunning:Int32=0\nfunc wineserver_is_running()->Int32 {serverRunning}\n'''
         checks='''
 @main struct Checks {
  @MainActor static func main() {
-  for windows in [false,true] {for steam in [false,true] {for psp in [false,true] {for console in [false,true] {
-   let steps=OnboardingRules.steps(windows:windows,steam:steam,pspJIT:psp,consoleJIT:console,signIn:true,dock:true,mono:true)
-   precondition(steps.first == .library && !steps.contains(.welcome))
-   precondition(steps.contains(.jit)==(windows || steam || psp || console))
-   precondition(steps.contains(.signIn)==steam && steps.contains(.dockClient)==steam && steps.contains(.wineMono)==windows)
-   for (i,step) in steps.enumerated() {
-    precondition(OnboardingRules.previous(before:step,in:steps)==(i>0 ? steps[i-1]:nil))
-    precondition(OnboardingRules.next(after:step,in:steps)==(i+1<steps.count ? steps[i+1]:nil))
-   }
-  }}}}
+  let steps=OnboardingRules.steps
+  precondition(steps == [.library,.options] && OnboardingRules.Step.allCases == steps)
+  for (i,step) in steps.enumerated() {
+   precondition(OnboardingRules.previous(before:step,in:steps)==(i>0 ? steps[i-1]:nil))
+   precondition(OnboardingRules.next(after:step,in:steps)==(i+1<steps.count ? steps[i+1]:nil))
+  }
   let model=OnboardingModel();model.presentIfNeeded();precondition(model.presented && model.step == .library)
-  model.next();precondition(model.step == .controls);model.skip();precondition(!model.presented)
-  let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .controls)
+  model.back();precondition(model.step == .library)
+  model.next();precondition(model.step == .options);model.skip();precondition(!model.presented && model.takeLibraryAction()==nil)
+  let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .options)
   precondition(resumed.binding(for:.settings).wrappedValue && !resumed.binding(for:.library).wrappedValue)
-  resumed.next();precondition(resumed.step == .options);resumed.windows=true;resumed.next();precondition(resumed.step == .jit)
-  resumed.back();precondition(resumed.step == .options);resumed.finish()
+  resumed.binding(for:.library).wrappedValue=false;precondition(resumed.presented)
+  resumed.back();precondition(resumed.step == .library);resumed.next();precondition(resumed.step == .options)
+  resumed.next();precondition(!resumed.presented && resumed.takeLibraryAction() == .library && resumed.takeLibraryAction()==nil)
+  precondition(resumed.dismissalGeneration == 0);resumed.presentationDidDismiss();precondition(resumed.dismissalGeneration == 1)
   precondition(fixtureDefaults.string(forKey:"iridium.setup.step")==nil)
   let completed=OnboardingModel();completed.presentIfNeeded();precondition(!completed.presented)
   let context=OnboardingModel();context.go(.library);context.chooseSteam()
-  precondition(context.step == .signIn && context.steam && context.steps.contains(.dockClient) && context.steps.contains(.jit))
+  precondition(context.step == .library && context.steam && context.steps == steps)
   let gameID="11111111-2222-3333-4444-555555555555"
   context.recordGame(id:gameID,title:"Homebrew PSP",platform:"psp",requiredJIT:false,optionalJIT:true)
-  precondition(!context.steps.contains(.jit) && !context.steam && context.optionalJIT)
-  context.pspJIT=true;precondition(context.steps.contains(.jit));context.pspJIT=false
+  precondition(context.step == .library && !context.steam && context.optionalJIT)
+  context.chooseSteam();precondition(context.firstGameID == gameID && context.optionalJIT && context.step == .library)
+  context.chooseFiles();precondition(context.firstGameID == gameID && context.optionalJIT && context.step == .library)
+  context.setPSPMode(true);precondition(context.pspJIT && context.step == .library && context.steps == steps)
+  context.setPSPMode(false)
   context.recordGame(id:gameID,title:"PS2 game",platform:"playStation2",requiredJIT:true,optionalJIT:false)
-  precondition(context.steps.contains(.jit) && context.consoleJIT && !context.pspJIT)
+  precondition(context.step == .library && context.consoleJIT && !context.pspJIT)
   context.go(.options);context.skip()
   let persisted=OnboardingModel();persisted.rerun()
   precondition(persisted.step == .options && persisted.firstGameID==gameID && persisted.firstGameTitle=="PS2 game" && persisted.requiresJIT)
-  persisted.finishOpeningLibrary();precondition(persisted.takeLibraryAction() == .game(gameID) && persisted.takeLibraryAction()==nil)
-  persisted.finishOpeningLibrary(gameAvailable:false);precondition(persisted.takeLibraryAction() == .files)
-  persisted.chooseFiles();persisted.recordGame(id:gameID,title:"Game Boy game",platform:"gameBoy",requiredJIT:false,optionalJIT:false)
-  precondition(!persisted.steps.contains(.jit))
-  let source=OnboardingModel();source.go(.library);source.chooseSteam();source.finishOpeningLibrary()
-  precondition(source.takeLibraryAction() == .steam && source.takeLibraryAction()==nil)
-  source.chooseFiles();source.finishOpeningLibrary();precondition(source.takeLibraryAction() == .files)
+  persisted.finishOpeningLibrary();precondition(persisted.takeLibraryAction() == .library && persisted.takeLibraryAction()==nil)
+  for windows in [false,true] {for steam in [false,true] {for psp in [false,true] {for console in [false,true] {for mono in [false,true] {
+   let capabilities=OnboardingModel()
+   capabilities.windows=windows;capabilities.steam=steam;capabilities.pspJIT=psp;capabilities.consoleJIT=console;capabilities.needsMono=mono
+   precondition(capabilities.steps == steps && capabilities.requiresJIT == (windows || steam || console))
+   capabilities.finishOpeningLibrary();precondition(capabilities.takeLibraryAction() == .library)
+  }}}}}
+  for saved in ["welcome","library","signIn","dockClient","unknown"] {
+   fixtureDefaults.set(saved,forKey:"iridium.setup.step")
+   let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .library)
+  }
+  for saved in ["controls","options","jit","wineMono","done"] {
+   fixtureDefaults.set(saved,forKey:"iridium.setup.step")
+   let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .options)
+   legacy.skip();let resumed=OnboardingModel();resumed.rerun();precondition(resumed.step == .options)
+  }
   fixtureDefaults.set(true,forKey:"iridium.setup.windows");fixtureDefaults.set(false,forKey:"iridium.setup.needsMono")
   fixtureDefaults.set("wineMono",forKey:"iridium.setup.step")
-  let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .wineMono && legacy.needsMono)
-  WineMonoModel.available=true
-  let installed=OnboardingModel();installed.rerun();precondition(installed.step == .wineMono)
-  WineMonoModel.available=false
-  fixtureDefaults.set("welcome",forKey:"iridium.setup.step")
-  let oldIntro=OnboardingModel();oldIntro.rerun();precondition(oldIntro.step == .library)
-  oldIntro.next();precondition(oldIntro.step == .controls)
-  oldIntro.skip();let skippedControls=OnboardingModel();skippedControls.rerun();precondition(skippedControls.step == .controls)
+  let legacy=OnboardingModel();legacy.rerun();precondition(legacy.step == .options && legacy.needsMono)
+  legacy.binding(for:.settings).wrappedValue=false;precondition(!legacy.presented && legacy.takeLibraryAction()==nil)
+  LibraryModel.shared.current="active";completed.rerun();precondition(!completed.presented)
+  LibraryModel.shared.current=nil
   LibraryModel.shared.launching=true;completed.rerun();precondition(!completed.presented)
   LibraryModel.shared.launching=false;serverRunning=1;completed.rerun();precondition(!completed.presented)
+  serverRunning=0;wineRunning=1;completed.rerun();precondition(!completed.presented)
+  wineRunning=0
   serverRunning=0;IridiumConsoleSession.shared.isActive=true;completed.rerun();precondition(!completed.presented)
-  print("PASS setup: every option combination, Back/Next boundaries, Skip/resume, one presentation owner and session admission")
+  IridiumConsoleSession.shared.isActive=false;MadeiraConfig.enabled=false;completed.rerun();precondition(!completed.presented)
+  MadeiraConfig.enabled=true;completed.rerun();precondition(completed.presented)
+  print("PASS setup: fixed pages across 32 capability combinations, legacy migration, same-page imports/Steam, Back/Next, Skip/resume, main Library completion, modal ownership and session admission")
  }
 }
 '''
         self.compile_run(fixture+core+checks,library=True)
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_setup_completion_enters_main_library_after_dismissal(self):
+        source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
+        handler=source[source.index('    private func completeOnboardingAction()'):source.index('    private func restoreKeyboardFocus()')]
+        fixture='''import Foundation
+@MainActor final class Setup {
+ enum Action { case library }
+ var presented=true
+ var firstGameID=""
+ var action:Action? = .library
+ func takeLibraryAction()->Action? {defer {action=nil};return action}
+}
+struct Game {let id:UUID}
+@MainActor final class CompletionFixture {
+ let onboarding=Setup()
+ var favorites=true,searching=true,searchFocus=true
+ var search="old filter",focus="search"
+ var games:[Game]=[]
+ var reconciled=0
+ var selected:UUID?
+ func keepSelection() {reconciled += 1}
+ func select(_ id:UUID) {selected=id}
+ func complete() {completeOnboardingAction()}
+'''
+        checks='''
+}
+@main struct Checks {
+ @MainActor static func main() {
+  let id=UUID()
+  for gameAvailable in [false,true] {
+   let fixture=CompletionFixture();fixture.onboarding.firstGameID=id.uuidString
+   if gameAvailable {fixture.games=[Game(id:id)]}
+   fixture.complete()
+   precondition(fixture.onboarding.action != nil && fixture.reconciled == 0 && fixture.favorites && fixture.searching)
+   fixture.onboarding.presented=false;fixture.complete()
+   precondition(!fixture.favorites && fixture.search.isEmpty && !fixture.searching && !fixture.searchFocus && fixture.focus == "games")
+   precondition(fixture.onboarding.action == nil && fixture.reconciled == 1 && fixture.selected == (gameAvailable ? id:nil))
+   fixture.complete();precondition(fixture.reconciled == 1)
+  }
+  let empty=CompletionFixture();empty.onboarding.presented=false;empty.complete()
+  precondition(empty.reconciled == 1 && empty.selected == nil)
+  print("PASS setup completion: waits for dismissal, clears Library filters, selects only existing games and consumes once")
+ }
+}
+'''
+        self.compile_run(fixture+handler+checks,library=True)
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_container_routes_and_cover_fit(self):
         route=(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumStikDebugRoute.swift').read_text()

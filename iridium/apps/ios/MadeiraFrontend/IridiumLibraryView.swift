@@ -576,9 +576,10 @@ struct IridiumLibraryView: View {
     private func completeOnboardingAction() {
         guard !onboarding.presented else { return }
         switch onboarding.takeLibraryAction() {
-        case .files: importingFiles = true
-        case .steam: features = 0
-        case .game(let id): if let id = UUID(uuidString: id) { select(id) }
+        case .library:
+            favorites = false; search = ""; searching = false; searchFocus = false; focus = "games"
+            keepSelection()
+            if let id = UUID(uuidString: onboarding.firstGameID), games.contains(where: { $0.id == id }) { select(id) }
         case nil: break
         }
     }
