@@ -153,14 +153,22 @@ private struct SetupControllerItem<Content: View>: View {
     let role: SetupControllerTarget.Role
     let action: () -> Void
     let adjust: ((Int) -> Void)?
+    let hidesFocusOnTouch: Bool
     @ObservedObject var focus: SetupControllerFocus
     @Environment(\.setupControllerPage) private var page
     @Environment(\.isEnabled) private var enabled
     @State private var probe = UIView()
     @State private var callbacks = SetupControllerCallbacks()
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if hidesFocusOnTouch {
+            registeredContent.simultaneousGesture(TapGesture().onEnded { focus.hide() })
+        } else {
+            registeredContent
+        }
+    }
+    private var registeredContent: some View {
         let selected = focus.policy.visible && focus.policy.page == page && focus.policy.selected == id
-        content
+        return content
             .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(IridiumTheme.accent, lineWidth: selected ? 3 : 0).allowsHitTesting(false) }
             .background {
                 GeometryReader { geometry in
@@ -171,7 +179,6 @@ private struct SetupControllerItem<Content: View>: View {
                 }
             }
             .background(SetupControllerProbe(view: probe, callbacks: callbacks, enabled: enabled, action: action, adjust: adjust))
-            .simultaneousGesture(TapGesture().onEnded { focus.hide() })
             .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
@@ -181,23 +188,24 @@ private struct SetupControllerFocusable: ViewModifier {
     let role: SetupControllerTarget.Role
     let action: () -> Void
     let adjust: ((Int) -> Void)?
+    let hidesFocusOnTouch: Bool
     @Environment(\.setupControllerFocus) private var focus
     @ViewBuilder func body(content: Content) -> some View {
-        if let focus { SetupControllerItem(content: content, id: id, order: order, role: role, action: action, adjust: adjust, focus: focus) }
+        if let focus { SetupControllerItem(content: content, id: id, order: order, role: role, action: action, adjust: adjust, hidesFocusOnTouch: hidesFocusOnTouch, focus: focus) }
         else { content }
     }
 }
 extension View {
-    func setupControllerTarget(_ id: String, order: Int, role: SetupControllerTarget.Role = .control,
+    func setupControllerTarget(_ id: String, order: Int, role: SetupControllerTarget.Role = .control, hidesFocusOnTouch: Bool = true,
                                action: @escaping () -> Void, adjust: ((Int) -> Void)? = nil) -> some View {
-        modifier(SetupControllerFocusable(id: id, order: order, role: role, action: action, adjust: adjust))
+        modifier(SetupControllerFocusable(id: id, order: order, role: role, action: action, adjust: adjust, hidesFocusOnTouch: hidesFocusOnTouch))
     }
     func setupControllerValue<Value: Equatable>(_ id: String, order: Int, selection: Binding<Value>, values: [Value]) -> some View {
         let change: (Int) -> Void = { selection.wrappedValue = SetupControllerPolicy.cycled(selection.wrappedValue, in: values, direction: $0) }
         return setupControllerTarget(id, order: order, action: { change(1) }, adjust: change)
     }
-    func setupControllerToggle(_ id: String, order: Int, value: Binding<Bool>) -> some View {
-        setupControllerTarget(id, order: order, action: { value.wrappedValue.toggle() }, adjust: { value.wrappedValue = $0 > 0 })
+    func setupControllerToggle(_ id: String, order: Int, value: Binding<Bool>, hidesFocusOnTouch: Bool = true) -> some View {
+        setupControllerTarget(id, order: order, hidesFocusOnTouch: hidesFocusOnTouch, action: { value.wrappedValue.toggle() }, adjust: { value.wrappedValue = $0 > 0 })
     }
 }
 

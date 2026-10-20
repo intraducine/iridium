@@ -657,6 +657,35 @@ struct JITSettingsSection: View {
     }
 }
 
+/// Presentation-only hosting detection; this does not select StikDebug's route.
+enum JITInstallation: String {
+    case standalone, liveContainer
+
+    var title: String { self == .liveContainer ? "LiveContainer" : "Standalone" }
+
+    static func detected(
+        liveContainerHomePath: String? = ProcessInfo.processInfo.environment["LC_HOME_PATH"],
+        bundleURL: URL = Bundle.main.bundleURL,
+        documentDirectoryURL: URL? = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    ) -> Self {
+        if liveContainerHomePath?.isEmpty == false { return .liveContainer }
+        if bundleURL.standardizedFileURL.path.contains("/Documents/Applications/") { return .liveContainer }
+        if documentDirectoryURL?.standardizedFileURL.path.contains("/LiveContainer/Data/Application/") == true {
+            return .liveContainer
+        }
+        return .standalone
+    }
+
+    static func overrideSelection(_ saved: String, host: String, detected: Self) -> String {
+        guard host == detected.rawValue, Self(rawValue: saved) != nil else { return "automatic" }
+        return saved
+    }
+
+    static func resolved(_ saved: String, host: String, detected: Self) -> Self {
+        Self(rawValue: overrideSelection(saved, host: host, detected: detected)) ?? detected
+    }
+}
+
 /// Shared setup controls. Inline content owns no navigation or scrolling container;
 /// Settings supplies a Form instead. Both presentations use the same coordinator.
 struct JITSetupContent: View {
@@ -666,10 +695,9 @@ struct JITSetupContent: View {
     @State private var importError: String?
     @State private var alternateContainerExpanded = false
     @AppStorage(IridiumStikDebugRoute.settingsKey) private var iridiumStikRoute = IridiumStikDebugRoute.standalone.rawValue
-    // These choices select instructions. The StikDebug route above selects the helper app's location.
-    @AppStorage("iridium.setup.installation") private var installation =
-        ProcessInfo.processInfo.environment["LC_HOME_PATH"] == nil ? "standalone" : "liveContainer"
-    @AppStorage("iridium.setup.container") private var container = "livecontainer"
+    // Only an explicit correction is saved. Never reuse the legacy persisted default.
+    @AppStorage("iridium.setup.installationOverride") private var installationOverride = "automatic"
+    @AppStorage("iridium.setup.installationOverrideHost") private var installationOverrideHost = ""
     @Binding private var modalPresented: Bool
     @Environment(\.scenePhase) private var scenePhase
     private let inline: Bool
@@ -681,12 +709,21 @@ struct JITSetupContent: View {
         self.includeShortcut = includeShortcut
     }
 
-    private var containerName: String {
-        switch container {
-        case "livecontainer2": "LC2"
-        case "livecontainer3": "LC3"
-        default: "LC"
-        }
+    private var detectedInstallation: JITInstallation { .detected() }
+    private var installation: JITInstallation {
+        .resolved(installationOverride, host: installationOverrideHost, detected: detectedInstallation)
+    }
+    private var installationSelection: Binding<String> {
+        Binding(get: {
+            JITInstallation.overrideSelection(self.installationOverride, host: self.installationOverrideHost, detected: self.detectedInstallation)
+        }, set: { value in
+            self.installationOverrideHost = self.detectedInstallation.rawValue
+            self.installationOverride = value
+        })
+    }
+    private func refreshInstallationOverride() {
+        installationOverride = installationSelection.wrappedValue
+        installationOverrideHost = detectedInstallation.rawValue
     }
 
     private var pairingLabel: String {
@@ -710,23 +747,36 @@ struct JITSetupContent: View {
             importing = $0
             modalPresented = $0
         }), allowedContentTypes: [.propertyList, .data], onCompletion: completeImport)
-        .onAppear { coordinator.refreshPairingStatus() }
+        .onAppear { refreshInstallationOverride(); coordinator.refreshPairingStatus() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { coordinator.refreshPairingStatus() }
+            if phase == .active { refreshInstallationOverride(); coordinator.refreshPairingStatus() }
         }
         .onDisappear { modalPresented = false }
     }
 
     @ViewBuilder private var sections: some View {
-        JITSetupGroup("How is Iridium installed?", inline: inline) {
-            Picker("How is Iridium installed?", selection: $installation) {
-                Text("LiveContainer").tag("liveContainer")
-                Text("Standalone").tag("standalone")
-            }.pickerStyle(.segmented)
-                .setupControllerValue("jit.installation", order: 10, selection: $installation, values: ["liveContainer", "standalone"])
-                .disabled(coordinator.busy || pairing.active)
+        JITSetupGroup(inline: inline) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text("Installation: \(installation.title)")
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("jitInstallationStatus")
+                Spacer(minLength: 0)
+                Menu {
+                    Picker("Installation", selection: installationSelection) {
+                        Text("Automatic").tag("automatic")
+                        Text("LiveContainer").tag("liveContainer")
+                        Text("Standalone").tag("standalone")
+                    }
+                } label: { Text("Change") }
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
+                    .accessibilityLabel("Change installation")
+                    .accessibilityIdentifier("jitInstallationMenu")
+                    .accessibilityValue(installationSelection.wrappedValue == "automatic" ? "Automatic, \(installation.title)" : installation.title)
+                    .setupControllerValue("jit.installation", order: 10, selection: installationSelection, values: ["automatic", "liveContainer", "standalone"])
+                    .disabled(coordinator.busy || pairing.active)
+            }
         }
-        if installation == "liveContainer" {
+        if installation == .liveContainer {
             liveContainerSetup
         } else {
             standaloneSetup
@@ -735,40 +785,31 @@ struct JITSetupContent: View {
     }
 
     @ViewBuilder private var liveContainerSetup: some View {
-        JITSetupGroup("Which container?", inline: inline) {
-            Picker("Which container?", selection: $container) {
-                Text("LC").tag("livecontainer")
-                Text("LC2").tag("livecontainer2")
-                Text("LC3").tag("livecontainer3")
-            }.pickerStyle(.segmented)
-                .setupControllerValue("jit.container", order: 20, selection: $container, values: ["livecontainer", "livecontainer2", "livecontainer3"])
-                .disabled(coordinator.busy || pairing.active)
-        }
-        JITSetupGroup("Set up \(containerName)", inline: inline) {
-            Text("1. In \(containerName) Settings → JIT, choose StikDebug. Import this device’s pairing file in StikDebug.")
+        JITSetupGroup("Set up LiveContainer", inline: inline) {
+            Text("1. In LiveContainer Settings → JIT, choose StikDebug. Import this device’s pairing file in StikDebug.")
                 .font(.subheadline)
             if let script = Bundle.main.url(forResource: "madeira-jit", withExtension: "js") {
                 SetupControllerShare(title: "Save JIT Script", url: script, id: "jit.script", order: 30)
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
                     .disabled(coordinator.busy || pairing.active)
-                Text("2. In \(containerName), hold Iridium and open Settings. Turn on Launch with JIT and Use LiveContainer’s Bundle ID, then set JIT Launch Script to the saved file.")
+                Text("2. In LiveContainer, hold Iridium and open Settings. Turn on Launch with JIT and Use LiveContainer’s Bundle ID, then set JIT Launch Script to the saved file.")
                     .font(.subheadline)
             } else {
                 Label("The JIT script is missing. Reinstall Iridium before setting up LiveContainer.",
                       systemImage: "exclamationmark.triangle").font(.subheadline).foregroundStyle(.red)
             }
-            Text("3. Connect LocalDevVPN, then fully close Iridium and reopen it from \(containerName).")
+            Text("3. Connect LocalDevVPN, then fully close Iridium and reopen it from LiveContainer.")
                 .font(.subheadline)
             Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
                 .modifier(IridiumFloatingActionStyle(enabled: inline))
                 .setupControllerTarget("jit.container.vpn", order: 40, action: LocalDevVPN.open)
                 .disabled(coordinator.busy || pairing.active)
             DisclosureGroup(isExpanded: $alternateContainerExpanded) {
-                Text("In LiveContainer, hold StikDebug and choose Settings → Convert to Shared App. Leave a different container free. In \(containerName) Settings → JIT, choose StikDebug (Another LiveContainer).")
+                Text("In LiveContainer, hold StikDebug and choose Settings → Convert to Shared App. Leave a different container free. In the container that runs Iridium, open Settings → JIT and choose StikDebug (Another LiveContainer).")
                     .font(.subheadline).foregroundStyle(.secondary)
             } label: {
                 Text("StikDebug in another container")
-                    .setupControllerToggle("jit.container.alternate", order: 50, value: $alternateContainerExpanded)
+                    .setupControllerToggle("jit.container.alternate", order: 50, value: $alternateContainerExpanded, hidesFocusOnTouch: false)
             }
             SetupControllerLink("Get StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!, id: "jit.container.stik", order: 60)
                 .modifier(IridiumFloatingActionStyle(enabled: inline))

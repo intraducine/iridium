@@ -390,7 +390,7 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
                     Text("Supported Systems").frame(maxWidth: .infinity, alignment: .leading)
-                        .setupControllerToggle("games.systems", order: 20, value: $systemsExpanded)
+                        .setupControllerToggle("games.systems", order: 20, value: $systemsExpanded, hidesFocusOnTouch: false)
                 }.font(.subheadline).multilineTextAlignment(.leading)
                 if SteamSignIn.isEnabled {
                     Divider()
@@ -427,7 +427,7 @@ struct OnboardingView: View {
                         }
                     }.padding(.top, 12).frame(maxWidth: .infinity, alignment: .leading)
                 } label: {
-                    Text("Which games need JIT?").setupControllerToggle("jit.systems", order: 200, value: $jitSystemsExpanded)
+                    Text("Which games need JIT?").setupControllerToggle("jit.systems", order: 200, value: $jitSystemsExpanded, hidesFocusOnTouch: false)
                 }
                 .font(.subheadline)
             }
