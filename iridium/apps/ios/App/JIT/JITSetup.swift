@@ -605,13 +605,18 @@ enum LocalDevVPN {
 /// answer); without it the shortcut runs on its own.
 @MainActor func jitConnectionActions(_ problem: JITCoordinator.ConnectionProblem,
                                      retry: (() -> Void)? = nil,
+                                     openSetup: (() -> Void)? = nil,
                                      then dismiss: @escaping () -> Void = {}) -> some View {
     Group {
         if problem == .pairing {
             Button(OnDevicePairing.isSupported ? "Pair Again" : "Open JIT Setup") {
                 dismiss()
-                if OnDevicePairing.isSupported { OnDevicePairing.shared.start() }
-                JITCoordinator.shared.showSetup = true
+                if OnDevicePairing.isSupported {
+                    JITCoordinator.shared.method = .builtIn
+                    OnDevicePairing.shared.start()
+                }
+                if let openSetup { openSetup() }
+                else { JITCoordinator.shared.showSetup = true }
             }
         }
         if JITNetworkShortcut.shared.enabled {
@@ -689,21 +694,7 @@ struct JITSetupContent: View {
         .fileImporter(isPresented: Binding(get: { importing }, set: {
             importing = $0
             modalPresented = $0
-        }), allowedContentTypes: [.propertyList, .data]) { result in
-            importing = false
-            modalPresented = false
-            switch result {
-            case .success(let url):
-                importError = nil
-                coordinator.importPairingFile(url)
-            case .failure(let failure):
-                if (failure as NSError).code != NSUserCancelledError {
-                    importError = failure.localizedDescription
-                    LogStore.shared.log("[jit-built-in] pairing import failed: \(failure.localizedDescription)",
-                                        level: .error)
-                }
-            }
-        }
+        }), allowedContentTypes: [.propertyList, .data], onCompletion: completeImport)
         .onAppear { coordinator.refreshPairingStatus() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { coordinator.refreshPairingStatus() }
@@ -784,7 +775,7 @@ struct JITSetupContent: View {
                 OnDevicePairingPanel()
             }
             Button("Import pairing file", action: beginImport)
-                .disabled(coordinator.busy)
+                .disabled(coordinator.busy || pairing.active)
             Link("How to create a pairing file",
                  destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!)
             Text(inline ? "Then connect LocalDevVPN and enable JIT."
@@ -818,7 +809,7 @@ struct JITSetupContent: View {
             JITSetupGroup("Pairing file import", inline: inline) {
                 Label(importError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                 Button("Import another pairing file", action: beginImport)
-                    .disabled(coordinator.busy)
+                    .disabled(coordinator.busy || pairing.active)
             }
         }
         if coordinator.busy {
@@ -836,6 +827,7 @@ struct JITSetupContent: View {
                             }.disabled(pairing.active)
                         } else {
                             Button("Import pairing file", action: beginImport)
+                                .disabled(coordinator.busy || pairing.active)
                         }
                     }
                     // Already in setup: recover here instead of opening another setup sheet.
@@ -853,9 +845,37 @@ struct JITSetupContent: View {
     }
 
     private func beginImport() {
+        guard allowPairingImport() else { return }
         importError = nil
         importing = true
         modalPresented = true
+    }
+
+    private func completeImport(_ result: Result<URL, Error>) {
+        importing = false
+        modalPresented = false
+        switch result {
+        case .success(let url):
+            guard allowPairingImport() else { return }
+            importError = nil
+            coordinator.importPairingFile(url)
+        case .failure(let failure):
+            if (failure as NSError).code != NSUserCancelledError {
+                importError = failure.localizedDescription
+                LogStore.shared.log("[jit-built-in] pairing import failed: \(failure.localizedDescription)",
+                                    level: .error)
+            }
+        }
+    }
+
+    private func allowPairingImport() -> Bool {
+        guard !coordinator.busy && !pairing.active else {
+            importError = pairing.active
+                ? "Finish or cancel pairing, then import again."
+                : "Wait for JIT setup to finish, then import again."
+            return false
+        }
+        return true
     }
 }
 
