@@ -14,7 +14,7 @@ import ppsspp_native_overlay as psp
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/PPSSPP'
-MADEIRA = ROOT / 'vendor/Madeira/app'
+MADEIRA = ROOT / 'ci/fixtures/madeira-build43/app'
 
 
 @unittest.skipUnless(platform.system() == 'Darwin' and shutil.which('clang++'), 'Darwin C++ compiler required')
@@ -166,11 +166,11 @@ check('T0', null); check('Tgg', null); check(null, null);
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         with tempfile.TemporaryDirectory() as directory:
             upstream = Path(directory) / 'upstream'; output = Path(directory) / 'output'
-            for name in (helper.SCRIPT, helper.HELPER, helper.MESSAGES, helper.HOST):
-                source = upstream / 'app' / name; generated = output / 'app' / name
-                source.parent.mkdir(parents=True, exist_ok=True); generated.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text((MADEIRA / name).read_text())
-                generated.write_text(frontend.overlay(source.name, source.read_text()))
+            (upstream / 'app/Madeira').mkdir(parents=True)
+            (output / 'app/Madeira/Winios').mkdir(parents=True)
+            (output / 'app/MadeiraJITHelper').mkdir(parents=True)
+            import iridium_app_sources
+            iridium_app_sources.stage(output / 'app')
             with patch.object(frontend, 'UPSTREAM', upstream), patch.object(frontend, 'OUTPUT', output), \
                  patch.object(frontend, 'check_sameboy_component'), patch.object(frontend, 'verify_pin'):
                 frontend.verify()

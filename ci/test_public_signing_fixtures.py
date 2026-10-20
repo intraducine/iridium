@@ -77,6 +77,23 @@ class PublicSigningFixtureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(NAME + ': private identifier 1', result.stdout)
 
+    def test_public_pem_source_exception_is_exact_and_keeps_other_patterns(self):
+        name = 'vendor/Engine/public-example.c'
+        data = b'-----BEGIN ' + b'PRIVATE KEY-----\npublic synthetic marker\n'
+        manifest = self.root / 'ci/public-key-source-fixtures.json'
+        manifest.write_text(json.dumps({name: {'sha256': hashlib.sha256(data).hexdigest()}}))
+        path = self.write(self.root, name, data)
+        result = self.scan()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.scan('public synthetic marker')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(name + ': private identifier 1', result.stdout)
+        path.write_bytes(data + b'changed')
+        self.assertEqual(self.scan().returncode, 1)
+        path.unlink()
+        self.write(self.root, 'vendor/Engine/copied-example.c', data)
+        self.assertEqual(self.scan().returncode, 1)
+
     def test_scan_checks_initialized_dependency_and_untracked_signing_files(self):
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         child = self.root / 'vendor/PPSSPP'

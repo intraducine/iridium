@@ -25,8 +25,7 @@ class CurrentExecutionStatusTests(unittest.TestCase):
         fallback = source.split('            case .fallback(let reason):', 1)[1].split('\n            }', 1)[0]
         harness = r'''import Foundation
 import Dispatch
-enum Platform { case psp, gameBoy }
-struct Game { var platform: Platform = .psp; var pspJITEnabled = false }
+struct Game { var platform: IridiumPlatform = .psp; var runtimeID = "ppsspp"; var pspJITEnabled = false }
 struct Progress { var phase = "" }
 struct FixtureQueue { func async(_ work: @escaping () -> Void) {} }
 enum RuntimeDiagnosticLogFiles { static func writeConsoleLine(_ text: String) {} }
@@ -36,6 +35,7 @@ final class IridiumConsoleSession {
     var game: Game? = Game(), lease: Int? = 1
     var phase = Phase.starting
     var pspReady = false, pspJITVerifiedForLaunch = false
+    var phase3JITVerified = false, phase3Status = "Waiting for video"
     var pspResolution = 2, pspCPUMode = "Not reported", pspJITStatus = ""
     var pspJITFallbackReason: String?, pspStateStatus: String?, error: String?
     var nativePSPController: Int? = 1, terminalFailure = false, diagnostics = Progress()
@@ -88,6 +88,18 @@ case "failure":
     precondition(session.executionStatus == .notRunning)
     session.begin(); session.receive(8, "JIT"); session.receive(9, "Cleanup incomplete")
     precondition(session.executionStatus.mode == "Unknown")
+case "phase3":
+    for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.nintendo3DS, "azahar"), (.playStation2, "play"), (.dreamcast, "flycast")] {
+        session.begin(); session.game = Game(platform: platform, runtimeID: runtime)
+        session.phase3JITVerified = true
+        precondition(session.executionStatus.mode == "Unknown")
+        session.phase = .running
+        precondition(session.executionStatus.mode == "Allocator verified")
+        precondition(session.executionStatus.detail.contains("does not establish"))
+        precondition(!session.executionStatus.runtime.contains("SameBoy"))
+        session.phase3JITVerified = false
+        precondition(session.executionStatus.mode != "JIT active")
+    }
 case "stale":
     session.receive(8, "JIT"); session.receive(4)
     precondition(session.executionStatus.mode == "JIT active")
@@ -108,8 +120,9 @@ print("PASS current-session execution status: " + CommandLine.arguments[1])
 '''.replace('HANDLER', handler).replace('RESET', reset).replace('CLEANUP', cleanup).replace('FALLBACK', fallback)
         main = folder / 'main.swift'; main.write_text(harness)
         cls.binary = folder / 'status'
-        result = subprocess.run(['swiftc', '-swift-version', '5',
+        result = subprocess.run(['swiftc', '-swift-version', '5', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
                                  '-module-cache-path', str(folder / 'cache'),
+                                 str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                                  str(FRONTEND / 'IridiumExecutionStatus.swift'), str(main),
                                  '-o', str(cls.binary)], capture_output=True, text=True)
         if result.returncode:
@@ -134,6 +147,9 @@ print("PASS current-session execution status: " + CommandLine.arguments[1])
 
     def test_previous_session_and_other_runtimes_do_not_inherit_jit(self):
         self.check_scenario('stale')
+
+    def test_phase3_allocator_capability_does_not_claim_guest_jit(self):
+        self.check_scenario('phase3')
 
 
 if __name__ == '__main__':

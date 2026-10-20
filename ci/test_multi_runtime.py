@@ -92,17 +92,16 @@ class MultiRuntimeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('runtime_overlay', ROOT / 'ci/madeira-frontend.py')
         overlay = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(overlay)
-        upstream = ROOT / 'vendor/Madeira/app/Madeira'
+        upstream = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
         if not upstream.is_dir():
             self.skipTest('Pinned Madeira source not initialized')
         source = (upstream / 'ContentView.swift').read_text()
         result = overlay.overlay('ContentView.swift', source)
         self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'), 4)
-        self.assertIn('guard !IridiumConsoleSession.shared.isActive else { return nil }', result)
-        # A changed entry point must fail the declared overlay rather than
-        # silently removing the exclusive-runtime check.
-        with self.assertRaises(ValueError):
-            overlay.overlay('ContentView.swift', source.replace('private func startLibraryEntry(', 'private func renamedEntry('))
+        self.assertIn('guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }', result)
+        # Upstream UI names no longer control maintained admission guards.
+        self.assertEqual(result, overlay.overlay('ContentView.swift',
+            source.replace('private func startLibraryEntry(', 'private func renamedEntry(')))
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for runtime model execution')
     def test_runtime_model_and_store(self):
@@ -112,14 +111,15 @@ class MultiRuntimeTests(unittest.TestCase):
             executable = Path(folder) / 'runtime-test'
             # Both shipping configurations execute the same production model:
             # PSP records must survive an installation without that component.
-            for flags in ([], ['-D', 'IRIDIUM_PPSSPP']):
+            for flags in ([], ['-D', 'IRIDIUM_PPSSPP'], ['-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3']):
                 subprocess.run(['swiftc', *flags, str(source), str(fixture), '-o', str(executable)], check=True)
                 subprocess.run([str(executable)], check=True, timeout=30)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for lifecycle checks')
     def test_console_launch_guards_execute_with_stopped_wine_flags(self):
         session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
-        start = session.index('            guard phase != .restartRequired')
+        admission = session[session.index('    func validateLaunchAdmission() throws {'):session.index('    func start(_ game:')]
+        start = session.index('            try validateLaunchAdmission()')
         end = session.index('            lock.lock(); intent =', start)
         # Execute the shipping preflight/lease acquisition, with controlled
         # process liveness endpoints. This is not a Wine teardown simulation.
@@ -135,10 +135,15 @@ final class LibraryModel {
     var current: UUID?
     var launching = false
 }
+final class TouchControlsModel {
+    static let shared = TouchControlsModel()
+    var iridiumSettingsContext: UUID?
+}
 final class Preflight {
     enum Phase { case idle, restartRequired }
     var phase = Phase.idle
     var ownership = IridiumRuntimeOwnership()
+ADMISSION
     func acquire(_ game: IridiumConsoleGame) throws -> IridiumRuntimeLease {
 GUARDS
         return owner
@@ -147,6 +152,9 @@ GUARDS
 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: .psp,
     runtimeID: "ppsspp", fileExtension: "elf", importedAt: Date())
 let preflight = Preflight()
+// Prompt-time admission never claims a lease; confirmation must recheck it.
+try preflight.validateLaunchAdmission()
+precondition(preflight.ownership.lease == nil)
 func rejects(_ expected: IridiumRuntimeError) {
     do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
     catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }
@@ -157,6 +165,8 @@ rejects(.busy)
 preflight.ownership.release(first)
 LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
 LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
+TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)
+TouchControlsModel.shared.iridiumSettingsContext = nil
 wineRunning = 1; rejects(.busy); wineRunning = 0
 serverRunning = 1; rejects(.busy); serverRunning = 0
 // Zero liveness flags alone cannot authorize a post-Windows console launch.
@@ -169,8 +179,11 @@ preflight.ownership.release(second)
 let third = try preflight.acquire(game)
 preflight.ownership.release(third)
 preflight.phase = .restartRequired; rejects(.restartRequired)
+preflight.phase = .idle
+let last = try preflight.acquire(game)
+preflight.ownership.release(last, restart: true); rejects(.restartRequired)
 print("PASS shipping preflight: active Windows/launch/server/owner, prior Windows despite zero flags, repeated clean console leases, stale stop, restart state")
-'''.replace('GUARDS', guards)
+'''.replace('GUARDS', guards).replace('ADMISSION', admission)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'checks'
@@ -213,7 +226,7 @@ print("PASS shipping preflight: active Windows/launch/server/owner, prior Window
         self.assertNotIn('IridiumSameBoyDriver', view + library)
         self.assertIn('descriptor = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)', library)
         self.assertIn('IridiumRuntimeRegistry.compatible(with: .psp)', library)
-        self.assertIn('supportsPSP ? ["elf", "iso", "cso", "pbp"] : []', library)
+        self.assertIn('IridiumConsoleSystem.all.flatMap(\\.extensions)', library)
 
     @unittest.skipUnless(os.environ.get('IRIDIUM_TEST_CORE') == '1',
                          'Native core execution is explicit; source CI must not trigger emulator builds')

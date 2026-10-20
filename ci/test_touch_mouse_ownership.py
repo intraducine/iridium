@@ -4,7 +4,7 @@ import unittest
 import madeira_player_presentation as presentation
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'vendor/Madeira/app/Madeira/ContentView.swift'
+SOURCE = ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift'
 
 
 @unittest.skipUnless(SOURCE.is_file(), 'Pinned Madeira source required')

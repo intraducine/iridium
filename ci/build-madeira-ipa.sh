@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the pinned Madeira app with Iridium's presentation overlay.
+# Build the Iridium-owned app against its pinned native runtimes.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 if [ "${IRIDIUM_LOCAL_BUILD_LOCKED:-}" != "$PWD" ]; then

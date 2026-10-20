@@ -27,11 +27,19 @@ PUBLIC_SELF_TEST = {
         # Local source rebuild: all 11 PEM blocks exactly match the same public
         # gnutls-3.8.9/lib/crypto-selftests-pk.c fixture; no other patterns bypass.
         '687032df65f8aca7da181b8667de33df20dd94ebdeb55a2652a7e941c85c1e88',
+        # Reused producer cache: its 11 complete PEM blocks exactly match the
+        # pinned upstream archive's self-test block multiset, byte for byte.
+        'cbcc2d7a0a6e9aa9b1a78013f00f9ff9ffe7102bf3074106511f2a07908a30e9',
+        # Xcode 27.1 rebuild: every complete PEM block is byte-identical
+        # to the pinned public crypto-selftests-pk.c source fixture.
+        '791f856b68f4f5d8af72f2198712cec7b5d7e7ee4e90658a1f76f23cb16a8e17',
     },
 }
 # Only reviewed public upstream bytes may bypass the signing-file suffix check.
 # The source collector omits these files; other privacy patterns still apply.
 PUBLIC_SIGNING_FIXTURES = json.loads((ROOT / 'ci/public-signing-fixtures.json').read_text())
+key_manifest = ROOT / 'ci/public-key-source-fixtures.json'
+PUBLIC_KEY_SOURCES = json.loads(key_manifest.read_text()) if key_manifest.exists() else {}
 unused_manifest = ROOT / 'ci/public-unused-archives.json'
 PUBLIC_UNUSED_ARCHIVES = json.loads(unused_manifest.read_text()) if unused_manifest.exists() else {}
 def source_files(root):
@@ -59,6 +67,9 @@ for path in source_files(ROOT):
     for category, pattern in PATTERNS.items():
         if re.search(pattern, data, re.IGNORECASE):
             if category == 'private key' and hashlib.sha256(data).hexdigest() in PUBLIC_SELF_TEST.get(str(path.relative_to(ROOT)), set()):
+                continue
+            if (category == 'private key' and not path.is_symlink()
+                    and PUBLIC_KEY_SOURCES.get(path.relative_to(ROOT).as_posix(), {}).get('sha256') == hashlib.sha256(data).hexdigest()):
                 continue
             findings.append((path.relative_to(ROOT), category))
     if path.suffix.lower() in {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}:

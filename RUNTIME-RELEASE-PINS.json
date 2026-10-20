@@ -63,5 +63,37 @@
     "releaseTag": "v1.20.4",
     "releaseURL": "https://github.com/hrydgard/ppsspp/releases/tag/v1.20.4",
     "tagObject": "3a31057b7e44270b4d5cef8c31b6559d51802a3b"
+  },
+  "dolphin": {
+    "commit": "7cac54161659421ed95c2cd1c0b0746539a4cd38",
+    "releaseTag": "v5.0.0b6",
+    "sourceURL": "https://github.com/OatmealDome/dolphin-ios",
+    "releaseURL": "https://github.com/OatmealDome/dolphin-ios/releases/tag/v5.0.0b6",
+    "adapter": "native iOS host library",
+    "deviceAcceptance": "pending"
+  },
+  "azahar": {
+    "commit": "219d743a1e698101fe1ab8bef43e6563126c3c27",
+    "releaseTag": "2126.2",
+    "sourceURL": "https://github.com/azahar-emu/azahar",
+    "releaseURL": "https://github.com/azahar-emu/azahar/releases/tag/2126.2",
+    "adapter": "upstream libretro adapter",
+    "deviceAcceptance": "pending"
+  },
+  "play": {
+    "commit": "fa75cea31a33f5ab7a2008ed0d90dc74353e9cef",
+    "releaseTag": "0.77",
+    "sourceURL": "https://github.com/jpd002/Play-",
+    "releaseURL": "https://github.com/jpd002/Play-/releases/tag/0.77",
+    "adapter": "upstream libretro adapter",
+    "deviceAcceptance": "pending"
+  },
+  "flycast": {
+    "commit": "5aa091fde632fb332c8d8c34e280d62dc951954c",
+    "releaseTag": "v2.7",
+    "sourceURL": "https://github.com/flyinghead/flycast",
+    "releaseURL": "https://github.com/flyinghead/flycast/releases/tag/v2.7",
+    "adapter": "upstream libretro adapter",
+    "deviceAcceptance": "pending"
   }
 }

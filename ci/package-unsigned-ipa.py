@@ -315,7 +315,9 @@ def check_payload(app):
 def check_asset_catalog(app):
     source = Path(__file__).resolve().parents[1] / "iridium/apps/ios/Iridium/Assets.xcassets"
     info = plistlib.loads((app / 'Info.plist').read_bytes())
-    if info.get('IridiumMadeiraRevision'):
+    if info.get('IridiumFrontendSource') == 'app-owned':
+        source = Path(__file__).resolve().parents[1] / 'iridium/apps/ios/App/Resources/Assets.xcassets'
+    elif info.get('IridiumMadeiraRevision'):
         source = Path(__file__).resolve().parents[1] / 'vendor/Madeira/app/Madeira/Assets.xcassets'
     expected = {path.stem for path in source.glob("*.imageset")}
     if not expected:

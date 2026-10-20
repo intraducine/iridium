@@ -13,6 +13,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var phase = Phase.idle
     @Published private(set) var image: UIImage?
     @Published private(set) var nativePSPController: UIViewController?
+    @Published private(set) var phase3Controller: UIViewController?
+    @Published private(set) var phase3Ready = false
+    @Published private(set) var phase3JITVerified = false
+    @Published private(set) var phase3Status = "Waiting for the engine"
+    private var phase3Generation: UInt64 = 0 // main-thread callback admission
     @Published private(set) var pspReady = false
     @Published private(set) var pspResolution = 2
     @Published private(set) var pspCPUMode = "Not reported"
@@ -31,10 +36,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var touchAnalogSources = IridiumAnalogSources()
     private var touchAnalog: (Int16, Int16) { touchAnalogSources.value }
     private var keyboardAnalog: (Int16, Int16) = (0, 0)
+    private var rightAnalog: (Int16, Int16) = (0, 0) // protected by lock
+    private var consolePointer: (Int16, Int16, Bool) = (0, 0, false)
     private var suppressController = false
     private var intent = IridiumConsoleIntent() // protected by lock
     private var intentGeneration: UInt64 = 0 // protected by lock
-    private enum Backend { case sameBoy, psp }
+    private enum Backend { case sameBoy, psp, advanced }
     private var backend = Backend.sameBoy // queue-owned below
     private var queueOwner: IridiumRuntimeLease?
     private var bootComplete = false
@@ -70,21 +77,28 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var jitDiagnostic: IridiumJITDiagnostic? // main-thread reference; workers retain their own owner
     private var displayedImageCount: UInt64 = 0 // protected by lock
 
+    func validateLaunchAdmission() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
+        guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
+        guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
+              wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
+        guard LibraryModel.sessionsThisRun == 0 else { throw IridiumRuntimeError.restartRequired }
+        guard ownership.lease == nil else { throw IridiumRuntimeError.busy }
+    }
+
     func start(_ game: IridiumConsoleGame, store: IridiumConsoleStore) {
         dispatchPrecondition(condition: .onQueue(.main))
         do {
-            guard phase != .restartRequired else { throw IridiumRuntimeError.restartRequired }
-            guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
-                  wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
-            guard LibraryModel.sessionsThisRun == 0 else { throw IridiumRuntimeError.restartRequired }
+            try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
-            guard runtime.id == "sameboy" || runtime.id == "ppsspp" else { throw IridiumRuntimeError.unavailable }
-            _ = try runtime.executionMode(jitAvailable: false)
+            if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
             lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
             releaseButtons()
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             diagnostics = IridiumRuntimeProgress()
+            phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
             pspJITStatus = "Off — using IR interpreter"
             pspJITFallbackReason = nil; pspJITVerifiedForLaunch = false
@@ -93,7 +107,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             LibraryController.shared.configure(enabled: true, ownsInput: false)
             queue.async { [self] in
                 queueOwner = owner; bootComplete = false; stopRequested = false; terminalFailure = false
-                backend = runtime.id == "ppsspp" ? .psp : .sameBoy
+                backend = game.platform.isPhase3 ? .advanced : runtime.id == "ppsspp" ? .psp : .sameBoy
                 audioBuffering = IridiumAudioBuffering()
                 progress = IridiumRuntimeProgress(); progressStarted = ProcessInfo.processInfo.systemUptime
                 lastFreshImage = nil; lastChangedImage = nil
@@ -131,12 +145,80 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                             }
                             self.prepareNativePSP(game: url, memoryStick: folder, owner: owner)
                         }
+                    case .advanced:
+                        let system = try store.systemDirectory(game)
+                        DispatchQueue.main.async {
+                            guard self.lease == owner else { return }
+                            guard self.requested != .stop else { self.queue.async { self.complete(owner) }; return }
+                            self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner)
+                        }
                     }
                 } catch {
                     fail(error.localizedDescription, owner: owner)
                 }
             }
         } catch { self.error = error.localizedDescription }
+    }
+
+    private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease) {
+        guard let frameworks = Bundle.main.privateFrameworksURL else {
+            queue.async { self.fail(IridiumRuntimeError.unavailable.localizedDescription, owner: owner) }; return
+        }
+        // These are upstream allocators. Helper readiness only authorizes the
+        // engine's own probe; it never substitutes for successful execution.
+        let controller = game.runtimeID.withCString { runtime in
+            frameworks.path.withCString { binaries in
+                url.path.withCString { content in
+                    folder.path.withCString { saves in
+                        system.path.withCString { assets in
+                            ir_phase3_open(runtime, binaries, content, saves, assets, StikJITHelper.ready,
+                                phase3Generation, { generation, kind, message in
+                                    let text = message.map { String(cString: $0) } ?? ""
+                                    DispatchQueue.main.async {
+                                        IridiumConsoleSession.shared.phase3Event(generation, kind: kind, message: text)
+                                    }
+                                }, { output in
+                                    guard let output else { return }
+                                    let session = IridiumConsoleSession.shared
+                                    let sample = session.input()
+                                    output.pointee.buttons = sample.digital.buttons
+                                    output.pointee.left_x = sample.x; output.pointee.left_y = sample.y
+                                    session.fillPhase3Input(output)
+                                    session.acknowledge(sample, polled: true)
+                                })
+                        }
+                    }
+                }
+            }
+        }
+        guard let controller else {
+            error = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
+            queue.async { self.terminalFailure = true; self.complete(owner) }; return
+        }
+        phase3Controller = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
+        diagnostics.phase = "upstream engine starting"
+        if requested == .pause { ir_phase3_pause(true) }
+    }
+
+    private func phase3Event(_ generation: UInt64, kind: UInt32, message: String) {
+        guard generation == phase3Generation, let owner = lease, game?.platform.isPhase3 == true else { return }
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[Phase3] " + message)
+        phase3Status = message
+        switch kind {
+        case 1:
+            phase3Ready = true; diagnostics.phase = "engine produced video"
+            if phase == .starting && requested == .play { phase = .running }
+        case 2:
+            phase3Controller = nil
+            queue.async { self.complete(owner) }
+        case 3:
+            error = message
+            queue.async { self.terminalFailure = true }
+            if phase3Controller != nil { stop() }
+        case 4: pause()
+        case 5: phase3JITVerified = true
+        default: break
+        }
     }
 
     @MainActor private func prepareNativePSP(game: URL, memoryStick: URL, owner: IridiumRuntimeLease) {
@@ -318,6 +400,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         phase = .paused; releaseButtons()
         diagnostics.phase = "pause requested"
         LibraryController.shared.configure(enabled: true, ownsInput: true)
+        if phase3Controller != nil { ir_phase3_pause(true); return }
         if nativePSPController != nil { ir_psp_native_pause(); return }
         queue.async { [self] in
             guard queueOwner == owner, requested == .pause else { return }
@@ -338,6 +421,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         phase = .starting
         diagnostics.phase = "resume requested"
         LibraryController.shared.configure(enabled: true, ownsInput: false)
+        if phase3Controller != nil { ir_phase3_pause(false); phase = phase3Ready ? .running : .starting; return }
         if nativePSPController != nil {
             ir_psp_native_resume(); phase = pspReady ? .running : .starting; return
         }
@@ -361,6 +445,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         phase = .stopping; releaseButtons()
         diagnostics.phase = "stop requested"
         watchStop(owner)
+        if phase3Controller != nil { ir_phase3_stop(); return }
         if nativePSPController != nil { ir_psp_native_stop(); return }
         if let preparedJIT, !preparedJIT.finished { return } // Its owned cleanup releases this lease.
         queue.async { [self] in
@@ -383,6 +468,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         progress.phase = "stopping"; publishProgress(owner, force: true)
         silenceAudio()
         switch backend {
+        case .advanced: complete(owner)
         case .sameBoy:
             stopTimer()
             do { try persistSaves() }
@@ -422,7 +508,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         stopTimer(); stopAudio(); runningGame = nil; saveFolder = nil; queueOwner = nil
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
-            self.ownership.release(owner)
+            let restart = self.game?.runtimeID == "play"
+            self.ownership.release(owner, restart: restart)
             self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
             self.jitDiagnostic = nil
             self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
@@ -431,7 +518,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             // Preserve an unacknowledged launch/runtime failure at the library.
             if failed, let error = self.error { LibraryModel.shared.error = error }
             self.error = nil
-            self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase = .idle; self.presented = false
+            self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
+            self.phase = restart ? .restartRequired : .idle; self.presented = false
             LibraryModel.shared.refreshFlag()
         }
     }
@@ -517,10 +605,43 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock()
         digitalInput.cancel()
         touchAnalogSources.clear(); keyboardAnalog = (0, 0); suppressController = true
+        rightAnalog = (0, 0); consolePointer = (0, 0, false)
         lock.unlock()
     }
 
     func resetInput() { releaseButtons() }
+
+    func setRightAnalog(x: Int16, y: Int16) {
+        lock.lock(); defer { lock.unlock() }
+        rightAnalog = intent.request == .play ? (x, y) : (0, 0)
+    }
+    func setConsolePointer(_ point: CGPoint?, size: CGSize) {
+        lock.lock(); defer { lock.unlock() }
+        guard intent.request == .play, let point,
+              let projected = Iridium3DSTouchProjection.project(point: point, size: size) else {
+            consolePointer = (0, 0, false); return
+        }
+        consolePointer = (projected.0, projected.1, true)
+    }
+    private func fillPhase3Input(_ value: UnsafeMutablePointer<IRPhase3Input>) {
+        let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad
+        lock.lock(); defer { lock.unlock() }
+        guard intent.request == .play else { value.pointee = IRPhase3Input(); return }
+        var right = rightAnalog
+        if !suppressController, let pad {
+            if right == (0, 0) {
+                right = (Int16(max(-1, min(1, pad.rightThumbstick.xAxis.value)) * 32767),
+                         Int16(max(-1, min(1, pad.rightThumbstick.yAxis.value)) * 32767))
+            }
+            if pad.leftTrigger.isPressed { value.pointee.buttons |= 1 << 12 }
+            if pad.rightTrigger.isPressed { value.pointee.buttons |= 1 << 13 }
+            if pad.leftThumbstickButton?.isPressed == true { value.pointee.buttons |= 1 << 14 }
+            if pad.rightThumbstickButton?.isPressed == true { value.pointee.buttons |= 1 << 15 }
+        }
+        value.pointee.right_x = right.0; value.pointee.right_y = Int16(clamping: -Int(right.1))
+        value.pointee.pointer_x = consolePointer.0; value.pointee.pointer_y = consolePointer.1
+        value.pointee.pointer_down = consolePointer.2
+    }
 
     private struct InputSample {
         let digital: IridiumPolledInput.Snapshot
@@ -541,15 +662,15 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         var physical: UInt16 = 0
         var stick: (Int16, Int16) = (0, 0)
         if let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad {
-            if pad.buttonA.isPressed { physical |= backend == .psp ? 1 : 1 << 8 }
-            if pad.buttonB.isPressed { physical |= backend == .psp ? 1 << 8 : 1 }
+            if pad.buttonA.isPressed { physical |= backend == .sameBoy ? 1 << 8 : 1 }
+            if pad.buttonB.isPressed { physical |= backend == .sameBoy ? 1 : 1 << 8 }
             if pad.buttonMenu.isPressed { physical |= 1 << 3 }
             if pad.buttonOptions?.isPressed == true { physical |= 1 << 2 }
             if pad.dpad.up.isPressed { physical |= 1 << 4 }
             if pad.dpad.down.isPressed { physical |= 1 << 5 }
             if pad.dpad.left.isPressed { physical |= 1 << 6 }
             if pad.dpad.right.isPressed { physical |= 1 << 7 }
-            if backend == .psp {
+            if backend == .psp || backend == .advanced {
                 if pad.buttonX.isPressed { physical |= 1 << 1 }
                 if pad.buttonY.isPressed { physical |= 1 << 9 }
                 if pad.leftShoulder.isPressed { physical |= 1 << 10 }
@@ -604,6 +725,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if requested == .stop, !stopRequested { beginStop(owner) }
         guard queueOwner == owner else { return }
         switch backend {
+        case .advanced: return // Native upstream player owns its frame clock.
         case .sameBoy:
             guard requested == .play else { return }
             var frame = IRCoreFrame()

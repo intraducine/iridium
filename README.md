@@ -38,12 +38,12 @@ in place. A conflicting save stops import instead of overwriting either copy.
 
 | Directory | Purpose |
 | --- | --- |
-| `vendor/Madeira/` | Pinned Madeira app and its dependency submodules |
-| `iridium/apps/ios/MadeiraFrontend/` | Iridium presentation and data import |
+| `vendor/Madeira/` | Pinned Madeira native runtime and its dependency submodules |
+| `iridium/apps/ios/App/`, `AppProject/`, `MadeiraFrontend/` | Maintained Iridium app, models, services, native adapters and project template |
 | `iridium/apps/ios/RuntimeSupport/`, `RuntimeBridge/` | Runtime contracts, isolated library and native core bridge |
 | `vendor/SameBoy/` | Pinned interpreter core and its permissive support sources |
 | `vendor/PPSSPP/` | Pinned PSP component; unchanged upstream source and selected dependencies |
-| `ci/madeira-frontend.py`, `ci/madeira_presentation.py` | Reviewed presentation overlay and native build preparation |
+| `ci/madeira-frontend.py`, `ci/iridium_app_sources.py` | App-owned staging and checked native build preparation |
 | Other runtime and application directories | Retained migration and recovery source; excluded from the frontend target |
 
 Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own licenses. Read [LICENSING.md](LICENSING.md) before redistributing. Madeira is credited for the runtime approach and implementation.
@@ -53,7 +53,8 @@ Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own lic
 Clone this repository. The frontend builder initializes the required Madeira
 submodules at their committed revisions. It does not initialize FEX's large test
 repositories. The current pin is recorded in [UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json).
-Upstream updates require a pin update and review of the declared hooks.
+Upstream updates require native API and integration checks, a reviewed pin update and rebuild.
+See [runtime integration and ownership](docs/runtime-integration.md).
 
 ## Build a sideloading IPA locally
 

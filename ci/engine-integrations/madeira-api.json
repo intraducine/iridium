@@ -1,0 +1,434 @@
+{
+  "schema": 1,
+  "madeiraRevision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+  "api": {
+    "functions": {
+      "jit_region_create": "JITRegion *(size_t)",
+      "jit_region_destroy": "void (JITRegion *)",
+      "jit_make_region_no_footprint": "_Bool (void *, size_t, const char *)",
+      "jit_region_rw_ptr": "void *(JITRegion *)",
+      "jit_region_rx_ptr": "void *(JITRegion *)",
+      "jit_region_size": "size_t (JITRegion *)",
+      "jit_region_write": "void *(JITRegion *, size_t, const void *, size_t)",
+      "jit_region_invalidate": "void (JITRegion *, size_t, size_t)",
+      "jit_check_debugged": "_Bool (void)",
+      "jit_install_trap_handler": "void (void)",
+      "jit_arm_trap_fallback": "void (void)",
+      "jit_cs_status": "_Bool (uint32_t *)",
+      "jit_task_map_range": "_Bool (uint64_t *, uint64_t *)",
+      "jit_available_memory": "uint64_t (void)",
+      "jit26_prepare_region": "void *(void *, size_t)",
+      "jit26_detach": "void (void)",
+      "jit_test_mapping": "_Bool (void)",
+      "jit_test_execute": "int64_t (void)",
+      "jit_test_execute_strategy2": "int64_t (void)",
+      "jit_wx_probe": "void (void)",
+      "jit_set_log_callback": "void (jit_log_callback_t)",
+      "madeira_early_window_base": "unsigned long",
+      "madeira_early_window_size": "unsigned long",
+      "madeira_early_pool_base": "unsigned long",
+      "madeira_early_intruder_base": "unsigned long",
+      "madeira_early_intruder_size": "unsigned long",
+      "madeira_early_intruder_tag": "unsigned int",
+      "madeira_early_intruder_prot": "unsigned int",
+      "madeira_early_pool_size": "unsigned long",
+      "fex_initialize": "_Bool (void)",
+      "fex_shutdown": "void (void)",
+      "fex_test_execute": "int64_t (void)",
+      "fex_set_log_callback": "void (fex_log_callback_t)",
+      "fex_get_jit_write_offset": "int64_t (void)",
+      "wineserver_start": "int (const char *)",
+      "wineserver_is_running": "int (void)",
+      "wineserver_is_ready": "int (void)",
+      "wineserver_stop": "void (void)",
+      "wineserver_inject_client_fd": "void (int)",
+      "wine_process_start": "int (const char *)",
+      "wine_process_is_running": "int (void)",
+      "wine_launched_process_did_exit": "void (int)",
+      "wine_crash_exit_status": "int (uint32_t *)",
+      "wine_exit_status_reset": "void (void)",
+      "madeira_write_continue_flag": "int (void)",
+      "madeira_seed_prefix_if_needed": "void (const char *)",
+      "madeira_display_set_layer": "void (CAMetalLayer *)",
+      "MadeiraDisplayModeChangedNotification": "NSString *const",
+      "winios_screen_size": "void (int *, int *)",
+      "winios_display_mode_changed": "void (int, int)",
+      "winios_gamepad_set_state": "void (int, const struct winios_gamepad *)",
+      "winios_gamepad_get_state": "int (int, struct winios_gamepad *)",
+      "winios_hidpad_set_state": "void (const struct winios_hidpad *)",
+      "winios_hidpad_get_state": "int (struct winios_hidpad *)",
+      "winios_hidpad_set_output": "void (const struct winios_hidpad_output *)",
+      "winios_hidpad_get_output": "int (uint32_t, struct winios_hidpad_output *)",
+      "winios_gamepad_set_vibration": "void (int, uint16_t, uint16_t)",
+      "winios_gamepad_get_vibration": "uint32_t (int, struct winios_gamepad_vibration *)",
+      "winios_gamepad_set_rumble_caps": "void (int)",
+      "winios_gamepad_rumble_caps": "int (void)",
+      "winios_pad_output_set_notify": "void (winios_pad_output_notify_fn)",
+      "winios_drv_register": "void (void)",
+      "winios_post_touch_down": "void (int, int)",
+      "winios_post_touch_move": "void (int, int)",
+      "winios_post_touch_up": "void (int, int)",
+      "winios_post_key": "void (int, int)",
+      "winios_set_compositor_frame": "void (double, double, double, double)",
+      "winios_set_desktop_rect": "void (double, double, double, double, int)",
+      "winios_pointer": "void (int, int, unsigned int, unsigned int)",
+      "winios_cursor_move": "void (int, int)",
+      "winios_surface_present_count": "unsigned long long (void)",
+      "winios_compositor_set_hidden": "int (int)",
+      "winios_note_game_metal_hwnd": "void (void *)",
+      "winios_session_reset": "void (void)",
+      "winios_desktop_point_from_window": "int (double, double, int *, int *)",
+      "winios_window_census_enable": "void (int)",
+      "winios_window_census": "int (struct winios_census_window *, int)",
+      "madeira_set_diag_enabled": "void (int)",
+      "madeira_get_diag_enabled": "int (void)",
+      "winios_direct_cursor_wanted": "int (void)",
+      "winios_direct_cursor_set": "void (unsigned int, int, int, int, int, const void *)",
+      "winios_direct_cursor_show": "void (int)",
+      "winios_direct_cursor_pos": "void (int, int)",
+      "winios_direct_cursor_enable": "void (winios_direct_cursor_notify_t)",
+      "winios_direct_cursor_track": "void (int)",
+      "winios_direct_cursor_get": "void (struct winios_direct_cursor_state *)",
+      "winios_direct_cursor_copy_image": "unsigned int (void *, size_t, struct winios_direct_cursor_state *)",
+      "madeira_pad_output_configure": "void (int, int)",
+      "madeira_pad_output_set_slot": "void (int, GCController * _Nullable)",
+      "madeira_pad_output_set_active": "void (int)",
+      "lzma_shim_decode": "int (const uint8_t *, size_t, const uint8_t *, size_t, uint8_t *, size_t, size_t *)",
+      "zstd_safe_decompress": "size_t (void *, size_t, const void *, size_t)",
+      "madeira_rppairing_new": "MadeiraRPPairing *(const char *, char **)",
+      "madeira_rppairing_port": "uint16_t (const MadeiraRPPairing *)",
+      "madeira_rppairing_service_name": "const char *(const MadeiraRPPairing *)",
+      "madeira_rppairing_txt_count": "size_t (const MadeiraRPPairing *)",
+      "madeira_rppairing_txt_key": "const char *(const MadeiraRPPairing *, size_t)",
+      "madeira_rppairing_txt_value": "const char *(const MadeiraRPPairing *, size_t)",
+      "madeira_rppairing_accept": "int32_t (const MadeiraRPPairing *, MadeiraRPPairingPinCallback, void *, uint8_t **, size_t *, char **, char **)",
+      "madeira_rppairing_cancel": "void (const MadeiraRPPairing *)",
+      "madeira_rppairing_free": "void (MadeiraRPPairing *)",
+      "madeira_rppairing_bytes_free": "void (uint8_t *, size_t)",
+      "madeira_rppairing_string_free": "void (char *)",
+      "madeira_extract_prefix_tgz": "int (const char *, const char *)",
+      "wine_log_set_file": "void (const char *)",
+      "wine_set_ui_log_callback": "void (wine_ui_log_callback_t)",
+      "madeira_get_present_count": "uint64_t (void)",
+      "madeira_gpu_meter_enable": "void (int)",
+      "madeira_gpu_meter_busy_seconds": "double (void)",
+      "madeira_gpu_meter_cmdbufs": "uint64_t (void)",
+      "madeira_capture_request": "void (int)",
+      "madeira_set_eco": "void (int)",
+      "madeira_get_eco": "int (void)",
+      "madeira_set_fence_mode": "void (int)",
+      "madeira_set_vsync_locked": "void (int)",
+      "madeira_get_vsync_locked": "int (void)",
+      "madeira_set_display_max_fps": "void (int, int)",
+      "madeira_dxmt_has_display_pacing": "int (void)",
+      "madeira_dxmt_has_40_cap": "int (void)",
+      "winios_phase": "void (const char *)",
+      "madeira_d3d12_canary_run": "int (const char *, const char *, void (*)(const char *))",
+      "madeira_d3d12_canary_run_log": "int (const char *, const char *, void (*)(const char *), const char *, const char *)"
+    },
+    "records": {
+      "winios_gamepad": [
+        [
+          "packet",
+          "uint32_t"
+        ],
+        [
+          "buttons",
+          "uint16_t"
+        ],
+        [
+          "left_trigger",
+          "uint8_t"
+        ],
+        [
+          "right_trigger",
+          "uint8_t"
+        ],
+        [
+          "lx",
+          "int16_t"
+        ],
+        [
+          "ly",
+          "int16_t"
+        ],
+        [
+          "rx",
+          "int16_t"
+        ],
+        [
+          "ry",
+          "int16_t"
+        ],
+        [
+          "connected",
+          "uint8_t"
+        ],
+        [
+          "reserved",
+          "uint8_t[3]"
+        ]
+      ],
+      "winios_hidpad": [
+        [
+          "packet",
+          "uint32_t"
+        ],
+        [
+          "buttons",
+          "uint32_t"
+        ],
+        [
+          "lx",
+          "int16_t"
+        ],
+        [
+          "ly",
+          "int16_t"
+        ],
+        [
+          "rx",
+          "int16_t"
+        ],
+        [
+          "ry",
+          "int16_t"
+        ],
+        [
+          "left_trigger",
+          "uint8_t"
+        ],
+        [
+          "right_trigger",
+          "uint8_t"
+        ],
+        [
+          "connected",
+          "uint8_t"
+        ],
+        [
+          "battery",
+          "uint8_t"
+        ],
+        [
+          "charging",
+          "uint8_t"
+        ],
+        [
+          "motion",
+          "uint8_t"
+        ],
+        [
+          "touch",
+          "uint8_t[2]"
+        ],
+        [
+          "reserved",
+          "uint8_t[2]"
+        ],
+        [
+          "touch_x",
+          "uint16_t[2]"
+        ],
+        [
+          "touch_y",
+          "uint16_t[2]"
+        ],
+        [
+          "gyro",
+          "int16_t[3]"
+        ],
+        [
+          "accel",
+          "int16_t[3]"
+        ],
+        [
+          "reserved2",
+          "uint16_t"
+        ]
+      ],
+      "winios_hidpad_output": [
+        [
+          "serial",
+          "uint32_t"
+        ],
+        [
+          "rumble_valid",
+          "uint8_t"
+        ],
+        [
+          "rumble_left",
+          "uint8_t"
+        ],
+        [
+          "rumble_right",
+          "uint8_t"
+        ],
+        [
+          "lightbar_valid",
+          "uint8_t"
+        ],
+        [
+          "red",
+          "uint8_t"
+        ],
+        [
+          "green",
+          "uint8_t"
+        ],
+        [
+          "blue",
+          "uint8_t"
+        ],
+        [
+          "player_leds_valid",
+          "uint8_t"
+        ],
+        [
+          "player_leds",
+          "uint8_t"
+        ],
+        [
+          "mute_led_valid",
+          "uint8_t"
+        ],
+        [
+          "mute_led",
+          "uint8_t"
+        ],
+        [
+          "trigger_valid",
+          "uint8_t[2]"
+        ],
+        [
+          "trigger",
+          "uint8_t[2][11]"
+        ],
+        [
+          "power_valid",
+          "uint8_t"
+        ],
+        [
+          "power_reduction",
+          "uint8_t"
+        ],
+        [
+          "reserved",
+          "uint8_t[3]"
+        ]
+      ],
+      "winios_gamepad_vibration": [
+        [
+          "serial",
+          "uint32_t"
+        ],
+        [
+          "left",
+          "uint16_t"
+        ],
+        [
+          "right",
+          "uint16_t"
+        ]
+      ],
+      "winios_census_window": [
+        [
+          "hwnd",
+          "unsigned long long"
+        ],
+        [
+          "x",
+          "int"
+        ],
+        [
+          "y",
+          "int"
+        ],
+        [
+          "w",
+          "int"
+        ],
+        [
+          "h",
+          "int"
+        ],
+        [
+          "pid",
+          "unsigned int"
+        ],
+        [
+          "presents",
+          "unsigned int"
+        ],
+        [
+          "visible",
+          "unsigned char"
+        ],
+        [
+          "metal",
+          "unsigned char"
+        ],
+        [
+          "shown_once",
+          "unsigned char"
+        ],
+        [
+          "restore_sent",
+          "unsigned char"
+        ],
+        [
+          "image",
+          "char[264]"
+        ]
+      ],
+      "winios_direct_cursor_state": [
+        [
+          "x",
+          "int"
+        ],
+        [
+          "y",
+          "int"
+        ],
+        [
+          "shown",
+          "int"
+        ],
+        [
+          "w",
+          "int"
+        ],
+        [
+          "h",
+          "int"
+        ],
+        [
+          "hot_x",
+          "int"
+        ],
+        [
+          "hot_y",
+          "int"
+        ],
+        [
+          "image_serial",
+          "unsigned int"
+        ],
+        [
+          "reports",
+          "unsigned int"
+        ]
+      ]
+    },
+    "aliases": {
+      "JITRegion": "struct JITRegion",
+      "jit_log_callback_t": "void (*)(const char *)",
+      "fex_log_callback_t": "void (*)(const char *)",
+      "winios_pad_output_notify_fn": "void (*)(void)",
+      "winios_direct_cursor_notify_t": "void (*)(void)",
+      "MadeiraRPPairing": "struct MadeiraRPPairing",
+      "MadeiraRPPairingPinCallback": "void (*)(const char *, void *)",
+      "wine_ui_log_callback_t": "void (*)(const char *)"
+    }
+  }
+}

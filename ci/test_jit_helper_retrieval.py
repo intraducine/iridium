@@ -10,7 +10,7 @@ import madeira_jit_observability as overlay
 import madeira_psp_jit as prepared
 
 ROOT = Path(__file__).resolve().parents[1]
-MADEIRA = ROOT / 'vendor/Madeira/app'
+MADEIRA = ROOT / 'ci/fixtures/madeira-build43/app'
 
 
 @unittest.skipUnless(platform.system() == 'Darwin' and shutil.which('swiftc'), 'Darwin Swift compiler required')

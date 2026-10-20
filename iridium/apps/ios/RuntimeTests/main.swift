@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import Foundation
-func check(_ value: Bool) { precondition(value) }
+func check(_ value: Bool, line: UInt = #line) { precondition(value, "Check failed at line \(line)") }
 
 func rejects(_ block: () throws -> Void) {
     do { try block(); fatalError("Expected rejection") } catch { }
@@ -285,4 +285,194 @@ var wrongRuntime = persistedPSP; wrongRuntime.runtimeID = "sameboy"
 rejects { try wrongRuntime.validate() }
 rejects { try pspStore.save([game, game]) }
 check(try pspStore.load() == [game])
+
+// Phase 3 headers exercise the shipping parser without executing guest code.
+func inspectPhase3(_ bytes: Data, _ ext: String, _ expected: IridiumPlatform?, preferred: IridiumPlatform? = nil) throws {
+    let path = temporary.appendingPathComponent("phase3-fixture." + ext)
+    try bytes.write(to: path)
+    if let expected { check(try IridiumROMInspection.inspect(path, fileExtension: ext, preferredPlatform: preferred).platform == expected) }
+    else { rejects { _ = try IridiumROMInspection.inspect(path, fileExtension: ext, preferredPlatform: preferred) } }
+}
+var ps2ELF = elfFixture(); putLE(0x20924001, in: &ps2ELF, at: 36, bytes: 4)
+try inspectPhase3(ps2ELF, "elf", .playStation2)
+var dcELF = elfFixture(); putLE(42, in: &dcELF, at: 18, bytes: 2)
+try inspectPhase3(dcELF, "elf", .dreamcast)
+var ps2ISO = isoFixture(); put(Array(repeating: 32, count: 32), in: &ps2ISO, at: 16 * 2048 + 8)
+put(Array("PLAYSTATION".utf8), in: &ps2ISO, at: 16 * 2048 + 8)
+try inspectPhase3(ps2ISO, "iso", .playStation2)
+var gc = Data(repeating: 0, count: 2048); putBE(0xc2339f3d, in: &gc, at: 28, bytes: 4)
+try inspectPhase3(gc, "gcm", .gameCube); try inspectPhase3(gc, "iso", .gameCube)
+var wii = Data(repeating: 0, count: 2048); putBE(0x5d1c9ea3, in: &wii, at: 24, bytes: 4)
+try inspectPhase3(wii, "iso", .wii); try inspectPhase3(wii, "gcm", nil)
+var dol = Data(repeating: 0, count: 260)
+putBE(256, in: &dol, at: 0, bytes: 4); putBE(4, in: &dol, at: 0x90, bytes: 4)
+putBE(0x80003100, in: &dol, at: 0xe0, bytes: 4)
+try inspectPhase3(dol, "dol", .gameCube); try inspectPhase3(dol, "dol", .wii, preferred: .wii)
+var badDOL = dol; putBE(5, in: &badDOL, at: 0x90, bytes: 4)
+try inspectPhase3(badDOL, "dol", nil)
+var rvz = Data(repeating: 0, count: 0x48 + 0xdc); put([0x52,0x56,0x5a,1], in: &rvz, at: 0)
+putBE(0xdc, in: &rvz, at: 12, bytes: 4); putBE(2, in: &rvz, at: 0x48, bytes: 4)
+putBE(0x5d1c9ea3, in: &rvz, at: 0x48 + 40, bytes: 4)
+try inspectPhase3(rvz, "rvz", .wii, preferred: .wii)
+var threeDSX = Data(repeating: 0, count: 40); put(Array("3DSX".utf8), in: &threeDSX, at: 0)
+putLE(32, in: &threeDSX, at: 4, bytes: 2); putLE(8, in: &threeDSX, at: 6, bytes: 2)
+try inspectPhase3(threeDSX, "3dsx", .nintendo3DS)
+threeDSX[4] = 0xff; try inspectPhase3(threeDSX, "3dsx", nil)
+for (ext, magic) in [("3ds", "NCSD"), ("cci", "NCSD"), ("cxi", "NCCH"), ("app", "NCCH")] {
+    var cartridge = Data(repeating: 0, count: 512)
+    put(Array(magic.utf8), in: &cartridge, at: 256); putLE(1, in: &cartridge, at: 260, bytes: 4)
+    try inspectPhase3(cartridge, ext, .nintendo3DS)
+    putLE(2, in: &cartridge, at: 260, bytes: 4); try inspectPhase3(cartridge, ext, nil)
+}
+var cdi = Data(repeating: 0, count: 512)
+putLE(0x80000006, in: &cdi, at: 504, bytes: 4); putLE(256, in: &cdi, at: 508, bytes: 4)
+try inspectPhase3(cdi, "cdi", .dreamcast)
+var chd = Data(repeating: 0, count: 512)
+put(Array("MComprHD".utf8), in: &chd, at: 0); putBE(124, in: &chd, at: 8, bytes: 4)
+putBE(5, in: &chd, at: 12, bytes: 4); putBE(1024, in: &chd, at: 32, bytes: 8)
+putBE(2448, in: &chd, at: 56, bytes: 4)
+try inspectPhase3(chd, "chd", nil)
+try inspectPhase3(chd, "chd", .dreamcast, preferred: .dreamcast)
+try inspectPhase3(chd, "chd", .playStation2, preferred: .playStation2)
+func arcadeZIP(_ filename: String = "test.bin") -> Data {
+    let name = Array(filename.utf8)
+    var local = Data(repeating: 0, count: 30 + name.count + 4)
+    put([0x50,0x4b,3,4], in: &local, at: 0); putLE(20, in: &local, at: 4, bytes: 2)
+    putLE(4, in: &local, at: 18, bytes: 4); putLE(4, in: &local, at: 22, bytes: 4)
+    putLE(UInt64(name.count), in: &local, at: 26, bytes: 2); put(name, in: &local, at: 30)
+    var central = Data(repeating: 0, count: 46 + name.count)
+    put([0x50,0x4b,1,2], in: &central, at: 0); putLE(20, in: &central, at: 6, bytes: 2)
+    putLE(4, in: &central, at: 20, bytes: 4); putLE(4, in: &central, at: 24, bytes: 4)
+    putLE(UInt64(name.count), in: &central, at: 28, bytes: 2); put(name, in: &central, at: 46)
+    var end = Data(repeating: 0, count: 22); put([0x50,0x4b,5,6], in: &end, at: 0)
+    putLE(1, in: &end, at: 8, bytes: 2); putLE(1, in: &end, at: 10, bytes: 2)
+    putLE(UInt64(central.count), in: &end, at: 12, bytes: 4); putLE(UInt64(local.count), in: &end, at: 16, bytes: 4)
+    return local + central + end
+}
+try inspectPhase3(arcadeZIP(), "zip", .arcade)
+for name in ["../test.bin", "folder/test.bin", "\\escape.bin", ".hidden", "bad\0.bin"] { try inspectPhase3(arcadeZIP(name), "zip", nil) }
+var badZIP = arcadeZIP(); badZIP[30] = 0x66
+try inspectPhase3(badZIP, "zip", nil) // Central/local identity mismatch.
+badZIP = arcadeZIP(); putLE(0xa0000000, in: &badZIP, at: 42 + 38, bytes: 4)
+try inspectPhase3(badZIP, "zip", nil) // Unix symbolic-link entry.
+
+check(Set(IridiumConsoleSystem.all.map(\.id)) == Set(IridiumRuntimeRegistry.all.filter { $0.id != "madeira" }.map(\.id)))
+#if IRIDIUM_PPSSPP
+check(IridiumConsoleSystem.system(for: .psp)?.extensions == ["elf", "iso", "cso", "pbp"])
+#else
+check(IridiumConsoleSystem.system(for: .psp) == nil)
+#endif
+for system in IridiumConsoleSystem.all {
+    check(IridiumConsoleSystem.system(titled: system.title)?.id == system.id)
+    for platform in system.platforms {
+        check(IridiumConsoleSystem.system(for: platform)?.id == system.id)
+        check(try IridiumRuntimeRegistry.resolve(platform: platform, preferred: system.id).id == system.id)
+        check(!system.formats(for: platform).isEmpty)
+    }
+}
+
+#if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
+for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.wii, "dolphin"), (.nintendo3DS, "azahar"), (.playStation2, "play"), (.dreamcast, "flycast"), (.arcade, "flycast")] {
+    check(try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil).id == runtime)
+}
+rejects { _ = try IridiumRuntimeRegistry.play.executionMode(jitAvailable: false) }
+rejects { _ = try IridiumRuntimeRegistry.flycast.executionMode(jitAvailable: false) }
+check(Set(IridiumConsoleSystem.all.map(\.id)).isSuperset(of: ["dolphin", "azahar", "play", "flycast"]))
+check(IridiumConsoleSystem.system(for: .arcade)?.formats(for: .arcade) == ["zip"])
+check(IridiumConsoleSystem.system(for: .dreamcast)?.formats(for: .dreamcast).contains("zip") == false)
+check(IridiumConsoleSystem.system(for: .nintendo3DS)?.extensions.contains("3ds") == true)
+check(IridiumConsoleSystem.system(for: .wii)?.formats(for: .wii).contains("gcm") == false)
+let chosenStore = IridiumConsoleStore(root: temporary.appendingPathComponent("chosen-system"))
+let chosenSource = temporary.appendingPathComponent("chosen.elf")
+try ps2ELF.write(to: chosenSource)
+rejects { _ = try chosenStore.importROM(chosenSource, into: [], preferredPlatform: .dreamcast) }
+check(try chosenStore.load().isEmpty)
+let chosenPS2 = try chosenStore.importROM(chosenSource, into: [], preferredPlatform: .playStation2)
+check(chosenPS2.platform == .playStation2 && chosenPS2.runtimeID == "play")
+check(try chosenStore.validateROM(chosenPS2) == chosenStore.rom(chosenPS2))
+let advancedStore = IridiumConsoleStore(root: temporary.appendingPathComponent("advanced"))
+let arcadeSource = temporary.appendingPathComponent("legal-fixture.zip")
+try arcadeZIP().write(to: arcadeSource)
+let arcade = try advancedStore.importROM(arcadeSource, into: [])
+check(arcade.platform == .arcade && arcade.originalFilename == "legal-fixture.zip")
+check(try advancedStore.rom(arcade).lastPathComponent == "legal-fixture.zip")
+check(try advancedStore.validateROM(arcade) == advancedStore.rom(arcade))
+let systemRoot = try advancedStore.systemDirectory(arcade)
+check(systemRoot.path.hasSuffix("System/flycast"))
+let anotherArcade = try advancedStore.importROM(arcadeSource, into: advancedStore.load())
+check(try advancedStore.systemDirectory(anotherArcade).path == systemRoot.path)
+check(try advancedStore.saveDirectory(arcade) != advancedStore.saveDirectory(anotherArcade))
+try fm.createSymbolicLink(at: systemRoot.appendingPathComponent("escape"), withDestinationURL: escapes)
+rejects { _ = try advancedStore.systemDirectory(arcade) }
+#else
+check(IridiumRuntimeRegistry.compatible(with: .playStation2).isEmpty)
+#endif
 print("Runtime registry, JIT policy, lifecycle intent, exclusive ownership, bounded headers, import, persistence and save isolation passed")
+
+// The selected manifest's exact track names survive import and relaunch.
+let discFolder = temporary.appendingPathComponent("Disc Set")
+try fm.createDirectory(at: discFolder, withIntermediateDirectories: true)
+for name in ["track 01.bin", "track02.raw", "track03.bin"] {
+    try Data(repeating: 0, count: 2352).write(to: discFolder.appendingPathComponent(name))
+}
+let gdiSource = discFolder.appendingPathComponent("Homebrew.gdi")
+try Data("3\n1 0 4 2352 \"track 01.bin\" 0\n2 450 0 2352 track02.raw 0\n3 45000 4 2352 track03.bin 0\n".utf8).write(to: gdiSource)
+check(try IridiumGameFileDetection.platforms(gdiSource, selectedFiles: [discFolder]) == [.dreamcast])
+rejects { _ = try IridiumDiscSet(gdiSource, selectedFiles: [gdiSource]) }
+let selectedTracks = try fm.contentsOfDirectory(at: discFolder, includingPropertiesForKeys: nil)
+check(try IridiumDiscSet(gdiSource, selectedFiles: selectedTracks).filenames.count == 3)
+#if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
+let discStore = IridiumConsoleStore(root: temporary.appendingPathComponent("disc-library"))
+let importedDisc = try discStore.importROM(gdiSource, into: [], selectedFiles: [discFolder])
+check(importedDisc.platform == .dreamcast && importedDisc.originalFilename == "Homebrew.gdi")
+check(try discStore.validateROM(importedDisc) == discStore.rom(importedDisc))
+for name in ["track 01.bin", "track02.raw", "track03.bin"] {
+    let copied = try discStore.rom(importedDisc).deletingLastPathComponent().appendingPathComponent(name)
+    check(try Data(contentsOf: copied) == Data(contentsOf: discFolder.appendingPathComponent(name)))
+}
+#endif
+let cueSource = discFolder.appendingPathComponent("Homebrew.cue")
+try Data("FILE \"track 01.bin\" BINARY\n TRACK 01 MODE1/2352\n INDEX 01 00:00:00\n".utf8).write(to: cueSource)
+check(try IridiumGameFileDetection.platforms(cueSource, selectedFiles: [discFolder]) == [.dreamcast, .playStation2])
+var dcBoot = Data(repeating: 0, count: 2352); put(Array("SEGA SEGAKATANA".utf8), in: &dcBoot, at: 16)
+try dcBoot.write(to: discFolder.appendingPathComponent("track 01.bin"))
+check(try IridiumGameFileDetection.platforms(cueSource, selectedFiles: [discFolder]) == [.dreamcast])
+try Data("FILE \"../Test.gb\" BINARY\n TRACK 01 MODE1/2352\n".utf8).write(to: cueSource)
+rejects { _ = try IridiumDiscSet(cueSource, selectedFiles: [discFolder]) }
+try Data("FILE \"track 01.bin\" BINARY\n TRACK 01 MODE1/2352\n TRACK 02 AUDIO\n".utf8).write(to: cueSource)
+check(try IridiumDiscSet(cueSource).hasSharedTracks)
+let trackLink = discFolder.appendingPathComponent("track03.bin")
+try fm.removeItem(at: trackLink); try fm.createSymbolicLink(at: trackLink, withDestinationURL: input)
+rejects { _ = try IridiumDiscSet(gdiSource, selectedFiles: [discFolder]) }
+let rvzSource = temporary.appendingPathComponent("Autodetect.rvz"); try rvz.write(to: rvzSource)
+check(try IridiumGameFileDetection.platforms(rvzSource, selectedFiles: [rvzSource]) == [.wii])
+print("Content detection and complete-disc import passed")
+
+var identifiedPS2 = ps2ISO
+identifiedPS2.append(Data(repeating: 0, count: 3 * 2048))
+putLE(20, in: &identifiedPS2, at: 16 * 2048 + 80, bytes: 4)
+putBE(20, in: &identifiedPS2, at: 16 * 2048 + 84, bytes: 4)
+identifiedPS2[16 * 2048 + 156] = 34
+putLE(18, in: &identifiedPS2, at: 16 * 2048 + 158, bytes: 4)
+putLE(2048, in: &identifiedPS2, at: 16 * 2048 + 166, bytes: 4)
+identifiedPS2[18 * 2048] = 45
+putLE(19, in: &identifiedPS2, at: 18 * 2048 + 2, bytes: 4)
+putLE(64, in: &identifiedPS2, at: 18 * 2048 + 10, bytes: 4)
+identifiedPS2[18 * 2048 + 32] = 12
+put(Array("SYSTEM.CNF;1".utf8), in: &identifiedPS2, at: 18 * 2048 + 33)
+put(Array("BOOT2 = cdrom0:GAME.ELF;1\n".utf8), in: &identifiedPS2, at: 19 * 2048)
+let psDisc = temporary.appendingPathComponent("Identify.iso")
+try identifiedPS2.write(to: psDisc)
+check(try IridiumGameFileDetection.platforms(psDisc, selectedFiles: [psDisc]) == [.playStation2])
+check(try !IridiumGameFileDetection.needsConfirmation(psDisc, platforms: [.playStation2]))
+put(Array("BOOT  = cdrom:GAME.EXE;1\n".utf8), in: &identifiedPS2, at: 19 * 2048)
+try identifiedPS2.write(to: psDisc)
+rejects { _ = try IridiumGameFileDetection.platforms(psDisc, selectedFiles: [psDisc]) }
+try ps2ISO.write(to: psDisc)
+check(try IridiumGameFileDetection.needsConfirmation(psDisc, platforms: [.playStation2]))
+let ambiguousELF = temporary.appendingPathComponent("MIPS.elf");try elfFixture().write(to: ambiguousELF)
+check(try IridiumGameFileDetection.platforms(ambiguousELF, selectedFiles: [ambiguousELF]) == [.psp, .playStation2])
+var identifiedPSP = elfFixture();putLE(0x10a23001, in: &identifiedPSP, at: 36, bytes: 4);try identifiedPSP.write(to: ambiguousELF)
+check(try IridiumGameFileDetection.platforms(ambiguousELF, selectedFiles: [ambiguousELF]) == [.psp])
+check(try IridiumROMInspection.inspect(ambiguousELF, fileExtension: "elf", preferredPlatform: .playStation2).platform == .psp)
+print("Ambiguous containers and PlayStation generation detection passed")

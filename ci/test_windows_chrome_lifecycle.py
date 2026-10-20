@@ -27,14 +27,17 @@ class WindowsChromeSourceTests(unittest.TestCase):
         for name, relative in [('GamepadInput.swift', 'GamepadInput.swift'),
                                ('TouchGamepad.swift', 'TouchGamepad.swift'),
                                ('WiniosGamepad.c', 'Winios/WiniosGamepad.c')]:
-            original = (frontend.UPSTREAM/'app/Madeira'/relative).read_text()
+            base = ROOT/'ci/fixtures/madeira-build43/app/Madeira' if name.endswith('.swift') else frontend.UPSTREAM/'app/Madeira'
+            original = (base/relative).read_text()
             self.assertEqual(frontend.overlay(name, original), original)
-        original = (frontend.UPSTREAM/'app/Madeira/ContentView.swift').read_text()
+        original = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
         actual = frontend.overlay('ContentView.swift', original)
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
         guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
-        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, ''),
+        settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
+        self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
+        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, ''),
                          original[original.index(start):original.index(end)])
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
@@ -42,7 +45,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, start, end in [('ContentView.swift', 'enum TouchControlsHost {', 'struct TouchControlsOverlay: View {'),
                                  ('Library.swift', '    func showGameView(reason:', '    /// The hotkey')]:
-            before = (frontend.UPSTREAM/'app/Madeira'/name).read_text()
+            before = (ROOT/'ci/fixtures/madeira-build43/app/Madeira'/name).read_text()
             after = frontend.overlay(name, before)
             # The next Library comment is pin-specific; compare the method alone.
             if name == 'Library.swift':
@@ -61,11 +64,11 @@ class WindowsChromeLifecycleTests(unittest.TestCase):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
         spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
-        upstream = (frontend.UPSTREAM/'app/Madeira/ContentView.swift').read_text()
+        upstream = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
         current = frontend.overlay('ContentView.swift', upstream)
         menu = (frontend.FRONTEND/'IridiumPlayerMenu.swift').read_text()
         menu = menu[menu.index('struct IridiumPlayerMenuButton:'):menu.index('struct IridiumPlayerMenuHeader:')]
-        wine = (frontend.UPSTREAM/'app/Madeira/Winios/Winios.m').read_text()
+        wine = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/Winios/Winios.m').read_text()
         start = wine.index('        UIWindow *win = nil;', wine.index('static void winios_ensure_compositor(void)'))
         pick = wine[start:wine.index('        if (!g_layers)', start)].replace('if (!win) return;', 'if (!win) return nil;')
         native = '#import <UIKit/UIKit.h>\nUIWindow *fixtureNativeSurface(void) {\n'+pick+'''
@@ -222,7 +225,7 @@ final class FixtureScene:UIResponder,UIWindowSceneDelegate {
                 host_source=modules['player'].controls(upstream) if baseline else current
                 a=host_source.index('final class ControlsWindow: UIWindow {')
                 host=host_source[a:host_source.index('struct TouchControlsOverlay: View {',a)]
-                pad_before=(frontend.UPSTREAM/'app/Madeira/GamepadInput.swift').read_text()
+                pad_before=(ROOT / 'ci/fixtures/madeira-build43/app/Madeira/GamepadInput.swift').read_text()
                 if baseline:pad=modules['startup'].apply('GamepadInput.swift',pad_before)
                 else:pad=frontend.overlay('GamepadInput.swift',pad_before)
                 a=pad.index('    @MainActor func reserveSessionSlot(')

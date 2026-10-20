@@ -16,7 +16,7 @@ ROOT=Path(__file__).resolve().parents[1]
 class RecoveryRelaunchTests(unittest.TestCase):
     def test_two_relaunches_retain_debt_until_correlated_success_and_block_psp(self):
         def generated(name):
-            original=(ROOT/'vendor/Madeira/app/Madeira'/name).read_text()
+            original=(ROOT/'ci/fixtures/madeira-build43/app/Madeira'/name).read_text()
             return psp.apply(name,diagnostics.apply(name,presentation.apply(name,original)))
         network=generated('JITNetwork.swift')
         network=network[network.index('@MainActor final class JITNetworkShortcut:'):]

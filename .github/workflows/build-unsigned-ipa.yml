@@ -15,6 +15,10 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Reuse matching completed Madeira component builds
         type: boolean
         default: true
+      phase3_engines:
+        description: Include all four Phase 3 engines (device acceptance pending)
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -37,12 +41,18 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
       - name: Initialize the pinned runtime sources
+        env:
+          IRIDIUM_PHASE3: ${{ inputs.phase3_engines && '1' || '0' }}
         run: |
           git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
           python3 ci/build-ppsspp-native.py --initialize
           git -C vendor/Madeira submodule update --init --depth 1 FEX wine dxmt madeira-dock
           git -C vendor/Madeira/FEX submodule update --init --depth 1 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/vixl External/xxhash Source/Common/cpp-optparse
           git -C vendor/Madeira/dxmt submodule update --init --recursive --depth 1
+          if [ "$IRIDIUM_PHASE3" = 1 ]; then
+            git submodule update --init --depth 1 vendor/Azahar
+            git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast
+          fi
       - name: Check source privacy and standards
         run: |
           python3 check-public-source.py
@@ -143,10 +153,19 @@ jobs:
           retention-days: 14
       - name: Check build prerequisites
         run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend
+      - name: Build all four Phase 3 components
+        if: inputs.phase3_engines
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .build/phase3-downloads
+          gh release download 2126.2 --repo azahar-emu/azahar --pattern azahar-libretro-ios-arm64-2126.2.zip --pattern azahar-unified-source-2126.2.tar.xz --dir .build/phase3-downloads
+          python3 ci/build-phase3.py --engine all --sdk iphoneos --jobs 3
       - name: Build without signing
         id: app_build
         env:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+          IRIDIUM_PHASE3: ${{ inputs.phase3_engines && '1' || '0' }}
         run: python3 ci/madeira-frontend.py app
       - name: Record app binaries for final audit
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex

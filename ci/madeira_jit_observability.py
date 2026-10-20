@@ -1,4 +1,6 @@
-"""Bounded diagnostic overlay over pinned Madeira; debugger commands are unchanged."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Bounded diagnostic overlay over pinned Madeira; debugger commands are unchanged."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

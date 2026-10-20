@@ -1,4 +1,6 @@
-"""Presentation-only edits to the pinned SwiftUI views. Native actions stay upstream."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Presentation-only edits to the pinned SwiftUI views. Native actions stay upstream."""
 import json
 import re
 import madeira_player_presentation
@@ -24,7 +26,7 @@ def page(title, sections, destinations):
 
 
 def destination_pages(destinations):
-    cases = '\n'.join(f'''case "{title}": Form {{ Group {{ {sections} }}.iridiumRowSurface() }}.iridiumPageSurface().navigationTitle("{title}")
+    cases = '\n'.join(f'''case "{title}": {sections[6:] if sections.startswith('@view:') else 'Form { Group { ' + sections + ' }.iridiumRowSurface() }'}.iridiumPageSurface().navigationTitle("{'Madeira' if title == 'Madeira · Windows' else title}")
                     .navigationBarBackButtonHidden()
                     .toolbar {{ ToolbarItem(placement: .topBarLeading) {{
                         Button("Back", systemImage: "chevron.backward") {{ iridiumNavigate("back") }}
@@ -91,46 +93,33 @@ def library(text):
     # The settings hub reuses the complete upstream sections, including callbacks.
     original = between(text, '    private var settings: some View {', '        .alert("Restart Madeira"')
     credits = between(original, '                Section {\n                    MadeiraCredit', '\n            }\n        }')
-    madeira_links = [
-        setting('Launch Support', 'JITSettingsSection()'),
-        setting('Pointer', 'Section { LibraryPointerSettings() }.iridiumRowSurface()'),
-        setting('Display & Runtime', 'DisplayRateSettings()\nif MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh) }'),
-        setting('Files & Saves', 'SavesSection()'),
-        setting('Steam Account & Dock', 'SteamSettingsSection(open: { settingsSheet = $0 })'),
-        setting('Windows Components', 'WineMonoSettingsSection()'),
-        setting('Advanced', 'Section { Toggle("Extended logging", isOn: $input.diagnostics) }.iridiumRowSurface()\nSection { Button("All Runtime Settings") { settingsSheet = .allSettings } }.iridiumRowSurface()'),
-        setting('Appearance', 'Section { Toggle("Liquid metal", isOn: $liquidMetal.on) } footer: { Text("Adds moving reflections to Madeira’s desktop controls.") }.iridiumRowSurface()')]
-    madeira_order = list(settings_pages)
-    controls_link = setting('Controls', 'Section { IridiumControlFeedbackSettings() }')
-    madeira_link = setting('Madeira', 'Section { ' + '\n'.join(madeira_links) + ' }')
-    psp_link = setting('PPSSPP', 'IridiumSystemGameSettings(platform: .psp, focus: iridiumGuided ? iridiumFocus : nil)')
-    gb_link = setting('Game Boy', 'IridiumSystemGameSettings(platform: .gameBoy, focus: iridiumGuided ? iridiumFocus : nil)')
+    launch_support_link = setting('Performance & Compatibility', '@view:IridiumCapabilitiesView()')
+    previous_pages = set(settings_pages)
+    display_link = setting('Display', '@view:iridiumDisplaySettings')
+    saves_link = setting('Saves & Backups', 'SavesSection()')
+    steam_link = setting('Steam', 'SteamSettingsSection(open: { settingsSheet = $0 })')
+    components_link = setting('Windows Components', 'WineMonoSettingsSection()')
+    advanced_link = setting('Advanced Compatibility', 'if MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh) }\nSection("Diagnostics") { Toggle("Detailed logging", isOn: $input.diagnostics) }\nSection { Toggle("Desktop reflections", isOn: $liquidMetal.on) } header: { Text("Appearance") } footer: { Text("Adds moving reflections to Windows desktop controls.") }')
+    madeira_order = [title for title in settings_pages if title not in previous_pages]
+    controls_link = setting('Controls', '@view:IridiumControlsSettingsView()')
+    madeira_link = setting('Madeira · Windows', 'Section { ForEach(model.entries.filter { $0.desktop != true }) { entry in Button { selected = entry } label: { HStack { Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) } } }\nif model.entries.filter({ $0.desktop != true }).isEmpty { Text("Add a Windows game to change its options.").foregroundStyle(.secondary) } } header: { Text("Games") } footer: { Text("Open a game to change its display, controls and compatibility options.") }\nSection("Preferences") { ' + display_link + '\n' + saves_link + '\n' + steam_link + ' }\nSection("Compatibility") { ' + components_link + '\n' + advanced_link + ' }')
+    console_links = '''ForEach(IridiumConsoleSystem.all) { system in
+                NavigationLink(system.title, value: system.title).id(system.title)
+                    .listRowBackground(iridiumGuided && iridiumFocus == system.title ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+            }'''
     diagnostics_link = setting('Diagnostics', 'IridiumDiagnosticsSections()\nRuntimeDiagnosticsExportSection()')
     contributors = between(credits, '                    MadeiraCredit', '\n                } header:')
-    thanks = credits[credits.index(' footer:'):]
-    credits = '''Section {
-        Link("intraducine/iridium", destination: URL(string: "https://github.com/intraducine/iridium")!)
-    } header: { Text("Iridium") } footer: { Text("Launcher, shared controls and runtime integration.") }
-    Section {
-        Link("willfaust/Madeira", destination: URL(string: "https://github.com/willfaust/Madeira")!)
-        DisclosureGroup("Contributors") { ''' + contributors + ''' }
-    } header: { Text("Madeira") }''' + thanks + '''
-    Section {
-        Link("hrydgard/ppsspp", destination: URL(string: "https://github.com/hrydgard/ppsspp")!)
-    } header: { Text("PPSSPP") } footer: { Text("PSP emulation by the PPSSPP project and contributors.") }
-    Section {
-        Link("LIJI32/SameBoy", destination: URL(string: "https://github.com/LIJI32/SameBoy")!)
-    } header: { Text("SameBoy") } footer: { Text("Game Boy and Game Boy Color emulation by Lior Halphon and contributors.") }
-    IridiumLegalNoticesSection()'''
-    credits_view = '\nprivate struct IridiumCreditsSections: View {\n    var body: some View {\n' + credits + '\n    }\n}\n'
+    credits = 'IridiumSoftwareCreditsSections()'
+    credits_view = '\nstruct IridiumCreditsSections: View {\n    var body: some View {\n' + credits + '\n    }\n}\n'
     credits_link = setting('Credits', 'IridiumCreditsSections()')
-    root_order = ['Controls', 'Madeira', 'PPSSPP', 'Game Boy', 'Diagnostics', 'Credits']
+    about_link = setting('About', '@view:IridiumAboutView()')
+    setup_link = 'if onboarding.available { Button("Getting Started", systemImage: "wand.and.stars") { onboarding.rerun() }.id("Getting Started") }'
+    root_order = ['Getting Started', 'Controls', 'Performance & Compatibility', 'Madeira · Windows', 'About']
     settings = '''    private var settings: some View {
         Form {
-            Section { LibraryStatus() }.iridiumRowSurface()
-            Section { ''' + controls_link + ''' }.iridiumRowSurface()
-            Section("Systems") { ''' + madeira_link + '\n' + psp_link + '\n' + gb_link + ''' }.iridiumRowSurface()
-            Section { ''' + diagnostics_link + '\n' + credits_link + ''' }.iridiumRowSurface()
+            Section { ''' + setup_link + '\n' + controls_link + '\n' + launch_support_link + ''' }.iridiumRowSurface()
+            Section("Systems") { ''' + madeira_link + '\n' + console_links + ''' }.iridiumRowSurface()
+            Section { ''' + about_link + ''' }.iridiumRowSurface()
         }
 '''
     text = replace(text, original, settings)
@@ -140,7 +129,16 @@ def library(text):
             .iridiumPageSurface().navigationTitle("Settings")
             .toolbar { settingsToolbar }
             ''' + destination_pages(settings_pages).replace('.navigationBarBackButtonHidden()', '.toolbar { settingsToolbar }.navigationBarBackButtonHidden()').replace('default: EmptyView()', '''default:
-                    if let game = IridiumSystemGameSettings.game(for: page) {
+                    if let system = IridiumConsoleSystem.system(titled: page) {
+                        Form { Group {
+                            IridiumSystemGameSettings(platform: system.primaryPlatform, focus: iridiumGuided ? iridiumFocus : nil)
+                        }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle(system.runtime.name)
+                            .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
+                            .toolbar { ToolbarItem(placement: .topBarLeading) {
+                                Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
+                                    .keyboardShortcut(.cancelAction)
+                            } }
+                    } else if let game = IridiumSystemGameSettings.game(for: page) {
                         IridiumConsoleOptions(game: game, embedded: true)
                     } else { EmptyView() }''') + '''
             .onChange(of: iridiumPages) { _, _ in
@@ -153,25 +151,66 @@ def library(text):
 ''')
     text = replace(text, 'struct LibraryView: View {', 'struct LibraryView: View {\n    @Environment(\\.dismiss) private var iridiumDismiss\n' + navigation_state('Controls'))
     settings_navigation = hub_navigation(root_order, 'iridiumDismiss()').replace('guard iridiumPages.isEmpty else { return }', 'guard !iridiumSettingsOrder.isEmpty else { return }')
-    settings_navigation = settings_navigation.replace('let order = ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]', 'let order = iridiumSettingsOrder')
+    settings_navigation = settings_navigation.replace('let order = ["Getting Started", "Controls", "Performance & Compatibility", "Madeira · Windows", "About"]', 'let order = iridiumSettingsOrder')
+    settings_navigation = settings_navigation.replace('        if command == "back" {', '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else { return }\n        if command == "back" {')
+    settings_navigation = settings_navigation.replace('        if command == "accept" {', '        if command == "accept", iridiumFocus == "Getting Started" { onboarding.rerun(); return }\n        if command == "accept" {')
     settings_navigation += '''
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Controls", "Madeira", "PPSSPP", "Game Boy", "Diagnostics", "Credits"]
-        case "Madeira": return ''' + json.dumps(madeira_order) + '''
-        case "PPSSPP": return IridiumSystemGameSettings.routes(for: .psp)
-        case "Game Boy": return IridiumSystemGameSettings.routes(for: .gameBoy)
-        default: return []
+        case nil: return ["Getting Started", "Controls", "Performance & Compatibility", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\\.title) + ["About"]
+        case "Madeira · Windows": return ''' + json.dumps(madeira_order) + '''
+        default:
+            guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
+            return IridiumSystemGameSettings.routes(for: system.primaryPlatform)
         }
     }
 '''
     text = replace(text, '    @ToolbarContentBuilder private var libraryToolbar:', settings_navigation + '    @ToolbarContentBuilder private var libraryToolbar:')
+    display_view = '''    private var iridiumDisplaySettings: some View {
+        Form { Group {
+            DisplayRateSettings()
+            Section {
+                ForEach(model.entries.filter { $0.desktop != true }) { entry in
+                    Button(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))) { iridiumDetailSelection = .init(entry: entry, page: "Display") }
+                }
+                Button("Windows Desktop") { iridiumDetailSelection = .init(entry: model.entries.first { $0.id == LibraryEntry.desktopID } ?? LibraryEntry.desktopEntry, page: "Display") }
+            } header: { Text("Games") } footer: { Text("Resolution, aspect and scaling, MetalFX, FPS limit and frame generation are set per game.") }
+        }.iridiumRowSurface() }.iridiumPageSurface()
+    }
+'''
+    text = replace(text, '    @ToolbarContentBuilder private var libraryToolbar:', display_view + '    @ToolbarContentBuilder private var libraryToolbar:')
+    text = replace(text, 'struct LibraryView: View {', '''struct LibraryView: View {
+    private struct IridiumLibraryDetailSelection: Identifiable {
+        let entry: LibraryEntry
+        var page: String? = nil
+        var id: UUID { entry.id }
+    }
+''')
+    text = replace(text, '    @State private var selected: LibraryEntry?', '''    @State private var iridiumDetailSelection: IridiumLibraryDetailSelection?
+    private var selected: LibraryEntry? {
+        get { iridiumDetailSelection?.entry }
+        nonmutating set { iridiumDetailSelection = newValue.map { .init(entry: $0) } }
+    }''')
+    text = replace(text, '            LibraryDetail(entry: entry, play: { profile in', '            LibraryDetail(iridiumInitialPage: route.page, entry: entry, play: { profile in')
+    text = replace(text, '.sheet(item: $selected) { entry in', '.sheet(item: $iridiumDetailSelection) { route in\n            let entry = route.entry')
+    # The legacy library page is no longer mounted in the settings-only root.
+    # Present per-game Display from the live root, with its existing launch/notices.
+    detail_start = text.index('        .sheet(item: $iridiumDetailSelection) { route in')
+    detail_end = text.index('        .onChange(of: scenePhase)', detail_start)
+    detail_presentation = text[detail_start:detail_end]
+    text = text[:detail_start] + text[detail_end:]
+    text = replace(text, '        .fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }',
+                   detail_presentation + '        .fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }')
+    text = replace(text, '.fullScreenCover(isPresented: $onboarding.presented) { OnboardingView() }', '.fullScreenCover(isPresented: onboarding.binding(for: .settings)) { OnboardingView() }')
+    text = replace(text, '            onboarding.presentIfNeeded()', '            onboarding.presentIfNeeded(owner: .settings)')
+
     text = replace(text, '    @ToolbarContentBuilder private var settingsToolbar: some ToolbarContent {', '''    @ToolbarContentBuilder private var settingsToolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) { Button("Done") { iridiumDismiss() } }''')
     toolbar = between(text, '    @ToolbarContentBuilder private var settingsToolbar:', '    private func switchTab(')
-    grouped_toolbar = toolbar.replace('        ToolbarItem(placement: .topBarTrailing) {', '        if iridiumPages.first == "Madeira" { ToolbarItem(placement: .topBarTrailing) {', 1)
-    grouped_toolbar = grouped_toolbar.replace('        }\n    }\n', '        } }\n    }\n', 1)
-    text = replace(text, toolbar, grouped_toolbar)
+    text = replace(text, toolbar, '''    @ToolbarContentBuilder private var settingsToolbar: some ToolbarContent {
+        ToolbarItem(placement: .confirmationAction) { Button("Done") { iridiumDismiss() } }
+    }
+''')
     text = replace(text, 'if selected == nil, !browser, !onboarding.presented, command == "tab" { switchTab(to: 1 - tab) }', 'guard selected == nil, !browser, !onboarding.presented, settingsSheet == nil else { return }\n            iridiumNavigate(command)')
     text = replace(text, '.onAppear { GlassSkin.shared.start() }\n        .onDisappear', '.onAppear {}\n        .onDisappear')
     text = replace(text, '''            .foregroundStyle(.white)
@@ -189,27 +228,44 @@ def library(text):
     controls = between(form, '                Section("On screen")', '                Section {\n                    NavigationLink {\n                        LibraryGameConfigEditor')
     config = between(form, '                Section {\n                    NavigationLink {\n                        LibraryGameConfigEditor', '                // A link that starts this game')
     files = between(form, '                // A link that starts this game', '                if let error')
+    # Keep each pinned binding; group rendering separately from frame pacing.
+    resolution = between(display, '                    // The Windows screen', '                    // Every setting here')
+    upscale = between(display, '                    Picker("MetalFX upscaling",', '                    FPSChoice(')
+    frames = between(display, '                    FPSChoice(', '                } header: { Text("Display") }')
+    frames = frames.replace("Shows a MetalFX-generated frame between every two rendered frames: twice the frames on screen, at the cost of GPU time, some latency and artifacts at edges and on the HUD. FPS limits do not apply while it is on.", "Generates extra frames. FPS limits are ignored while enabled.")
+    filtering = between(launch, '                    Picker("D3D9 anisotropic filtering",', '                    Toggle("Report an NVIDIA GPU",')
+    launch = replace(launch, filtering, '')
+    display = '                Section("Resolution & Scaling") {\n' + resolution + '                }\n                Section("Rendering") {\n' + upscale + filtering + '                }\n                Section("Frame Rate") {\n' + frames + '                }\n'
+    launch = launch.replace('Settings › Memory & sync', 'Settings → Madeira → Advanced Compatibility')
     # The new upstream reset remains last for every entry, including Desktop.
     marker = '                // madeira-bcd: always last'
     reset = files[files.index(marker):]
+    reset = reset.replace('Button("Reset to Recommended",', 'Button(recommended == nil ? "Clear Game Configuration" : "Restore Game Configuration",')
+    reset = reset.replace('Text(GameRecommendations.note(recommended, desktop: entry.desktop == true))', 'Text("Restores configuration and any recommended compatibility/display values. Keeps controls, artwork, files and saves.")')
     files = files[:files.index(marker)]
-    # Art remains the page's background. No opaque mini-background inside its header.
-    art_background = between(header, '                        .listRowBackground(', '\n                }')
-    header = header.replace(art_background, '.listRowBackground(Color.clear)')
-    header = header.replace('width: 120, height: 180', 'width: 80, height: 120').replace('.padding(.vertical, 24)', '.padding(.vertical, 12)')
-    header = header.replace('Text(entry.title).font(.title2.bold())', 'Text(entry.title).font(.title2.bold()).lineLimit(2)')
+    # Use the same identity header as console games; retain native launch state.
+    play_button = between(header, '                            Button(action: start)', '\n                        }')
+    header = '''                Section {
+                    IridiumGameOptionsHeader(game: IridiumGame(windows: entry))
+                    if let played = entry.lastPlayed { LabeledContent("Last Played", value: played.formatted(.relative(presentation: .named))) }
+                    if DockOffline.enabled, let appID = entry.steamAppID, !entry.startsSteamGameDirectly { DockOfflineMark(appID: appID) }
+''' + play_button + '''
+                }.listRowBackground(Color.clear)
+                Section("Runtime") { LabeledContent("Emulator", value: "Madeira"); LibraryBadges(entry: entry) }
+'''
     detail_pages = {}
     def detail(title, sections): return page(title, sections, detail_pages)
-    body = '            Form {\n' + header + '\n                Section {\n'
+    body = '            Form {\n' + header + '\n                Section("Library") {\n'
     body += '                    if entry.desktop != true { ' + detail('Rename & Artwork', rename) + ' }\n'
-    body += '                    ' + detail('Controls', controls) + '\n'
-    body += '                    ' + detail('Display', display) + '\n'
-    body += '                    ' + detail('Files & Saves', 'if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }\n' + files) + '\n'
-    body += '                    ' + detail('Advanced', launch + config + '\nif entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; dismiss() } }') + '\n'
-    body += '                }.iridiumRowSurface()\n                if entry.desktop != true { Section { IridiumFavoriteButton(entry: entry).id("Favorites").listRowBackground(iridiumGuided && iridiumFocus == "Favorites" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) } }\n' + reset + '                if let error { Section { Text(error).foregroundStyle(.red) } }\n            }\n' + destination_pages(detail_pages) + '\n'
+    body += '                }.iridiumRowSurface()\n                Section("Controls") { ' + detail('Controls', controls) + ' }.iridiumRowSurface()\n'
+    body += '                Section("Display") { ' + detail('Display', display) + ' }.iridiumRowSurface()\n'
+    body += '                Section("Files & Saves") { ' + detail('Files & Saves', 'if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }\n' + files) + ' }.iridiumRowSurface()\n'
+    body += '                Section("Compatibility") { ' + detail('Advanced', launch + config + '\nif entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; dismiss() } }') + ' }.iridiumRowSurface()\n'
+    body += '                if entry.desktop != true { Section { IridiumFavoriteButton(entry: entry).id("Favorites") }.iridiumRowSurface() }\n' + reset + '                if let error { Section { Text(error).foregroundStyle(.red) } }\n            }\n' + destination_pages(detail_pages) + '\n'
     text = replace(text, form, body)
     text = replace(text, '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)', '.navigationTitle("Game details").navigationBarTitleDisplayMode(.inline)\n            ' + keyboard_navigation())
-    text = replace(text, 'struct LibraryDetail: View {', 'struct LibraryDetail: View {' + navigation_state('Controls'))
+    text = replace(text, 'struct LibraryDetail: View {', 'struct LibraryDetail: View {\n    var iridiumInitialPage: String? = nil\n    @State private var iridiumInitialPageOpened = false\n' + navigation_state('Controls'))
+    text = replace(text, '                reloadBCD()\n            }\n            .onDisappear { if !leaving', '                reloadBCD()\n                if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }\n            }\n            .onDisappear { if !leaving')
     game_navigation = hub_navigation([*detail_pages, 'Favorites'], 'model.save(entry); dismiss()')
     game_navigation = game_navigation.replace('\n        let index =', '.filter { entry.desktop != true || !["Rename & Artwork", "Favorites"].contains($0) }\n        let index =')
     game_navigation = game_navigation.replace('iridiumPages.append(iridiumFocus)', 'if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) } else { iridiumPages.append(iridiumFocus) }')
@@ -374,27 +430,108 @@ def apply(name, text):
         old = '.navigationTitle(' + title + ')'
         text = replace(text, old, '.iridiumPageSurface()' + old)
     if name == 'Onboarding.swift':
-        text = replace(text, '.background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())', '.iridiumPageSurface()')
-        # Product names in the onboarding copy; protocol names/keys stay untouched.
-        text = text.replace('Welcome to Madeira', 'Welcome to Iridium')
-    if name in ['Onboarding.swift', 'JITSetup.swift']:
-        boundary = 'struct OnboardingView: View' if name == 'Onboarding.swift' else 'struct JITSettingsSection: View'
-        start = text.index(boundary)
-        # Keep the Dock and actual shortcut names, identifiers and services upstream.
-        text = text[:start] + re.sub(r'\bMadeira\b(?! (?:Dock|JIT))', 'Iridium', text[start:])
-    if name == 'Onboarding.swift':
-        text = replace(text, 'Text("Iridium runs Windows games on your \\(UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone").")',
-                       'Text(IridiumConsoleLibrary.supportsPSP ? "Play your Windows, PSP, Game Boy and Game Boy Color games in one library." : "Play your Windows, Game Boy and Game Boy Color games in one library.")')
-        text = replace(text, 'Text("A few optional steps get you ready:")',
-                       'Text("These optional steps prepare Windows games. You can skip setup and add console games now.")')
-        text = text.replace('Settings › JIT', 'Settings › Madeira › Launch Support')
-        text = text.replace('Settings › Steam › Madeira Dock', 'Settings › Madeira › Steam Account & Dock')
-        text = text.replace('Settings › .NET Framework', 'Settings › Madeira › Windows Components')
-        text = text.replace(' or Settings › Steam.', '.')
+        # One app-level model/view owns setup. Keep the native Steam and Dock actions.
+        text = text[:text.index('// First-run setup')] + text[text.index('struct SteamSettingsSection:'):]
+        text = replace(text, '''            if onboarding.available {
+                Button { onboarding.rerun() } label: { Label("Run setup again", systemImage: "wand.and.stars") }
+            }
+''', '')
+        text = text.replace("Madeira keeps a Steam sign-in token in this device's Keychain, for this device only. Signing out removes it.", "Signing out removes this device’s saved Steam sign-in.")
     if name == 'JITSetup.swift':
+        start = text.index('struct JITSettingsSection: View')
+        text = text[:start] + re.sub(r'\bMadeira\b(?! (?:Dock|JIT))', 'Iridium', text[start:])
+    if name == 'JITSetup.swift':
+        text = replace(text, '''            if onboarding.available {
+                Button {
+                    onboarding.rerun()
+                } label: {
+                    Label("Run setup again", systemImage: "wand.and.stars")
+                }
+            }
+''', '')
+        text = text.replace('"StikDebug is installed, so Madeira will open it directly."', '"The selected StikDebug route is detected."')
+        text = text.replace('"StikDebug was not detected, so Madeira will use its built-in helper."', '"The selected StikDebug route was not detected. Automatic will use the built-in helper."')
+        text = text.replace('let message = "StikDebug is not installed. Install it or choose Built-in StikJIT."', 'let message = IridiumStikDebugRoute.current.unavailableMessage')
+        text = replace(text, '    @State private var importing = false', '    @State private var importing = false\n    @AppStorage(IridiumStikDebugRoute.settingsKey) private var iridiumStikRoute = IridiumStikDebugRoute.standalone.rawValue')
+        text = replace(text, '                    LabeledContent("StikDebug",', '                    LabeledContent(IridiumStikDebugRoute.current == .standalone ? "StikDebug" : "Container route",')
+        text = text.replace('value: StikJITHelper.isAvailable ? "Installed" : "Not detected")', 'value: StikJITHelper.isAvailable ? "Detected" : "Not detected")')
+        text = replace(text, '                if coordinator.method != .stikDebug {', '''                if coordinator.method != .builtIn {
+                    Section {
+                        Picker("Open StikDebug In", selection: $iridiumStikRoute) {
+                            ForEach(IridiumStikDebugRoute.allCases) { route in Text(route.title).tag(route.rawValue) }
+                        }.disabled(coordinator.busy)
+                    } footer: {
+                        if IridiumStikDebugRoute.current != .standalone { Text("Install StikDebug inside the selected container.") }
+                    }
+                }
+                if coordinator.method != .stikDebug {''')
+
+    if name == 'StikJITHelper.swift':
+        text = replace(text, '        guard let url = URL(string: "stikdebug://enable-jit") else { return false }', '        let url = IridiumStikDebugRoute.current.probeURL')
+        text = replace(text, '        guard let url = components.url else {', '''        let route = IridiumStikDebugRoute.current
+        guard route == .standalone || getenv("LC_HOME_PATH") == nil else {
+            completion(.failure(NSError(domain: "IridiumJITRoute", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Start Iridium with JIT from LiveContainer, or choose standalone StikDebug."])))
+            return
+        }
+        guard let request = components.url, let url = route.destination(for: request) else {''')
+
+    if name == 'JITSetup.swift':
+        text = replace(text, '''                            Link("Install StikDebug",
+                                 destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!)''', '''                            if IridiumStikDebugRoute.current == .standalone {
+                                Link("Install StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!)
+                            } else {
+                                Text(IridiumStikDebugRoute.current.unavailableMessage).foregroundStyle(.secondary)
+                                Link("Get LiveContainer", destination: URL(string: "https://github.com/LiveContainer/LiveContainer/releases/latest")!)
+                            }''')
+        text = text.replace('Label("JIT setup",', 'Label("Set Up JIT",')
+        text = text.replace('Picker("JIT method",', 'Picker("Connection method",')
+        text = text.replace('Text("JIT method")', 'Text("Connection method")')
+        text = text.replace('Text("JIT")', 'Text("JIT · Faster Execution")')
+        text = text.replace('When LocalDevVPN can\'t reach this device, Enable JIT runs your \\(JITNetworkShortcut.name) shortcut: it turns Cellular Data off when there\'s no Wi-Fi and connects LocalDevVPN, then puts both back once the game has started. Each run opens Shortcuts for a moment.', 'The shortcut connects LocalDevVPN for you. Without Wi-Fi it temporarily turns off cellular data, then restores your network settings after launch.')
         text = replace(text, 'Automatic uses StikDebug when it is installed. Iridium does not silently change methods after a failure.',
                        'Automatic opens StikDebug when it is installed. Otherwise, it uses the built-in helper.')
+    if name == 'Library.swift':
+        text = text.replace("Off by default. On a 120 Hz display, keeps the panel at 120 Hz during a game's 60 FPS limit so a frame that misses one refresh waits 8 ms instead of 17 ms. Uses more power.", "Keeps supported displays at their highest refresh rate during games. Uses more power.")
+        concise = {
+            "Reduced-precision x87 can make older games faster": "Use compatibility options when a game needs them. Changes apply next launch; precision changes may require restarting Iridium.",
+            "Directly: the game is Wine's first program": "Start the game on its own, or use the Wine desktop for launchers and desktop windows.",
+            "The working folder is a C:": "Use a Windows path for the working folder. Enable Windows services only if your launcher needs them.",
+            "Lines in madeira.cfg's format for this game only.": "Keys here override shared settings for this game. Changes apply next launch.",
+        }
+        for prefix, copy in concise.items():
+            original = next(line for line in text.splitlines() if ('Text("' + prefix) in line)
+            text = replace(text, original, original[:len(original) - len(original.lstrip())] + 'Text(' + json.dumps(copy) + ')')
+        text = text.replace('Arrange buttons and choose XInput, mouse, or keyboard actions from the in-game menu.', 'Edit layouts and reusable profiles above.')
+        text = text.replace("XInput and DirectInput: for games older than XInput, which read the pad through DirectInput. The same pad is offered through both APIs, so a game that reads both may list two controllers. Applies to the next launch.", "DirectInput supports older games. Changes apply next launch.")
+        text = text.replace("Keyboard and mouse: for games without controller support. The controller presses keys and moves the mouse (left stick WASD, right stick mouse, triggers click, D-pad arrows, Start Esc, Select Tab) and the game sees no controller. Change what each button does under Controller binds, here or in the in-game menu.", "Map the controller to keys and pointer movement under Controller Binds.")
+        text = text.replace('Passed to the program on every start; the line above is the command that runs. The flags add or remove themselves; the renderer flags exclude each other, as do -windowed and -fullscreen.', 'Applied when this game starts. The command above includes your selected flags.')
+    if name == 'Library.swift':
+        text = text.replace('mbPicker("JIT pool",', 'mbPicker("Code translation memory",')
+        text = text.replace('mbPicker("Swap tier",', 'mbPicker("Extra storage for memory",')
+        text = text.replace('Picker("Swap coverage",', 'Picker("Memory fallback coverage",')
+        text = text.replace('Picker("Sync engine",', 'Picker("Synchronization method",')
+        text = text.replace('Toggle("Eco mode",', 'Toggle("Lower power priority",')
+        text = text.replace('Text("Memory & sync")', 'Text("Advanced Runtime Tuning")')
+        text = text.replace('All settings (\\(ConfigCatalog.generated.count - Self.featuredKeys.count) more)', 'All Compatibility Options')
+        text = text.replace('JIT pool is the memory reserved at launch for translated x86 code (256 to 1152 MB; below 512 MB, large games can run out of room for it).', 'Code translation memory is reserved when a game starts. Low values can prevent large games from running.')
+        text = text.replace('Video memory is how much graphics memory games are told they have. Automatic sizes it from the memory free at launch. Too high can get Madeira closed for using too much memory; too low makes games keep reloading textures.', 'Video memory is reported to the game. Automatic is recommended; high values can cause memory-related exits.')
+        text = text.replace("Swap tier moves game data to a file on this device's storage when memory runs short, up to the chosen size, at some speed cost. Coverage decides which allocations it moves: large ones only (8 MB and up, the default), every allocation of 1 MB and up, or those plus allocations that overflow the game's address range. Broad backs every new reservation of 4 MB and up (madeira.cfg swap-min-mb moves the floor) as it is made, so the small commits games make inside it are covered too, and the swap tier size limits the storage it uses. Wider coverage saves more memory but can slow a game down.", 'Memory fallback uses device storage when memory runs short. It can help a game finish loading, but uses storage and may reduce performance. Turn it on before changing coverage.')
+        text = text.replace("Sync engine: Fastsync (the default) handles events and semaphores in-process; its per-game options are in each game's details. Madsync is the older in-process engine. Wine standard sync uses neither. Only one engine runs at a time.", 'Keep the default synchronization method unless a game needs another method. Per-game synchronization options are in Game Options.')
+        text = text.replace('Eco mode starts every game with its threads at a low priority, which saves power but makes games run slower. Off by default. It is meant for loading screens: Eco mode in the in-game menu turns it on and off while a game runs.', 'Lower power priority can reduce power use and game performance. It can also be changed while playing.')
+        text = text.replace('Restart Madeira (close it from the app switcher) for these changes to apply.', 'Close and reopen Iridium to apply these changes.')
+    if name == 'ContentView.swift':
+        text = text.replace('Button("Choose") {', 'Button("Review Save Conflicts") {')
+        text = text.replace('Button("Launch anyway") {', 'Button("Play with This Device’s Saves") {')
+        text = text.replace('Madeira does not know whether', 'Iridium could not check whether')
     if name == 'SteamGames.swift':
+        text = text.replace('Upload saves and close Madeira', 'Upload Saves & Close Iridium')
+        text = text.replace('Not uploaded, Madeira stays open:', 'Upload failed. Iridium stays open:')
+        text = text.replace('Files › Madeira › Steam Cloud Backups', 'Files › Iridium › Steam Cloud Backups')
+        text = text.replace("Save in the game first. Uploads this game's saves to Steam Cloud, then closes Madeira; Steam in this session is signed out when the upload starts.",
+                            "Save in the game first. Uploading signs out this Steam session and closes Iridium when it finishes.")
+        text = text.replace("Saves sync with Steam Cloud when Madeira starts and when this page opens, not while you play: use Upload Saves & Close Iridium in the game menu when you stop, or what you played is uploaded the next time Madeira starts. A save that differs on both sides, or that is missing on this device, is never replaced without asking, and a save a sync replaces is kept in Files › Iridium › Steam Cloud Backups.",
+                            "Saves sync when Iridium opens or when you open this page. After playing, use Upload Saves & Close Iridium in the game menu. Conflicts need your choice; replaced saves are kept in Files › Iridium › Steam Cloud Backups.")
         text = replace(text, 'See your Steam games here and install them without leaving Madeira.', 'View and download your Steam games.')
         text = replace(text, '''            }.padding(14)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))''',

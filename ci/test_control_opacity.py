@@ -14,13 +14,13 @@ SPEC.loader.exec_module(FRONTEND)
 
 class ControlOpacityTests(unittest.TestCase):
     def generated(self):
-        return FRONTEND.overlay('ContentView.swift', (FRONTEND.UPSTREAM / 'app/Madeira/ContentView.swift').read_text())
+        return FRONTEND.overlay('ContentView.swift', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text())
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_shipping_schema_legacy_presets_and_visual_state(self):
         generated = self.generated()
         model = generated[generated.index('enum ControlAction:'):generated.index('final class TouchControlsModel:')]
-        presets = (FRONTEND.UPSTREAM / 'app/Madeira/TouchControlPresets.swift').read_text()
+        presets = (ROOT / 'iridium/apps/ios/App/Controls/TouchControlPresets.swift').read_text()
         preset = presets[presets.index('struct ControlPreset:'):presets.index('struct ControlPresetScreen:')]
         fixture = r'''
 let encoder = JSONEncoder(), decoder = JSONDecoder()
@@ -66,7 +66,7 @@ print("PASS shipping optional opacity schema, legacy default, preset round-trip,
         self.assertIn('LabeledContent("Button opacity"', text)
         self.assertIn('m.controls[i].opacity = IridiumControlOpacity.normalized(value)', text)
         self.assertNotIn('.opacity(session && !m.editing', text)
-        self.assertIn('iridiumLayoutOpacity: session && !m.editing', text)
+        self.assertIn('iridiumLayoutOpacity: iridiumSettings ? m.iridiumSettingsOpacity : session && !m.editing', text)
         button = text[text.index('struct TouchControlButton:'):text.index('    /// 8-way snap. Screen y grows downward')]
         alpha = button.index('.opacity(IridiumControlOpacity.visual(')
         self.assertLess(alpha, button.index('.overlay(outline.stroke'))

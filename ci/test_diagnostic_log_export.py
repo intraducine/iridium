@@ -178,7 +178,7 @@ class DiagnosticLogExportTests(unittest.TestCase):
         self.assertIn("RuntimeDiagnosticsExportSection()", diagnostics)
         self.assertNotIn("ShareLink", diagnostics)
         self.assertNotIn("LogStore.shared", diagnostics)
-        shipping = madeira_presentation.library((ROOT / "vendor/Madeira/app/Madeira/Library.swift").read_text())
+        shipping = madeira_presentation.library((ROOT / "ci/fixtures/madeira-build43/app/Madeira/Library.swift").read_text())
         destination = shipping.split('case "Diagnostics":', 1)[1].split('case "Credits":', 1)[0]
         self.assertIn("RuntimeDiagnosticsExportSection()", destination)
         self.assertIn("IridiumDiagnosticsSections()", destination)
