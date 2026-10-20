@@ -1,0 +1,107 @@
+{
+  "vendor/Dolphin/Externals/curl/curl/docs/examples/usercertinmem.c": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "00883bbc788a69ffd97f3b3fbc76687fb9b35759c288e1d9e85cfb76283f647e",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/docs/examples/usercertinmem.c"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/EdelCurlRoot-ca.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "6b4cdb1b436ae85e2d3515880e6362724db9b3981b2371ff1f63abfadd7986fe",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/EdelCurlRoot-ca.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-firstSAN-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "264134f386befacc09fa05dfad406bbc056ac8571c33935b29212f8b55039ffb",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-firstSAN-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-firstSAN-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "e84d35828d3e8506d86dc15da4fa4f943c018967ecd90e75f8b5764936740116",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-firstSAN-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-lastSAN-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "ba72d0fbb04cfcef9dbc271e848ef2ebd675cad75a7ed4c7deeab07fc5c47d38",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-lastSAN-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-lastSAN-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "bec8f4ad4122050d53304b95c10623461256b485fec816cbbcfd154549e0aac1",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-lastSAN-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "ed6355f43b845ce753c2445eb509c3c9c02915e02085d23467b4ad373c7448e5",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "05303bddb9ef2a33a55c893415e8b1df2682efddb5ca1c99824241dc94fb6a58",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost.nn-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "ee02aec7b361967bbba53db0d3d90748203d9bdbdeab0e36cacde141294222d4",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost.nn-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost.nn-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "8fe0e3cecbba7573ac794747fe2c3c7587434d08bd74e1b130e73e805c3b377e",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost.nn-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost0h-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "b78c45e686b00306119b4da36a69e298e35c2d8a1b38344919a039ad06bb491f",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost0h-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/Server-localhost0h-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "367d977d887a5a229f64469df2f5e236b812b67bdc441e4c44cf85bfe75bd822",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/Server-localhost0h-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/stunnel-sv.key": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "7575fa3e93af311bcca2c4638ffa3d4b90ddf994d38b035258e02199dca1e18f",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/stunnel-sv.key"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/certs/stunnel-sv.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "1fd177388d644d89f42fb0c3eeb21864e42dd4e54d5d07c26878e5712f952b0f",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/certs/stunnel-sv.pem"
+  },
+  "vendor/Dolphin/Externals/curl/curl/tests/stunnel.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "1fd177388d644d89f42fb0c3eeb21864e42dd4e54d5d07c26878e5712f952b0f",
+    "source": "https://github.com/curl/curl/blob/75a2079d5c28debb2eaa848ca9430f1fe0d7844c/tests/stunnel.pem"
+  },
+  "vendor/Dolphin/Externals/mbedtls/library/certs.c": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "d2981ebc0902151c33567a797ef7a612bdc813049ac5921a45c573bfb77becfc",
+    "source": "https://github.com/OatmealDome/dolphin-ios/blob/7cac54161659421ed95c2cd1c0b0746539a4cd38/Externals/mbedtls/library/certs.c"
+  },
+  "vendor/Dolphin/Externals/mbedtls/library/pkparse.c": {
+    "reason": "Pinned public upstream PEM-format parser/writer marker; no private key body. Required build source is preserved.",
+    "sha256": "c7e9fec0306b85f228bb0f6d07ff35bb339c3c38b4efa49580d434947c40a2e1",
+    "source": "https://github.com/OatmealDome/dolphin-ios/blob/7cac54161659421ed95c2cd1c0b0746539a4cd38/Externals/mbedtls/library/pkparse.c"
+  },
+  "vendor/Dolphin/Externals/mbedtls/library/pkwrite.c": {
+    "reason": "Pinned public upstream PEM-format parser/writer marker; no private key body. Required build source is preserved.",
+    "sha256": "48e14b1c960c1baf16078bf0b53dd1e5e3eeaef3e08bdc2f84d46f8a593d3575",
+    "source": "https://github.com/OatmealDome/dolphin-ios/blob/7cac54161659421ed95c2cd1c0b0746539a4cd38/Externals/mbedtls/library/pkwrite.c"
+  },
+  "vendor/Flycast/core/deps/asio/asio/src/examples/cpp11/ssl/server.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "a6070c979ae317e3db6c9d72129697a3f1d0f76cdb17b31b11c2a322dc593c4e",
+    "source": "https://github.com/flyinghead/asio/blob/d3402006e84efb6114ff93e4f2b8508412ed80d5/asio/src/examples/cpp11/ssl/server.pem"
+  },
+  "vendor/Flycast/core/deps/websocketpp/examples/echo_server_both/server.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "6aa07704855c42df087174ade2cffa49167a2181da6158a47373103ccf3b9fa6",
+    "source": "https://github.com/zaphoyd/websocketpp/blob/1b11fd301531e6df35a6107c1e8665b1e77a2d8e/examples/echo_server_both/server.pem"
+  },
+  "vendor/Flycast/core/deps/websocketpp/examples/echo_server_tls/server.pem": {
+    "reason": "Pinned public upstream TLS self-test/example key. Never maintainer credentials; complete upstream source is preserved.",
+    "sha256": "028bb3b3b88f501ae7ba6f53b828ca0555e2561ac413f2f8b04d09d1248f360c",
+    "source": "https://github.com/zaphoyd/websocketpp/blob/1b11fd301531e6df35a6107c1e8665b1e77a2d8e/examples/echo_server_tls/server.pem"
+  }
+}

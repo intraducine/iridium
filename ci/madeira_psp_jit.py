@@ -1,4 +1,6 @@
-"""Owned PSP consumer of the pinned helper; Windows' script is unchanged."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Owned PSP consumer of the pinned helper; Windows' script is unchanged."""
 from pathlib import Path
 import base64
 import madeira_jit_observability as diagnostics
@@ -14,7 +16,7 @@ def replace(text, old, new):
 
 
 def script():
-    text = diagnostics.apply('madeira-jit.js', (ROOT / 'vendor/Madeira/app/Madeira/madeira-jit.js').read_text())
+    text = diagnostics.apply('madeira-jit.js', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/madeira-jit.js').read_text())
     prelude = r'''
 // IRIDIUM_PSP_PREPARED_V2: fixed fresh arenas, no late growth or fault-policy change.
 let pspSequence = 0;

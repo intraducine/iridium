@@ -25,11 +25,12 @@ struct IridiumArtworkEditor: View {
     @State private var focus = "name"
     @State private var guided = false
     @State private var backPending = false
+    @State private var hasImage = false
     @FocusState private var field: String?
     @FocusState private var keyboard: Bool
     private var item: IridiumArtworkAppearance { artwork.appearance(game.id) }
     private var actions: [String] {
-        ["name", "saveName", "image", "photos", "files", "crop", "remove", "restore", "automatic", "query", "search"]
+        ["name", "saveName", "image", "photos", "files"] + (hasImage ? ["crop", "center"] : []) + ["remove", "restore", "automatic", "query", "search"]
             + matches.map { "match:" + $0.id } + (item.match == nil ? [] : ["removeMatch"])
     }
     var body: some View {
@@ -51,6 +52,10 @@ struct IridiumArtworkEditor: View {
             matches = artwork.suggestions[game.id] ?? []; searched = !matches.isEmpty
         }
         .onDisappear { operation?.cancel(); request = UUID() }
+        .task(id: artwork.key(game) + String(background)) {
+            let image = await artwork.image(for: game, backdrop: background)
+            if !Task.isCancelled { hasImage = image != nil }
+        }
     }
     private var content: some View {
         ScrollViewReader { proxy in
@@ -64,14 +69,26 @@ struct IridiumArtworkEditor: View {
                 Section {
                     Picker("Image", selection: $background) { Text("Cover").tag(false); Text("Background").tag(true) }
                         .pickerStyle(.segmented).id("image")
-                    IridiumGameArtwork(game: game, backdrop: background)
+                    IridiumGameArtwork(game: game, backdrop: background, featured: !background, forceCrop: true)
                         .frame(height: 180).clipShape(RoundedRectangle(cornerRadius: 16))
                     row("photos", "Choose from Photos", icon: "photo") { photos = true }
                         .photosPicker(isPresented: $photos, selection: $photo, matching: .images)
                     row("files", "Choose from Files", icon: "folder") { files = true }
-                    Slider(value: Binding(get: { background ? item.backgroundY : item.coverY }, set: { value in
-                        perform { try artwork.update(game.id) { if background { $0.backgroundY = value } else { $0.coverY = value } } }
-                    }), in: 0...1) { Text("Crop position") }.id("crop").accessibilityLabel("Vertical crop position")
+                    if hasImage {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(background ? "Landscape Background Position" : "Portrait Background Position")
+                                Spacer()
+                                Text("\(Int((background ? item.backgroundY : item.coverY) * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                            }
+                            Slider(value: Binding(get: { background ? item.backgroundY : item.coverY }, set: setCrop), in: 0...1)
+                                .accessibilityLabel(background ? "Landscape background position" : "Portrait background position")
+                                .accessibilityValue("\(Int((background ? item.backgroundY : item.coverY) * 100)) percent from top")
+                            HStack { Text("Top"); Spacer(); Text("Center"); Spacer(); Text("Bottom") }.font(.caption).foregroundStyle(.secondary)
+                            Text("Adjust which part of the image appears on the featured card or background.").font(.caption).foregroundStyle(.secondary)
+                        }.id("crop")
+                        row("center", "Center Crop", icon: "scope") { setCrop(0.5) }
+                    }
                     row("remove", "Remove Image", icon: "trash") {
                         perform { try artwork.update(game.id) {
                             if background { $0.background = nil; $0.customBackground = true }
@@ -86,9 +103,7 @@ struct IridiumArtworkEditor: View {
                         } }
                         run { await artwork.prepare(game, retry: true) }
                     }
-                } header: { Text("Artwork") } footer: {
-                    Text("Custom images stay on this device. Existing artwork is kept until you choose automatic artwork for that image. Removing an image keeps it empty until you choose another image or automatic artwork.")
-                }
+                } header: { Text("Artwork") }
                 Section {
                     Toggle("Automatic matching", isOn: Binding(get: { item.automaticLookup }, set: { value in
                         perform { try artwork.update(game.id) { $0.automaticLookup = value } }
@@ -113,11 +128,7 @@ struct IridiumArtworkEditor: View {
                             run { try await artwork.select(candidate, for: game); matches = []; searched = false }
                         }
                     }
-                } header: { Text("Game match") } footer: {
-                    Text(game.platform == .windows ?
-                        "Game names and public IDs from local metadata help find Steam artwork. Uncertain matches need your choice. Only title searches reach Steam; executable files stay on this device. A match changes appearance only." :
-                        "Matches come from Libretro's public artwork catalog for \(game.platform.title). Ambiguous titles need your choice. Artwork is optional and games remain playable offline.")
-                }
+                } header: { Text("Game Match") }
                 if let failure = failure ?? artwork.error { Section { Text(failure).foregroundStyle(.red) } }
             }
             .iridiumPageSurface().navigationTitle("Rename & Artwork")
@@ -184,6 +195,9 @@ struct IridiumArtworkEditor: View {
         perform { try artwork.update(game.id) { $0.title = IridiumArtworkAppearance.titleOverride(title) } }
         field = nil; keyboard = true
     }
+    private func setCrop(_ value: Double) {
+        perform { try artwork.update(game.id) { if background { $0.backgroundY = value } else { $0.coverY = value } } }
+    }
 
     private func perform(_ action: () throws -> Void) {
         do { try action(); failure = nil } catch { failure = error.localizedDescription }
@@ -236,6 +250,7 @@ struct IridiumArtworkEditor: View {
             switch focus {
             case "name", "query": field = focus
             case "saveName": saveName()
+            case "center": setCrop(0.5)
             case "image": background.toggle()
             case "photos": photos = true
             case "files": files = true

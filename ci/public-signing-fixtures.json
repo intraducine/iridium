@@ -1,7 +1,22 @@
 {
+  "vendor/Dolphin/Externals/minizip-ng/minizip-ng/test/test.p12": {
+    "reason": "Public upstream test/Windows signing fixture, unused by iOS and excluded from corresponding source.",
+    "sha256": "cd49fbb75daabd68eb2c4e8ee6e5e2e3891b1a9011df008048870c5ac14ede61",
+    "source": "https://github.com/zlib-ng/minizip-ng/blob/55db144e03027b43263e5ebcb599bf0878ba58de/test/test.p12"
+  },
+  "vendor/Flycast/shell/uwp/sign_cert.pfx": {
+    "reason": "Public upstream test/Windows signing fixture, unused by iOS and excluded from corresponding source.",
+    "sha256": "3b6233f5a2cb4f4fe2da76db9120fcd87948aaa0e7e8dc32ba4e7f9f9eaea9ed",
+    "source": "https://github.com/flyinghead/flycast/blob/5aa091fde632fb332c8d8c34e280d62dc951954c/shell/uwp/sign_cert.pfx"
+  },
   "vendor/PPSSPP/UWP/PPSSPP_UWP_TemporaryKey.pfx": {
+    "reason": "Public upstream Windows UWP signing fixture, unused by the native iOS build; excluded from corresponding source.",
     "sha256": "8a81c07290d15cc22e19b3711477d39204dd7660792bd0e5d9e6d643c8dd615d",
-    "source": "https://github.com/hrydgard/ppsspp/blob/fa50bb1976065c4f8b1b47af227d367fe9771555/UWP/PPSSPP_UWP_TemporaryKey.pfx",
-    "reason": "Public upstream Windows UWP signing fixture, unused by the native iOS build; excluded from corresponding source."
+    "source": "https://github.com/hrydgard/ppsspp/blob/fa50bb1976065c4f8b1b47af227d367fe9771555/UWP/PPSSPP_UWP_TemporaryKey.pfx"
+  },
+  "vendor/Play/deps/CodeGen/build_uwp/CodeGenTestSuite_TemporaryKey.pfx": {
+    "reason": "Public upstream test/Windows signing fixture, unused by iOS and excluded from corresponding source.",
+    "sha256": "5bf573c71442abb0bface5ba72d7f1c40528446b2550684988d7aa3c63db2d02",
+    "source": "https://github.com/jpd002/Play--CodeGen/blob/a5009f7dca062695b8e5aebbd71e67b4ddfa9251/build_uwp/CodeGenTestSuite_TemporaryKey.pfx"
   }
 }

@@ -19,7 +19,7 @@ def block(source, anchor):
 class TrackpadCursorTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_production_policy_and_live_resolution_projection(self):
-        source=presentation.hardware_cursor((ROOT/'vendor/Madeira/app/Madeira/HardwareInput.swift').read_text())
+        source=presentation.hardware_cursor((ROOT/'ci/fixtures/madeira-build43/app/Madeira/HardwareInput.swift').read_text())
         actual='\n'.join(block(source,a) for a in ('    private var iridiumTrackpadActive:',
             '    private var iridiumStickCursorActive:', '    private func updateTracking()',
             '    private func renderCursor()', '    private func updateFocusTimer()',

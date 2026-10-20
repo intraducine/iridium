@@ -109,3 +109,15 @@
 [submodule "vendor/PPSSPP"]
 	path = vendor/PPSSPP
 	url = https://github.com/hrydgard/ppsspp.git
+[submodule "vendor/Dolphin"]
+	path = vendor/Dolphin
+	url = https://github.com/OatmealDome/dolphin-ios.git
+[submodule "vendor/Azahar"]
+	path = vendor/Azahar
+	url = https://github.com/azahar-emu/azahar.git
+[submodule "vendor/Play"]
+	path = vendor/Play
+	url = https://github.com/jpd002/Play-.git
+[submodule "vendor/Flycast"]
+	path = vendor/Flycast
+	url = https://github.com/flyinghead/flycast.git

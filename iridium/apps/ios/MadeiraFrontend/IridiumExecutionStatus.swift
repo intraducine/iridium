@@ -17,11 +17,18 @@ struct IridiumExecutionStatus: Equatable {
 extension IridiumConsoleSession {
     var executionStatus: IridiumExecutionStatus {
         guard let game, phase != .idle else { return .notRunning }
-        let runtime = game.platform == .psp ? "PPSSPP (PSP)" : "SameBoy (Game Boy)"
+        let runtime = game.platform.isPhase3
+            ? "\((try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID).name) ?? game.runtimeID) (\(game.platform.title))"
+            : game.platform == .psp ? "PPSSPP (PSP)" : "SameBoy (Game Boy)"
         guard phase == .running || phase == .paused else {
             let detail = phase == .starting ? "Waiting for the running engine to report its CPU mode."
                 : phase == .stopping ? "The runtime is stopping." : "The runtime requires an app restart."
             return .init(runtime: runtime, mode: "Unknown", detail: detail)
+        }
+        if game.platform.isPhase3 {
+            let mode = phase3JITVerified ? "Allocator verified" : ["dolphin", "azahar"].contains(game.runtimeID) ? "Interpreter requested" : "Not reported"
+            return .init(runtime: runtime, mode: mode,
+                detail: phase3Status + (phase3JITVerified ? " A small allocator probe does not establish later guest JIT behavior." : ""))
         }
         guard game.platform == .psp else {
             return .init(runtime: runtime, mode: "Unknown", detail: "This runtime does not report its execution mode here.")

@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "madeira": {
+    "revision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+    "appAdapter": "iridium/apps/ios/App/Adapters/Madeira",
+    "nativeAPI": "ci/engine-integrations/madeira-api.json",
+    "nativeBuild": "ci/madeira-frontend.py",
+    "obligations": [
+      "Wine/FEX/DXMT/D3D12 and crypto build recipes and strict receipt identity",
+      "Native app C/Objective-C bridges and engine resource layout",
+      "JIT helper protocol, executable memory ownership and pairing lifecycle",
+      "Corresponding source and license/exception obligations"
+    ]
+  },
+  "ppsspp": {
+    "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+    "adapter": "iridium/apps/ios/RuntimeBridge/IRPPSSPPNative.mm",
+    "patches": [
+      "ci/ppsspp_callback_overlay.py",
+      "ci/ppsspp_exec_overlay.py",
+      "ci/ppsspp_frontend_overlay.py",
+      "ci/ppsspp_gl_sync_overlay.py",
+      "ci/ppsspp_native_overlay.py",
+      "ci/ppsspp_picker_overlay.py",
+      "ci/ppsspp_sensor_overlay.py"
+    ],
+    "obligations": [
+      "Native ABI 3 and executable protocol 3",
+      "ARM64 emitter/CodeBlock memory ownership",
+      "GPU/GL frame lifecycle, teardown and exports",
+      "Rebuild and audit exact pinned component before packaging"
+    ]
+  },
+  "otherEngines": {
+    "builds": [
+      "ci/build-sameboy.py",
+      "ci/build-phase3.py"
+    ],
+    "adapter": "iridium/apps/ios/RuntimeBridge",
+    "obligations": [
+      "Per-engine revision, source identity, asset and export receipts",
+      "Runtime lease, pause/resume, save path and teardown behavior"
+    ]
+  }
+}

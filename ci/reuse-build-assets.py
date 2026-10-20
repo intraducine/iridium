@@ -86,7 +86,7 @@ COMPONENT_INPUTS = {
 # other function, import, global, signature and command-line route as input.
 # In particular, compiler helpers are not an allowlist that can miss new code.
 FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tree',
-                                    'prepare', 'verify', 'app'))
+                                    'prepare', 'verify', 'app', 'check_bundle'))
 FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
                               'time', 'sys', 'tempfile', 'madeira_presentation'))

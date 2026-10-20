@@ -8,8 +8,8 @@ bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-build"
 ```
 
 Use `git pull` only on the branch you intend to update. The build command does
-not reset source, delete saves or install the app. It builds the pinned Madeira
-app with Iridium's presentation overlay. GitHub Actions uses the same builder.
+not reset source, delete saves or install the app. It builds the Iridium-owned app
+against the pinned native runtime. GitHub Actions uses the same builder.
 See [build, source and replacement instructions](actions-ipa.md).
 
 Use an Apple Silicon Mac, Homebrew, Python 3.11 or newer, and full Xcode 27.

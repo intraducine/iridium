@@ -8,7 +8,7 @@ struct IridiumConsoleControlSurface: View {
     let action: String
     let changed: (CGSize, Bool) -> Void
     @ObservedObject private var session = IridiumConsoleSession.shared
-    private var profile: IridiumPlayerProfile { session.game?.platform == .psp ? .psp : .gameBoy }
+    private var profile: IridiumPlayerProfile { .consoleProfile(session.game?.platform.rawValue) }
     var body: some View {
         IridiumControlTouchSurface(enabled: session.phase == .running) { point, size in
             let down = point != nil
@@ -18,9 +18,13 @@ struct IridiumConsoleControlSurface: View {
                 let x = (bits & (1 << 7) != 0 ? 1.0 : 0) - (bits & (1 << 6) != 0 ? 1.0 : 0)
                 let y = (bits & (1 << 5) != 0 ? 1.0 : 0) - (bits & (1 << 4) != 0 ? 1.0 : 0)
                 changed(CGSize(width: x, height: y), bits != 0)
-            } else if action == "LS", profile == .psp {
+            } else if action == "LS", profile != .gameBoy {
                 let vector = point.map { IridiumControlGeometry.stick(location: $0, size: size) } ?? .zero
                 session.setAnalog(x: Int16((vector.x * 32767).rounded()), y: Int16((vector.y * 32767).rounded()), source: "touch.layout." + control.uuidString)
+                changed(CGSize(width: vector.x, height: -vector.y), down)
+            } else if action == "RS", session.game?.platform.isPhase3 == true {
+                let vector = point.map { IridiumControlGeometry.stick(location: $0, size: size) } ?? .zero
+                session.setRightAnalog(x: Int16((vector.x * 32767).rounded()), y: Int16((vector.y * 32767).rounded()))
                 changed(CGSize(width: vector.x, height: -vector.y), down)
             } else if let bit = IridiumConsoleControlMapping.button(action, profile: profile) {
                 let inside = point.map { CGRect(origin: .zero, size: size).contains($0) } ?? false
@@ -34,7 +38,7 @@ struct IridiumConsoleControlSurface: View {
             if action == "DPad" {
                 Button("Up") { pulse(1 << 4) }; Button("Down") { pulse(1 << 5) }
                 Button("Left") { pulse(1 << 6) }; Button("Right") { pulse(1 << 7) }
-            } else if action == "LS" {
+            } else if action == "LS" || action == "RS" {
                 Button("Up") { analog(0, 32767) }; Button("Down") { analog(0, -32767) }
                 Button("Left") { analog(-32767, 0) }; Button("Right") { analog(32767, 0) }
                 Button("Center") { analog(0, 0) }
@@ -48,9 +52,10 @@ struct IridiumConsoleControlSurface: View {
         }
     }
     private func analog(_ x: Int16, _ y: Int16) {
-        guard action == "LS" else { return }
+        guard action == "LS" || action == "RS" else { return }
         if x != 0 || y != 0 { IridiumControlHaptics.press() }
-        session.setAnalog(x: x, y: y, source: "accessibility.layout." + control.uuidString)
+        if action == "RS" { session.setRightAnalog(x: x, y: y) }
+        else { session.setAnalog(x: x, y: y, source: "accessibility.layout." + control.uuidString) }
     }
     private func pulse(_ bit: UInt16) {
         guard session.phase == .running else { return }
@@ -80,6 +85,16 @@ enum IridiumConsoleControlLayout {
         return value
     }
 
+    /// Navigation can first measure the editor at zero or at a short transition
+    /// size. Generate normalized defaults in a usable reference canvas; fitting
+    /// still follows the actual canvas without rewriting the saved layout.
+    static func editorDefaults(profile: IridiumPlayerProfile, size: CGSize) -> [TouchControl] {
+        let wide = size.width > size.height
+        let reference = CGSize(width: max(wide ? 667 : 320, size.width),
+                               height: max(wide ? 320 : 548, size.height))
+        return defaults(profile: profile, bounds: CGRect(origin: .zero, size: reference))
+    }
+
     static func defaults(profile: IridiumPlayerProfile, bounds: CGRect) -> [TouchControl] {
         let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: true)
         func control(_ action: String, _ frame: CGRect) -> TouchControl {
@@ -91,8 +106,11 @@ enum IridiumConsoleControlLayout {
         var values = [control("DPad", layout.dpad)]
         if let stick = layout.stick { values.append(control("LS", stick)) }
         let actions = ["Cross": "A", "Circle": "B", "Square": "X", "Triangle": "Y",
-                       "L": "LB", "R": "RB", "Start": "Menu", "Select": "View", "A": "A", "B": "B"]
+                       "L": "LB", "R": "RB", "L2": "LT", "R2": "RT", "Start": "Menu", "Select": "View", "A": "A", "B": "B", "X": "X", "Y": "Y"]
         values += layout.buttons.compactMap { button in actions[button.id].map { control($0, button.frame) } }
+        if profile == .console || profile == .nintendo3DS {
+            values.append(control("RS", CGRect(x: bounds.maxX - 192, y: bounds.maxY - 98, width: 80, height: 80)))
+        }
         return values
     }
 }

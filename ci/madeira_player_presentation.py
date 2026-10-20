@@ -1,4 +1,6 @@
-"""Shared Iridium player primitives over Madeira's unchanged native input owners."""
+"""Build 43 migration test fixture; not used by application preparation.
+
+Shared Iridium player primitives over Madeira's unchanged native input owners."""
 
 
 def replace(text, old, new):
@@ -249,7 +251,11 @@ def apply(name, text):
     if name == 'ContentView.swift':
         text = shared_console(controls(text))
         text = touch_mouse(text)
-    if name == 'Library.swift': text = pointer_settings(menu(text))
+        import madeira_control_settings
+        text = madeira_control_settings.apply(text)
+    if name == 'Library.swift':
+        import madeira_control_settings
+        text = madeira_control_settings.library(pointer_settings(menu(text)))
     if name == 'HardwareInput.swift': text = hardware_cursor(text)
 
     return text
