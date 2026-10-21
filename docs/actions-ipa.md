@@ -28,9 +28,9 @@ upstream iOS 26 minimum. Use external JIT on earlier versions.
 ## GitHub Actions
 
 Builds are manual. Source checks can run on pushes and pull requests.
-Current development uses `feature/madeira-279fd0f`. Check its exact reviewed
-commit when selecting source-check results or dispatching a developer build;
-an older feature-branch run does not validate the current development tree.
+Every workflow build includes all integrated engines, including Dolphin,
+Azahar, Play!, and Flycast. Select `main` or the reviewed branch intended for
+testing, and check its exact commit when selecting source-check results.
 Push the reviewed commit, then use:
 
 ```sh

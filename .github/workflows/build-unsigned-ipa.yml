@@ -15,10 +15,6 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Reuse matching completed Madeira component builds
         type: boolean
         default: true
-      phase3_engines:
-        description: Include Dolphin, Azahar, Play!, and Flycast (device acceptance pending)
-        type: boolean
-        default: false
 permissions:
   contents: read
   actions: read
@@ -41,18 +37,14 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
       - name: Initialize the pinned runtime sources
-        env:
-          IRIDIUM_PHASE3: ${{ inputs.phase3_engines && '1' || '0' }}
         run: |
           git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
           python3 ci/build-ppsspp-native.py --initialize
           git -C vendor/Madeira submodule update --init --depth 1 FEX wine dxmt madeira-dock
           git -C vendor/Madeira/FEX submodule update --init --depth 1 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/vixl External/xxhash Source/Common/cpp-optparse
           git -C vendor/Madeira/dxmt submodule update --init --recursive --depth 1
-          if [ "$IRIDIUM_PHASE3" = 1 ]; then
-            git submodule update --init --depth 1 vendor/Azahar
-            git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast
-          fi
+          git submodule update --init --depth 1 vendor/Azahar
+          git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast
       - name: Check source privacy and standards
         run: |
           python3 check-public-source.py
@@ -154,7 +146,6 @@ jobs:
       - name: Check build prerequisites
         run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend
       - name: Prepare Dolphin, Azahar, Play!, and Flycast
-        if: inputs.phase3_engines
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -165,7 +156,7 @@ jobs:
         id: app_build
         env:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
-          IRIDIUM_PHASE3: ${{ inputs.phase3_engines && '1' || '0' }}
+          IRIDIUM_PHASE3: "1"
         run: python3 ci/madeira-frontend.py app
       - name: Record app binaries for final audit
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex

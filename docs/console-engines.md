@@ -1,6 +1,6 @@
 # Console engine builds and verification
 
-Dolphin, Azahar, Play!, and Flycast are optional native engine components.
+Dolphin, Azahar, Play!, and Flycast are included in standard Actions IPA builds.
 Physical-device verification is pending for all four. A compiled component, imported game,
 opened player, or allocator probe is not a successful game launch. The UI waits
 for an upstream video callback and reports failures without simulating playback.
@@ -138,9 +138,9 @@ and update the receipt to identify the replacement. Simulator components build
 with `python3 ci/build-phase3.py --engine all --sdk iphonesimulator --jobs 3`.
 The simulator Azahar recipe selects software rendering and disables Vulkan.
 
-The manual IPA workflow exposes **Include Dolphin, Azahar, Play!, and Flycast**.
-`python3 ci/dispatch-build.py --phase3` dispatches that mode for the exact
-committed branch head. It never publishes a release. Monitor any dispatched
+The manual IPA workflow always includes all four console engine components.
+`python3 ci/dispatch-build.py` builds the exact committed branch head with all
+engines included. It never publishes a release. Monitor any dispatched
 build at five-minute intervals and retrieve both its IPA and matching source.
 
 Receipts record root/dependency pins, compiled files, recipe/ABI/overlay hashes,
