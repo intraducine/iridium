@@ -56,7 +56,12 @@ def binary_component(name):
     raise ValueError('Unmapped packaged binary: ' + name)
 
 
-def snapshot(repo, destination, revisions):
+def snapshot(repo, destination, revisions, *, source_root=None):
+    source_root = destination if source_root is None else source_root
+    relative = destination.relative_to(source_root)
+    if '..' in relative.parts:
+        raise ValueError('Source snapshot destination escapes its staging root')
+    prefix = ['--prefix=' + relative.as_posix() + '/'] if relative.parts else []
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
     if subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).strip():
         # Generated crate notices are copied separately; source edits need a commit.
@@ -66,11 +71,13 @@ def snapshot(repo, destination, revisions):
         elif any(Path(name).suffix != '.a' and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt' for name in changed):
             raise ValueError('Commit source changes before collection: ' + str(repo.relative_to(ROOT)))
     with tempfile.TemporaryFile() as stream:
-        subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', revision], stdout=stream, check=True)
+        subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', *prefix, revision], stdout=stream, check=True)
         stream.seek(0)
-        destination.mkdir(parents=True, exist_ok=True)
+        source_root.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=stream) as archive:
-            archive.extractall(destination, filter='data')
+            # Submodules may link to siblings in the complete source tree.
+            # Prefix paths before filtering so the full stage is the boundary.
+            archive.extractall(source_root, filter='data')
     revisions[repo.relative_to(ROOT).as_posix()] = revision
     records = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '--stage', '-z'], text=True).split('\0')
     for record in records:
@@ -80,10 +87,10 @@ def snapshot(repo, destination, revisions):
         if not (child / '.git').exists(): continue
         if subprocess.check_output(['git', '-C', str(child), 'rev-parse', 'HEAD'], text=True).strip() != meta.split()[1]:
             raise ValueError('Submodule differs from its pin: ' + name)
-        snapshot(child, destination / name, revisions)
+        snapshot(child, destination / name, revisions, source_root=source_root)
 
 
-def snapshot_freetype(destination, revisions):
+def snapshot_freetype(destination, revisions, *, source_root=None):
     repo = build.UPSTREAM / 'research/freetype'
     # Restored native archives skip the compiler step that normally clones this source.
     if not repo.exists():
@@ -91,7 +98,7 @@ def snapshot_freetype(destination, revisions):
                         'https://github.com/freetype/freetype.git', str(repo)], check=True)
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != FREETYPE_REVISION: raise ValueError('Unexpected FreeType revision')
-    snapshot(repo, destination, revisions)
+    snapshot(repo, destination, revisions, source_root=source_root)
 
 
 def exclude_signing_fixtures(stage):
@@ -148,7 +155,7 @@ def collect(app, output, maps):
         revisions = {}
         snapshot(ROOT, stage, revisions)
         freetype = build.UPSTREAM / 'research/freetype'
-        snapshot_freetype(stage / freetype.relative_to(ROOT), revisions)
+        snapshot_freetype(stage / freetype.relative_to(ROOT), revisions, source_root=stage)
         # Locked published inputs are shared with local builds, not local signing files.
         inputs = [item for item in json.loads((ROOT / 'ci/runtime-inputs.json').read_text()) if item['name'] in {
             'llvm', 'frontend-stikjit-source', 'idevice-source', 'llvm-target-runtime-source', 'mingw-runtime-source', 'mingw-build-source'}]
