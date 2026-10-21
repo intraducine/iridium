@@ -192,6 +192,10 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 Path(args[-1]).mkdir(parents=True)
             return 'test tool output'
 
+        def snapshot_freetype(destination, revisions, *, source_root):
+            self.assertEqual(destination, source_root / 'vendor/Madeira/research/freetype')
+            snapshot(self.root / 'vendor/Madeira/research/freetype', destination, revisions)
+
         with patch.object(COLLECT, 'ROOT', self.root), \
                 patch.object(COLLECT.build, 'UPSTREAM', self.root / 'vendor/Madeira'), \
                 patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
@@ -202,8 +206,7 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[
                     {'archive': 'libntdll_unix.a'}, {'archive': 'libIridiumSameBoy.a'}]), \
                 patch.object(COLLECT, 'snapshot', side_effect=snapshot), \
-                patch.object(COLLECT, 'snapshot_freetype', side_effect=lambda destination, revisions:
-                    snapshot(self.root / 'vendor/Madeira/research/freetype', destination, revisions)), \
+                patch.object(COLLECT, 'snapshot_freetype', side_effect=snapshot_freetype), \
                 patch.object(COLLECT.subprocess, 'check_output', side_effect=command):
             COLLECT.collect(app, output, maps)
 
