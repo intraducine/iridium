@@ -144,6 +144,35 @@ class ManualBuildTests(unittest.TestCase):
         self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira-frontend.py').read_text())
         self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("ci/madeira-frontend.py app"))
 
+    def test_workflow_always_initializes_builds_and_bundles_console_engines(self):
+        text = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        self.assertNotIn('phase3_engines', text)
+        def step(name):
+            return re.search(r'^      - name: ' + re.escape(name) + r'\n.*?(?=^      - |\Z)',
+                             text, re.M | re.S).group(0)
+        initialize = step('Initialize the pinned runtime sources')
+        self.assertNotIn('if [', initialize)
+        self.assertIn('git submodule update --init --depth 1 vendor/Azahar', initialize)
+        self.assertIn('git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast', initialize)
+        engines = step('Prepare Dolphin, Azahar, Play!, and Flycast')
+        self.assertNotIn('\n        if:', engines)
+        self.assertIn('python3 ci/build-phase3.py --engine all --sdk iphoneos', engines)
+        self.assertIn('IRIDIUM_PHASE3: "1"', step('Build without signing'))
+
+    def test_default_and_legacy_dispatch_use_the_same_complete_build(self):
+        import contextlib
+        import io
+        import sys
+        expected = 'a' * 40
+        for arguments in ([], ['--phase3']):
+            with self.subTest(arguments=arguments), patch.object(sys, 'argv', ['dispatch-build.py', *arguments]), \
+                    patch.object(dispatch.subprocess, 'check_output', side_effect=[expected, 'main']), \
+                    patch.object(dispatch, 'dispatch', return_value='build-url') as run, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                dispatch.main()
+                run.assert_called_once_with('main', expected)
+                self.assertEqual(output.getvalue().strip(), 'build-url')
+
     def test_dispatch_checks_and_cancels_only_its_own_run(self):
         import json
         expected = "a" * 40
@@ -157,6 +186,10 @@ class ManualBuildTests(unittest.TestCase):
                 if actual == expected:
                     self.assertEqual(dispatch.dispatch("main", expected), run["html_url"])
                     self.assertEqual(gh.call_count, 2)
+                    self.assertEqual(gh.call_args_list[0].args,
+                                     ('workflow', 'run', dispatch.WORKFLOW, '--repo', dispatch.REPO,
+                                      '--ref', 'main', '-f', f'expected_sha={expected}',
+                                      '-f', 'dispatch_id=token'))
                 else:
                     with self.assertRaises(ValueError):
                         dispatch.dispatch("main", expected)

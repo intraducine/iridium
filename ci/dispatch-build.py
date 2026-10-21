@@ -22,12 +22,11 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], cwd=ROOT, text=True)
 
 
-def dispatch(ref, expected, phase3=False):
+def dispatch(ref, expected):
     check_commit(expected, expected)
     token = uuid.uuid4().hex
-    inputs = ["-f", "phase3_engines=true"] if phase3 else []
     gh("workflow", "run", WORKFLOW, "--repo", REPO, "--ref", ref,
-       "-f", f"expected_sha={expected}", "-f", f"dispatch_id={token}", *inputs)
+       "-f", f"expected_sha={expected}", "-f", f"dispatch_id={token}")
     # A unique title identifies this request, even with concurrent dispatches.
     for _ in range(30):
         runs = json.loads(gh("api", f"repos/{REPO}/actions/workflows/{WORKFLOW}/runs?event=workflow_dispatch&per_page=100"))["workflow_runs"]
@@ -49,14 +48,14 @@ def dispatch(ref, expected, phase3=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Check workflow inputs before any compilation")
-    parser.add_argument("--phase3", action="store_true", help="Include Dolphin, Azahar, Play!, and Flycast in the manual build")
+    parser.add_argument("--phase3", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.check:
         check_commit(os.environ.get("EXPECTED_SHA", ""), os.environ.get("GITHUB_SHA", ""))
         return
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     ref = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    print(dispatch(ref, expected, phase3=args.phase3))
+    print(dispatch(ref, expected))
 
 
 if __name__ == "__main__":
