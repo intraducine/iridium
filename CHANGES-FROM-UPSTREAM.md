@@ -1,13 +1,13 @@
 # Changes from upstream
 
-## Phase 3 native runtimes
+## Native console engines
 
-The optional Phase 3 target adds pinned DolphiniOS Dolphin, Azahar, Play! and
+The optional console engine target includes pinned DolphiniOS Dolphin, Azahar, Play! and
 Flycast. Iridium hosts upstream runtime/Libretro implementations and adapts
 rendering, audio, input, isolated storage and lifecycle through a C boundary.
 It does not replace guest CPU/GPU/media implementations. Pins, build/replacement
 instructions, limitations and the four-engine acceptance checklist are in
-[docs/phase3-acceptance.md](docs/phase3-acceptance.md).
+[docs/console-engines.md](docs/console-engines.md).
 
 Declared CMake adapters hide C++ symbols. Dolphin uses upstream Metal/iOS with
 plain interpretation and complete Sys resources. Azahar reuses its verified

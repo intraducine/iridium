@@ -16,7 +16,7 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         type: boolean
         default: true
       phase3_engines:
-        description: Include all four Phase 3 engines (device acceptance pending)
+        description: Include Dolphin, Azahar, Play!, and Flycast (device acceptance pending)
         type: boolean
         default: false
 permissions:
@@ -153,7 +153,7 @@ jobs:
           retention-days: 14
       - name: Check build prerequisites
         run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend
-      - name: Build all four Phase 3 components
+      - name: Prepare Dolphin, Azahar, Play!, and Flycast
         if: inputs.phase3_engines
         env:
           GH_TOKEN: ${{ github.token }}

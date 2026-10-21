@@ -1,9 +1,8 @@
 # Runtime architecture
 
-Phase 3's four native engines, reproducible component builds, storage/input
-adapters and device acceptance gates are documented in
-[phase3-acceptance.md](phase3-acceptance.md). It remains a draft until that
-four-engine physical-device checklist passes.
+Dolphin, Azahar, Play!, and Flycast builds, storage/input adapters and
+physical-device verification requirements are documented in
+[console-engines.md](console-engines.md).
 
 This branch adds a real interpreter core behind the live Madeira frontend. It
 does not revive the excluded legacy Linux backend or duplicate Madeira's Steam,

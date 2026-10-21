@@ -276,7 +276,7 @@ def check_bundle(app):
         from phase3_app import check_phase3_bundle
         check_phase3_bundle(app, info['IridiumPhase3Revisions'])
     elif (os.environ.get('IRIDIUM_PHASE3') == '1'):
-        raise ValueError('Phase 3 capability metadata is missing')
+        raise ValueError('Console engine capability metadata is missing')
     if any(info.get(name) != value for name, value in PSP_PRIVACY_DESCRIPTIONS.items()):
         raise ValueError('The native PSP platform permission descriptions are missing or changed')
     if info.get('IridiumMadeiraRevision') != REVISION:

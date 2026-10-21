@@ -32,7 +32,7 @@ ObservableObject stores directly. These are deliberately not wrapped in another
 copy of the same published state.
 
 Console engines continue through `IridiumRuntimeDriver`, console session and
-`RuntimeBridge` C interfaces. SameBoy, PSP and phase 3 component receipts and
+`RuntimeBridge` C interfaces. SameBoy, PSP and console engine component receipts and
 native ABI/export audits remain mandatory. Windows native functions cross the
 retained C/Objective-C bridging header. The Windows coordinator still contains
 engine-specific presentation and platform integration; it is maintained in the

@@ -202,7 +202,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     private func phase3Event(_ generation: UInt64, kind: UInt32, message: String) {
         guard generation == phase3Generation, let owner = lease, game?.platform.isPhase3 == true else { return }
-        RuntimeDiagnosticLogFiles.writeConsoleLine("[Phase3] " + message)
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[Console engine] " + message)
         phase3Status = message
         switch kind {
         case 1:

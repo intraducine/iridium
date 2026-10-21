@@ -46,7 +46,7 @@ separate works.
 
 ## Source and library replacement
 
-Phase 3 adds DolphiniOS Dolphin, Azahar and Flycast under their upstream
+The console engine components include DolphiniOS Dolphin, Azahar and Flycast under their upstream
 GPL-2.0-or-later and file/dependency-specific terms, and Play! under BSD-2-Clause
 and dependency-specific terms. Selected GPL-or-later components may use GPLv3
 when combined with AGPLv3 components; original grants/notices remain intact.
@@ -54,11 +54,11 @@ The Dolphin embedding adapter retains GPL-2.0-or-later attribution. This does
 not resolve the combined-app Metal Shader Converter question below or authorize
 a public release.
 
-The Phase 3 builder copies dependency notice trees with relative paths,
+The console engine builder copies dependency notice trees with relative paths,
 including Azahar's official unified-source closure, into `licenses/Phase3`.
 Source collection includes pinned dependencies, generated adaptation recipes,
 matching Azahar source and receipts. See
-[docs/phase3-acceptance.md](docs/phase3-acceptance.md) for build/replacement
+[docs/console-engines.md](docs/console-engines.md) for build/replacement
 instructions and limits. A dynamic-library boundary is not a license exception
 or a determination of aggregation.
 

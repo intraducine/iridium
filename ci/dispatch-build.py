@@ -49,7 +49,7 @@ def dispatch(ref, expected, phase3=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Check workflow inputs before any compilation")
-    parser.add_argument("--phase3", action="store_true", help="Include all four Phase 3 engines in the manual build")
+    parser.add_argument("--phase3", action="store_true", help="Include Dolphin, Azahar, Play!, and Flycast in the manual build")
     args = parser.parse_args()
     if args.check:
         check_commit(os.environ.get("EXPECTED_SHA", ""), os.environ.get("GITHUB_SHA", ""))
