@@ -1,7 +1,7 @@
 # Console engine builds and verification
 
 Dolphin, Azahar, Play!, and Flycast are included in standard Actions IPA builds.
-Physical-device verification is pending for all four. A compiled component, imported game,
+Each engine needs separate physical-device verification. A compiled component, imported game,
 opened player, or allocator probe is not a successful game launch. The UI waits
 for an upstream video callback and reports failures without simulating playback.
 
@@ -9,25 +9,59 @@ for an upstream video callback and reports failures without simulating playback.
 
 | Engine | Selected source | Adapter policy |
 | --- | --- | --- |
-| Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. CPU interpreter, HLE DSP without DSP JIT, software vertex loader. |
+| Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. ARM64 JIT and native vertex loader require the shared helper and execution probe. No interpreter fallback. HLE DSP without DSP JIT. |
 | Azahar, Nintendo 3DS | Official `2126.2`, `219d743a1e698101fe1ab8bef43e6563126c3c27` | Digest-verified official iOS Libretro binary and matching unified source. CPU/shader interpreters and software graphics. Simulator core built from that source. |
 | Play!, PlayStation 2 | Official `0.77`, `fa75cea31a33f5ab7a2008ed0d90dc74353e9cef` | Upstream Libretro VM, OpenGL ES GS and CodeGen. Its own executable-memory probe is required. Restart after a session because configuration uses a process singleton. |
 | Flycast, Dreamcast/arcade | Official `v2.7`, `5aa091fde632fb332c8d8c34e280d62dc951954c` | Upstream Libretro runtime and ES3 renderer. Device requires its own executable-memory probe; simulator recompilers are compiled out upstream. This release dropped supported iOS distribution; the adapter remains device unverified. |
 
-Dolphin's selected iOS port is a beta. The plain interpreter avoids a reproduced
-cached-interpreter shutdown allocator crash in that port; current-run settings
-prevent game INI files from selecting JIT. Its interpreter and Azahar's software
-renderer can be too slow for a game. Play!/Flycast may remain unavailable when
-iOS rejects their upstream allocators. Helper readiness is only a prerequisite;
-the allocator must execute 42, rewrite the block, then execute 7. That small
-check does not establish later arena sizes or guest JIT behavior. No PSP
-prepared arenas, BetterJIT experiments, new helper opcodes, exception-port
-repair, or replacement emulator internals are used.
+Dolphin's selected iOS port is a beta. Core and common CPU helpers compile with
+strict floating-point semantics to preserve guest rounding-mode changes.
+A checked platform header overlay fixes
+its cached-code ownership: non-executable blocks allocate and release ordinary
+RW pages, without creating executable aliases or using the iOS executable
+allocator. Normal launches require the global JIT service and the upstream
+allocator must pass both execution and rewrite checks before boot. A failed
+check stops the launch and points to shared JIT Setup. The cached interpreter
+has known graphics faults in this pin and is not a supported fallback.
+Legacy per-game JIT flags are ignored while all other settings are retained.
+Play enters Dolphin's shared JIT preparation directly. The library does not add
+a second enable-and-play confirmation or show a setup link beside each game.
+JIT provider settings remain in Performance & Compatibility.
+Dolphin receives the app's existing
+`jit26_prepare_region` function through its native interface. The TXM platform
+overlay uses that shared memory service instead of a separate breakpoint
+protocol or helper script. It rejects MAP_FAILED before requesting preparation.
+Helper readiness alone never selects native JIT. The probe returns 42, rewrites
+the block, then returns 7. This check does not establish later arena sizes or
+guest JIT behavior. Azahar's software renderer can be too slow for a game.
+Play!/Flycast may remain unavailable if iOS rejects their upstream allocators.
+
+Dolphin uses `JITCoordinator`, as Madeira and PSP do. The coordinator owns
+provider selection, setup, single-flight admission and network preparation.
+Dolphin requests a live debugger when it needs fresh executable memory; an
+existing Madeira pool alone cannot prepare a different engine's memory.
+The native boundary checks CS_DEBUGGED and live attachment before allocation.
+Each engine retains its own code-memory ownership and execution checks.
+The shared script writes complete 64-bit addresses and checks every page-write
+reply. This avoids address truncation in the pinned StikJIT batch formatter.
+After Dolphin stops, the coordinator detaches only its own active built-in
+helper. It waits for the original helper operation, the detach call, a cleared
+live-debugger flag and successful network restoration before releasing admission.
+An unknown debugger or uncertain cleanup requires restart instead of an engine
+handoff. Existing Madeira pool ownership and PSP's verified teardown stay separate.
+The built-in helper extension requires a standalone installation. LiveContainer
+uses the global LiveContainer JIT route configured in app settings.
+
+The CoreAudio overlay implements volume in the final 16-bit output samples,
+with an atomic gain and audio-unit disposal on shutdown. This fixes the iOS
+port's ineffective HAL volume calls and permits a per-game mute control.
 
 The Dolphin platform overlay disables framebuffer fetch only on Simulator:
 its advertised Apple GPU family otherwise selects shaders that Simulator Metal
 rejects as unsupported render-target reads. Device capability detection and
 the upstream non-fetch shader fallback remain intact.
+Dolphin's required native JIT probe does not pass on Simulator, so a simulator
+component build does not provide a supported Dolphin game-launch path.
 
 The shared Iridium menu, pause/resume, touch editor, opacity, keyboard, physical
 controller and ownership rules remain app owned. Cores use separate dynamic
@@ -74,7 +108,7 @@ or decrypt content.
 
 | System | Imports | Limits |
 | --- | --- | --- |
-| GameCube/Wii | `.dol`, `.gcm`, `.iso`, `.rvz` | Choose the system for DOL; ISO/RVZ use disc headers. No WAD installation, real Wiimote, motion/gyro or NAND-management UI. |
+| GameCube/Wii | `.dol`, `.gcm`, `.iso`, `.rvz`, `.wad` | Choose the system for DOL; ISO/RVZ use disc headers. WAD boot/install uses Dolphin. Per-game settings include resolution, aspect, dual core, player count and Wii controller mode. Phone motion, shake and pointer input are routed to emulated remotes. Save/system-file export and backed-up WAD installation are available with games stopped. Real Bluetooth Wii Remotes remain unsupported. |
 | Nintendo 3DS | `.3dsx`, `.3ds`, `.cci`, `.cxi`, `.app` | Prepared unencrypted single files/homebrew. `.3ds` and `.cci` use the same NCSD checks. No CIA installer or encrypted-game preparation. Upstream top/bottom display layout and lower-screen touch mapping. |
 | PlayStation 2 | `.elf`, `.iso`, `.chd`, `.cue` | R5900 ELF flags identify PS2; ISO uses PLAYSTATION. Choose PS2 for CHD. Play! supplies its own high-level system implementation. Its CUE reader requires one track per binary file; unsupported shared-track layouts are rejected before launch. |
 | Dreamcast | `.elf`, `.cdi`, `.chd`, `.gdi`, `.cue` | SH ELF/CDI/GDI identify Dreamcast; choose the system for ambiguous CHD/CUE. Include every named track. |
@@ -91,8 +125,19 @@ keeps user NAND/cards/configuration in the game's save root. Play!'s complete
 Removing a library entry retains its files.
 
 Generic controls expose A/B/X/Y, L/R, L2/R2, two sticks, Start and Select.
-GameCube Z maps to R2. Wii minus/plus map to Select/Start, 1/2 to Y/X, Nunchuk
-C/Z to L/R, and IR to the right stick. Wii Home uses the left thumb click.
+GameCube Z maps to RB. Wii minus/plus map to Select/Start, 1/2 to Y/X, Nunchuk
+C/Z to L/R, shake to L2, and IR to the right stick or display touch. Wii Home uses
+the left thumb click. Sideways, Nunchuk and Classic modes are selectable.
+Up to four physical controllers use stable connection slots, with player 1 also
+accepting touch and keyboard. GameCube/Classic triggers retain analog values.
+Disconnects clear the old slot, and new controllers reuse empty slots without
+moving a connected player's assignment. An empty player 1 slot never reads
+another player's current controller. All four players retain thumb-click inputs.
+The host writes all controller profiles before boot because Dolphin reloads them
+on boot and title changes. Axis values stay signed; the upstream Touchscreen
+backend applies each direction's sign. Five state slots use upstream state files;
+a checked completion callback reports load success only after deserialization.
+Periodic diagnostics record FPS, VPS, emulation speed, frames and input samples.
 Keyboard: arrows D-pad; WASD left stick; Z/X A/B; C/V X/Y; Q/E L/R; 1/3 L2/R2.
 Physical thumb clicks are exposed; touch layouts can be customized.
 

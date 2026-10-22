@@ -32,7 +32,7 @@ struct IridiumConsoleControlSurface: View {
                 changed(.zero, inside)
             } else { changed(.zero, false) }
         }
-        .accessibilityElement().accessibilityLabel(IridiumConsoleControlMapping.label(action, profile: profile))
+        .accessibilityElement().accessibilityLabel(IridiumConsoleControlMapping.label(action, profile: profile, platform: session.game?.platform.rawValue, wiiRemote: session.dolphinSettings.remote))
         .accessibilityAddTraits(.isButton)
         .accessibilityActions {
             if action == "DPad" {

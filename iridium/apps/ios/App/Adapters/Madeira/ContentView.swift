@@ -4524,7 +4524,7 @@ struct TouchControlButton: View {
         default: shape = .round
         }
         let console = IridiumConsoleSession.shared
-        let label = m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows ? IridiumConsoleControlMapping.label(action.padName ?? "", profile: .consoleProfile(m.iridiumEditingPlatform?.rawValue)) : action.padFaceLabel
+        let label = m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows ? IridiumConsoleControlMapping.label(action.padName ?? "", profile: .consoleProfile(m.iridiumEditingPlatform?.rawValue), platform: m.iridiumEditingPlatform?.rawValue, wiiRemote: console.dolphinSettings.remote) : action.padFaceLabel
         return Group {
             if m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows && action.padName == "DPad" {
                 IridiumDPadFace(vector: padVector, pressed: isDown)
@@ -4865,7 +4865,7 @@ struct MappingPanel: View {
                 Text("Choose an input. Drag controls to move them, or pinch to resize.")
                     .font(.caption).foregroundStyle(.secondary)
                 section("Game controls", IridiumControlActions.names(for: platform).map { name in
-                    (IridiumConsoleControlMapping.label(name, profile: .consoleProfile(platform.rawValue)), ControlAction.pad(name))
+                    (IridiumConsoleControlMapping.label(name, profile: .consoleProfile(platform.rawValue), platform: platform.rawValue, wiiRemote: IridiumConsoleSession.shared.dolphinSettings.remote), ControlAction.pad(name))
                 })
             }
         } else {

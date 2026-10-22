@@ -14,6 +14,7 @@ typedef struct {
 // Events: 0 fixed diagnostic, 1 first produced/presented video frame,
 // 2 confirmed teardown, 3 failure, 4 pause requested by audio interruption,
 // 5 upstream executable-memory probe passed (not a guest JIT assertion).
+// Dolphin: 6 completed state operation, 7 recoverable operation failure.
 // Events may arrive on the engine owner queue.
 typedef void (*IRPhase3Event)(uint64_t generation, unsigned, const char *);
 typedef void (*IRPhase3Poll)(IRPhase3Input *);

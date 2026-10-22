@@ -130,7 +130,13 @@ enum IridiumConsoleControlMapping {
         guard profile == .psp else { return nil }
         return ["A": "xmark", "B": "circle", "X": "square", "Y": "triangle"][action]
     }
-    static func label(_ action: String, profile: IridiumPlayerProfile) -> String {
+    static func label(_ action: String, profile: IridiumPlayerProfile, platform: String? = nil, wiiRemote: Int = 0) -> String {
+        if platform == "wii" {
+            let remote = ["Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
+            let classic = ["Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]
+            return (wiiRemote == 2 ? classic : remote)[action] ?? action
+        }
+        if platform == "gameCube", let label = ["LB": "L Click", "RB": "Z", "LT": "L", "RT": "R"][action] { return label }
         if action == "DPad" { return "D-pad" }; if action == "Menu" { return "Start" }; if action == "View" { return "Select" }
         if profile == .psp {
             return ["A": "Cross", "B": "Circle", "X": "Square", "Y": "Triangle", "LB": "L", "RB": "R"][action] ?? action

@@ -20,6 +20,7 @@ PINS = {
     'flycast': ('Flycast', '5aa091fde632fb332c8d8c34e280d62dc951954c', 'v2.7'),
 }
 NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames')}
+DOLPHIN_EXPORTS = NATIVE_EXPORTS | {'_ir_dolphin_api'}
 AZAHAR_DOWNLOADS = {
     'azahar-libretro-ios-arm64-2126.2.zip': '18e78a721884438b11a3588f96d19e09895f0dbb5c716448343ab185972bc451',
     'azahar-unified-source-2126.2.tar.xz': '85c8b56fac703df04720125044b8ff887997911858a6cde545dfb1107ba4cd26',
@@ -72,7 +73,7 @@ def source_state(source):
 def fixed_inputs(engine):
     names = ['ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
              'iridium/apps/ios/RuntimeBridge/IRPhase3.h']
-    bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm'], 'azahar': [],
+    bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': [],
               'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
@@ -103,10 +104,90 @@ def public_arguments(arguments):
 def generated(engine, destination):
     directory = destination / 'embedding'
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / 'native.exports').write_text('\n'.join(sorted(NATIVE_EXPORTS)) + '\n')
+    (directory / 'native.exports').write_text('\n'.join(sorted(DOLPHIN_EXPORTS if engine == 'dolphin' else NATIVE_EXPORTS)) + '\n')
     (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else ''))
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
     if engine == 'dolphin':
+        code_block = (ROOT / 'vendor/Dolphin/Source/Core/Common/CodeBlock.h').read_text()
+        alias = '    writable_region_diff = Common::AllocateWritableRegionAndGetDiff(region, size);'
+        release = ('    Common::FreeWritableRegion(region, total_region_size, writable_region_diff);\n'
+                   '    Common::FreeExecutableMemory(region, total_region_size);')
+        if code_block.count(alias) != 1 or code_block.count(release) != 1:
+            raise ValueError('Dolphin iOS code-block allocation hooks changed')
+        # CachedInterpreter owns ordinary RW pages, not an executable region.
+        code_block = code_block.replace(alias, '    if constexpr (executable)\n  ' + alias)
+        code_block = code_block.replace(release,
+            '    if constexpr (executable)\n    {\n' +
+            '\n'.join('  ' + line for line in release.splitlines()) +
+            '\n    }\n    else\n      Common::FreeMemoryPages(region, total_region_size);')
+        overlay = directory / 'include/Common/CodeBlock.h'
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        overlay.write_text(code_block)
+        memory = (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').read_text()
+        mapping = 'static_cast<u8*>(mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0))'
+        if memory.count('if (!rx_ptr)') != 1 or memory.count(mapping) != 1:
+            raise ValueError('Dolphin TXM mapping failure hook changed')
+        request_start = memory.index('  asm (')
+        request_end = memory.index('\n\n  vm_address_t rw_region', request_start)
+        # Use the shared debugger allocation path, as Madeira does. Preparing
+        # an app-created RX mapping was rejected by TXM on the physical phone.
+        memory = memory[:request_start] + memory[request_end:]
+        memory = memory.replace(mapping, 'static_cast<u8*>(ir_dolphin_jit_prepare(nullptr, size))')
+        memory = memory.replace('namespace Common',
+            'extern "C" void* ir_dolphin_jit_prepare(void*, size_t);\n\nnamespace Common', 1)
+        (directory / 'MemoryUtil_iOS_LuckTXM.cpp').write_text(memory.replace('if (!rx_ptr)', 'if (!rx_ptr || rx_ptr == MAP_FAILED)'))
+        state = (ROOT / 'vendor/Dolphin/Source/Core/Core/State.cpp').read_text()
+        callback = 'if (s_on_after_load_callback)'
+        if state.count(callback) != 1:
+            raise ValueError('Dolphin state completion hook changed')
+        # The upstream completion callback also fires for failed loads.
+        (directory / 'State.cpp').write_text(state.replace(callback,
+            'if (loadedSuccessfully && s_on_after_load_callback)'))
+        audio_root = ROOT / 'vendor/Dolphin/Source/Core/AudioCommon'
+        audio_header = (audio_root / 'CoreAudioSoundStream.h').read_text()
+        audio = (audio_root / 'CoreAudioSoundStream.cpp').read_text()
+        mix = '    sound->m_mixer->Mix(static_cast<short*>(buffer.mData), buffer.mDataByteSize / 4);'
+        initial_volume = ('  err = AudioUnitSetParameter(audio_unit, kHALOutputParam_Volume, kAudioUnitScope_Output, 0,\n'
+                          '                              m_volume / 100., 0);\n'
+                          '  if (err != noErr)\n    ERROR_LOG_FMT(AUDIO, "error setting volume");\n')
+        if (audio_header.count('  int m_volume;') != 1 or audio.count(mix) != 1 or
+                audio.count(initial_volume) != 1 or audio.count('void CoreAudioSound::SetVolume(int volume)') != 1):
+            raise ValueError('Dolphin iOS audio hooks changed')
+        audio_header = audio_header.replace('#pragma once', '#pragma once\n#include <atomic>')
+        audio_header = audio_header.replace('  bool Init() override;', '  ~CoreAudioSound() override;\n  bool Init() override;')
+        audio_header = audio_header.replace('  AudioUnit audio_unit;', '  AudioUnit audio_unit = nullptr;')
+        audio_header = audio_header.replace('  int m_volume;', '  std::atomic<int> m_volume{100};')
+        audio_overlay = directory / 'include/AudioCommon/CoreAudioSoundStream.h'
+        audio_overlay.parent.mkdir(parents=True, exist_ok=True)
+        audio_overlay.write_text(audio_header)
+        # RemoteIO has no HAL output-volume control. Apply gain to its PCM output.
+        audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>')
+        audio = audio.replace(mix, mix + '''
+    const int volume = sound->m_volume.load(std::memory_order_relaxed);
+    auto* samples = static_cast<short*>(buffer.mData);
+    if (volume == 0)
+      std::memset(samples, 0, buffer.mDataByteSize);
+    else if (volume != 100)
+      for (UInt32 sample = 0; sample < buffer.mDataByteSize / sizeof(short); ++sample)
+        samples[sample] = static_cast<short>(static_cast<int>(samples[sample]) * volume / 100);
+''')
+        audio = audio.replace(initial_volume, '')
+        audio = audio[:audio.index('void CoreAudioSound::SetVolume(int volume)')] + '''void CoreAudioSound::SetVolume(int volume)
+{
+  m_volume.store(std::clamp(volume, 0, 100), std::memory_order_relaxed);
+}
+
+CoreAudioSound::~CoreAudioSound()
+{
+  if (audio_unit)
+  {
+    AudioOutputUnitStop(audio_unit);
+    AudioUnitUninitialize(audio_unit);
+    AudioComponentInstanceDispose(audio_unit);
+  }
+}
+'''
+        (directory / 'CoreAudioSoundStream.cpp').write_text(audio)
         # Supported mbedTLS user configuration: its public self-test keys are
         # unnecessary in a player. Preserve TLS/PEM support and all source.
         (directory / 'mbedtls-user-config.h').write_text(
@@ -185,8 +266,9 @@ extern "C" bool ir_phase3_core_pause(bool paused) {
 def audit(binary, sdk, native=False):
     symbols = set(output('xcrun', 'nm', '-gUj', binary).splitlines())
     if native:
-        if symbols != NATIVE_EXPORTS:
-            raise ValueError('Native player exports differ: ' + str(symbols ^ NATIVE_EXPORTS))
+        expected = DOLPHIN_EXPORTS if binary.name == 'libIridiumDolphin.dylib' else NATIVE_EXPORTS
+        if symbols != expected:
+            raise ValueError('Native player exports differ: ' + str(symbols ^ expected))
     elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause'} for s in symbols):
         raise ValueError('Upstream C++ symbols escape the core boundary')
     if not native and '_retro_run' not in symbols:
@@ -296,8 +378,8 @@ def build(engine, sdk, jobs):
     record.update(engine=engine, sdk=sdk, revision=revision, release=release, arguments=public_arguments(arguments),
                   buildInputs=fixed_inputs(engine), sourceRevisions=source_state(source),
                   recipeSHA256=digest(Path(__file__)),
-                  embedding={p.name: digest(p) for p in embedding.iterdir() if p.is_file()})
-    bridge_sources = {'dolphin': ['IRDolphin.mm', 'IRPhase3.h'], 'azahar': [],
+                  embedding={p.relative_to(embedding).as_posix(): digest(p) for p in embedding.rglob('*') if p.is_file()})
+    bridge_sources = {'dolphin': ['IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': [],
         'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
         'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}[engine]
     record['adapterSources'] = {name: digest(BRIDGE / name) for name in bridge_sources}

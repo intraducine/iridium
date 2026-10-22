@@ -15,6 +15,19 @@
 // signal so wine's sigaction handlers run; if the signal cannot be delivered
 // the script detaches so the process dies visibly instead of wandering.
 
+// StikJIT 1.9's batch formatter keeps only nine address digits. Keep the
+// complete address and check each reply, including on 512 GB address maps.
+function iridiumPrepareRegion(address, length) {
+    const limit = 1n << 64n;
+    if (address <= 0n || length <= 0n || length > (1n << 32n) ||
+        address >= limit || length > limit - address) return false;
+    const end = address + length;
+    for (let page = address & ~0x3fffn; page < end; page += 0x4000n) {
+        if (send_command(`M${page.toString(16)},1:69`) !== 'OK') return false;
+    }
+    return true;
+}
+
 function littleEndianHexStringToNumber(hexStr) {
     const bytes = [];
     for (let i = 0; i < hexStr.length; i += 2) {
@@ -313,7 +326,7 @@ while (!detached) {
         if (x16Num === 0n) {
             // CMD_DETACH
             ulog(`Madeira JIT: detach`);
-            send_command(`D`);
+            if (send_command(`D`) !== 'OK') throw new Error('JIT detach was not acknowledged.');
             detached = true;
 
         } else if (x16Num === 1n) {
@@ -321,17 +334,19 @@ while (!detached) {
             ulog(`Madeira JIT: prepare addr=0x${x0.toString(16)} size=0x${x1.toString(16)}`);
 
             let addr = x0;
-            if (x0 === 0n && x1 !== 0n) {
+            if (x0 === 0n && x1 > 0n && x1 <= (1n << 32n)) {
                 let allocResp = send_command(`_M${x1.toString(16)},rx`);
-                if (allocResp && allocResp.length > 0) {
-                    addr = BigInt(`0x${allocResp}`);
+                if (typeof allocResp === 'string' && /^[0-9a-f]{1,16}$/i.test(allocResp)) {
+                    const allocated = BigInt(`0x${allocResp}`);
+                    if (allocated > 0n && (allocated & 0x3fffn) === 0n) addr = allocated;
                     ulog(`Madeira JIT: allocated at 0x${addr.toString(16)}`);
                 }
             }
 
             if (addr !== 0n && x1 !== 0n) {
-                let prepResp = prepare_memory_region(addr, x1);
-                ulog(`Madeira JIT: prepared = ${prepResp}`);
+                const prepared = iridiumPrepareRegion(addr, x1);
+                ulog(`Madeira JIT: prepared = ${prepared}`);
+                if (!prepared) addr = 0n;
             }
 
             send_command(`P0=${numberToLittleEndianHexString(addr)};thread:${tid};`);
@@ -376,9 +391,7 @@ while (!detached) {
     } else if (brkImm === 0x69) {
         // Legacy protocol
         ulog(`Madeira JIT: legacy BRK 0x69, x0=0x${x0.toString(16)}`);
-        if (x0 !== 0n) {
-            prepare_memory_region(x0, x0);
-        }
-        send_command(`P0=${numberToLittleEndianHexString(x0)};thread:${tid};`);
+        const prepared = x0 !== 0n && iridiumPrepareRegion(x0, x1);
+        send_command(`P0=${numberToLittleEndianHexString(prepared ? x0 : 0n)};thread:${tid};`);
     }
 }

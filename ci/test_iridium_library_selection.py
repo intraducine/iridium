@@ -8,6 +8,89 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 class LibrarySelectionTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for menu haptic lifecycle checks')
+    def test_menu_haptics_renew_after_game_and_cover_touch_is_not_duplicated(self):
+        view = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
+        select = view[view.index('    private func select(_ id:'):view.index('    var body: some View')]
+        start = view.index('.fullScreenCover(isPresented: Binding(get: { consoleSession.presented }')
+        start = view.index('onDismiss: {', start) + len('onDismiss: {')
+        dismiss = view[start:view.index('\n            }) {', start)]
+        start = view.index('.onChange(of: selection.highlightedID) { old, value in') + len('.onChange(of: selection.highlightedID) { old, value in')
+        change = view[start:view.index('\n            }', start)]
+        fixture = r'''import Foundation
+enum IridiumTouchHaptics { case off, medium; static var mode = Self.medium; static func current() -> Self { mode } }
+final class UISelectionFeedbackGenerator {
+    var valid = true, pulses = 0, preparations = 0
+    func selectionChanged() { if valid { pulses += 1 } }
+    func prepare() { preparations += 1 }
+}
+struct Animation { static func smooth(duration: Double) -> Self { Self() } }
+func withAnimation(_ animation: Animation?, _ body: () -> Void) { body() }
+enum Anchor { case leading }
+struct Position { mutating func scrollTo(id: UUID, anchor: Anchor) {} }
+struct Game { let id: UUID }
+final class Host {
+    var selectionFeedback = UISelectionFeedbackGenerator()
+    var selection = IridiumLibrarySelection(), carouselPosition = Position()
+    var selectedID: UUID?, selected: Game?, pageArtwork = ""
+    var showFocus = false, showHints = false, reduceMotion = false
+    let reorderSession = IridiumLibraryDragSession()
+    let games: [Game]
+    var focusRestores = 0
+    init(_ ids: [UUID]) { games = ids.map(Game.init); _ = selection.reconcile(ids) }
+    func restoreKeyboardFocus() { focusRestores += 1 }
+SELECT
+    func touch(_ id: UUID) {
+        let old = selection.highlightedID
+        select(id, touched: true)
+        changed(old, selection.highlightedID)
+    }
+    func focus(_ id: UUID) {
+        let old = selection.highlightedID
+        select(id); changed(old, selection.highlightedID)
+    }
+    func changed(_ old: UUID?, _ value: UUID?) {
+CHANGE
+    }
+    func dismissed() {
+DISMISS
+    }
+    func swipe(_ id: UUID) {
+        let old = selection.highlightedID
+        _ = selection.transition(to: .tracking); selection.observed(id)
+        changed(old, selection.highlightedID)
+        _ = selection.transition(to: .idle)
+    }
+}
+let a = UUID(), b = UUID(), c = UUID()
+let host = Host([a,b,c])
+host.showFocus = true; host.showHints = true
+host.touch(b)
+precondition(host.selectionFeedback.pulses == 1 && !host.showFocus && !host.showHints)
+host.touch(b); precondition(host.selectionFeedback.pulses == 1)
+host.swipe(c); precondition(host.selectionFeedback.pulses == 2)
+// Model a feedback resource made unusable during a native session.
+let oldFeedback = host.selectionFeedback; oldFeedback.valid = false
+host.dismissed()
+precondition(host.selectionFeedback !== oldFeedback && host.selectionFeedback.preparations == 1 && host.focusRestores == 1)
+host.swipe(b); host.touch(a)
+precondition(host.selectionFeedback.pulses == 2 && oldFeedback.pulses == 2)
+IridiumTouchHaptics.mode = .off
+host.touch(b); host.swipe(c)
+precondition(host.selectionFeedback.pulses == 2)
+IridiumTouchHaptics.mode = .medium
+host.showFocus = true
+host.focus(b)
+precondition(host.selectionFeedback.pulses == 3)
+print("PASS shipping menu haptics: fresh feedback after game dismissal, touch/swipe/controller, no duplicate tap and Off retained")
+'''.replace('SELECT', select).replace('CHANGE', change).replace('DISMISS', dismiss)
+        with tempfile.TemporaryDirectory() as folder:
+            unit = Path(folder) / 'main.swift'; unit.write_text(fixture)
+            binary = Path(folder) / 'check'
+            subprocess.run(['swiftc', str(ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibrarySelection.swift'),
+                            str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for executable carousel checks')
     def test_touch_momentum_focus_and_identity(self):
         source = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibrarySelection.swift'

@@ -10,7 +10,41 @@ instructions, limitations and the four-engine acceptance checklist are in
 [docs/console-engines.md](docs/console-engines.md).
 
 Declared CMake adapters hide C++ symbols. Dolphin uses upstream Metal/iOS with
-plain interpretation and complete Sys resources. Azahar reuses its verified
+verified native ARM64 JIT and complete Sys resources. Normal launches require
+the shared JIT service and successful execution and rewrite checks before boot.
+The known faulty cached interpreter is not used as a fallback. Legacy per-game
+JIT flags are ignored; other settings are retained.
+Core and common CPU helpers use strict floating-point compilation so conversions
+retain guest rounding-mode changes instead of reusing a result from the old mode.
+Checked generated platform overlays pair non-executable code-block allocations
+with ordinary page release, reject failed TXM mappings, and limit the state-load
+completion callback to successful loads. Dolphin's original core remains pinned.
+The iOS audio overlay applies volume to the output samples because RemoteIO
+does not provide the HAL volume control used by this port. It also initializes
+the gain and disposes the audio unit after shutdown. The app offers a per-game
+mute control without changing the phone or Mac output volume. The host adapter
+uses ARC in the CMake directory that owns its target. Dolphin acquires JIT through
+the shared coordinator and receives the existing app memory-preparation function,
+using the same helper protocol as Madeira instead of a Dolphin-specific script.
+The shared script preserves full 64-bit addresses and checks each memory-write
+reply. This avoids the pinned SDK batch formatter's nine-digit truncation on
+the phone's high address allocations. Dolphin requests its pool through that
+same shared allocation function.
+On Dolphin shutdown the shared coordinator checks its original built-in helper
+completion, live debugger state and network restoration before admitting another
+engine. It never detaches an unknown debugger. The shared script also requires a
+successful detach acknowledgement.
+The generated app project signs all six embedded engine libraries on copy when
+Xcode signing is enabled, so standalone installs can load them.
+The adapter persists four controller profiles before boot, passes signed axes,
+analog triggers, pointer and motion samples through the upstream iOS input layer,
+and uses upstream performance metrics, state operations and WAD installation.
+Four controller slots clear disconnected devices and reuse empty slots; an empty
+first slot does not alias another player's controller.
+The app offers per-game settings, five state slots and file export. WAD installs
+require a stopped session and a retained backup, restored after an installation
+failure with confirmed cleanup. Uncertain installer cleanup blocks new games
+and preserves both copies for recovery after restart. Azahar reuses its verified
 official iOS core and matching unified source, with software graphics and
 CPU/shader interpreters. Play!'s generated Libretro entry routes CAppConfig to
 the game's save root; existing CodeGen allocation/protection calls now fail

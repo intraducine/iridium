@@ -181,6 +181,9 @@ final class JITCoordinator: ObservableObject {
     /// lockdownd is a LocalDevVPN problem whatever the helper's message says: a network
     /// that accepts any connection makes the helper's read end early ("early eof").
     private var enableRequest: UUID?
+    private var builtInHelper: UUID?
+    private var builtInHelperResult: Bool?
+    private var builtInHelperReturned: (() -> Void)?
     private var loopbackAnswered: Bool?
     @Published var showSetup = false
     @Published private(set) var busy = false
@@ -211,7 +214,7 @@ final class JITCoordinator: ObservableObject {
         pairingSource = JITPairingFileStore.source
     }
 
-    func enable(completion: @escaping (Result<Void, Error>) -> Void) {
+    func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
         guard enableRequest == nil, !busy else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")
             completion(.failure(NSError(domain: "MadeiraJIT", code: 15,
@@ -233,7 +236,7 @@ final class JITCoordinator: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: SigningStatus.notDebuggableMessage])))
             return
         }
-        if StikJITHelper.ready {
+        if StikJITHelper.ready && (!requiresAttachedDebugger || isDebuggerAttached()) {
             finish(.success(()))
             return
         }
@@ -511,6 +514,8 @@ final class JITCoordinator: ObservableObject {
         status = "Starting Madeira's JIT helper…"
         var readinessTimer: Timer?
         var readinessFinished = false
+        let helper = UUID()
+        builtInHelper = helper; builtInHelperResult = nil
         MadeiraBuiltInJIT.send(
             .enable(targetPID: getpid(), pairingData: pairing,
                     scriptBase64: script.base64EncodedString()),
@@ -531,6 +536,11 @@ final class JITCoordinator: ObservableObject {
                 }
             },
             completion: { [weak self] result in
+                if let self, self.builtInHelper == helper {
+                    if case .success(let response) = result { self.builtInHelperResult = response.success }
+                    else { self.builtInHelperResult = false }
+                    self.builtInHelperReturned?()
+                }
                 switch result {
                 case .success(let response):
                     self?.txmPresent = response.txmPresent
@@ -556,6 +566,43 @@ final class JITCoordinator: ObservableObject {
                     }
                 }
             })
+    }
+
+    /// A stopped engine releases only this coordinator's original helper request.
+    func releaseAttachedDebugger(completion: @escaping (Bool) -> Void) {
+        guard enableRequest == nil, !busy else { completion(false); return }
+        guard let helper = builtInHelper else { completion(!isDebuggerAttached()); return }
+        let owner = UUID(); enableRequest = owner; busy = true
+        var detachReturned = !isDebuggerAttached(), finished = false
+        let finish: (Bool) -> Void = { [weak self] clean in
+            guard let self, !finished, self.enableRequest == owner else { return }
+            finished = true; self.builtInHelperReturned = nil
+            guard clean else { completion(false); return } // Keep admission until process restart.
+            self.builtInHelper = nil; self.builtInHelperResult = nil
+            JITNetworkShortcut.shared.restorePSP { result in
+                guard self.enableRequest == owner else { return }
+                guard case .done = result, !JITNetworkShortcut.shared.pspRecoveryPending else {
+                    completion(false); return
+                }
+                self.enableRequest = nil; self.busy = false
+                RuntimeDiagnosticLogFiles.writeConsoleLine("[JIT] Owned helper closed; shared service is available.")
+                completion(true)
+            }
+        }
+        let check: () -> Void = { [weak self] in
+            guard let self, self.builtInHelper == helper, detachReturned,
+                  let clean = self.builtInHelperResult else { return }
+            finish(clean && !isDebuggerAttached())
+        }
+        builtInHelperReturned = check
+        if !detachReturned {
+            guard builtInHelperResult == nil else { finish(false); return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                StikJITHelper.detachDebugger()
+                DispatchQueue.main.async { detachReturned = true; check() }
+            }
+        } else { check() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { if !finished { finish(false) } }
     }
 
     /// The helper's failure as shown: a connection problem gets its plain explanation
@@ -644,7 +691,7 @@ struct JITSettingsSection: View {
             Button {
                 coordinator.showSetup = true
             } label: {
-                Label("Set Up JIT", systemImage: "bolt.badge.clock")
+                Label("JIT Settings", systemImage: "bolt.badge.clock")
             }
             if coordinator.method == .automatic {
                 Text(coordinator.automaticDescription)

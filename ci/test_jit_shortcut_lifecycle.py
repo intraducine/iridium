@@ -15,15 +15,155 @@ def upstream():
 
 
 class ShortcutLifecycleTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_owned_shared_helper_release_waits_for_original_completion(self):
+        source = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
+        method = source[source.index('    func releaseAttachedDebugger('):source.index('    /// The helper\'s failure as shown:')]
+        fixture = '''import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
+@MainActor var attached = false
+@MainActor var detachCalls = 0
+@MainActor func isDebuggerAttached() -> Bool { attached }
+enum StikJITHelper {
+    static func detachDebugger() { DispatchQueue.main.async { detachCalls += 1 } }
+}
+@MainActor enum RuntimeDiagnosticLogFiles { static func writeConsoleLine(_ value: String) {} }
+@MainActor final class JITNetworkShortcut {
+    enum Outcome { case done, failed }
+    static let shared = JITNetworkShortcut()
+    var pspRecoveryPending = false
+    var pending: ((Outcome) -> Void)?
+    func restorePSP(completion: @escaping (Outcome) -> Void) { pending = completion }
+}
+@MainActor final class JITCoordinator {
+    var enableRequest: UUID?
+    var busy = false
+    var builtInHelper: UUID?
+    var builtInHelperResult: Bool?
+    var builtInHelperReturned: (() -> Void)?
+METHOD
+}
+@MainActor func settle() async { try! await Task.sleep(nanoseconds: 100_000_000) }
+@MainActor func runChecks() async {
+    let network = JITNetworkShortcut.shared
+    let foreign = JITCoordinator()
+    attached = true
+    var foreignResults: [Bool] = []
+    foreign.releaseAttachedDebugger { foreignResults.append($0) }
+    await settle()
+    precondition(foreignResults == [false] && detachCalls == 0 && network.pending == nil)
+    attached = false
+    foreign.releaseAttachedDebugger { foreignResults.append($0) }
+    precondition(foreignResults == [false, true] && detachCalls == 0)
+
+    let owned = JITCoordinator()
+    owned.builtInHelper = UUID(); attached = true
+    var results: [Bool] = []
+    owned.releaseAttachedDebugger { results.append($0) }
+    await settle()
+    precondition(detachCalls == 1 && results.isEmpty && owned.busy)
+    // A returned BRK is insufficient. So is a sticky signing flag without the original result.
+    attached = false
+    owned.builtInHelperReturned?()
+    precondition(results.isEmpty && network.pending == nil)
+    let originalCompletion = owned.builtInHelperReturned!
+    owned.builtInHelperResult = true; originalCompletion()
+    precondition(results.isEmpty && owned.busy && network.pending != nil)
+    network.pending?(.done); network.pending = nil
+    precondition(results == [true] && !owned.busy && owned.enableRequest == nil)
+    originalCompletion()
+    precondition(results == [true] && network.pending == nil)
+
+    let failed = JITCoordinator()
+    failed.builtInHelper = UUID(); failed.builtInHelperResult = false
+    var failures: [Bool] = []
+    failed.releaseAttachedDebugger { failures.append($0) }
+    precondition(failures == [false] && failed.busy && network.pending == nil && detachCalls == 1)
+
+    let replaced = JITCoordinator()
+    replaced.builtInHelper = UUID(); replaced.builtInHelperResult = true; attached = true
+    replaced.releaseAttachedDebugger { failures.append($0) }
+    precondition(failures == [false, false] && detachCalls == 1)
+
+    let recovery = JITCoordinator()
+    recovery.builtInHelper = UUID(); recovery.builtInHelperResult = true; attached = false
+    recovery.releaseAttachedDebugger { failures.append($0) }
+    network.pspRecoveryPending = true
+    network.pending?(.failed); network.pending = nil
+    precondition(failures == [false, false, false] && recovery.busy)
+
+    let interrupted = JITCoordinator()
+    interrupted.builtInHelper = UUID(); attached = true
+    interrupted.releaseAttachedDebugger { failures.append($0) }
+    await settle()
+    precondition(detachCalls == 2 && failures.count == 3)
+    try! await Task.sleep(nanoseconds: 10_100_000_000)
+    precondition(failures == [false, false, false, false] && interrupted.busy)
+    attached = false; interrupted.builtInHelperResult = true; interrupted.builtInHelperReturned?()
+    precondition(failures.count == 4 && network.pending == nil)
+}
+Task { @MainActor in await runChecks(); exit(0) }
+dispatchMain()
+'''.replace('METHOD', method)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'main.swift'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['swiftc', str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=20)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_fresh_helper_readiness_requires_live_attachment(self):
+        source = (ROOT / 'iridium/apps/ios/App/JIT/StikJITHelper.swift').read_text()
+        method = source[source.index('    static func waitForDebugger('):source.index('    /// Allocate a JIT memory pool')]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            main = folder / 'main.swift'
+            main.write_text('''import Foundation
+enum SigningStatus { struct Status { var debugged = true }; static var current = Status() }
+var attached = false
+func isDebuggerAttached() -> Bool { attached }
+final class LogStore {
+    static let shared = LogStore()
+    enum Level { case success, error }
+    func log(_ text: String, level: Level) {}
+}
+enum Helper {
+    enum RequestError: Error { case timedOut }
+''' + method + '''
+}
+var outcomes: [Bool] = []
+let timer = Helper.waitForDebugger { outcomes.append((try? $0.get()) != nil) }
+timer.fire()
+precondition(outcomes.isEmpty)
+attached = true; SigningStatus.current.debugged = false
+timer.fire()
+precondition(outcomes.isEmpty)
+SigningStatus.current.debugged = true
+timer.fire()
+precondition(outcomes == [true] && !timer.isValid)
+attached = false
+let expired = Helper.waitForDebugger(timeout: -1) { outcomes.append((try? $0.get()) != nil) }
+expired.fire()
+precondition(outcomes == [true, false] && !expired.isValid)
+''')
+            executable = folder / 'check'
+            subprocess.run(['swiftc', str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
+
     @unittest.skipUnless((upstream() / 'JITNetwork.swift').is_file(), 'Pinned Madeira source required')
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for executable JIT lifecycle checks')
     def test_single_flight_failure_cleanup_and_stale_callbacks(self):
         network = lifecycle.apply('JITNetwork.swift', (upstream() / 'JITNetwork.swift').read_text())
-        setup = lifecycle.apply('JITSetup.swift', (upstream() / 'JITSetup.swift').read_text())
+        setup = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
         # Exact production methods. Replace only the platform/network endpoints.
         methods = network[network.index('    func start(completion:'):network.index('    /// At launch:')]
         methods += network[network.index('    private func run('):].rsplit('\n}', 1)[0]
-        enable = setup[setup.index('    func enable(completion:'):setup.index('    /// JIT setup\'s connect action')]
+        enable = setup[setup.index('    func enable(requiresAttachedDebugger:'):setup.index('    /// PSP owns a distinct script')]
+        enable += setup[setup.index('    private func ensureLoopback('):setup.index('    /// JIT setup\'s connect action')]
         swift = r'''
 import Foundation
 import CoreFoundation
@@ -50,7 +190,8 @@ import CoreFoundation
     static var ready = false
     nonisolated static func detachDebugger() { fatalError("fixture has no debugger") }
 }
-func isDebuggerAttached() -> Bool { true } // Foreign OR supported helper: neither is ours to detach.
+@MainActor var debuggerAttached = true
+@MainActor func isDebuggerAttached() -> Bool { debuggerAttached }
 func jit_arm_trap_fallback() { fatalError("fixture has no debugger") }
 @MainActor final class JITNetworkShortcut {
     enum Outcome { case done(String), failed(String) }
@@ -155,7 +296,20 @@ let beforeReady = app.urls.count
 StikJITHelper.ready = true
 coordinator.enable { first.append((try? $0.get()) != nil) }
 precondition(first == [false, false, false, false, true] && app.urls.count == beforeReady && !coordinator.busy)
-// PSP uses these exact generated methods plus its production continuation.
+// A retained Madeira pool is reusable, but cannot answer a fresh Dolphin allocation.
+let allocatorClient = JITCoordinator()
+var allocatorReady = false
+debuggerAttached = false
+allocatorClient.enable(requiresAttachedDebugger: true) { allocatorReady = (try? $0.get()) != nil }
+precondition(allocatorClient.busy && !allocatorReady)
+LoopbackProbe.pending?(LoopbackProbe.Probe(reachable: true))
+precondition(allocatorClient.enables == 1)
+debuggerAttached = true
+allocatorClient.resolved?(.success(()))
+precondition(allocatorReady && !allocatorClient.busy)
+allocatorClient.enable(requiresAttachedDebugger: true) { precondition((try? $0.get()) != nil) }
+precondition(allocatorClient.enables == 1 && !allocatorClient.busy)
+// PSP uses these exact shipping methods plus its production continuation.
 // No real Shortcut, network setting or debugger endpoint is invoked.
 // A preexisting debugger can satisfy ready without starting our helper.
 // Both forbidden protocol endpoints above trap if cleanup invokes them.

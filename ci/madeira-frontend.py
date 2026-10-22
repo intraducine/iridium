@@ -30,7 +30,7 @@ CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
     'NSCameraUsageDescription': 'A PSP game can use your camera to emulate the Go!Cam accessory.',
     'NSMicrophoneUsageDescription': 'A PSP game can request microphone input for the Go!Cam or Talkman accessory.',
-    'NSMotionUsageDescription': 'PSP tilt controls use device motion while you play.',
+    'NSMotionUsageDescription': 'Wii and PSP controls use device motion while you play.',
     'NSLocationWhenInUseUsageDescription': 'A PSP game can use your location to emulate the Go!Explore GPS accessory while playing.',
     'NSPhotoLibraryUsageDescription': 'Choose a photo for the PPSSPP background when you request it.',
     'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP multiplayer and on-device JIT pairing.',
@@ -91,7 +91,8 @@ def project(source, names):
     component_ref, component_build, embed = 'F20000000000000000000001', 'F20000000000000000000002', 'F20000000000000000000003'
     objects[component_ref] = dict(isa='PBXFileReference', lastKnownFileType='compiled.mach-o.dylib',
         path='../../ppsspp/$(PLATFORM_NAME)/libIridiumPPSSPPNative.dylib', sourceTree='SOURCE_ROOT')
-    objects[component_build] = dict(isa='PBXBuildFile', fileRef=component_ref)
+    objects[component_build] = dict(isa='PBXBuildFile', fileRef=component_ref,
+                                   settings={'ATTRIBUTES': ['CodeSignOnCopy']})
     objects[embed] = dict(isa='PBXCopyFilesBuildPhase', buildActionMask=2147483647, dstPath='',
         dstSubfolderSpec=10, files=[component_build], name='Embed PSP component', runOnlyForDeploymentPostprocessing=0)
     target['buildPhases'].append(embed); group['children'].append(component_ref)
@@ -108,7 +109,8 @@ def project(source, names):
             ref, build = f'F300000000000000{index:08X}', f'F400000000000000{index:08X}'
             objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='compiled.mach-o.dylib',
                 path=f'../../phase3/{engine}/$(PLATFORM_NAME)/{binary}', sourceTree='SOURCE_ROOT')
-            objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
+            objects[build] = dict(isa='PBXBuildFile', fileRef=ref,
+                                  settings={'ATTRIBUTES': ['CodeSignOnCopy']})
             embedded['files'].append(build); group['children'].append(ref)
         ref, build = 'F30000000000000000000010', 'F40000000000000000000010'
         objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='Phase3', sourceTree='<group>')
@@ -187,10 +189,10 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -250,7 +252,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')

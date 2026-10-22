@@ -52,7 +52,7 @@ enum IridiumRuntimeRegistry {
     static let ppsspp = IridiumRuntimeDescriptor(id: "ppsspp", name: "PPSSPP", platforms: [.psp],
         jit: .optional, supportsPause: true, restartAfterStop: false)
     static let dolphin = IridiumRuntimeDescriptor(id: "dolphin", name: "Dolphin", platforms: [.gameCube, .wii],
-        jit: .none, supportsPause: true, restartAfterStop: false)
+        jit: .required, supportsPause: true, restartAfterStop: false)
     static let azahar = IridiumRuntimeDescriptor(id: "azahar", name: "Azahar", platforms: [.nintendo3DS],
         jit: .none, supportsPause: true, restartAfterStop: false)
     // Play's app configuration is a process-lifetime upstream singleton. Its
@@ -121,6 +121,7 @@ struct IridiumConsoleSystem: Identifiable {
     }
     func formats(for platform: IridiumPlatform) -> [String] {
         if platform == .wii { return extensions.filter { $0 != "gcm" } }
+        if platform == .gameCube { return extensions.filter { $0 != "wad" } }
         if platform == .arcade { return ["zip"] }
         if platform == .dreamcast { return extensions.filter { $0 != "zip" } }
         return extensions
@@ -133,7 +134,7 @@ struct IridiumConsoleSystem: Identifiable {
             case "ppsspp": return Self(runtime: runtime, title: "PPSSPP · PSP", primaryPlatform: .psp,
                 extensions: ["elf", "iso", "cso", "pbp"], guidance: "PSP games use PPSSPP. Open a game's menu for display and save-state options.")
             case "dolphin": return Self(runtime: runtime, title: "Dolphin · GameCube / Wii", primaryPlatform: .gameCube,
-                extensions: ["dol", "gcm", "iso", "rvz"], guidance: "GameCube and Wii games use Dolphin. Some games may run slowly.")
+                extensions: ["dol", "gcm", "iso", "rvz", "wad"], guidance: "GameCube and Wii games use Dolphin and the shared JIT system.")
             case "azahar": return Self(runtime: runtime, title: "Azahar · Nintendo 3DS", primaryPlatform: .nintendo3DS,
                 extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
             case "play": return Self(runtime: runtime, title: "Play! · PlayStation 2", primaryPlatform: .playStation2,
@@ -219,7 +220,8 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
         case .psp:
             guard runtimeID == "ppsspp", ["elf", "iso", "cso", "pbp"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .gameCube, .wii:
-            guard runtimeID == "dolphin", ["dol", "gcm", "iso", "rvz"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
+            guard runtimeID == "dolphin", ["dol", "gcm", "iso", "rvz", "wad"].contains(fileExtension),
+                  fileExtension != "wad" || platform == .wii else { throw IridiumRuntimeError.invalidGame }
         case .nintendo3DS:
             guard runtimeID == "azahar", ["3dsx", "3ds", "cci", "cxi", "app"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .playStation2:
@@ -400,7 +402,7 @@ struct IridiumROMInspection: Equatable {
     }
 
     static func inspect(_ source: URL, fileExtension ext: String, preferredPlatform: IridiumPlatform? = nil) throws -> Self {
-        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip", "gdi", "cue"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
+        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "wad", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip", "gdi", "cue"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
         let url = try checkedFile(source)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
@@ -450,6 +452,17 @@ struct IridiumROMInspection: Equatable {
             }
             guard sections > 0, big(header, 0xe0, 4) >= 0x80000000 else { throw IridiumRuntimeError.invalidGame }
             platform = preferredPlatform == .wii ? .wii : .gameCube
+        case "wad":
+            let header = try reader.read(0, 32)
+            guard big(header, 0, 4) == 32, big(header, 4, 2) == 0x4973,
+                  big(header, 16, 4) >= 0x2a4, big(header, 20, 4) >= 0x1e4 else { throw IridiumRuntimeError.invalidGame }
+            var end: UInt64 = 64
+            for offset in [8, 12, 16, 20, 24, 28] {
+                let length = big(header, offset, 4)
+                guard end <= size, length <= size - end else { throw IridiumRuntimeError.invalidGame }
+                end += (length + 63) & ~63
+            }
+            platform = .wii
         case "gcm":
             let header = try reader.read(0, 32)
             guard big(header, 28, 4) == 0xc2339f3d else { throw IridiumRuntimeError.invalidGame }
