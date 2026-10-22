@@ -82,11 +82,12 @@ COMPONENT_INPUTS = {
             'ci/fetch-runtime-inputs.py', 'ci/runtime-inputs.json'),
 }
 
-# These functions only run in the later app/presentation actions. Keep every
-# other function, import, global, signature and command-line route as input.
+# These functions and metadata only serve the later app/presentation actions.
+# Keep every other function, import, global, signature and CLI route as input.
 # In particular, compiler helpers are not an allowlist that can miss new code.
 FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tree',
                                     'prepare', 'verify', 'app', 'check_bundle'))
+FRONTEND_APP_METADATA = frozenset(('PSP_PRIVACY_DESCRIPTIONS',))
 FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
                               'time', 'sys', 'tempfile', 'madeira_presentation'))
@@ -112,7 +113,7 @@ FRONTEND_MAIN = """if __name__ == '__main__':
 
 
 def frontend_compiler_source(text):
-    """Exclude reviewed app bodies without executing producer source.
+    """Exclude reviewed app bodies and metadata without executing producer source.
 
     Unknown layouts or dependencies retain the original whole-file contract.
     Preserve raw compiler text: native completion stamps use inspect.getsource,
@@ -124,13 +125,14 @@ def frontend_compiler_source(text):
     except (SyntaxError, ValueError):
         return text
     lines = text.splitlines(keepends=True)
-    names, ignored, retained = set(), [], []
+    names, ignored, metadata, retained = set(), [], [], []
+    app_names = FRONTEND_APP_FUNCTIONS | FRONTEND_APP_METADATA
     main = ast.dump(ast.parse(FRONTEND_MAIN).body[0])
     root = ast.dump(ast.parse("Path(__file__).resolve().parents[1]", mode='eval').body)
     if not tree.body or ast.dump(tree.body[-1]) != main:
         return text
     def app_reference(table):
-        return (any(s.get_name() in FRONTEND_APP_FUNCTIONS and s.is_global() and s.is_referenced()
+        return (any(s.get_name() in app_names and s.is_global() and s.is_referenced()
                     for s in table.get_symbols())
                 or any(app_reference(child) for child in table.get_children()))
     for node in tree.body:
@@ -153,7 +155,7 @@ def frontend_compiler_source(text):
                 return text
             table = next(t for t in symbols.get_children() if t.get_name() == node.name)
             headers = node.decorator_list + [node.args] + ([node.returns] if node.returns else [])
-            if (app_reference(table) or any(isinstance(n, ast.Name) and n.id in FRONTEND_APP_FUNCTIONS
+            if (app_reference(table) or any(isinstance(n, ast.Name) and n.id in app_names
                                            for header in headers for n in ast.walk(header))):
                 return text
             if any(isinstance(n, (ast.Import, ast.ImportFrom))
@@ -182,7 +184,16 @@ def frontend_compiler_source(text):
             # Reviewed module initialization is literals and checkout paths;
             # arbitrary module-time calls could invoke otherwise unused code.
             try:
-                ast.literal_eval(node.value)
+                value = ast.literal_eval(node.value)
+                if name in FRONTEND_APP_METADATA:
+                    if not isinstance(value, dict) or not all(
+                            isinstance(k, str) and isinstance(v, str) for k, v in value.items()):
+                        return text
+                    tail = lines[node.end_lineno - 1].encode()[node.end_col_offset:].strip()
+                    if lines[node.lineno - 1].encode()[:node.col_offset].strip() or tail and not tail.startswith(b'#'):
+                        return text
+                    metadata.append(node)
+                    continue
             except (ValueError, TypeError):
                 value = node.value
                 while isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div) and isinstance(value.right, ast.Constant):
@@ -201,18 +212,21 @@ def frontend_compiler_source(text):
     if not FRONTEND_APP_FUNCTIONS <= {n.name for n in ignored}:
         return text
     for node in retained:
-        if (isinstance(node, ast.Name) and node.id in FRONTEND_APP_FUNCTIONS | {
+        if (isinstance(node, ast.Name) and node.id in app_names | {
                 'globals', 'locals', 'vars', 'eval', 'exec', 'compile', 'getattr', 'setattr', 'delattr',
                 '__import__', '__builtins__', 'type', 'object', 'dir'}
                 or isinstance(node, ast.Constant) and isinstance(node.value, str)
-                    and (node.value in FRONTEND_APP_FUNCTIONS or 'madeira-frontend.py' in node.value)
+                    and (node.value in app_names or 'madeira-frontend.py' in node.value)
                 or isinstance(node, ast.Attribute) and (node.attr.startswith('__') or node.attr in {
                     'modules', '_getframe', 'currentframe', 'import_module', 'load_module'}
-                    or node.attr in FRONTEND_APP_FUNCTIONS
+                    or node.attr in app_names
                     or isinstance(node.value, ast.Name) and node.value.id == 'inspect' and node.attr != 'getsource')):
             return text
-    for node in reversed(ignored):
-        lines[node.lineno:node.end_lineno] = ['    pass\n']
+    for node in sorted(ignored + metadata, key=lambda n: n.lineno, reverse=True):
+        if isinstance(node, ast.FunctionDef):
+            lines[node.lineno:node.end_lineno] = ['    pass\n']
+        else:
+            lines[node.lineno - 1:node.end_lineno] = [node.targets[0].id + ' = {}\n']
     return ''.join(lines)
 
 SPEC = importlib.util.spec_from_file_location('linux_reuse', ROOT / 'ci/verify-linux-reuse.py')
