@@ -83,10 +83,8 @@ enum StikJITHelper {
         }
     }
 
-    /// ml1235 (local, 2026-10-02) is folded in here: upstream's waitForDebugger
-    /// waits for `ready` (CS_DEBUGGED and a live debugger), which is what ml1235's
-    /// pollForJIT did; the flag-only poll reported success at once in the
-    /// flagged-without-debugger state. `ready` reads the flag silently (below).
+    /// A fresh request needs a live debugger. A retained pool can serve its
+    /// existing owner, but cannot satisfy another engine's new allocation.
     /// Opening a URL only proves iOS accepted it. Readiness requires both the
     /// sticky CS_DEBUGGED flag and a live debugger that can answer Madeira's BRK.
     @discardableResult
@@ -94,7 +92,7 @@ enum StikJITHelper {
                                 completion: @escaping (Result<Void, Error>) -> Void) -> Timer {
         let deadline = Date().addingTimeInterval(timeout)
         let timer = Timer(timeInterval: 0.5, repeats: true) { timer in
-            if ready {
+            if SigningStatus.current.debugged && isDebuggerAttached() {
                 timer.invalidate()
                 LogStore.shared.log("JIT enabled and debugger attached.", level: .success)
                 completion(.success(()))

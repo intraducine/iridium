@@ -185,3 +185,12 @@ for saved in [CGPoint(x: 0.92, y: 0.12), CGPoint(x: 1.0, y: 1.0)] {
         translation: .zero, size: size, leading: 62, trailing: 62, top: 0, bottom: 21)
     precondition(persisted == moved, "Releasing the drag must not snap")
 }
+
+precondition(IridiumConsoleControlMapping.label("X", profile: .console, platform: "wii") == "2")
+precondition(IridiumConsoleControlMapping.label("X", profile: .console, platform: "wii", wiiRemote: 2) == "X")
+precondition(IridiumConsoleControlMapping.label("LT", profile: .console, platform: "wii") == "Shake")
+precondition(IridiumConsoleControlMapping.label("Menu", profile: .console, platform: "wii") == "+")
+precondition(IridiumConsoleControlMapping.label("A", profile: .psp) == "Cross")
+
+precondition(IridiumConsoleControlMapping.label("RB", profile: .console, platform: "gameCube") == "Z")
+precondition(IridiumConsoleControlMapping.label("LT", profile: .console, platform: "wii", wiiRemote: 2) == "L")

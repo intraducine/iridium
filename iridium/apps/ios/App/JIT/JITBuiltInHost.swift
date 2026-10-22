@@ -52,7 +52,7 @@ enum MadeiraBuiltInJIT {
             return "Built-in JIT requires iOS 26 or later."
         }
         if getenv("LC_HOME_PATH") != nil {
-            return "Built-in JIT is unavailable inside LiveContainer. Choose StikDebug instead."
+            return "The built-in JIT helper needs a standalone installation. In LiveContainer, use the JIT launch route in global settings."
         }
         return nil
 #endif

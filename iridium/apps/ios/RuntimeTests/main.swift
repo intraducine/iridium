@@ -304,6 +304,16 @@ var gc = Data(repeating: 0, count: 2048); putBE(0xc2339f3d, in: &gc, at: 28, byt
 try inspectPhase3(gc, "gcm", .gameCube); try inspectPhase3(gc, "iso", .gameCube)
 var wii = Data(repeating: 0, count: 2048); putBE(0x5d1c9ea3, in: &wii, at: 24, bytes: 4)
 try inspectPhase3(wii, "iso", .wii); try inspectPhase3(wii, "gcm", nil)
+var wad = Data(repeating: 0, count: 64 + 0x2c0 + 0x200)
+putBE(32, in: &wad, at: 0, bytes: 4); putBE(0x4973, in: &wad, at: 4, bytes: 2)
+putBE(0x2a4, in: &wad, at: 16, bytes: 4); putBE(0x1e4, in: &wad, at: 20, bytes: 4)
+try inspectPhase3(wad, "wad", .wii)
+try inspectPhase3(Data(wad.prefix(64)), "wad", nil)
+var badWad = wad; putBE(0xffffffff, in: &badWad, at: 24, bytes: 4)
+try inspectPhase3(badWad, "wad", nil)
+putBE(0x6962, in: &badWad, at: 4, bytes: 2)
+try inspectPhase3(badWad, "wad", nil)
+
 var dol = Data(repeating: 0, count: 260)
 putBE(256, in: &dol, at: 0, bytes: 4); putBE(4, in: &dol, at: 0x90, bytes: 4)
 putBE(0x80003100, in: &dol, at: 0xe0, bytes: 4)
@@ -376,6 +386,8 @@ for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.wii, "dolph
     check(try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil).id == runtime)
 }
 rejects { _ = try IridiumRuntimeRegistry.play.executionMode(jitAvailable: false) }
+rejects { _ = try IridiumRuntimeRegistry.dolphin.executionMode(jitAvailable: false) }
+check(try IridiumRuntimeRegistry.dolphin.executionMode(jitAvailable: true) == .jit)
 rejects { _ = try IridiumRuntimeRegistry.flycast.executionMode(jitAvailable: false) }
 check(Set(IridiumConsoleSystem.all.map(\.id)).isSuperset(of: ["dolphin", "azahar", "play", "flycast"]))
 check(IridiumConsoleSystem.system(for: .arcade)?.formats(for: .arcade) == ["zip"])

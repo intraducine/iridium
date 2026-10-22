@@ -17,7 +17,7 @@ jobs:
           submodules: false
           lfs: false
       - name: Check out the pinned frontend and console sources
-        run: git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
+        run: git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP vendor/Dolphin
       - name: Verify host test tools
         run: |
           xcrun --find swiftc

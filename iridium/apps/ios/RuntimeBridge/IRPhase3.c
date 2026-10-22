@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRPhase3.h"
+#include "IRDolphinAPI.h"
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +9,7 @@ typedef void *(*Create)(const char *, const char *, const char *, const char *, 
 static Create create;
 static void (*pause_player)(bool), (*stop_player)(void);
 static uint64_t (*frames)(void);
+static const IRDolphinAPI *dolphin;
 // Loaded images deliberately remain resident. Clean shutdown releases the
 // session, never executable code that an upstream worker might still reference.
 static const char *binary(const char *engine) {
@@ -48,8 +50,33 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
         event(generation, 3, "The bundled engine player has an incompatible interface."); return NULL;
     }
     create = next; pause_player = p; stop_player = s; frames = f;
+    dolphin = NULL;
+    if (!strcmp(engine, "dolphin")) {
+        const IRDolphinAPI *(*api)(void) = (const IRDolphinAPI *(*)(void))dlsym(image, "ir_dolphin_api");
+        if (api) dolphin = api();
+        if (!dolphin || dolphin->version != 1) {
+            event(generation, 3, "The bundled Dolphin interface is incomplete."); return NULL;
+        }
+    }
     return create(engine, core, game, save, assets, jit, generation, event, input);
 }
 void ir_phase3_pause(bool paused) { if (pause_player) pause_player(paused); }
 void ir_phase3_stop(void) { if (stop_player) stop_player(); }
 uint64_t ir_phase3_frames(void) { return frames ? frames() : 0; }
+bool ir_phase3_dolphin_configure(IRDolphinOptions options, IRDolphinPoll poll, IRDolphinJITPrepare prepare) {
+    if (!dolphin || !poll) return false;
+    dolphin->configure(options, poll, prepare); return true;
+}
+void ir_phase3_dolphin_settings(IRDolphinOptions options) { if (dolphin) dolphin->settings(options); }
+IRDolphinStats ir_phase3_dolphin_stats(void) { return dolphin ? dolphin->stats() : (IRDolphinStats){0}; }
+void ir_phase3_dolphin_state(bool load, unsigned slot) { if (dolphin) dolphin->state(load, slot); }
+bool ir_phase3_dolphin_install_wad(const char *root, const char *save, const char *wad, IRDolphinCompletion completion) {
+    char file[4096];
+    if (!root || !save || !wad || !completion || !path(file, sizeof file, root, "libIridiumDolphin.dylib")) return false;
+    void *image = dlopen(file, RTLD_NOW | RTLD_LOCAL);
+    if (!image) return false;
+    const IRDolphinAPI *(*get_api)(void) = (const IRDolphinAPI *(*)(void))dlsym(image, "ir_dolphin_api");
+    const IRDolphinAPI *api = get_api ? get_api() : NULL;
+    if (!api || api->version != 1 || !api->install_wad) return false;
+    api->install_wad(save, wad, completion); return true;
+}

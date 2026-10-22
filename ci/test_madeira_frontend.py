@@ -274,6 +274,15 @@ class FrontendImportTests(unittest.TestCase):
         self.assertIn('DEBUG', result['debug']['buildSettings']['SWIFT_ACTIVE_COMPILATION_CONDITIONS'])
         self.assertIn('existing-include', result['debug']['buildSettings']['HEADER_SEARCH_PATHS'])
         self.assertIn('-lexisting', result['debug']['buildSettings']['OTHER_LDFLAGS'])
+        self.assertIn('CodeSignOnCopy', result[embed['files'][0]]['settings']['ATTRIBUTES'])
+        with patch.dict(BUILD.os.environ, {'IRIDIUM_PHASE3': '1'}), \
+             patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+            signed = BUILD.project(pathlib.Path('/fixture/project.pbxproj'), [])['objects']
+        embedded = signed['F20000000000000000000003']['files']
+        self.assertEqual(len(embedded), 6)
+        for item in embedded:
+            self.assertIn('CodeSignOnCopy', signed[item]['settings']['ATTRIBUTES'])
+        self.assertEqual(signed['frameworks']['files'], ['existing-link'])
 
     def test_generated_tree_refresh_is_repeatable_and_removes_only_stale_outputs(self):
         with tempfile.TemporaryDirectory() as folder:

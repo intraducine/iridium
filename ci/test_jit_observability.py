@@ -91,6 +91,60 @@ int main() {
 
 @unittest.skipUnless(shutil.which('node'), 'Node required for isolated script fixture')
 class HelperScriptTests(unittest.TestCase):
+    def test_shared_region_keeps_high_address_bits_and_checks_every_reply(self):
+        source = (ROOT / 'iridium/apps/ios/App/Resources/madeira-jit.js').read_text()
+        harness = r'''
+const vm = require('vm'), assert = require('assert');
+const source = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+let commands = [], failAt = -1;
+const context = vm.createContext({send_command: command => {
+  commands.push(command); return commands.length === failAt ? 'E09' : 'OK';
+}});
+vm.runInContext(source.split('let pid = get_pid();')[0], context);
+assert(context.iridiumPrepareRegion(0x7000000000n, 0x20000000n));
+assert.equal(commands.length, 32768);
+assert.equal(commands[0], 'M7000000000,1:69');
+assert.equal(commands.at(-1), 'M701fffc000,1:69');
+commands = [];
+assert(context.iridiumPrepareRegion(0x123456789abcdef0n, 0x4000n));
+assert.deepEqual(commands, ['M123456789abcc000,1:69', 'M123456789abd0000,1:69']);
+commands = []; failAt = 2;
+assert(!context.iridiumPrepareRegion(0x7000000000n, 0xc000n));
+assert.equal(commands.length, 2);
+for (const [address, size] of [[0n, 1n], [-1n, 1n], [1n, 0n], [1n, 0x100000001n],
+                              [0xffffffffffffffffn, 2n], [1n << 64n, 1n]]) {
+  commands = []; assert(!context.iridiumPrepareRegion(address, size)); assert.equal(commands.length, 0);
+}
+function le(value) {
+  return Array.from({length: 8}, (_, i) => Number(value >> BigInt(i * 8) & 255n).toString(16).padStart(2, '0')).join('');
+}
+function run(allocated, writeReply, bytes = 0x8000n, detachReply = 'OK') {
+  const trace = []; let stops = 0;
+  vm.runInNewContext(source, {get_pid: () => 42, log: () => {}, send_command: command => {
+    trace.push(command);
+    if (command.startsWith('vAttach')) return 'T05';
+    if (command === 'c') return 'T05thread:abc;20:' + le(0x100000000n) + ';00:' + le(0n) +
+      ';01:' + le(bytes) + ';10:' + le(stops++ === 0 ? 1n : 0n) + ';metype:6;medata:1;';
+    if (command.startsWith('m')) return 'a0013ed4';
+    if (command.startsWith('_M')) return allocated;
+    if (command.startsWith('M')) return writeReply;
+    if (command === 'D') return detachReply;
+    return 'OK';
+  }}, {timeout: 1000});
+  return trace;
+}
+const success = run('7000000000', 'OK');
+assert.throws(() => run('7000000000', 'OK', 0x8000n, 'E09'), /detach was not acknowledged/);
+assert.deepEqual(success.filter(x => x.startsWith('M')), ['M7000000000,1:69', 'M7000004000,1:69']);
+assert(success.includes('P0=0000000070000000;thread:abc;'));
+for (const result of [run('7000000000', 'E09'), run('E09', 'OK'), run('not-hex', 'OK'),
+                      run('7000000001', 'OK'), run('7000000000', 'OK', 0x100000001n)]) {
+  assert(result.includes('P0=0000000000000000;thread:abc;'));
+  assert(result.includes('D'));
+}
+'''
+        subprocess.run(['node', '-e', harness], input=json.dumps(source), text=True, check=True, timeout=10)
+
     def test_first_fault_tuple_exact_64bit_fields_bounds_and_one_record(self):
         harness = r'''
 const vm = require('vm');

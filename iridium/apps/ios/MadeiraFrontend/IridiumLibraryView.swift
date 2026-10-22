@@ -39,9 +39,7 @@ struct IridiumLibraryView: View {
     @State private var pendingDetail: LibraryEntry?
     @State private var choosingAdd = false
     @State private var pendingAdd: IridiumAddGameSource?
-    @State private var supportPrompt = false
     @State private var pendingSupportGame: IridiumConsoleGame?
-    @State private var supportLaunchRequested = false
     @State private var lastLaunchNeedsSupport = false
     @State private var artworkDetail: IridiumGame?
     @State private var showHints = false
@@ -81,8 +79,9 @@ struct IridiumLibraryView: View {
                 try consoleSession.validateLaunchAdmission()
                 let runtime = try IridiumRuntimeRegistry.resolve(platform: console.platform, preferred: console.runtimeID)
                 lastLaunchNeedsSupport = runtime.jit == .required
-                if lastLaunchNeedsSupport && !jitState.enabled {
-                    supportLaunchRequested = false; pendingSupportGame = console; supportPrompt = true; return
+                // Dolphin acquires a fresh shared JIT session inside its driver.
+                if lastLaunchNeedsSupport && runtime.id != "dolphin" && !jitState.enabled {
+                    pendingSupportGame = console; enableJIT(); return
                 }
                 try IridiumConsoleDriver(game: console).launch(gameID: game.id)
             }
@@ -97,7 +96,13 @@ struct IridiumLibraryView: View {
         selectedID = selection.selectedID
         if let target { carouselPosition.scrollTo(id: target, anchor: .leading) }
     }
-    private func select(_ id: UUID) {
+    private func select(_ id: UUID, touched: Bool = false) {
+        if touched {
+            showFocus = false; showHints = false
+            if selection.highlightedID != id, IridiumTouchHaptics.current() != .off {
+                selectionFeedback.selectionChanged(); selectionFeedback.prepare()
+            }
+        }
         if let target = selection.select(id) {
             selectedID = selection.selectedID
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
@@ -196,12 +201,12 @@ struct IridiumLibraryView: View {
                 else {
                     if jitState.enabled, let game = pendingSupportGame { pendingSupportGame = nil; launch(IridiumGame(console: game)) }
                     else { pendingSupportGame = nil }
-                    supportLaunchRequested = false; restoreKeyboardFocus()
+                    restoreKeyboardFocus()
                 }
             }
             .onChange(of: jitState.enabled) { _, enabled in
                 if enabled, !jit.showSetup, let game = pendingSupportGame {
-                    pendingSupportGame = nil; supportLaunchRequested = false; launch(IridiumGame(console: game))
+                    pendingSupportGame = nil; launch(IridiumGame(console: game))
                 }
             }
             .onChange(of: library.showDetail) { _, id in
@@ -248,7 +253,11 @@ struct IridiumLibraryView: View {
             .sheet(item: $consoleDetail, onDismiss: restoreKeyboardFocus) { game in
                 IridiumConsoleOptions(game: game) { launch(IridiumGame(console: $0)) }
             }
-            .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: restoreKeyboardFocus) {
+            .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: {
+                // Create feedback for the returned menu after the native session has closed.
+                selectionFeedback = UISelectionFeedbackGenerator(); selectionFeedback.prepare()
+                restoreKeyboardFocus()
+            }) {
                 IridiumConsolePlayer()
             }
             .fileImporter(isPresented: $importingFiles, allowedContentTypes: IridiumImportSource.contentTypes, allowsMultipleSelection: true) { result in
@@ -295,29 +304,11 @@ struct IridiumLibraryView: View {
                 if features != nil { pendingDetail = nil; features = nil }
                 else { completeOnboardingAction() }
             }
-            .confirmationDialog("Enable JIT to Play", isPresented: Binding(get: { supportPrompt }, set: { value in
-                supportPrompt = value
-                if !value && !supportLaunchRequested { pendingSupportGame = nil }
-            }), titleVisibility: .visible) {
-                if let game = pendingSupportGame {
-                    Button("Enable & Play") {
-                        do {
-                            try consoleSession.validateLaunchAdmission()
-                            pendingSupportGame = game; supportLaunchRequested = true; enableJIT()
-                        } catch {
-                            pendingSupportGame = nil; lastLaunchNeedsSupport = false
-                            library.error = error.localizedDescription
-                        }
-                    }
-                }
-                Button("Set Up JIT") { pendingSupportGame = nil; jit.showSetup = true }
-                Button("Cancel", role: .cancel) { pendingSupportGame = nil }
-            }
             .alert("Could not start", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 if let problem = JITCoordinator.shared.connectionProblem, library.error == problem.message {
                     jitConnectionActions(problem, retry: enableJIT) { library.error = nil }
                 }
-                if lastLaunchNeedsSupport { Button("Set Up JIT") { library.error = nil; jit.showSetup = true } }
+                if lastLaunchNeedsSupport { Button("JIT Settings") { library.error = nil; jit.showSetup = true } }
                 Button("OK", role: .cancel) { library.error = nil }
             } message: { Text(library.error ?? "") }
     }
@@ -421,7 +412,7 @@ struct IridiumLibraryView: View {
             .onChange(of: width) { _, _ in touchCoverHeight = nil; keepSelection() }
     }
     private func revealFocusedSection(in page: ScrollViewProxy) {
-        let section = focus == "games" ? "games" : ["play", "jit", "options"].contains(focus) ? "details" : "header"
+        let section = focus == "games" ? "games" : ["play", "options"].contains(focus) ? "details" : "header"
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
             page.scrollTo(section, anchor: section == "header" ? .top : .bottom)
         }
@@ -453,7 +444,7 @@ struct IridiumLibraryView: View {
             }
         }, feedbackEnabled: IridiumTouchHaptics.current() != .off,
            trace: { LogStore.shared.log("[Library Drag] phase=\($0)") }) {
-            Button { select(entry.id); focus = "games" } label: {
+            Button { select(entry.id, touched: true); focus = "games" } label: {
                 IridiumGameArtwork(game: entry, featured: featured)
                     .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -518,10 +509,6 @@ struct IridiumLibraryView: View {
         if LibraryModel.sessionsThisRun > 0 || consoleSession.phase == .restartRequired { return "Reopen Iridium" }
         return ""
     }
-    private func needsJITSetup(_ game: IridiumGame) -> Bool {
-        !jitState.enabled && ((try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.console?.runtimeID).jit) == .required ||
-            (game.platform == .psp && game.console?.pspJITEnabled == true))
-    }
     private func actions(_ entry: IridiumGame) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) { gameActions(entry) }
@@ -533,7 +520,6 @@ struct IridiumLibraryView: View {
             .buttonStyle(.plain).foregroundStyle(.black).background(.white, in: Capsule())
             .overlay { Capsule().strokeBorder(showFocus && focus == "play" ? .white : .clear, lineWidth: 3).padding(-5) }
             .disabled(library.launching || consoleSession.isActive || consoles.working).keyboardShortcut("p", modifiers: [])
-        if needsJITSetup(entry) { IridiumJITSetupButton().background(focusShape("jit")) }
         Button { options(entry) } label: { Label("Options", systemImage: "ellipsis").frame(minHeight: 44) }
             .buttonStyle(.plain).accessibilityLabel("Game Options").background(focusShape("options"))
     }
@@ -588,11 +574,11 @@ struct IridiumLibraryView: View {
     }
     private func command(_ value: String) {
         guard !searchFocus else { if value == "back" { endSearch() }; return }
-        let toolbar = ["search", "add", "settings"], actions = ["play"] + (selected.map { needsJITSetup($0) } == true ? ["jit"] : []) + ["options"]
+        let toolbar = ["search", "add", "settings"], actions = ["play", "options"]
         switch value {
         case "tab": favorites.toggle(); keepSelection()
         case "up", "down":
-            focus = IridiumLibrarySelection.verticalFocus(focus == "jit" ? "play" : focus, down: value == "down", wide: wideLayout)
+            focus = IridiumLibrarySelection.verticalFocus(focus, down: value == "down", wide: wideLayout)
         case "left", "right":
             let step = value == "left" ? -1 : 1
             if focus == "filters" {
@@ -614,7 +600,6 @@ struct IridiumLibraryView: View {
             case "add": choosingAdd = true
             case "settings": features = 1
             case "games": focus = "play"
-            case "jit": jit.showSetup = true
             case "options": if let selected { options(selected) }
             default: if let selected { launch(selected) }
             }

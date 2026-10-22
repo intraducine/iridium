@@ -8,9 +8,6 @@ struct IridiumSystemSetupSections: View {
         Section {
             LabeledContent("Platforms", value: system.subtitle)
             LabeledContent("Emulator", value: system.runtime.name)
-            if system.runtime.jit == .required {
-                IridiumJITSetupButton()
-            }
         }
         Section("Default Controls") {
             ForEach(system.platforms.filter { $0 != .gameBoyColor }, id: \.self) { platform in

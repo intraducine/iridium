@@ -21,6 +21,14 @@ struct IridiumConsolePlayer: View {
     @State private var helpSection = 0
     @State private var showingLogs = false
     private var isPSP: Bool { session.game?.platform == .psp }
+    private var isDolphin: Bool { session.game?.runtimeID == "dolphin" }
+    private var stateSlot: Int {
+        get { isDolphin ? session.dolphinStateSlot : session.pspStateSlot }
+        nonmutating set { if isDolphin { session.dolphinStateSlot = newValue } else { session.pspStateSlot = newValue } }
+    }
+    private var stateStatus: String? { isDolphin ? session.dolphinStateStatus : session.pspStateStatus }
+    private var remoteName: String { ["Sideways Wii Remote", "Wii Remote and Nunchuk", "Classic Controller"][session.dolphinSettings.remote] }
+    private var aspectName: String { ["Auto", "16:9", "4:3"][session.dolphinSettings.aspect] }
     private var profile: IridiumPlayerProfile { .consoleProfile(session.game?.platform.rawValue) }
     private var touchVisible: Bool { controls.visible && !controller.hidesTouchControls }
     private var menuVisible: Bool { !controls.editing && (session.phase == .paused || session.phase == .restartRequired) }
@@ -70,6 +78,7 @@ struct IridiumConsolePlayer: View {
             }.foregroundStyle(.white)
                 .onChange(of: geometry.size) { _, _ in
                     releaseInput()
+                    session.updateDolphinOrientation()
                     controls.iridiumResizeConsole(defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds))
                 }
                 .onAppear {
@@ -84,6 +93,7 @@ struct IridiumConsolePlayer: View {
         .statusBarHidden().persistentSystemOverlays(.hidden)
         .focusable().focusEffectDisabled().focused($keyboardFocus)
         .onAppear { keyboardFocus = true; controller.refresh() }
+        .onChange(of: session.dolphinSettings.remote) { _, _ in inputGeneration += 1 }
         .onKeyPress(phases: [.down, .up], action: handleKey)
         .onReceive(LibraryController.shared.commands, perform: command)
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { _ in openMenu() }
@@ -125,7 +135,7 @@ struct IridiumConsolePlayer: View {
                     .accessibilityLabel("Game display")
                     .overlay { if !session.phase3Ready { starting.background(.black.opacity(0.8)).allowsHitTesting(false) } }
                     .overlay {
-                        if session.game?.platform == .nintendo3DS {
+                        if session.game?.platform == .nintendo3DS || session.game?.platform == .wii {
                             GeometryReader { geometry in
                                 Color.clear.contentShape(Rectangle())
                                     .gesture(DragGesture(minimumDistance: 0).onChanged { value in
@@ -145,7 +155,9 @@ struct IridiumConsolePlayer: View {
         VStack(spacing: 12) {
             ProgressView().tint(.white)
             Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
-            Text("Starting \(platform)…").font(.subheadline).foregroundStyle(.secondary)
+            Text(session.phase == .stopping ? "Closing game…" : "Starting \(platform)…")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if isDolphin { Text(session.phase3Status).font(.footnote).multilineTextAlignment(.center) }
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func menu(in size: CGSize) -> some View {
@@ -163,10 +175,12 @@ struct IridiumConsolePlayer: View {
                                 IridiumPlayerMenuRow(title: "Library", symbol: "square.grid.2x2") { session.returnToLibraryAfterTimeout() }
                             } else if menuPage == "Session" {
                                 IridiumSessionMenuActions(focused: menuGuided ? menuFocus : nil, activate: activate)
-                                if isPSP {
-                                    menuRow("PSP Settings", "slider.horizontal.3")
-                                    menuRow("Save States", "square.and.arrow.down")
+                                if isPSP { menuRow("PSP Settings", "slider.horizontal.3") }
+                                if isDolphin {
+                                    Text(session.dolphinPerformance).monospacedDigit().font(.subheadline)
+                                    menuRow("Dolphin Settings", "slider.horizontal.3")
                                 }
+                                if isPSP || isDolphin { menuRow("Save States", "square.and.arrow.down") }
                                 menuRow("Close Game", "stop.circle")
                             } else if menuPage == "Controls" {
                                 menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
@@ -191,13 +205,29 @@ struct IridiumConsolePlayer: View {
                                 }
                                 Text("Resolution changes apply when you resume. Lower values reduce graphics work.")
                                     .font(.footnote).foregroundStyle(.secondary)
+                            } else if menuPage == "Dolphin Settings" {
+                                Text("Dolphin · Metal · \(session.dolphinCPUMode)").font(.subheadline)
+                                Text(session.dolphinPerformance).monospacedDigit().font(.footnote)
+                                ForEach(1...4, id: \.self) { scale in
+                                    menuRow("Resolution \(scale)×", session.dolphinSettings.resolution == scale ? "checkmark.circle.fill" : "circle")
+                                }
+                                menuRow("Aspect: \(aspectName)", "aspectratio")
+                                menuRow(session.dolphinSettings.muted == true ? "Game Sound: Off" : "Game Sound: On", "speaker.wave.2")
+                                if session.game?.platform == .wii {
+                                    menuRow(remoteName, "gamecontroller")
+                                    menuRow(session.dolphinSettings.motion ? "Phone Motion: On" : "Phone Motion: Off", "gyroscope")
+                                    Text("LT or L2 shakes the Wii Remote. The right stick points. Touch the game display to point directly.").font(.footnote).foregroundStyle(.secondary)
+                                }
+                                menuRow("Players: \(session.dolphinSettings.players)", "person.2")
+                                menuRow(session.dolphinSettings.dualCore ? "Dual Core: On" : "Dual Core: Off", "cpu")
+                                Text("Player count and dual core apply after you close and reopen the game. Players follow controller connection order. Touch and keyboard control player 1.").font(.footnote).foregroundStyle(.secondary)
                             } else if menuPage == "Save States" {
-                                menuRow("Slot \(session.pspStateSlot + 1)", "number.square")
+                                menuRow("Slot \(stateSlot + 1)", "number.square")
                                 menuRow("Save State and Resume", "square.and.arrow.down")
                                 menuRow("Load State and Resume", "square.and.arrow.up")
-                                Text("Five slots per game. Saving replaces the selected slot. Loading replaces current unsaved progress. In-game memory-stick saves stay separate.")
+                                Text("Five slots per game. Saving replaces the selected slot. Loading replaces current unsaved progress. In-game saves stay separate.")
                                     .font(.footnote).foregroundStyle(.secondary)
-                                if let status = session.pspStateStatus { Text(status).font(.footnote) }
+                                if let status = stateStatus { Text(status).font(.footnote) }
                             } else { help }
                         }
                     }.id(menuPage).onChange(of: menuFocus) { _, title in
@@ -237,12 +267,22 @@ struct IridiumConsolePlayer: View {
     private func activate(_ title: String) {
         switch title {
         case "Resume": resume()
-        case "Slot \(session.pspStateSlot + 1)": session.pspStateSlot = (session.pspStateSlot + 1) % 5; menuFocus = "Slot \(session.pspStateSlot + 1)"
+        case "Slot \(stateSlot + 1)": stateSlot = (stateSlot + 1) % 5; menuFocus = "Slot \(stateSlot + 1)"
         case "Save State and Resume", "Load State and Resume":
             releaseInput()
-            session.requestPSPState(load: title == "Load State and Resume")
+            if isDolphin { session.requestDolphinState(load: title == "Load State and Resume") }
+            else { session.requestPSPState(load: title == "Load State and Resume") }
         case let value where value.hasPrefix("Resolution "):
-            if let scale = Int(value.dropFirst(11).prefix(1)) { session.setPSPResolution(scale) }
+            if let scale = Int(value.dropFirst(11).prefix(1)) {
+                if isDolphin { session.setDolphin { $0.resolution = scale } }
+                else { session.setPSPResolution(scale) }
+            }
+        case "Aspect: \(aspectName)": session.setDolphin { $0.aspect = ($0.aspect + 1) % 3 }
+        case remoteName where isDolphin: session.setDolphin { $0.remote = ($0.remote + 1) % 3 }
+        case "Phone Motion: On", "Phone Motion: Off": session.setDolphin { $0.motion.toggle() }
+        case "Game Sound: On", "Game Sound: Off": session.setDolphin { $0.muted = !($0.muted == true) }
+        case "Players: \(session.dolphinSettings.players)": session.setDolphin { $0.players = $0.players % 4 + 1 }
+        case "Dual Core: On", "Dual Core: Off": session.setDolphin { $0.dualCore.toggle() }
         case "Close Game": closeConfirmation = IridiumCloseConfirmation(); confirmClose = true
         case "View Log": releaseInput(); showingLogs = true
         case "Edit Controls":
@@ -258,7 +298,8 @@ struct IridiumConsolePlayer: View {
             if title == "Controls" { menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls" }
             if title == "Help" { helpSection = 0 }
             if title == "PSP Settings" { menuFocus = "Resolution \(session.pspResolution)×" }
-            if title == "Save States" { menuFocus = "Slot \(session.pspStateSlot + 1)" }
+            if title == "Dolphin Settings" { menuFocus = "Resolution \(session.dolphinSettings.resolution)×" }
+            if title == "Save States" { menuFocus = "Slot \(stateSlot + 1)" }
         }
     }
     private func command(_ value: String) {
@@ -299,9 +340,12 @@ struct IridiumConsolePlayer: View {
         let order: [String]
         switch menuPage {
         case "Session": order = IridiumSessionMenuActions.items(windows: false).map { $0.0 }
-            + (isPSP ? ["PSP Settings", "Save States"] : []) + ["Close Game"]
+            + (isPSP ? ["PSP Settings", "Save States"] : isDolphin ? ["Dolphin Settings", "Save States"] : []) + ["Close Game"]
         case "PSP Settings": order = (1...4).map { "Resolution \($0)×" }
-        case "Save States": order = ["Slot \(session.pspStateSlot + 1)", "Save State and Resume", "Load State and Resume"]
+        case "Dolphin Settings": order = (1...4).map { "Resolution \($0)×" } + ["Aspect: \(aspectName)", session.dolphinSettings.muted == true ? "Game Sound: Off" : "Game Sound: On"]
+            + (session.game?.platform == .wii ? [remoteName, session.dolphinSettings.motion ? "Phone Motion: On" : "Phone Motion: Off"] : [])
+            + ["Players: \(session.dolphinSettings.players)", session.dolphinSettings.dualCore ? "Dual Core: On" : "Dual Core: Off"]
+        case "Save States": order = ["Slot \(stateSlot + 1)", "Save State and Resume", "Load State and Resume"]
         default: return
         }
         if ["up", "down", "left", "right"].contains(value) {

@@ -25,6 +25,20 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var pspJITFallbackReason: String?
     @Published var pspStateSlot = 0
     @Published private(set) var pspStateStatus: String?
+    @Published private(set) var dolphinSettings = IridiumDolphinSettings()
+    @Published private(set) var dolphinMaintenance = false
+    @Published private(set) var dolphinSystemStatus: String?
+    private var dolphinSystemFiles: (save: URL, backup: URL, staging: URL)?
+    @Published private(set) var dolphinCPUMode = "Waiting for JIT"
+    private var dolphinPreparingJIT = false
+    private var dolphinJITRequested = false
+    @Published private(set) var dolphinPerformance = "Waiting for speed data"
+    @Published private(set) var dolphinStateStatus: String?
+    @Published private(set) var dolphinStatePending = false
+    @Published var dolphinStateSlot = 0
+    private let dolphinMotion = IridiumDolphinMotion()
+    private var dolphinMonitor: Timer?
+    private var dolphinControllers = [GCController?](repeating: nil, count: 4)
     @Published var error: String?
     @Published private(set) var presented = false
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
@@ -55,6 +69,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var ownership = IridiumRuntimeOwnership() // main thread only
     private var lease: IridiumRuntimeLease?
+    private var finalizing = false // main thread only
     private var stopWatch = UUID() // main-thread stop-attempt generation
     private var saveFolder: URL?
     private var runningGame: IridiumConsoleGame?
@@ -79,6 +94,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func validateLaunchAdmission() throws {
         dispatchPrecondition(condition: .onQueue(.main))
+        guard !dolphinMaintenance else { throw IridiumRuntimeError.busy }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
         guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
         guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
@@ -97,8 +113,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
             releaseButtons()
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
+            finalizing = false
             diagnostics = IridiumRuntimeProgress()
             phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
+            dolphinJITRequested = false
+            dolphinCPUMode = "Waiting for JIT"
+            dolphinPerformance = "Waiting for speed data"
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
             pspJITStatus = "Off — using IR interpreter"
             pspJITFallbackReason = nil; pspJITVerifiedForLaunch = false
@@ -160,7 +180,27 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         } catch { self.error = error.localizedDescription }
     }
 
-    private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease) {
+    @MainActor private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease, dolphinJITReady: Bool? = nil) {
+        if game.runtimeID == "dolphin", dolphinJITReady == nil {
+            dolphinSettings = .load(game.id)
+            dolphinPreparingJIT = true; dolphinJITRequested = true; phase3Status = "Preparing Dolphin JIT"
+            JITCoordinator.shared.enable(requiresAttachedDebugger: true) { result in
+                self.dolphinPreparingJIT = false
+                guard self.lease == owner else { return }
+                if self.requested == .stop { self.queue.async { self.complete(owner) }; return }
+                switch result {
+                case .success:
+                    self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, dolphinJITReady: true)
+                case .failure(let failure):
+                    let message = "Dolphin needs the shared JIT system. Open JIT Setup and try again. " + failure.localizedDescription
+                    self.queue.async { self.fail(message, owner: owner) }
+                }
+            }
+            return
+        }
+        if game.runtimeID == "dolphin", dolphinJITReady != true {
+            queue.async { self.fail(IridiumRuntimeError.jitRequired.localizedDescription, owner: owner) }; return
+        }
         guard let frameworks = Bundle.main.privateFrameworksURL else {
             queue.async { self.fail(IridiumRuntimeError.unavailable.localizedDescription, owner: owner) }; return
         }
@@ -195,6 +235,19 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             error = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
+        if game.runtimeID == "dolphin" {
+            dolphinSettings = .load(game.id); dolphinStateStatus = nil; dolphinStatePending = false
+            lock.lock(); dolphinControllers = [GCController?](repeating: nil, count: 4); lock.unlock()
+            var options = dolphinSettings.native; options.use_jit = dolphinJITReady == true
+            guard ir_phase3_dolphin_configure(options, { player, output in
+                guard let output else { return }
+                IridiumConsoleSession.shared.fillDolphinInput(player, output)
+            }, jit26_prepare_region) else {
+                ir_phase3_stop(); error = "This Dolphin component does not support the app interface."; return
+            }
+            dolphinMotion.start(enabled: dolphinSettings.motion)
+            monitorDolphin()
+        }
         phase3Controller = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
         diagnostics.phase = "upstream engine starting"
         if requested == .pause { ir_phase3_pause(true) }
@@ -209,6 +262,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             phase3Ready = true; diagnostics.phase = "engine produced video"
             if phase == .starting && requested == .play { phase = .running }
         case 2:
+            dolphinMonitor?.invalidate(); dolphinMonitor = nil; dolphinMotion.stop()
             phase3Controller = nil
             queue.async { self.complete(owner) }
         case 3:
@@ -217,6 +271,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             if phase3Controller != nil { stop() }
         case 4: pause()
         case 5: phase3JITVerified = true
+        case 6:
+            dolphinStatePending = false; dolphinStateStatus = message; resume()
+        case 7:
+            dolphinStatePending = false; dolphinStateStatus = message; error = message
         default: break
         }
     }
@@ -385,6 +443,162 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         resume()
     }
 
+    func installDolphinWAD(_ source: URL, game: IridiumConsoleGame) {
+        do { try validateLaunchAdmission() } catch { dolphinSystemStatus = error.localizedDescription; return }
+        guard let frameworks = Bundle.main.privateFrameworksURL else { dolphinSystemStatus = "The Dolphin component is unavailable."; return }
+        dolphinMaintenance = true; dolphinSystemStatus = "Backing up Wii files…"
+        let scoped = source.startAccessingSecurityScopedResource()
+        queue.async {
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            var staging: URL?
+            do {
+                let store = IridiumConsoleLibrary.shared.store
+                guard source.pathExtension.lowercased() == "wad" else { throw IridiumRuntimeError.invalidGame }
+                _ = try IridiumROMInspection.inspect(source, fileExtension: "wad")
+                let save = try store.saveDirectory(game)
+                let backup = save.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true)
+                    .appendingPathComponent(game.id.uuidString + "-" + UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+                guard backup.deletingLastPathComponent().resolvingSymlinksInPath() == backup.deletingLastPathComponent().standardizedFileURL else {
+                    throw IridiumRuntimeError.unsafePath
+                }
+                try FileManager.default.copyItem(at: save, to: backup)
+                let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("Dolphin-" + UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
+                staging = temporary
+                let wad = temporary.appendingPathComponent("content.wad")
+                try FileManager.default.copyItem(at: source, to: wad)
+                DispatchQueue.main.async {
+                    self.dolphinSystemFiles = (save, backup, temporary)
+                    self.dolphinSystemStatus = "Installing Wii content…"
+                    let queued = ir_phase3_dolphin_install_wad(frameworks.path, save.path, wad.path) { success, restart, message in
+                        let text = message.map { String(cString: $0) } ?? "Dolphin did not report an installation result."
+                        DispatchQueue.main.async { IridiumConsoleSession.shared.finishDolphinWAD(success: success, message: text, restart: restart) }
+                    }
+                    if !queued { self.finishDolphinWAD(success: false, message: "The Dolphin installer could not be loaded.") }
+                }
+            } catch {
+                if let staging { try? FileManager.default.removeItem(at: staging) }
+                let message = error.localizedDescription
+                DispatchQueue.main.async { self.dolphinMaintenance = false; self.dolphinSystemStatus = message }
+            }
+        }
+    }
+
+    private func finishDolphinWAD(success: Bool, message: String, restart: Bool = false) {
+        guard let files = dolphinSystemFiles else { return }
+        dolphinSystemFiles = nil
+        if restart {
+            phase = .restartRequired
+            dolphinMaintenance = false; dolphinSystemStatus = message
+            return // The installer may still own these files. Keep both copies in place.
+        }
+        queue.async {
+            var status = message
+            do {
+                if !success {
+                    let failed = files.backup.appendingPathExtension("failed")
+                    try FileManager.default.moveItem(at: files.save, to: failed)
+                    try FileManager.default.copyItem(at: files.backup, to: files.save)
+                    status += " The original files were restored."
+                }
+                try FileManager.default.removeItem(at: files.staging)
+            } catch { status += " File recovery or temporary-file cleanup failed. The backup is kept. " + error.localizedDescription }
+            let result = status
+            DispatchQueue.main.async { self.dolphinMaintenance = false; self.dolphinSystemStatus = result }
+        }
+    }
+
+    func setDolphin(_ update: (inout IridiumDolphinSettings) -> Void) {
+        guard let game, game.runtimeID == "dolphin", phase == .paused, !dolphinStatePending else { return }
+        update(&dolphinSettings); dolphinSettings.save(game.id)
+        ir_phase3_dolphin_settings(dolphinSettings.native)
+        dolphinMotion.stop()
+    }
+
+    func requestDolphinState(load: Bool) {
+        guard game?.runtimeID == "dolphin", phase3Ready, phase == .paused, !dolphinStatePending else {
+            error = "Wait for Dolphin to start and pause the game before using save states."; return
+        }
+        dolphinStatePending = true; dolphinStateStatus = load ? "Loading state…" : "Saving state…"
+        ir_phase3_dolphin_state(load, UInt32(dolphinStateSlot))
+    }
+
+    func updateDolphinOrientation() { dolphinMotion.updateOrientation() }
+
+    private func monitorDolphin() {
+        dolphinMonitor?.invalidate()
+        var previous: UInt64 = 0, stalled = 0, samples = 0
+        dolphinMonitor = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self, self.game?.runtimeID == "dolphin" else { return }
+            let stats = ir_phase3_dolphin_stats()
+            self.dolphinCPUMode = stats.jit ? "Native JIT" : "Waiting for JIT"
+            if self.phase == .running {
+                self.dolphinPerformance = String(format: "%.1f FPS · %.0f%% speed", stats.fps, stats.speed * 100)
+                stalled = stats.frames == previous ? stalled + 1 : 0
+                if stalled >= 3 { self.phase3Status = "No new Metal frame for \(stalled) seconds." }
+                else { self.phase3Status = self.dolphinPerformance }
+                samples += 1
+                if samples % 10 == 0 {
+                    RuntimeDiagnosticLogFiles.writeConsoleLine(String(format: "[Dolphin] fps=%.2f vps=%.2f speed=%.3f frames=%llu input_samples=%llu",
+                        stats.fps, stats.vps, stats.speed, stats.frames, stats.input_samples))
+                }
+            }
+            previous = stats.frames
+        }
+        if let dolphinMonitor { RunLoop.main.add(dolphinMonitor, forMode: .common) }
+    }
+
+    private func updateDolphinControllers(_ connected: [GCController]) {
+        for index in dolphinControllers.indices {
+            if let old = dolphinControllers[index], !connected.contains(where: { $0 === old }) {
+                dolphinControllers[index] = nil
+            }
+        }
+        for controller in connected where !dolphinControllers.contains(where: { $0 === controller }) {
+            if let slot = dolphinControllers.firstIndex(where: { $0 == nil }) { dolphinControllers[slot] = controller }
+        }
+    }
+
+    private func fillDolphinInput(_ player: UInt32, _ output: UnsafeMutablePointer<IRDolphinInput>) {
+        let connected = GCController.controllers()
+        lock.lock()
+        updateDolphinControllers(connected)
+        let controller = Int(player) < dolphinControllers.count ? dolphinControllers[Int(player)] : nil
+        let playing = intent.request == .play
+        lock.unlock()
+        output.pointee = IRDolphinInput()
+        output.pointee.acceleration.2 = 9.81
+        guard playing else { return }
+        if player == 0 {
+            let sample = input(controller: controller)
+            output.pointee.controls.buttons = sample.digital.buttons
+            output.pointee.left_trigger = sample.digital.buttons & (1 << 12) != 0 ? 1 : 0
+            output.pointee.right_trigger = sample.digital.buttons & (1 << 13) != 0 ? 1 : 0
+            output.pointee.controls.left_x = sample.x; output.pointee.controls.left_y = sample.y
+            withUnsafeMutablePointer(to: &output.pointee.controls) { fillPhase3Input($0, controller: controller) }
+            acknowledge(sample, polled: true)
+            dolphinMotion.fill(&output.pointee)
+        } else if let pad = controller?.extendedGamepad {
+            let bindings: [(GCControllerButtonInput?, String)] = [(pad.buttonA,"A"),(pad.buttonB,"B"),
+                (pad.buttonX,"X"),(pad.buttonY,"Y"),(pad.buttonMenu,"Menu"),(pad.buttonOptions,"View"),
+                (pad.leftShoulder,"LB"),(pad.rightShoulder,"RB"),(pad.dpad.up,"D↑"),(pad.dpad.down,"D↓"),
+                (pad.dpad.left,"D←"),(pad.dpad.right,"D→"),(pad.leftTrigger,"LT"),(pad.rightTrigger,"RT"),
+                (pad.leftThumbstickButton,"L3"),(pad.rightThumbstickButton,"R3")]
+            for (button, action) in bindings where button?.isPressed == true {
+                output.pointee.controls.buttons |= IridiumConsoleControlMapping.button(action, profile: .console) ?? 0
+            }
+            output.pointee.controls.left_x = Int16(max(-1,min(1,pad.leftThumbstick.xAxis.value)) * 32767)
+            output.pointee.controls.left_y = Int16(max(-1,min(1,-pad.leftThumbstick.yAxis.value)) * 32767)
+            output.pointee.controls.right_x = Int16(max(-1,min(1,pad.rightThumbstick.xAxis.value)) * 32767)
+            output.pointee.controls.right_y = Int16(max(-1,min(1,-pad.rightThumbstick.yAxis.value)) * 32767)
+        }
+        if let pad = controller?.extendedGamepad {
+            output.pointee.left_trigger = max(output.pointee.left_trigger, pad.leftTrigger.value)
+            output.pointee.right_trigger = max(output.pointee.right_trigger, pad.rightTrigger.value)
+        }
+    }
+
     private var currentIntentGeneration: UInt64 {
         lock.lock(); defer { lock.unlock() }; return intentGeneration
     }
@@ -397,7 +611,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .running || phase == .starting else { return }
         lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
-        phase = .paused; releaseButtons()
+        phase = .paused; releaseButtons(); dolphinMotion.stop()
         diagnostics.phase = "pause requested"
         LibraryController.shared.configure(enabled: true, ownsInput: true)
         if phase3Controller != nil { ir_phase3_pause(true); return }
@@ -416,12 +630,15 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func resume() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let owner = lease, phase == .paused else { return }
+        guard let owner = lease, phase == .paused, !dolphinStatePending else { return }
         lock.lock(); intent.resume(); intentGeneration &+= 1; lock.unlock()
         phase = .starting
         diagnostics.phase = "resume requested"
         LibraryController.shared.configure(enabled: true, ownsInput: false)
-        if phase3Controller != nil { ir_phase3_pause(false); phase = phase3Ready ? .running : .starting; return }
+        if phase3Controller != nil {
+            if game?.runtimeID == "dolphin" { dolphinMotion.start(enabled: dolphinSettings.motion) }
+            ir_phase3_pause(false); phase = phase3Ready ? .running : .starting; return
+        }
         if nativePSPController != nil {
             ir_psp_native_resume(); phase = pspReady ? .running : .starting; return
         }
@@ -447,6 +664,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         watchStop(owner)
         if phase3Controller != nil { ir_phase3_stop(); return }
         if nativePSPController != nil { ir_psp_native_stop(); return }
+        if dolphinPreparingJIT { return } // Keep ownership until the helper returns or restart is required.
         if let preparedJIT, !preparedJIT.finished { return } // Its owned cleanup releases this lease.
         queue.async { [self] in
             guard queueOwner == owner, requested == .stop else { return }
@@ -507,21 +725,36 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         progress.phase = failed ? "failed" : "closed"; publishProgress(owner, force: true)
         stopTimer(); stopAudio(); runningGame = nil; saveFolder = nil; queueOwner = nil
         DispatchQueue.main.async {
-            guard self.lease == owner else { return }
-            let restart = self.game?.runtimeID == "play"
-            self.ownership.release(owner, restart: restart)
-            self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
-            self.jitDiagnostic = nil
-            self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
-            self.pspReady = false; self.pspCPUMode = "Not reported"; self.pspJITFallbackReason = nil
-            // Async drain can dismiss the player after its error observer ran.
-            // Preserve an unacknowledged launch/runtime failure at the library.
-            if failed, let error = self.error { LibraryModel.shared.error = error }
-            self.error = nil
-            self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
-            self.phase = restart ? .restartRequired : .idle; self.presented = false
-            LibraryModel.shared.refreshFlag()
+            guard self.lease == owner, !self.finalizing else { return }
+            self.finalizing = true
+            if self.game?.runtimeID == "dolphin", self.dolphinJITRequested {
+                self.phase = .stopping
+                self.stopWatch = UUID() // The engine stopped; the shared helper has its own bounded wait.
+                self.phase3Status = "Closing the shared JIT session"
+                JITCoordinator.shared.releaseAttachedDebugger { clean in
+                    guard self.lease == owner else { return }
+                    if clean { self.finishComplete(owner, failed: failed) }
+                    else { self.requireRestart(owner) }
+                }
+            } else { self.finishComplete(owner, failed: failed) }
         }
+    }
+
+    @MainActor private func finishComplete(_ owner: IridiumRuntimeLease, failed: Bool) {
+        guard lease == owner else { return }
+        let restart = self.game?.runtimeID == "play"
+        self.ownership.release(owner, restart: restart)
+        self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
+        self.jitDiagnostic = nil
+        self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
+        self.pspReady = false; self.pspCPUMode = "Not reported"; self.pspJITFallbackReason = nil
+        // Async drain can dismiss the player after its error observer ran.
+        // Preserve an unacknowledged launch/runtime failure at the library.
+        if failed, let error = self.error { LibraryModel.shared.error = error }
+        self.error = nil
+        self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
+        self.phase = restart ? .restartRequired : .idle; self.presented = false
+        LibraryModel.shared.refreshFlag()
     }
 
     private func requireRestart(_ owner: IridiumRuntimeLease) {
@@ -617,14 +850,21 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
     func setConsolePointer(_ point: CGPoint?, size: CGSize) {
         lock.lock(); defer { lock.unlock() }
+        if game?.platform == .wii {
+            guard intent.request == .play, let point, size.width > 0, size.height > 0,
+                  point.x.isFinite, point.y.isFinite else { consolePointer = (0, 0, false); return }
+            consolePointer = (Int16(max(-1, min(1, point.x / size.width * 2 - 1)) * 32767),
+                              Int16(max(-1, min(1, point.y / size.height * 2 - 1)) * 32767), true)
+            return
+        }
         guard intent.request == .play, let point,
               let projected = Iridium3DSTouchProjection.project(point: point, size: size) else {
             consolePointer = (0, 0, false); return
         }
         consolePointer = (projected.0, projected.1, true)
     }
-    private func fillPhase3Input(_ value: UnsafeMutablePointer<IRPhase3Input>) {
-        let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad
+    private func fillPhase3Input(_ value: UnsafeMutablePointer<IRPhase3Input>, controller: GCController? = GCController.current ?? GCController.controllers().first) {
+        let pad = controller?.extendedGamepad
         lock.lock(); defer { lock.unlock() }
         guard intent.request == .play else { value.pointee = IRPhase3Input(); return }
         var right = rightAnalog
@@ -655,15 +895,15 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         digitalInput.acknowledge(sample.digital)
     }
 
-    private func input() -> InputSample {
+    private func input(controller: GCController? = GCController.current ?? GCController.controllers().first) -> InputSample {
         // Polling leaves Madeira's existing controller handlers untouched.
         // Physical taps wholly between these samples still need a native event
         // path; touch and keyboard callbacks already feed every edge above.
         var physical: UInt16 = 0
         var stick: (Int16, Int16) = (0, 0)
-        if let pad = (GCController.current ?? GCController.controllers().first)?.extendedGamepad {
-            if pad.buttonA.isPressed { physical |= backend == .sameBoy ? 1 << 8 : 1 }
-            if pad.buttonB.isPressed { physical |= backend == .sameBoy ? 1 : 1 << 8 }
+        if let pad = controller?.extendedGamepad {
+            if pad.buttonA.isPressed { physical |= backend == .psp ? 1 : 1 << 8 }
+            if pad.buttonB.isPressed { physical |= backend == .psp ? 1 << 8 : 1 }
             if pad.buttonMenu.isPressed { physical |= 1 << 3 }
             if pad.buttonOptions?.isPressed == true { physical |= 1 << 2 }
             if pad.dpad.up.isPressed { physical |= 1 << 4 }
@@ -671,8 +911,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             if pad.dpad.left.isPressed { physical |= 1 << 6 }
             if pad.dpad.right.isPressed { physical |= 1 << 7 }
             if backend == .psp || backend == .advanced {
-                if pad.buttonX.isPressed { physical |= 1 << 1 }
-                if pad.buttonY.isPressed { physical |= 1 << 9 }
+                if pad.buttonX.isPressed { physical |= backend == .advanced ? 1 << 9 : 1 << 1 }
+                if pad.buttonY.isPressed { physical |= backend == .advanced ? 1 << 1 : 1 << 9 }
                 if pad.leftShoulder.isPressed { physical |= 1 << 10 }
                 if pad.rightShoulder.isPressed { physical |= 1 << 11 }
                 stick = (Int16(max(-1, min(1, pad.leftThumbstick.xAxis.value)) * 32767),

@@ -1,6 +1,7 @@
 """Phase 3 build reuse and corresponding-source boundaries."""
 import importlib.util
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -22,6 +23,457 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 
 class Phase3Tests(unittest.TestCase):
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for Dolphin launch checks')
+    def test_dolphin_launch_requires_shared_jit_and_preserves_cancellation(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        launch = source[source.index('    @MainActor private func openPhase3('):source.index('        guard let frameworks =', source.index('    @MainActor private func openPhase3('))]
+        settings = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumDolphinSettings.swift').read_text()
+        settings = settings[settings.index('struct IridiumDolphinSettings:'):settings.index('/// Sensor samples')]
+        fixture = r'''import Foundation
+struct IRDolphinOptions { var resolution: Int32, aspect: Int32, remote: Int32, players: Int32; var dual_core: Bool, use_jit: Bool, muted: Bool }
+SETTINGS
+typealias IridiumRuntimeLease = Int
+struct IridiumConsoleGame { var runtimeID = "dolphin"; var id = UUID() }
+enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: String { "JIT required" } }
+@MainActor final class JITCoordinator {
+    static let shared = JITCoordinator()
+    var callback: ((Result<Void, Error>) -> Void)?
+    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        precondition(requiresAttachedDebugger); callback = completion
+    }
+    func finish(_ result: Result<Void, Error>) { let saved = callback; callback = nil; saved?(result) }
+}
+final class Queue { func async(execute: () -> Void) { execute() } }
+@MainActor final class Host {
+    enum Request { case play, stop }
+    var requested = Request.play, dolphinPreparingJIT = false, dolphinJITRequested = false
+    var lease = 1, phase3Status = "", dolphinSettings = IridiumDolphinSettings()
+    var nativeStarts = 0, completions = 0, error: String?
+    let queue = Queue()
+    func complete(_ owner: Int) { precondition(owner == lease); completions += 1 }
+    func fail(_ message: String, owner: Int) { error = message; complete(owner) }
+LAUNCH
+        nativeStarts += 1
+    }
+    func start(_ ready: Bool? = nil) {
+        let url = URL(fileURLWithPath: "/fixture")
+        openPhase3(game: IridiumConsoleGame(), url: url, folder: url, system: url, owner: lease, dolphinJITReady: ready)
+    }
+}
+MainActor.assumeIsolated {
+    // Legacy per-game JIT=false must not erase mute, saves or other settings.
+    let id = UUID()
+    let legacy = Data(#"{"resolution":2,"aspect":1,"remote":2,"players":3,"dualCore":false,"motion":false,"jit":false,"muted":true}"#.utf8)
+    UserDefaults.standard.set(legacy, forKey: "Dolphin.\(id)")
+    defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
+    let restored = IridiumDolphinSettings.load(id)
+    precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
+    let failed = Host(); failed.start()
+    precondition(failed.nativeStarts == 0 && failed.dolphinPreparingJIT && failed.dolphinJITRequested)
+    JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
+    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT Setup"))
+    precondition(!failed.dolphinPreparingJIT)
+    let cancelled = Host(); cancelled.start(); cancelled.requested = .stop
+    JITCoordinator.shared.finish(.success(()))
+    precondition(cancelled.nativeStarts == 0 && cancelled.completions == 1)
+    let stale = Host(); stale.start(); stale.lease = 2
+    JITCoordinator.shared.finish(.success(()))
+    precondition(stale.nativeStarts == 0 && stale.completions == 0)
+    let ready = Host(); ready.start(); JITCoordinator.shared.finish(.success(()))
+    precondition(ready.nativeStarts == 1 && ready.error == nil && !ready.dolphinPreparingJIT)
+    let invalid = Host(); invalid.start(false)
+    precondition(invalid.nativeStarts == 0 && invalid.completions == 1)
+}
+'''.replace('SETTINGS', settings).replace('LAUNCH', launch)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'main.swift'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['swiftc', str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin native JIT gate')
+    def test_dolphin_native_boot_rejects_missing_or_failed_jit(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
+        gate = source[source.index('    if(!options.use_jit||!prepareNativeJIT())'):source.index('    DolphinAnalytics::Instance().ReportDolphinStart')]
+        gate = gate.replace('[self finish]', 'finish()')
+        fixture = r'''#include <cassert>
+#include <atomic>
+#include "IRDolphinAPI.h"
+namespace PowerPC { enum class CPUCore { JITARM64 }; }
+enum class VertexLoaderType { Native };
+namespace Config {
+enum Key { MAIN_CPU_CORE,MAIN_FASTMEM,MAIN_FASTMEM_ARENA,MAIN_DSP_HLE,MAIN_DSP_JIT,MAIN_GFX_BACKEND,MAIN_AUDIO_BACKEND,GFX_VERTEX_LOADER_TYPE };
+static int writes=0;
+template<class T> void SetCurrent(Key,T) { ++writes; }
+}
+#include <string>
+#define BACKEND_COREAUDIO "CoreAudio"
+static unsigned probes=0,boots=0,stops=0,errors=0,verified=0;
+static bool probeResult=false;
+struct Player {
+    IRDolphinOptions options{};std::atomic<bool> jitVerified{false};unsigned generation=1;
+    bool prepareNativeJIT(){++probes;return probeResult;}
+    void event(unsigned,unsigned kind,const char*){if(kind==3)++errors;if(kind==5)++verified;}
+    void finish(){++stops;}
+    void boot(){
+GATE
+        ++boots;
+    }
+};
+int main(){
+    Player p;p.boot();assert(!probes&&!boots&&stops==1&&errors==1&&!Config::writes);
+    p.options.use_jit=true;p.boot();assert(probes==1&&!boots&&stops==2&&errors==2&&!Config::writes&&!p.jitVerified);
+    probeResult=true;p.boot();assert(probes==2&&boots==1&&stops==2&&errors==2&&verified==1&&p.jitVerified);
+}
+'''.replace('GATE', gate)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'main.cpp'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['c++', '-std=c++20', '-I', str(ROOT / 'iridium/apps/ios/RuntimeBridge'), str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('clang++') and (ROOT / 'vendor/Dolphin/Source/Core/Core/PowerPC/Interpreter/Interpreter_FPUtils.h').is_file(), 'Dolphin source and Clang required')
+    def test_dolphin_interpreter_preserves_guest_rounding_modes(self):
+        recipe = (ROOT / 'ci/phase3-targets.cmake').read_text()
+        flags = {}
+        for target in ('core', 'common'):
+            match = re.search(r'target_compile_options\(' + target + r' PRIVATE ([^)]+)\)', recipe)
+            self.assertIsNotNone(match, target + ' must retain the floating-point build contract')
+            flags[target] = match.group(1).split()
+        self.assertEqual(flags['core'], flags['common'])
+        source = (ROOT / 'vendor/Dolphin/Source/Core/Core/PowerPC/Interpreter/Interpreter_FPUtils.h').read_text()
+        conversion = source[source.index('inline float ForceSingle('):source.index('inline double ForceDouble(')]
+        fixture = r'''#include <bit>
+#include <cfenv>
+#include <cmath>
+#include <cstdint>
+#include <cassert>
+using u64=uint64_t;using u32=uint32_t;
+struct UReg_FPSCR { bool NI=false; };
+struct { bool bFlushToZero=true; } cpu_info;
+namespace Common {
+constexpr u64 DOUBLE_EXP=0x7ff0000000000000ULL,DOUBLE_FRAC=0xfffffffffffffULL,DOUBLE_SIGN=0x8000000000000000ULL;
+float FlushToZero(float x) { return std::fpclassify(x)==FP_SUBNORMAL?std::copysign(0.f,x):x; }
+}
+''' + conversion + r'''
+int main() {
+    UReg_FPSCR fpscr;
+    const double halfway=1.0+0x1p-24;
+    const int modes[]={FE_TONEAREST,FE_DOWNWARD,FE_UPWARD,FE_TOWARDZERO};
+    const u32 positive[]={0x3f800000,0x3f800000,0x3f800001,0x3f800000};
+    const u32 negative[]={0xbf800000,0xbf800001,0xbf800000,0xbf800000};
+    for(unsigned n=0;n<4;++n) {
+        assert(std::fesetround(modes[n])==0);
+        assert(std::bit_cast<u32>(ForceSingle(fpscr,halfway))==positive[n]);
+        assert(std::bit_cast<u32>(ForceSingle(fpscr,-halfway))==negative[n]);
+    }
+    assert(std::fesetround(FE_TONEAREST)==0);
+    fpscr.NI=true;
+    assert(std::bit_cast<u32>(ForceSingle(fpscr,0x1p-130))==0);
+    assert(std::bit_cast<u32>(ForceSingle(fpscr,-0x1p-130))==0x80000000);
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'rounding.cpp'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['clang++', '-std=c++20', '-O3', *flags['core'], str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for controller reconnect checks')
+    def test_dolphin_controller_slots_reuse_disconnects_without_player_aliasing(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        slots = source[source.index('    private func updateDolphinControllers('):source.index('    private func fillDolphinInput(')]
+        inputs = source[source.index('    private func fillPhase3Input('):source.index('    private func startTimer(')]
+        fixture = '''import Foundation
+final class Button { var isPressed = false }
+final class Axis { var value: Float = 0 }
+final class Stick { let xAxis = Axis(), yAxis = Axis() }
+final class DPad { let up = Button(), down = Button(), left = Button(), right = Button() }
+final class Pad {
+    let buttonA = Button(), buttonB = Button(), buttonX = Button(), buttonY = Button(), buttonMenu = Button()
+    let leftShoulder = Button(), rightShoulder = Button(), leftTrigger = Button(), rightTrigger = Button()
+    var buttonOptions: Button? = Button(), leftThumbstickButton: Button? = Button(), rightThumbstickButton: Button? = Button()
+    let dpad = DPad(), leftThumbstick = Stick(), rightThumbstick = Stick()
+}
+final class GCController {
+    static var current: GCController?
+    static var live: [GCController] = []
+    static func controllers() -> [GCController] { live }
+    var extendedGamepad: Pad? = Pad()
+}
+struct IRPhase3Input {
+    var buttons: UInt16 = 0
+    var right_x: Int16 = 0, right_y: Int16 = 0, pointer_x: Int16 = 0, pointer_y: Int16 = 0
+    var pointer_down = false
+}
+final class Host {
+    enum Backend { case sameBoy, psp, advanced }
+    enum Request { case play, pause }
+    struct Intent { var request = Request.play }
+    let lock = NSLock()
+    var dolphinControllers = [GCController?](repeating: nil, count: 4)
+    var digitalInput = IridiumPolledInput(), intent = Intent(), backend = Backend.advanced
+    var touchAnalog: (Int16, Int16) = (0, 0), keyboardAnalog: (Int16, Int16) = (0, 0), rightAnalog: (Int16, Int16) = (0, 0)
+    var consolePointer: (Int16, Int16, Bool) = (0, 0, false)
+    var suppressController = false
+METHODS
+    func check() {
+        let a = GCController(), b = GCController(), c = GCController(), d = GCController(), e = GCController()
+        updateDolphinControllers([a,b])
+        precondition(dolphinControllers[0] === a && dolphinControllers[1] === b)
+        updateDolphinControllers([b,a])
+        precondition(dolphinControllers[0] === a && dolphinControllers[1] === b)
+        updateDolphinControllers([b])
+        precondition(dolphinControllers[0] == nil && dolphinControllers[1] === b)
+        GCController.current = b; GCController.live = [b]
+        b.extendedGamepad!.buttonA.isPressed = true
+        b.extendedGamepad!.rightTrigger.isPressed = true
+        b.extendedGamepad!.leftThumbstick.xAxis.value = 1
+        b.extendedGamepad!.rightThumbstick.xAxis.value = 1
+        // An empty player-1 slot must not read player 2's live or current controller.
+        let empty = input(controller: dolphinControllers[0])
+        precondition(empty.digital.buttons == 0 && empty.x == 0 && empty.y == 0)
+        var output = IRPhase3Input()
+        withUnsafeMutablePointer(to: &output) { fillPhase3Input($0, controller: dolphinControllers[0]) }
+        precondition(output.buttons == 0 && output.right_x == 0)
+        // Other engines keep their existing default-controller behavior.
+        let selected = input()
+        precondition(selected.digital.buttons & (1 << 8) != 0 && selected.x == 32767)
+        withUnsafeMutablePointer(to: &output) { fillPhase3Input($0) }
+        precondition(output.buttons & (1 << 13) != 0 && output.right_x == 32767)
+        updateDolphinControllers([b,c,d,e])
+        precondition(dolphinControllers[0] === c && dolphinControllers[1] === b)
+        precondition(dolphinControllers[2] === d && dolphinControllers[3] === e)
+        updateDolphinControllers([a,b,c,d,e])
+        precondition(dolphinControllers.count == 4 && !dolphinControllers.contains { $0 === a })
+        updateDolphinControllers([])
+        precondition(dolphinControllers.allSatisfy { $0 == nil })
+        for _ in 0..<20 {
+            let replacement = GCController()
+            updateDolphinControllers([replacement])
+            precondition(dolphinControllers.count == 4 && dolphinControllers[0] === replacement)
+        }
+    }
+}
+Host().check()
+'''.replace('METHODS', slots + inputs)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'main.swift'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['swiftc', str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumPolledInput.swift'),
+                            str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run([str(binary)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('c++') and (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').is_file(), 'Dolphin source and C++ compiler required')
+    def test_dolphin_allocator_calls_shared_memory_service(self):
+        native = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
+        bridge = native[native.index('extern "C" void *ir_dolphin_jit_prepare('):native.index('static bool dolphinAlert(')]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            generated = builder.generated('dolphin', folder)
+            memory = (generated / 'MemoryUtil_iOS_LuckTXM.cpp').read_text()
+            allocation = memory[memory.index('constexpr size_t EXECUTABLE_REGION_SIZE'):memory.index('ptrdiff_t AllocateWritableRegionAndGetDiff_LuckTXM()')] + '}\n'
+            main = folder / 'allocator.cpp'
+            main.write_text(r'''#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include "IRDolphinAPI.h"
+using u8=unsigned char;using vm_address_t=uintptr_t;using vm_prot_t=int;using kern_return_t=int;
+constexpr int PROT_READ=1,PROT_WRITE=2,PROT_EXEC=4,MAP_ANON=1,MAP_PRIVATE=2,KERN_SUCCESS=0,VM_INHERIT_DEFAULT=0;
+static void* const MAP_FAILED=reinterpret_cast<void*>(-1);
+static u8 pages[8192];static int requests=0;static bool mapFails=false,prepareFails=false;
+struct Player { IRDolphinJITPrepare prepareJIT=nullptr; };static Player* active=nullptr;
+''' + bridge + r'''
+static void* sharedPrepare(void* address,size_t bytes) {
+  ++requests;assert(address==nullptr && bytes==536870912);
+  return mapFails?MAP_FAILED:prepareFails?nullptr:pages;
+}
+static int mprotect(void*,size_t,int) {return 0;}
+static int mach_task_self() {return 0;}
+static int vm_remap(int,vm_address_t* address,size_t,int,bool,int,vm_address_t,bool,vm_prot_t*,vm_prot_t*,int) {
+  *address=reinterpret_cast<vm_address_t>(pages+4096);return 0;
+}
+struct lwmem_region_t {void* address;size_t size;};
+static size_t lwmem_assignmem(lwmem_region_t*) {return 1;}
+static const char* LastStrerrorString() {return "fixture";}
+template<class... T> static void PanicAlertFmt(const char*,T...) {}
+''' + allocation + r'''
+int main() {
+  Player owner;active=&owner;
+  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==0);
+  owner.prepareJIT=sharedPrepare;mapFails=true;
+  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==1 && !g_rx_region);
+  mapFails=false;
+  owner.prepareJIT=sharedPrepare;prepareFails=true;
+  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==2 && !g_rx_region);
+  prepareFails=false;Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
+  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
+  assert(g_rx_region==pages && g_rw_region_diff==4096);
+}
+''')
+            executable=folder/'allocator'
+            subprocess.run(['c++','-std=c++17','-I',str(ROOT/'iridium/apps/ios/RuntimeBridge'),str(main),'-o',str(executable)],check=True,timeout=30)
+            subprocess.run([str(executable)],check=True,timeout=5)
+
+    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin installer tests')
+    def test_dolphin_installer_reports_cleanup_and_blocks_uncertain_reuse(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
+        install = source[source.index('[](const char *root,const char *wad,IRDolphinCompletion completion)'):source.index('};return &api;')]
+        install = install.replace('DOLHostQueueRunAsync(^{', 'DOLHostQueueRunAsync([=]{')
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory);main = folder / 'install.cpp'
+            main.write_text('''#include <atomic>
+#include <cassert>
+#include <functional>
+#include <string>
+#include "IRDolphinAPI.h"
+struct Player { std::atomic<bool> ended{false}; };static Player* active=nullptr;
+static std::atomic<bool> maintenanceUncertain{false};
+static bool initThrows=false,installThrows=false,shutdownThrows=false,installed=true;
+static bool result=false,restart=false;static int callbacks=0,shutdowns=0;
+static void dolphinAlert() {}
+namespace Common { void RegisterMsgAlertHandler(void(*)()) {} }
+namespace Core {
+  enum class State { Uninitialized, Running };static State state=State::Uninitialized;
+  struct System { static System& GetInstance(){ static System s;return s;} };
+  State GetState(System&) { return state; }
+}
+namespace UICommon {
+  void SetUserDirectory(const std::string&) {} void CreateDirectories() {}
+  void Init() { if(initThrows)throw 1; }
+  void Shutdown() { ++shutdowns;if(shutdownThrows)throw 1; }
+}
+namespace WiiUtils { bool InstallWAD(const std::string&) { if(installThrows)throw 1;return installed; } }
+static void DOLHostQueueRunAsync(std::function<void()> work) { work(); }
+static void completed(bool ok,bool needsRestart,const char*) { result=ok;restart=needsRestart;++callbacks; }
+int main() {
+  auto install=''' + install + ''';
+  install("save","wad",completed);assert(callbacks==1 && result && !restart && shutdowns==1);
+  installed=false;install("save","wad",completed);assert(callbacks==2 && !result && !restart && shutdowns==2);
+  installThrows=true;install("save","wad",completed);assert(callbacks==3 && !result && !restart && shutdowns==3);
+  installThrows=false;initThrows=true;install("save","wad",completed);assert(callbacks==4 && !result && restart && maintenanceUncertain);
+  initThrows=false;install("save","wad",completed);assert(callbacks==5 && !result && restart && shutdowns==3);
+  maintenanceUncertain=false;shutdownThrows=true;install("save","wad",completed);
+  assert(callbacks==6 && !result && restart && maintenanceUncertain && shutdowns==4);
+  maintenanceUncertain=false;shutdownThrows=false;Core::state=Core::State::Running;
+  install("save","wad",completed);assert(callbacks==7 && !result && !restart && shutdowns==4);
+}
+''')
+            executable = folder / 'install'
+            subprocess.run(['c++', '-std=c++17', '-I', str(ROOT / 'iridium/apps/ios/RuntimeBridge'), str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin profile tests')
+    def test_dolphin_controller_extension_is_a_name_not_a_boolean(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
+        assignment = next(line.strip() for line in source.splitlines() if 'profile->Set("Extension",' in line)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            main = folder / 'profile.cpp'
+            main.write_text('''#include <cassert>
+#include <string>
+struct Profile {
+    std::string value;
+    void Set(const char*, const std::string& text) { value=text; }
+    void Set(const char*, bool) { value="True"; }
+};
+struct Player { struct { int remote; } options; };
+int main() {
+    Profile config;auto profile=&config;Player player;auto p=&player;
+    const char* expected[]={"None","Nunchuk","Classic"};
+    for(int mode=0;mode<3;++mode) {
+        p->options.remote=mode;
+''' + assignment + '''
+        assert(config.value==expected[mode]);
+    }
+}
+''')
+            executable = folder / 'profile'
+            subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
+
+    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin input boundary tests')
+    def test_dolphin_inputs_preserve_players_signed_axes_triggers_and_motion(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
+        sample = source[source.index('static void sampleController('):source.index('\n@implementation')]
+        buttons = sorted(set(re.findall(r'\b(?:BUTTON|STICK|TRIGGER|WIIMOTE|NUNCHUK|CLASSIC)_[A-Z0-9_]+\b', sample)))
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            main = folder / 'input.cpp'
+            main.write_text('''#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <cmath>
+#include <initializer_list>
+#include <map>
+#include "IRDolphinAPI.h"
+namespace ciface::iOS {
+enum ButtonType { ''' + ','.join(buttons) + ''' };
+struct StateManager {
+    std::map<std::pair<int,ButtonType>,bool> buttons;
+    std::map<std::pair<int,ButtonType>,float> axes;
+    static StateManager* GetInstance() { static StateManager manager; return &manager; }
+    void SetButtonPressed(int id,ButtonType button,bool value) { buttons[{id,button}]=value; }
+    void SetAxisValue(int id,ButtonType axis,float value) { axes[{id,axis}]=value; }
+};
+}
+struct IRDolphinPlayer {
+    IRDolphinOptions options{}; IRDolphinPoll dolphinInput; IRPhase3Poll input;
+    std::atomic<unsigned> inputSamples{};
+};
+''' + sample + '''
+static void poll(unsigned player,IRDolphinInput* sample) {
+    sample->controls.buttons=(player==0?(1<<8)|(1<<12):1)|(player==1?(1<<11):0)|(player==2?(1<<13):0)|(player==3?(1<<14):0);
+    sample->controls.left_x=-16384; sample->controls.left_y=-8192;
+    sample->controls.right_x=8192; sample->controls.right_y=16384;
+    sample->left_trigger=0.3f;sample->right_trigger=0.7f;
+    sample->controls.pointer_down=true;sample->controls.pointer_x=16384;sample->controls.pointer_y=-8192;
+    sample->acceleration[0]=-12.3f;sample->acceleration[2]=9.81f;sample->rotation[1]=-2.5f;
+}
+int main() {
+    using namespace ciface::iOS;
+    IRDolphinPlayer player;player.options.players=4;player.dolphinInput=poll;
+    auto manager=StateManager::GetInstance();sampleController(&player);
+    assert(player.inputSamples==1);
+    assert(manager->buttons[std::make_pair(0,BUTTON_A)]);
+    assert(!manager->buttons[std::make_pair(0,BUTTON_B)]);
+    assert(manager->buttons[std::make_pair(1,BUTTON_B)]);
+    assert(manager->buttons[std::make_pair(7,WIIMOTE_BUTTON_B)]);
+    assert(manager->buttons[std::make_pair(4,WIIMOTE_SHAKE_X)]);
+    // The upstream Touchscreen axes apply -1 for left/up themselves.
+    assert(manager->axes[std::make_pair(0,STICK_MAIN_LEFT)]==-0.5f);
+    assert(manager->axes[std::make_pair(0,STICK_MAIN_RIGHT)]==-0.5f);
+    assert(manager->axes[std::make_pair(0,STICK_MAIN_UP)]==-0.25f);
+    assert(manager->axes[std::make_pair(4,WIIMOTE_IR_RIGHT)]==0.5f);
+    assert(manager->axes[std::make_pair(4,WIIMOTE_IR_UP)]==-0.25f);
+    assert(manager->axes[std::make_pair(0,TRIGGER_L)]==0.3f);
+    assert(manager->axes[std::make_pair(0,TRIGGER_R)]==0.7f);
+    assert(manager->axes[std::make_pair(4,WIIMOTE_ACCEL_RIGHT)]==-12.3f);
+    assert(manager->axes[std::make_pair(4,NUNCHUK_ACCEL_UP)]==9.81f);
+    assert(manager->axes[std::make_pair(4,WIIMOTE_GYRO_ROLL_LEFT)]==-2.5f);
+    assert(manager->buttons[std::make_pair(1,BUTTON_Z)]);
+    assert(!manager->buttons[std::make_pair(2,BUTTON_Z)]);
+    assert(manager->axes[std::make_pair(1,TRIGGER_R)]==0.7f);
+    assert(manager->buttons[std::make_pair(6,WIIMOTE_BUTTON_HOME)]);
+    assert(manager->buttons[std::make_pair(7,WIIMOTE_BUTTON_HOME)]);
+    player.options.remote=2;sampleController(&player);
+    assert(!manager->buttons[std::make_pair(6,WIIMOTE_BUTTON_HOME)]);
+    assert(manager->buttons[std::make_pair(7,CLASSIC_BUTTON_HOME)]);
+    assert(manager->buttons[std::make_pair(5,CLASSIC_BUTTON_ZR)]);
+    assert(!manager->buttons[std::make_pair(6,CLASSIC_BUTTON_ZR)]);
+    assert(!manager->buttons[std::make_pair(4,WIIMOTE_SHAKE_X)]);
+    assert(manager->axes[std::make_pair(5,CLASSIC_TRIGGER_R)]==0.7f);
+    player.options.players=1;sampleController(&player);
+    assert(!manager->buttons[std::make_pair(1,BUTTON_B)]);
+    assert(manager->axes[std::make_pair(1,TRIGGER_L)]==0);
+}
+''')
+            executable = folder / 'input'
+            subprocess.run(['c++', '-std=c++17', '-I', str(ROOT / 'iridium/apps/ios/RuntimeBridge'),
+                            str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for native session adapter tests')
     def test_generated_vm_pause_pumps_without_destroying_graphics(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -160,11 +612,119 @@ int main() {
             source.parent.mkdir(parents=True)
             capability = 'backend_info->bSupportsFramebufferFetch = [device supportsFamily:MTLGPUFamilyApple1];'
             source.write_text(capability + '\n')
+            header = root / 'vendor/Dolphin/Source/Core/Common/CodeBlock.h'
+            header.parent.mkdir(parents=True)
+            header.write_text('''#include <cassert>
+#include <cstdlib>
+static int pages = 0, executablePages = 0, aliases = 0;
+namespace Common {
+void* AllocateMemoryPages(size_t n) { ++pages; return malloc(n); }
+void* AllocateExecutableMemory(size_t n) { ++executablePages; return malloc(n); }
+ptrdiff_t AllocateWritableRegionAndGetDiff(void*, size_t) { ++aliases; return 0; }
+void FreeMemoryPages(void* p, size_t) { --pages; free(p); }
+void FreeWritableRegion(void*, size_t, ptrdiff_t) { --aliases; }
+void FreeExecutableMemory(void* p, size_t) { --executablePages; free(p); }
+}
+template<bool executable> struct Block {
+void* region;
+size_t total_region_size;
+ptrdiff_t writable_region_diff = 0;
+void Allocate(size_t size) {
+total_region_size = size;
+if constexpr (executable) region = Common::AllocateExecutableMemory(size);
+else region = Common::AllocateMemoryPages(size);
+    writable_region_diff = Common::AllocateWritableRegionAndGetDiff(region, size);
+}
+void Release() {
+    Common::FreeWritableRegion(region, total_region_size, writable_region_diff);
+    Common::FreeExecutableMemory(region, total_region_size);
+}
+};
+''')
+            state = root / 'vendor/Dolphin/Source/Core/Core/State.cpp'
+            state.parent.mkdir(parents=True)
+            state.write_text('if (s_on_after_load_callback)\n  s_on_after_load_callback();\n')
+            (header.parent / 'MemoryUtil_iOS_LuckTXM.cpp').write_text((ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').read_text())
+            audio_root = root / 'vendor/Dolphin/Source/Core/AudioCommon'
+            audio_root.mkdir(parents=True)
+            (audio_root / 'CoreAudioSoundStream.h').write_text('''#pragma once
+  bool Init() override;
+  AudioUnit audio_unit;
+  int m_volume;
+''')
+            (audio_root / 'CoreAudioSoundStream.cpp').write_text('''#include <AudioUnit/AudioUnit.h>
+OSStatus CoreAudioSound::callback(void* ref_con, AudioUnitRenderActionFlags*,
+                                  const AudioTimeStamp*, UInt32, UInt32, AudioBufferList* io_data)
+{
+  auto* const sound = static_cast<CoreAudioSound*>(ref_con);
+  for (UInt32 i = 0; i < io_data->mNumberBuffers; i++)
+  {
+    const AudioBuffer buffer = io_data->mBuffers[i];
+    sound->m_mixer->Mix(static_cast<short*>(buffer.mData), buffer.mDataByteSize / 4);
+  }
+  return noErr;
+}
+bool CoreAudioSound::Init() {
+  err = AudioUnitSetParameter(audio_unit, kHALOutputParam_Volume, kAudioUnitScope_Output, 0,
+                              m_volume / 100., 0);
+  if (err != noErr)
+    ERROR_LOG_FMT(AUDIO, "error setting volume");
+}
+void CoreAudioSound::SetVolume(int volume) {}
+''')
             with patch.object(builder, 'ROOT', root):
                 generated = builder.generated('dolphin', root / 'output')
                 self.assertIn(capability[:-1] + ' && !TARGET_OS_SIMULATOR;',
                               (generated / 'MTLUtil.mm').read_text())
                 self.assertEqual((generated / 'mbedtls-user-config.h').read_text(),
                                  '#undef MBEDTLS_SELF_TEST\n#undef MBEDTLS_CERTS_C\n')
+                if shutil.which('c++'):
+                    main = root / 'allocator.cpp'
+                    main.write_text('#include <cstddef>\n#include "Common/CodeBlock.h"\n' + '''
+int main() {
+    Block<false> cached; cached.Allocate(4096);
+    assert(pages == 1 && executablePages == 0 && aliases == 0);
+    cached.Release(); assert(pages == 0 && executablePages == 0 && aliases == 0);
+    Block<true> jit; jit.Allocate(4096);
+    assert(pages == 0 && executablePages == 1 && aliases == 1);
+    jit.Release(); assert(pages == 0 && executablePages == 0 && aliases == 0);
+}
+''')
+                    executable = root / 'allocator'
+                    subprocess.run(['c++', '-std=c++17', '-DIPHONEOS', '-I', str(generated / 'include'),
+                                    str(main), '-o', str(executable)], check=True, timeout=30)
+                    subprocess.run([str(executable)], check=True, timeout=5)
+                    audio = (generated / 'CoreAudioSoundStream.cpp').read_text()
+                    callback = audio[audio.index('OSStatus CoreAudioSound::callback'):audio.index('bool CoreAudioSound::Init()')]
+                    volume = audio[audio.index('void CoreAudioSound::SetVolume'):audio.index('CoreAudioSound::~CoreAudioSound')]
+                    main.write_text('''#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <cstring>
+using UInt32=unsigned;using OSStatus=int;using AudioUnitRenderActionFlags=unsigned;
+struct AudioTimeStamp {};constexpr int noErr=0;
+struct AudioBuffer { void* mData;unsigned mDataByteSize; };
+struct AudioBufferList { unsigned mNumberBuffers;AudioBuffer mBuffers[1]; };
+struct Mixer { void Mix(short* out,unsigned frames) {
+  for(unsigned n=0;n<frames*2;++n)out[n]=n%2?-32768:32767;
+} };
+struct CoreAudioSound {
+  std::atomic<int> m_volume{100};Mixer mixer;Mixer* m_mixer=&mixer;
+  static OSStatus callback(void*,AudioUnitRenderActionFlags*,const AudioTimeStamp*,UInt32,UInt32,AudioBufferList*);
+  void SetVolume(int);
+};
+''' + callback + volume + '''
+int main() {
+  CoreAudioSound sound;short samples[4];AudioBufferList buffers{1,{{samples,sizeof samples}}};
+  for(int gain : {100,50,0,-1,200}) {
+    sound.SetVolume(gain);CoreAudioSound::callback(&sound,nullptr,nullptr,0,2,&buffers);
+    int expected=std::clamp(gain,0,100);
+    assert(samples[0]==32767*expected/100 && samples[1]==-32768*expected/100);
+    assert(samples[2]==samples[0] && samples[3]==samples[1]);
+  }
+}
+''')
+                    subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+                    subprocess.run([str(executable)], check=True, timeout=5)
                 source.write_text('upstream changed\n')
                 with self.assertRaises(ValueError): builder.generated('dolphin', root / 'output')

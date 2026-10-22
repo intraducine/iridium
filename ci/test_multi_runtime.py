@@ -88,6 +88,87 @@ class SameBoyBuildTests(unittest.TestCase):
 
 
 class MultiRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for library launch routing')
+    def test_play_routes_dolphin_to_owned_jit_without_extra_confirmation(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
+        launch = source[source.index('    private func launch(_ game:'):source.index('    private func options(_ game:')]
+        marker = '.onChange(of: jitState.enabled) { _, enabled in'
+        start = source.index(marker) + len(marker)
+        continuation = source[start:source.index('\n            }', start)]
+        fixture = r'''import Foundation
+struct LibraryEntry { let id = UUID() }
+struct IridiumGame {
+    var windows: LibraryEntry?
+    var console: IridiumConsoleGame?
+    init(console: IridiumConsoleGame) { self.console = console }
+    init(windows: LibraryEntry) { self.windows = windows }
+    var id: UUID { console?.id ?? windows!.id }
+}
+@MainActor final class Session {
+    var busy = false
+    func validateLaunchAdmission() throws { if busy { throw IridiumRuntimeError.busy } }
+}
+@MainActor final class Library { var error: String? }
+@MainActor final class JITState { var enabled = false; var showSetup = false }
+@MainActor var nativeStarts: [UUID] = []
+@MainActor struct IridiumConsoleDriver {
+    init(game: IridiumConsoleGame) throws {}
+    func launch(gameID: UUID) throws { nativeStarts.append(gameID) }
+}
+@MainActor struct IridiumWindowsDriver {
+    let start: (LibraryEntry) -> Void
+    func launch(gameID: UUID) throws { start(LibraryEntry()) }
+}
+@MainActor final class Host {
+    let consoleSession = Session(), library = Library(), jitState = JITState(), jit = JITState()
+    var lastLaunchNeedsSupport = false, pendingSupportGame: IridiumConsoleGame?
+    var enables = 0, windows = 0
+    func enableJIT() { enables += 1 }
+    func play(_ game: LibraryEntry) { windows += 1 }
+LAUNCH
+    func start(_ game: IridiumConsoleGame) { launch(IridiumGame(console: game)) }
+    func enabledChanged(_ enabled: Bool) {
+CONTINUATION
+    }
+}
+@main struct Check {
+    @MainActor static func main() {
+        for platform in [IridiumPlatform.wii, .gameCube, .psp] {
+            for enabled in [false, true] {
+                let host = Host(); host.jitState.enabled = enabled
+                let runtime = platform == .psp ? "ppsspp" : "dolphin"
+                let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
+                    runtimeID: runtime, fileExtension: "iso", importedAt: Date())
+                let count = nativeStarts.count; host.start(game)
+                precondition(nativeStarts.count == count + 1 && nativeStarts.last == game.id)
+                precondition(host.enables == 0 && host.pendingSupportGame == nil && host.library.error == nil)
+            }
+        }
+        for (platform, runtime) in [(IridiumPlatform.playStation2, "play"), (.dreamcast, "flycast")] {
+            let host = Host(), game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
+                runtimeID: runtime, fileExtension: "iso", importedAt: Date())
+            let count = nativeStarts.count; host.start(game)
+            precondition(host.enables == 1 && host.pendingSupportGame?.id == game.id && nativeStarts.count == count)
+            host.jitState.enabled = true; host.enabledChanged(true)
+            precondition(host.pendingSupportGame == nil && nativeStarts.count == count + 1 && nativeStarts.last == game.id)
+            host.enabledChanged(true); precondition(nativeStarts.count == count + 1)
+        }
+        let blocked = Host(); blocked.consoleSession.busy = true
+        let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: .wii,
+            runtimeID: "dolphin", fileExtension: "iso", importedAt: Date())
+        let count = nativeStarts.count; blocked.start(game)
+        precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
+        print("PASS shipping Play: Dolphin/PSP own JIT; other required engines auto-enable once; busy admission retained")
+    }
+}
+'''.replace('LAUNCH', launch).replace('CONTINUATION', continuation)
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory); unit = folder / 'check.swift'; unit.write_text(fixture)
+            binary = folder / 'check'
+            subprocess.run(['swiftc', '-parse-as-library', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
+                            str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'), str(unit), '-o', str(binary)], check=True, timeout=60)
+            subprocess.run([str(binary)], check=True, timeout=10)
+
     def test_live_target_includes_core_sources_and_guards(self):
         spec = importlib.util.spec_from_file_location('runtime_overlay', ROOT / 'ci/madeira-frontend.py')
         overlay = importlib.util.module_from_spec(spec)
@@ -142,6 +223,7 @@ final class TouchControlsModel {
 final class Preflight {
     enum Phase { case idle, restartRequired }
     var phase = Phase.idle
+    var dolphinMaintenance = false
     var ownership = IridiumRuntimeOwnership()
 ADMISSION
     func acquire(_ game: IridiumConsoleGame) throws -> IridiumRuntimeLease {
@@ -163,6 +245,7 @@ func rejects(_ expected: IridiumRuntimeError) {
 let first = try preflight.acquire(game)
 rejects(.busy)
 preflight.ownership.release(first)
+preflight.dolphinMaintenance = true; rejects(.busy); preflight.dolphinMaintenance = false
 LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
 LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
 TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)

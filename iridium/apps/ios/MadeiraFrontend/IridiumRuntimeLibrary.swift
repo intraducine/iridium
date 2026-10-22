@@ -30,7 +30,8 @@ struct IridiumGame: Identifiable {
     }
     func launch(gameID: UUID) throws {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
-        guard !IridiumConsoleSession.shared.isActive else { throw IridiumRuntimeError.busy }
+        guard !IridiumConsoleSession.shared.isActive, !IridiumConsoleSession.shared.dolphinMaintenance else { throw IridiumRuntimeError.busy }
+        guard IridiumConsoleSession.shared.phase != .restartRequired else { throw IridiumRuntimeError.restartRequired }
         guard let game = LibraryModel.shared.entries.first(where: { $0.id == gameID }) else { throw IridiumRuntimeError.invalidGame }
         start(game) // Madeira may enable JIT and continue asynchronously.
     }
@@ -197,7 +198,7 @@ struct IridiumConsoleOptions: View {
     private var runtimeDescription: String {
         guard let runtime = resolvedRuntime else { return "This game’s emulator is unavailable." }
         switch runtime.id {
-        case "dolphin": return "Some GameCube and Wii games may run slowly."
+        case "dolphin": return "Dolphin requires the shared JIT system. Each launch checks that JIT works before the game starts."
         case "azahar": return "Some 3DS games may run slowly."
         case "play": return "Fully close and reopen Iridium after finishing a PlayStation 2 game."
         default: return ""
@@ -241,7 +242,6 @@ struct IridiumConsoleOptions: View {
                         }.disabled(library.working)
                     }
                     if !runtimeDescription.isEmpty { Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary) }
-                    if resolvedRuntime?.jit == .required { IridiumJITSetupButton() }
                     if game.platform == .psp {
                         Toggle("Faster CPU (JIT)", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
                             var changed = currentGame; changed.pspJIT = value; library.update(changed)
@@ -250,9 +250,9 @@ struct IridiumConsoleOptions: View {
                         .accessibilityIdentifier("psp-use-jit")
                         Text("Off by default. If JIT is unavailable, this game uses the interpreter.")
                             .font(.footnote).foregroundStyle(.secondary)
-                        if currentGame.pspJITEnabled { IridiumJITSetupButton() }
                     }
                 }
+                if game.runtimeID == "dolphin" { IridiumDolphinGameOptions(game: currentGame) }
                 Section("Controls") {
                     IridiumGameControlsButton(target: .init(platform: game.platform, title: artwork.title(IridiumGame(console: currentGame)), gameID: game.id))
                 }

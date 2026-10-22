@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
 
-struct IridiumJITSetupButton: View {
-    var body: some View {
-        Button("Set Up JIT", systemImage: "bolt") { JITCoordinator.shared.showSetup = true }
-    }
-}
-
 struct IridiumCapabilitiesView: View {
     @ObservedObject private var state = LibraryJITState.shared
     @ObservedObject private var coordinator = JITCoordinator.shared
@@ -18,10 +12,10 @@ struct IridiumCapabilitiesView: View {
                 Group {
 
             Section {
-                LabeledContent("JIT", value: state.enabled ? "Enabled for this session" : "Not enabled")
-                Text("JIT helps games run faster. Windows, PlayStation 2, Dreamcast and arcade games require it.")
+                LabeledContent("JIT", value: state.enabled ? "Active for this session" : "Not active")
+                Text("JIT helps games run faster. Windows, GameCube, Wii, PlayStation 2, Dreamcast and arcade games require it.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("Set Up JIT", systemImage: "bolt") { showingJITSetup = true }
+                Button("JIT Settings", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)
                 if !state.enabled {
                     Button("Enable JIT", action: enableJIT).disabled(coordinator.busy)
@@ -34,7 +28,7 @@ struct IridiumCapabilitiesView: View {
                     }
                 }
             } header: { Text("JIT · Faster Execution") } footer: {
-                Text("Enable JIT again after closing and reopening Iridium.")
+                Text("Games that need JIT enable it when you press Play.")
             }
             #if !targetEnvironment(simulator)
             Section {
