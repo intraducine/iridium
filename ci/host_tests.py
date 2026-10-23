@@ -107,7 +107,7 @@ def main():
         print('Source-check reuse unavailable.', flush=True)
     print('No passed source checks match this commit and host tools; running the tests.', flush=True)
     subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'ci', '-p', 'test_*.py'],
-                   cwd=ROOT, check=True)
+                   cwd=ROOT, check=True, timeout=20 * 60)
 
 
 if __name__ == '__main__':

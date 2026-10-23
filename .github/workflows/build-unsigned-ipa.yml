@@ -51,6 +51,7 @@ jobs:
         run: |
           python3 check-public-source.py
           python3 ci/check-standards.py
+          command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
           python3 ci/host_tests.py --reuse
       - name: Prepare Apple Silicon build tools
         run: |

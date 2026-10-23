@@ -100,7 +100,7 @@ class HostTestReuseTests(unittest.TestCase):
                     patch('sys.stdout', new_callable=io.StringIO):
                 with self.assertRaises(subprocess.CalledProcessError): host.main()
                 suite.assert_called_once_with([sys.executable, '-B', '-m', 'unittest', 'discover',
-                                               '-s', 'ci', '-p', 'test_*.py'], cwd=host.ROOT, check=True)
+                                               '-s', 'ci', '-p', 'test_*.py'], cwd=host.ROOT, check=True, timeout=1200)
 
     def test_stuck_source_check_has_bounded_wait_then_runs_tests(self):
         with patch.object(sys, 'argv', ['host_tests.py', '--reuse']), \
