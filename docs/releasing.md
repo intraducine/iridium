@@ -46,14 +46,27 @@ a release. When publication is explicitly authorized, use the reviewed file as
 first, inspect the actual assets and description, then publish deliberately.
 Do not use a placeholder command as proof that publication happened.
 
+## Test builds and release builds
+
+Manual IPA builds default to fast test mode. This builds the same complete app
+and keeps source, component, privacy, package-blocker and signature checks.
+It skips the full corresponding-source archive and release audit uploads.
+Use this mode for development and device tests.
+
+A release candidate requires `release_build=true` in Actions or
+`python3 ci/dispatch-build.py --release`. This adds source collection, the
+component manifest, link audit and archive checksum gate. It does not publish.
+Do not use a test artifact as a public release without these matching materials
+and checks. The build mode does not change upstream license or source obligations.
+
 ## Release sequence
 
 1. Select an exact source commit after review and green source checks. Review
    outstanding issues, `ci/binary-release-blockers.json` (build readiness), and
    `ci/binary-package-blockers.json` (final binary review); never clear entries
    just to make CI green. Record the evidence that resolves each entry.
-2. Start the manual build only when requested. Retain its commit, run URL,
-   dependency revisions, source archive, notices, and checksums. Fix failures
+2. Start the manual build in release mode only when requested. Retain its commit,
+   run URL, dependency revisions, source archive, notices, and checksums. Fix failures
    through reviewed source changes, then choose another manual run.
 3. Audit the actual IPA and corresponding source. Check every nested executable
    is unsigned except the main app's anonymous ad-hoc increased-memory-limit
@@ -92,8 +105,8 @@ References:
 - https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository
 
 The final binary review gate runs after Xcode and before IPA packaging or upload.
-App link maps are generated and retained for 14 days even when that gate
-blocks packaging. A missing or invalid final-review record blocks packaging.
+In release mode, app link maps are generated and retained for 14 days even when
+that gate blocks packaging. A missing or invalid final-review record blocks packaging.
 This permits an audit build without treating it as an approved release.
 
 The audit artifact also records each native binary's bundle-relative path, size,

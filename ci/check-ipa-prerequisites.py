@@ -78,13 +78,13 @@ def required_for_profile(profile):
             if profile == 'legacy' or group != 'legacy runtime host and userland'}
 
 
-def blockers(root, package=False, profile='madeira'):
+def blockers(root, package=False, profile='madeira', test_build=False):
     result = []
     for group, paths in required_for_profile(profile).items():
         missing = [p for p in paths if not (root / p).is_file() or not (root / p).stat().st_size]
         if missing:
             result.append(f"{group}: missing " + ", ".join(missing))
-    if package and profile == 'madeira-frontend':
+    if package and profile == 'madeira-frontend' and not test_build:
         output = root / '.build/ipa-output'
         try:
             manifest = json.loads((output / 'COMPONENT-MANIFEST.json').read_text())
@@ -117,9 +117,12 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', action='store_true')
+    parser.add_argument('--test-build', action='store_true', help='Skip the release source archive gate for a test IPA')
     parser.add_argument('--profile', choices=('madeira', 'legacy', 'madeira-frontend'), default='madeira')
     args = parser.parse_args()
-    problems = blockers(ROOT, package=args.package, profile=args.profile)
+    if args.test_build and (not args.package or args.profile != 'madeira-frontend'):
+        parser.error('--test-build requires --package --profile madeira-frontend')
+    problems = blockers(ROOT, package=args.package, profile=args.profile, test_build=args.test_build)
     if problems:
         print("Unsigned IPA packaging is blocked." if args.package else
               "Unsigned IPA build is not ready. No app was built or uploaded.")

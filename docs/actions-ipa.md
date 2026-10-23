@@ -37,6 +37,17 @@ Push the reviewed commit, then use:
 python3 ci/dispatch-build.py
 ```
 
+This defaults to a fast test build. It builds the complete app and checks the
+IPA, but skips the full source archive and release audit uploads. Source checks,
+component validation, privacy checks, package blockers and signature checks stay
+on.
+
+For a release candidate, use `python3 ci/dispatch-build.py --release`, or set
+`release_build=true` in GitHub. This also collects and checks the full matching
+source archive and retains the link audit. This mode does not publish a release.
+Use a release build for public distribution; do not promote a test artifact
+without the matching source and release checks. See [the release policy](releasing.md).
+
 The command builds the current branch and passes its full commit as
 `expected_sha`. It checks the actual dispatched commit and cancels a mismatched
 run. The workflow also checks this value before downloads or compilation.
@@ -107,8 +118,8 @@ frontend and console sources and verify Swift, Clang and zstd before running the
 suite. This job tests source and host fixtures; application and IPA builds remain
 manual.
 
-The workflow records the final app's Mach-O, PE and ELF files and its static
-link inputs. It collects the exact repository and initialized dependency
+With `release_build=true`, the workflow records the final app's Mach-O, PE and ELF
+files and its static link inputs. It collects the exact repository and initialized dependency
 snapshots, FreeType source, locked LLVM and runtime source archives, pairing
 crate sources, generators, build instructions and notices into
 `Iridium-corresponding-source.tar.gz`. Source collection fetches and verifies the
@@ -126,11 +137,12 @@ in the archive. The privacy scan accepts only the reviewed path and bytes in
 `ci/public-signing-fixtures.json`; changed or additional signing files fail both
 the scan and source collection. The unused archive manifest also requires exact
 paths and hashes; changed bytes fail exclusion. Other private-data checks remain in force.
-An unknown binary, absent runtime link map, missing source input or unresolved
-entry in the repository's build/package blocker records stops IPA upload.
+In release mode, an unknown binary, absent runtime link map or missing source
+input stops IPA upload. Unresolved build/package blocker records stop both modes.
 
-Retained artifacts include the IPA and signature report, the matching source
-package and checksum, and link maps with the binary inventory. Actions artifacts
+Both modes retain the IPA, checksum and signature report. Release mode also
+retains the matching source package and checksum, and link maps with the binary
+inventory. Actions artifacts
 expire. For a public release, host the matching source package and required
 notices permanently beside the IPA. Follow [the release policy](releasing.md).
 
