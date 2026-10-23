@@ -40,6 +40,10 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
+      - name: Select pinned Xcode
+        run: |
+          test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
+          echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
       - name: Initialize the pinned runtime sources
         run: |
           git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP

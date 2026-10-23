@@ -177,6 +177,19 @@ class ManualBuildTests(unittest.TestCase):
         self.assertIn('if [ "$RELEASE_BUILD" = true ]', gate)
         self.assertIn('--package --test-build', gate)
 
+    def test_source_checks_and_ipa_select_the_same_xcode_before_tools(self):
+        selected = []
+        for filename, next_step in (('source-checks.yml', 'Check out the pinned frontend'),
+                                    ('build-unsigned-ipa.yml', 'Initialize the pinned runtime')):
+            workflow = (ROOT / '.github/workflows' / filename).read_text()
+            pin = re.search(r'      - name: Select pinned Xcode\n(.*?)(?=      - )', workflow, re.S)
+            self.assertIsNotNone(pin)
+            self.assertIn('test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild', pin[1])
+            self.assertIn('echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"', pin[1])
+            self.assertLess(pin.start(), workflow.index('name: ' + next_step))
+            selected.append(pin[1])
+        self.assertEqual(*selected)
+
     def test_default_and_legacy_dispatch_use_the_same_complete_build(self):
         import contextlib
         import io

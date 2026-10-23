@@ -28,6 +28,11 @@ upstream iOS 26 minimum. Use external JIT on earlier versions.
 ## GitHub Actions
 
 Builds are manual. Source checks can run on pushes and pull requests.
+Both workflows select `/Applications/Xcode_27.app/Contents/Developer` (Xcode
+27.0) before checking tools or building. A runner image's default Xcode change
+must not change the compiler silently. A missing pinned Xcode stops the job.
+Update this selection deliberately in both workflows. Compiler and SDK changes
+still require matching new component artifacts and source-check results.
 Every workflow build includes all integrated engines, including Dolphin,
 Azahar, Play!, and Flycast. Select `main` or the reviewed branch intended for
 testing, and check its exact commit when selecting source-check results.
