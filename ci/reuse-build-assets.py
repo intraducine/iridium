@@ -36,7 +36,9 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
 
 COMPONENT_INPUTS = {
     'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
-                       'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
+                       'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
+                       'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
+                       'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
     'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
                         'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
     # App UI, docs, and tools are not inputs to the native compiler recipes.
@@ -60,6 +62,9 @@ COMPONENT_INPUTS = {
                'testrepos/Madeira/research/remote-metal',
                'testrepos/Madeira/app/Madeira/Winios',
                'ci/prepare-native-runtime.sh', 'ci/prepare-runtime-inputs.sh',
+               'ci/madeira-frontend.py', 'ci/madeira_audio_volume.py',
+               'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
+               'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
                'iridium/apps/ios/Scripts/build_media_runtime.sh',
                'ci/apply-fex-runtime-corrections.py',
                'ci/patches/rpmalloc-compact-runtime.patch',
@@ -87,7 +92,7 @@ COMPONENT_INPUTS = {
 # In particular, compiler helpers are not an allowlist that can miss new code.
 FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tree',
                                     'prepare', 'verify', 'app', 'check_bundle'))
-FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex',
+FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
                               'time', 'sys', 'tempfile', 'madeira_presentation'))
 # This reviewed route cannot run app preparation during a compiler action.

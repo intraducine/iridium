@@ -3208,6 +3208,8 @@ struct LibraryHUD: View {
         .focusable().focusEffectDisabled().focused($menuKeyboard)
         .onAppear { menuKeyboard = true }
         .onKeyPress(.escape, phases: .down) { _ in iridiumMenuNavigate("back"); return .handled }
+        .onKeyPress(.leftArrow) { guard IridiumPlayerMenuNavigation.ownsCommands(page: menuPage, nativeEditor: bindsPage) else { return .ignored }; iridiumMenuNavigate("left"); return .handled }
+        .onKeyPress(.rightArrow) { guard IridiumPlayerMenuNavigation.ownsCommands(page: menuPage, nativeEditor: bindsPage) else { return .ignored }; iridiumMenuNavigate("right"); return .handled }
         .onKeyPress(.upArrow) { guard IridiumPlayerMenuNavigation.ownsCommands(page: menuPage, nativeEditor: bindsPage) else { return .ignored }; iridiumMenuNavigate("up"); return .handled }
         .onKeyPress(.downArrow) { guard IridiumPlayerMenuNavigation.ownsCommands(page: menuPage, nativeEditor: bindsPage) else { return .ignored }; iridiumMenuNavigate("down"); return .handled }
         .onKeyPress(.return, phases: .down) { _ in guard IridiumPlayerMenuNavigation.ownsCommands(page: menuPage, nativeEditor: bindsPage) else { return .ignored }; iridiumMenuNavigate("accept"); return .handled }
@@ -3223,6 +3225,7 @@ struct LibraryHUD: View {
     private func iridiumMenuActivate(_ title: String) {
         switch title {
         case "Resume": model.menu = false
+        case "Volume": break
         case "Controls": menuPage = "Controls"; menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls"
         case "Hide Touch Controls", "Show Touch Controls":
             controls.visible.toggle(); menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls"
@@ -3263,6 +3266,9 @@ struct LibraryHUD: View {
             return
         }
         guard menuPage == "Session" else { return }
+        if menuFocus == "Volume", command == "left" || command == "right" {
+            IridiumGameAudio.shared.adjust(command); return
+        }
         let order = IridiumSessionMenuActions.items(windows: true).map { $0.0 } + ["Close Game"]
         if ["up", "down", "left", "right"].contains(command) {
             menuGuided = true

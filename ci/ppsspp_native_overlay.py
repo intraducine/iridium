@@ -49,6 +49,10 @@ def apply(name, text):
     if name in gl_sync.PATCHED: return gl_sync.apply(name, text)
     if name in sensors.PATCHED: return sensors.apply(name, text)
     if name == picker.NAME: return picker.apply(text)
+    if name == 'ios/iOSCoreAudio.mm':
+        text = '#include "IRAudioVolume.h"\n' + text
+        return replace(text, '\tNativeMix(output, inNumberFrames, SAMPLE_RATE, nullptr);',
+            '\tNativeMix(output, inNumberFrames, SAMPLE_RATE, nullptr);\n\tir_audio_volume_apply_i16(output, static_cast<size_t>(inNumberFrames) * 2);')
     if name == 'CMakeLists.txt':
         text = replace(text, 'set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")',
                        'if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)\n\t\t\tset(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")\n\t\tendif()')
@@ -245,7 +249,7 @@ def apply(name, text):
     return executable.apply(name, frontend.apply(name, callbacks.apply(name, text)))
 
 
-PATCHED = ('Common/CodeBlock.h', 'Common/Arm64Emitter.cpp', 'CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED, *executable.PATCHED)
+PATCHED = ('Common/CodeBlock.h', 'Common/Arm64Emitter.cpp', 'CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/iOSCoreAudio.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED, *executable.PATCHED)
 
 
 def stage(source, destination):

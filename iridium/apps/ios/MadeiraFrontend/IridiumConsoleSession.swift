@@ -112,6 +112,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             let owner = try ownership.acquire(runtime)
             lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
             releaseButtons()
+            IridiumGameAudio.shared.begin(game.id, legacyMuted: game.runtimeID == "dolphin" && IridiumDolphinSettings.load(game.id).muted == true)
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
@@ -1213,9 +1214,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             return
         }
         buffer.frameLength = AVAudioFrameCount(frame.audio_frames)
+        let volume = ir_audio_volume_get()
         for index in 0..<Int(frame.audio_frames) {
-            channels[0][index] = Float(samples[index * 2]) / 32768
-            channels[1][index] = Float(samples[index * 2 + 1]) / 32768
+            channels[0][index] = Float(samples[index * 2]) / 32768 * volume
+            channels[1][index] = Float(samples[index * 2 + 1]) / 32768 * volume
         }
         lock.lock()
         guard intent.request == .play, audioGeneration == generation else {

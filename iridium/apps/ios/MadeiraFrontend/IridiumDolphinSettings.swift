@@ -13,7 +13,7 @@ struct IridiumDolphinSettings: Codable, Equatable {
     var muted: Bool?
     var native: IRDolphinOptions {
         IRDolphinOptions(resolution: Int32(resolution), aspect: Int32(aspect), remote: Int32(remote),
-                         players: Int32(players), dual_core: dualCore, use_jit: false, muted: muted == true)
+                         players: Int32(players), dual_core: dualCore, use_jit: false, muted: false)
     }
     static func load(_ game: UUID) -> Self {
         guard let data = UserDefaults.standard.data(forKey: "Dolphin.\(game)"),

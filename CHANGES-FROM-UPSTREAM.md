@@ -898,3 +898,11 @@ New numeric duplicate categories are 31 (thread), 32 (thread list), 33 (process)
 34 (exception type), 35 (required registers), 36 (other register), and 37 (other
 metadata). Code 38 refuses malformed expedited-memory metadata. Code 9 remains
 valid for older receipts. These records contain no remote key, address or bytes.
+
+The shared player menu has a saved volume level for each game. The host applies
+that gain to SameBoy and Wine's final PCM output. The native PSP, Dolphin and
+shared Libretro player apply the same level in their own final audio callbacks.
+Checked overlays preserve the upstream mixers and device audio settings. Native
+player loading requires the additive volume entry point, so older components
+cannot silently ignore the slider. Existing Dolphin mute preferences become a
+zero initial volume until the user changes that game's level.

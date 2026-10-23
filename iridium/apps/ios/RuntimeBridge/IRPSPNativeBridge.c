@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRPSPNativeBridge.h"
+#include "IRAudioVolume.h"
 #include <dlfcn.h>
 #include <stddef.h>
 #include <fcntl.h>
@@ -211,6 +212,7 @@ void *ir_psp_native_open(const char *component, const char *game, const char *me
                          const char *assets, bool jit, IRPSPNativeEvent event, IRPSPNativeInput input)
 {
     if (!game || !memory_stick || !assets || !event || !input || !load(component, NULL)) return NULL;
+    if (!ir_audio_volume_bind(handle, "ir_native_psp_set_volume")) return NULL;
     // Objective-C classes and native globals cannot safely be unloaded with dlclose.
     return api.create(game, memory_stick, assets, jit, event, input);
 }

@@ -14,6 +14,7 @@ import os
 import time
 import sys
 import tempfile
+import madeira_audio_volume
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
@@ -189,10 +190,10 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -252,7 +253,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')
@@ -266,6 +267,9 @@ def check_psp_jit_interface(record):
                 '_ir_native_psp_exec_cancel', '_ir_native_psp_exec_end'}.issubset(record.get('exports', []))
         or record.get('diagnosticHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest()
         or record.get('executableMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest()
+        or '_ir_native_psp_set_volume' not in record.get('exports', [])
+        or record.get('audioVolumeHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest()
+        or record.get('compiledInputSHA256', {}).get('Iridium/IRAudioVolume.c') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest()
         or record.get('adapterSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRPSPExecutableMemory.cpp') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRJITExecutionProbe.c') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()):
@@ -403,7 +407,13 @@ def run_checked_recipe(name, env=None):
     """Keep upstream retries, but never install outputs after failed compilation."""
     text = (UPSTREAM / 'build' / name / 'build.sh').read_text()
     if name == 'ntdll-unix':
+        generated_audio = OUTPUT / 'embedding/audio_null_ios.c'
+        generated_audio.parent.mkdir(parents=True, exist_ok=True)
+        original_audio = UPSTREAM / 'build/ntdll-unix/audio_null_ios.c'
+        generated_audio.write_text(madeira_audio_volume.apply(original_audio.read_text()))
         patches = [
+            ('compile_one "$BUILD_DIR/audio_null_ios.c" "audio_null_ios"',
+             'compile_one ' + shlex.quote(str(generated_audio)) + ' "audio_null_ios"'),
             ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
              'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/ntdll-unix'))),
             ('echo "Results: $SUCCEEDED succeeded, $FAILED failed"',
@@ -616,7 +626,8 @@ def native_inputs():
                 ('native_source_inventory', native_source_inventory), ('native_source_identity', native_source_identity),
                 ('run_checked_recipe', run_checked_recipe), ('stage_crypto_libraries', stage_crypto_libraries))},
             'files': {name: file_digest(ROOT / name) for name in (
-                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py')},
+                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
+                'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h')},
             'cryptoLibraries': list(CRYPTO_LIBRARIES), 'tools': tools, 'upstreamSources': native_source_identity()}
 
 

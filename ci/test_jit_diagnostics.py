@@ -53,6 +53,8 @@ import Foundation
             root = Path(directory); data = root / 'logs'; data.mkdir()
             bridge = root / 'bridge.o'
             subprocess.run(['clang', '-c', str(BRIDGE / 'IRPSPNativeBridge.c'), '-o', str(bridge)], check=True)
+            audio = root / 'audio.o'
+            subprocess.run(['clang', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(audio)], check=True)
             main = root / 'check.swift'; main.write_text(fixture)
             runtime = root / 'RuntimeDiagnosticLogFiles.swift'
             runtime.write_text((ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift').read_text().replace(
@@ -62,7 +64,7 @@ import Foundation
             command = ['swiftc', '-swift-version', '5', '-parse-as-library', '-module-cache-path', str(root / 'cache'),
                        '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                        str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumJITDiagnostic.swift'),
-                       str(runtime), str(main), str(bridge), '-o', str(binary)]
+                       str(runtime), str(main), str(bridge), str(audio), '-o', str(binary)]
             result = subprocess.run(command, capture_output=True, text=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             subprocess.run([str(binary), str(data)], check=True, timeout=20)
@@ -134,12 +136,14 @@ import Foundation
             root = Path(directory); data = root / 'logs'; data.mkdir()
             bridge = root / 'bridge.o'
             subprocess.run(['clang', '-c', str(BRIDGE / 'IRPSPNativeBridge.c'), '-o', str(bridge)], check=True)
+            audio = root / 'audio.o'
+            subprocess.run(['clang', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(audio)], check=True)
             main = root / 'checks.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/RuntimeSupport'
             subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
                             '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                             str(support / 'IridiumJITDiagnostic.swift'), str(support / 'IridiumJITRequest.swift'),
-                            str(main), str(bridge), '-o', str(binary)], check=True)
+                            str(main), str(bridge), str(audio), '-o', str(binary)], check=True)
             subprocess.run([str(binary), str(data)], check=True, timeout=20)
 
     def test_production_preflight_failure_stages_and_no_false_capability(self):
@@ -356,12 +360,14 @@ import Foundation
             subprocess.run(['clang', '-shared', '-fPIC', '-I', str(BRIDGE), str(source), '-o', str(library)], check=True)
             bridge = root / 'bridge.o'
             subprocess.run(['clang', '-c', str(BRIDGE / 'IRPSPNativeBridge.c'), '-o', str(bridge)], check=True)
+            audio = root / 'audio.o'
+            subprocess.run(['clang', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(audio)], check=True)
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/RuntimeSupport'
             subprocess.run(['swiftc', '-parse-as-library', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
                             '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                             str(support / 'IridiumJITDiagnostic.swift'), str(support / 'IridiumJITRequest.swift'),
-                            str(main), str(bridge), '-o', str(binary)], check=True)
+                            str(main), str(bridge), str(audio), '-o', str(binary)], check=True)
             subprocess.run([str(binary), str(data), str(library)], check=True, timeout=20)
 
     @unittest.skipUnless(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'Apple Silicon host required')
@@ -504,7 +510,7 @@ int main(int argc, char **argv) {
             source = root / 'check.c'; source.write_text(fixture)
             binary = root / 'check'
             subprocess.run(['clang', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', str(BRIDGE),
-                            str(source), '-lpthread', '-ldl', '-o', str(binary)], check=True)
+                            str(source), str(BRIDGE / 'IRAudioVolume.c'), '-lpthread', '-ldl', '-o', str(binary)], check=True)
             subprocess.run([str(binary), str(data)], check=True, timeout=20)
 
     def test_prepared_api_version_mismatch_never_calls_old_component(self):
@@ -541,7 +547,7 @@ int main(int argc,char **argv){
             for version,expected,end in [(1,'IR_PSP_EXEC_UNAVAILABLE',0),(2,'IR_PSP_EXEC_UNAVAILABLE',0),(3,'73',75)]:
                 lib=root/f'version{version}.dylib';exe=root/f'check{version}';logs=root/f'logs{version}';logs.mkdir()
                 subprocess.run(['clang','-shared','-fPIC','-I',str(BRIDGE),f'-DVERSION={version}',str(root/'component.c'),'-o',str(lib)],check=True)
-                subprocess.run(['clang','-I',str(BRIDGE),f'-DEXPECTED={expected}',f'-DEND_RESULT={end}',str(root/'main.c'),str(BRIDGE/'IRPSPNativeBridge.c'),'-o',str(exe)],check=True)
+                subprocess.run(['clang','-I',str(BRIDGE),f'-DEXPECTED={expected}',f'-DEND_RESULT={end}',str(root/'main.c'),str(BRIDGE/'IRPSPNativeBridge.c'),str(BRIDGE/'IRAudioVolume.c'),'-o',str(exe)],check=True)
                 subprocess.run([str(exe),str(lib),str(logs)],check=True,timeout=15)
         print('PASS real loader: v1/v2 rejected without invoking cached old callbacks; allocation API v3 negotiated')
 
@@ -612,7 +618,7 @@ DIAGNOSTIC
                     logs = data / ('logs-' + str(index)); logs.mkdir()
                     source = data / 'main.c'; source.write_text(fixture.replace('EXPECTED', str(expected)))
                     binary = data / 'check'
-                    subprocess.run(['clang', '-I', str(BRIDGE), str(source),
+                    subprocess.run(['clang', '-I', str(BRIDGE), str(source), str(BRIDGE / 'IRAudioVolume.c'),
                                     '-ldl', '-lpthread', '-o', str(binary)], check=True)
                     subprocess.run([str(binary), str(lib), str(logs), refused], check=True, timeout=10)
                     text = (logs / 'iridium-psp-jit-stages.log').read_text()

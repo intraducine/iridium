@@ -22,16 +22,18 @@ SPEC.loader.exec_module(BUILD)
 class FrontendImportTests(unittest.TestCase):
     def test_psp_jit_interface_rejects_stale_component_before_preparation(self):
         record = {
-            'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+            'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
             'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
+            'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
             'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
             'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
-            'compiledInputSHA256': {'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
+            'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
         }
         BUILD.check_psp_jit_interface(record)
         for change in ({'exports': []}, {'exports': ['_ir_native_psp_check_jit']},
                        *({'exports': [name for name in record['exports'] if name != missing]}
-                         for missing in ('_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic')),
+                         for missing in ('_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_set_volume')),
+                       {'audioVolumeHeaderSHA256': '0' * 64},
                        {'diagnosticHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
             with self.assertRaisesRegex(ValueError, 'matching JIT validation'):
                 BUILD.check_psp_jit_interface(dict(record, **change))
@@ -166,11 +168,12 @@ class FrontendImportTests(unittest.TestCase):
             psp_output = root / 'psp-output'; psp_output.mkdir()
             (psp_output / 'component.json').write_text(json.dumps({
                 'revision': BUILD.PSP_REVISION, 'componentType': 'native-ios-player',
-                'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+                'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
                 'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
-            'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
+                'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
+                'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
                 'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
-                'compiledInputSHA256': {'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
+                'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
                 'sha256': hashlib.sha256(component.read_bytes()).hexdigest(),
                 'assetSHA256': {'compat.ini': hashlib.sha256(asset.read_bytes()).hexdigest()},
             }))

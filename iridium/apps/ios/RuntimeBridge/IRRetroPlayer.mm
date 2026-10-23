@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include "libretro.h"
 #include "IRPhase3.h"
+#include "IRAudioVolume.h"
 
 @interface IRRetroSurface : UIView
 @end
@@ -388,6 +389,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         for (UInt32 channel = 0; channel < buffers->mNumberBuffers; ++channel) {
             float *out = (float *)buffers->mBuffers[channel].mData;
             for (UInt32 i = 0; i < count; ++i) out[i] = i < available ? p->samples[((read + i) % audioCapacity) * 2 + std::min(channel, 1u)] / 32768.f : 0;
+            ir_audio_volume_apply_float(out, count);
         }
         p->readAudio.store(mute ? write : read + available, std::memory_order_release); *silent = available == 0; return noErr;
     }];
@@ -510,6 +512,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 }
 @end
 
+extern "C" void ir_native_engine_set_volume(float level) { ir_audio_volume_set(level); }
 extern "C" unsigned ir_native_engine_abi() { return 1; }
 extern "C" void *ir_native_engine_create(const char *name,const char *binary,const char *content,const char *save,const char *assets,bool jit,uint64_t generation,IRPhase3Event event,IRPhase3Poll poll) {
     if(active && !active->stopped.load()) return nullptr;

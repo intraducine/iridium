@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRPhase3.h"
+#include "IRAudioVolume.h"
 #include "IRDolphinAPI.h"
 #include <dlfcn.h>
 #include <stdio.h>
@@ -57,6 +58,9 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
         if (!dolphin || dolphin->version != 1) {
             event(generation, 3, "The bundled Dolphin interface is incomplete."); return NULL;
         }
+    }
+    if (!ir_audio_volume_bind(image, "ir_native_engine_set_volume")) {
+        event(generation, 3, "The bundled player does not support game volume. Reinstall Iridium."); return NULL;
     }
     return create(engine, core, game, save, assets, jit, generation, event, input);
 }

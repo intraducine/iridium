@@ -112,7 +112,22 @@ mkdir -p "$MADEIRA/wine/build-macos"
     make -j"$JOBS" include/all tools/winebuild/winebuild
 )
 for component in wineserver ntdll-unix win32u-unix; do
-    bash "$MADEIRA/build/$component/build.sh"
+    if [ "$component" = ntdll-unix ]; then
+        python3 - "$ROOT" "$MADEIRA" <<'PY_AUDIO'
+import importlib.util
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'ci'))
+spec = importlib.util.spec_from_file_location('madeira_frontend_audio', root / 'ci/madeira-frontend.py')
+frontend = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frontend)
+frontend.UPSTREAM = Path(sys.argv[2])
+frontend.run_checked_recipe('ntdll-unix')
+PY_AUDIO
+    else
+        bash "$MADEIRA/build/$component/build.sh"
+    fi
 done
 
 SHADERS="$MADEIRA/build/dxmt-ios/shader-headers"

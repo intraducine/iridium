@@ -19,7 +19,7 @@ PINS = {
     'play': ('Play', 'fa75cea31a33f5ab7a2008ed0d90dc74353e9cef', '0.77'),
     'flycast': ('Flycast', '5aa091fde632fb332c8d8c34e280d62dc951954c', 'v2.7'),
 }
-NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames')}
+NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames', 'set_volume')}
 DOLPHIN_EXPORTS = NATIVE_EXPORTS | {'_ir_dolphin_api'}
 AZAHAR_DOWNLOADS = {
     'azahar-libretro-ios-arm64-2126.2.zip': '18e78a721884438b11a3588f96d19e09895f0dbb5c716448343ab185972bc451',
@@ -77,6 +77,8 @@ def fixed_inputs(engine):
               'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
+    if engine in ('host', 'dolphin'):
+        names += ['iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h']
     if engine == 'host': names += ['vendor/Flycast/core/deps/libretro-common/include/libretro.h']
     return {name: digest(ROOT / name) for name in names}
 
@@ -161,15 +163,15 @@ def generated(engine, destination):
         audio_overlay.parent.mkdir(parents=True, exist_ok=True)
         audio_overlay.write_text(audio_header)
         # RemoteIO has no HAL output-volume control. Apply gain to its PCM output.
-        audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>')
+        audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>\n#include "IRAudioVolume.h"')
         audio = audio.replace(mix, mix + '''
-    const int volume = sound->m_volume.load(std::memory_order_relaxed);
+    const float volume = sound->m_volume.load(std::memory_order_relaxed) / 100.0f * ir_audio_volume_get();
     auto* samples = static_cast<short*>(buffer.mData);
     if (volume == 0)
       std::memset(samples, 0, buffer.mDataByteSize);
-    else if (volume != 100)
+    else if (volume != 1)
       for (UInt32 sample = 0; sample < buffer.mDataByteSize / sizeof(short); ++sample)
-        samples[sample] = static_cast<short>(static_cast<int>(samples[sample]) * volume / 100);
+        samples[sample] = static_cast<short>(samples[sample] * volume);
 ''')
         audio = audio.replace(initial_volume, '')
         audio = audio[:audio.index('void CoreAudioSound::SetVolume(int volume)')] + '''void CoreAudioSound::SetVolume(int volume)
@@ -421,7 +423,7 @@ def host(sdk):
     arguments = ['xcrun', '--sdk', sdk, 'clang++', '-std=c++17', '-fobjc-arc', '-dynamiclib', '-O2',
         '-target', target, '-isysroot', output('xcrun', '--sdk', sdk, '--show-sdk-path'),
         '-I', ROOT / 'vendor/Flycast/core/deps/libretro-common/include', '-I', BRIDGE,
-        BRIDGE / 'IRRetroPlayer.mm', '-Wl,-exported_symbols_list,' + str(exports),
+        BRIDGE / 'IRRetroPlayer.mm', BRIDGE / 'IRAudioVolume.c', '-Wl,-exported_symbols_list,' + str(exports),
         '-framework', 'UIKit', '-framework', 'AVFAudio', '-framework', 'CoreGraphics',
         '-framework', 'OpenGLES', '-framework', 'QuartzCore', '-install_name', '@rpath/' + binary.name, '-o', binary]
     run(*arguments)

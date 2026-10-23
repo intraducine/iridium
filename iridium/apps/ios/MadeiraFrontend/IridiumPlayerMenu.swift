@@ -177,7 +177,7 @@ struct IridiumSessionMenuActions: View {
     var focused: String?
     let activate: (String) -> Void
     static func items(windows: Bool) -> [(String, String)] {
-        var rows = [("Resume", "play.fill"), ("Controls", "gamecontroller"), ("View Log", "doc.text")]
+        var rows = [("Resume", "play.fill"), ("Volume", "speaker.wave.2"), ("Controls", "gamecontroller"), ("View Log", "doc.text")]
         if windows {
             rows += [("Performance", "chart.xyaxis.line"), ("Advanced", "slider.horizontal.3"), ("Show Device Keyboard", "keyboard")]
         } else { rows += [("Help", "questionmark.circle")] }
@@ -185,7 +185,8 @@ struct IridiumSessionMenuActions: View {
     }
     var body: some View {
         ForEach(Self.items(windows: windows), id: \.0) { title, icon in
-            IridiumPlayerMenuRow(title: title, symbol: icon, selected: focused == title) { activate(title) }
+            if title == "Volume" { IridiumGameVolumeSlider(selected: focused == title) }
+            else { IridiumPlayerMenuRow(title: title, symbol: icon, selected: focused == title) { activate(title) } }
         }
     }
 }

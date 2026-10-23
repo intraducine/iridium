@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRPPSSPPNative.h"
+#include "IRAudioVolume.h"
 #include "IRJITExecutionProbe.h"
 #include "IRPSPExecutableMemory.h"
 #import <UIKit/UIKit.h>
@@ -495,6 +496,7 @@ void ir_native_psp_resume(void) {
 }
 // Requests are accepted on the UI thread and applied by the existing render
 // owner after resume. No UI thread reads or mutates live emulation/config state.
+void ir_native_psp_set_volume(float level) { ir_audio_volume_set(level); }
 bool ir_native_psp_request(unsigned operation, int value) {
     if (!NSThread.isMainThread || !container || !container.initialized || container.closing) return false;
     if (operation == 1 && value >= 1 && value <= 4) {

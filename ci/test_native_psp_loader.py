@@ -19,6 +19,7 @@ class NativePSPLoaderTests(unittest.TestCase):
 #include <stdbool.h>
 static unsigned calls;
 uint32_t ir_native_psp_abi(void) { return ABI; }
+void ir_native_psp_set_volume(float gain) { (void)gain; }
 int ir_native_psp_check_jit(void) { calls |= 16; return 1; }
 void *ir_native_psp_create(const char *g,const char *m,const char *a,bool j,void (*e)(unsigned,const char*),void (*input)(uint16_t*,int16_t*,int16_t*)) {
     e(0,"created"); return (void*)1;
@@ -56,7 +57,7 @@ int main(int argc,char**argv) {
 }
 '''.replace('EXPECTED', '1' if expected else '0'))
             executable = root / 'check-loader'
-            result = subprocess.run(['clang', '-I' + str(BRIDGE), str(harness), str(BRIDGE / 'IRPSPNativeBridge.c'),
+            result = subprocess.run(['clang', '-I' + str(BRIDGE), str(harness), str(BRIDGE / 'IRPSPNativeBridge.c'), str(BRIDGE / 'IRAudioVolume.c'),
                             '-ldl', '-o', str(executable)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             subprocess.run([str(executable), str(lib)], check=True, capture_output=True, timeout=10)
