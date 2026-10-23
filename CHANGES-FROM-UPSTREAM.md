@@ -44,9 +44,19 @@ first slot does not alias another player's controller.
 The app offers per-game settings, five state slots and file export. WAD installs
 require a stopped session and a retained backup, restored after an installation
 failure with confirmed cleanup. Uncertain installer cleanup blocks new games
-and preserves both copies for recovery after restart. Azahar reuses its verified
-official iOS core and matching unified source, with software graphics and
-CPU/shader interpreters. Play!'s generated Libretro entry routes CAppConfig to
+and preserves both copies for recovery after restart. Azahar builds from its
+verified official unified source. Checked Oaknut,
+Dynarmic and shader overlays use the shared JIT memory callback with separate
+writable/executable aliases and cache maintenance. Dynarmic uses checked memory
+instead of taking the shared debugger's Mach exception handlers. An allocator
+execution/rewrite probe runs before boot; separate markers report completed guest
+CPU and shader execution. The native Vulkan renderer owns its device, scheduler
+and presentation queue. Checked frontend overlays connect its Apple surface to
+an iOS CAMetalLayer and report submitted frames to the libretro loop. MoltenVK
+1.4.1 is built from its digest-locked source closure, with original dependency
+notices and corresponding source retained. Input, audio and save handling retain
+the libretro interface. Play!'s generated
+Libretro entry routes CAppConfig to
 the game's save root; existing CodeGen allocation/protection calls now fail
 before execution when Release assertions would disappear. Flycast's generated
 GLSM advertises ES3 when its target compiles HAVE_OPENGLES3. Play!/Flycast probes

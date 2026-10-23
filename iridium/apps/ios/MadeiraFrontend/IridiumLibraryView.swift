@@ -79,8 +79,8 @@ struct IridiumLibraryView: View {
                 try consoleSession.validateLaunchAdmission()
                 let runtime = try IridiumRuntimeRegistry.resolve(platform: console.platform, preferred: console.runtimeID)
                 lastLaunchNeedsSupport = runtime.jit == .required
-                // Dolphin acquires a fresh shared JIT session inside its driver.
-                if lastLaunchNeedsSupport && runtime.id != "dolphin" && !jitState.enabled {
+                // These drivers acquire and close their own shared JIT session.
+                if lastLaunchNeedsSupport && runtime.id != "dolphin" && runtime.id != "azahar" && !jitState.enabled {
                     pendingSupportGame = console; enableJIT(); return
                 }
                 try IridiumConsoleDriver(game: console).launch(gameID: game.id)

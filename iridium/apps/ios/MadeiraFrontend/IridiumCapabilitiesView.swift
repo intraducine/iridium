@@ -13,7 +13,7 @@ struct IridiumCapabilitiesView: View {
 
             Section {
                 LabeledContent("JIT", value: state.enabled ? "Active for this session" : "Not active")
-                Text("JIT helps games run faster. Windows, GameCube, Wii, PlayStation 2, Dreamcast and arcade games require it.")
+                Text("JIT helps games run faster. Windows, GameCube, Wii, Nintendo 3DS, PlayStation 2, Dreamcast and arcade games require it.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("JIT Settings", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)

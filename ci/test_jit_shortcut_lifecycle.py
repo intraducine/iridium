@@ -28,7 +28,9 @@ import Glibc
 #endif
 @MainActor var attached = false
 @MainActor var detachCalls = 0
+@MainActor var fallbackCalls = 0
 @MainActor func isDebuggerAttached() -> Bool { attached }
+func jit_arm_trap_fallback() { DispatchQueue.main.async { fallbackCalls += 1 } }
 enum StikJITHelper {
     static func detachDebugger() { DispatchQueue.main.async { detachCalls += 1 } }
 }
@@ -44,7 +46,7 @@ enum StikJITHelper {
     var enableRequest: UUID?
     var busy = false
     var builtInHelper: UUID?
-    var builtInHelperResult: Bool?
+    var builtInHelperReleased: Bool?
     var builtInHelperReturned: (() -> Void)?
 METHOD
 }
@@ -72,26 +74,37 @@ METHOD
     owned.builtInHelperReturned?()
     precondition(results.isEmpty && network.pending == nil)
     let originalCompletion = owned.builtInHelperReturned!
-    owned.builtInHelperResult = true; originalCompletion()
+    owned.builtInHelperReleased = true; originalCompletion()
     precondition(results.isEmpty && owned.busy && network.pending != nil)
     network.pending?(.done); network.pending = nil
     precondition(results == [true] && !owned.busy && owned.enableRequest == nil)
     originalCompletion()
     precondition(results == [true] && network.pending == nil)
 
+    // P_TRACED can clear while the owned extension still holds its request.
+    let untraced = JITCoordinator()
+    untraced.builtInHelper = UUID(); attached = false
+    var untracedResults: [Bool] = []
+    untraced.releaseAttachedDebugger { untracedResults.append($0) }
+    await settle()
+    precondition(detachCalls == 2 && fallbackCalls == 1 && untracedResults.isEmpty && network.pending == nil)
+    untraced.builtInHelperReleased = true; untraced.builtInHelperReturned?()
+    network.pending?(.done); network.pending = nil
+    precondition(untracedResults == [true] && !untraced.busy)
+
     let failed = JITCoordinator()
-    failed.builtInHelper = UUID(); failed.builtInHelperResult = false
+    failed.builtInHelper = UUID(); failed.builtInHelperReleased = false
     var failures: [Bool] = []
     failed.releaseAttachedDebugger { failures.append($0) }
-    precondition(failures == [false] && failed.busy && network.pending == nil && detachCalls == 1)
+    precondition(failures == [false] && failed.busy && network.pending == nil && detachCalls == 2)
 
     let replaced = JITCoordinator()
-    replaced.builtInHelper = UUID(); replaced.builtInHelperResult = true; attached = true
+    replaced.builtInHelper = UUID(); replaced.builtInHelperReleased = true; attached = true
     replaced.releaseAttachedDebugger { failures.append($0) }
-    precondition(failures == [false, false] && detachCalls == 1)
+    precondition(failures == [false, false] && detachCalls == 2)
 
     let recovery = JITCoordinator()
-    recovery.builtInHelper = UUID(); recovery.builtInHelperResult = true; attached = false
+    recovery.builtInHelper = UUID(); recovery.builtInHelperReleased = true; attached = false
     recovery.releaseAttachedDebugger { failures.append($0) }
     network.pspRecoveryPending = true
     network.pending?(.failed); network.pending = nil
@@ -101,10 +114,10 @@ METHOD
     interrupted.builtInHelper = UUID(); attached = true
     interrupted.releaseAttachedDebugger { failures.append($0) }
     await settle()
-    precondition(detachCalls == 2 && failures.count == 3)
+    precondition(detachCalls == 3 && failures.count == 3)
     try! await Task.sleep(nanoseconds: 10_100_000_000)
     precondition(failures == [false, false, false, false] && interrupted.busy)
-    attached = false; interrupted.builtInHelperResult = true; interrupted.builtInHelperReturned?()
+    attached = false; interrupted.builtInHelperReleased = true; interrupted.builtInHelperReturned?()
     precondition(failures.count == 4 && network.pending == nil)
 }
 Task { @MainActor in await runChecks(); exit(0) }
@@ -113,7 +126,7 @@ dispatchMain()
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); unit = folder / 'main.swift'; unit.write_text(fixture)
             binary = folder / 'check'
-            subprocess.run(['swiftc', str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(unit), '-o', str(binary)], check=True, timeout=30)
             subprocess.run([str(binary)], check=True, timeout=20)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
@@ -213,6 +226,8 @@ NETWORK_METHODS
     var error: String?
     var status: String?
     var connectionProblem: String?
+    var builtInHelper: UUID?
+    var builtInHelperReleased: Bool?
     var loopbackAnswered: Bool?
     var enables = 0
     var resolved: ((Result<Void, Error>) -> Void)?
@@ -298,7 +313,15 @@ StikJITHelper.ready = true
 coordinator.enable { first.append((try? $0.get()) != nil) }
 precondition(first == [false, false, false, false, true] && app.urls.count == beforeReady && !coordinator.busy)
 // A retained Madeira pool is reusable, but cannot answer a fresh Dolphin allocation.
+debuggerAttached = false
+for released: Bool? in [nil, false] {
+    let unfinished = JITCoordinator()
+    unfinished.builtInHelper = UUID(); unfinished.builtInHelperReleased = released
+    unfinished.enable(requiresAttachedDebugger: true) { precondition((try? $0.get()) == nil) }
+    precondition(!unfinished.busy && unfinished.enables == 0)
+}
 let allocatorClient = JITCoordinator()
+allocatorClient.builtInHelper = UUID(); allocatorClient.builtInHelperReleased = true
 var allocatorReady = false
 debuggerAttached = false
 allocatorClient.enable(requiresAttachedDebugger: true) { allocatorReady = (try? $0.get()) != nil }

@@ -30,8 +30,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var dolphinSystemStatus: String?
     private var dolphinSystemFiles: (save: URL, backup: URL, staging: URL)?
     @Published private(set) var dolphinCPUMode = "Waiting for JIT"
-    private var dolphinPreparingJIT = false
-    private var dolphinJITRequested = false
+    private var phase3PreparingJIT = false
+    private var phase3JITRequested = false
     @Published private(set) var dolphinPerformance = "Waiting for speed data"
     @Published private(set) var dolphinStateStatus: String?
     @Published private(set) var dolphinStatePending = false
@@ -116,7 +116,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
             phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
-            dolphinJITRequested = false
+            phase3JITRequested = false
             dolphinCPUMode = "Waiting for JIT"
             dolphinPerformance = "Waiting for speed data"
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
@@ -180,25 +180,27 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         } catch { self.error = error.localizedDescription }
     }
 
-    @MainActor private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease, dolphinJITReady: Bool? = nil) {
-        if game.runtimeID == "dolphin", dolphinJITReady == nil {
-            dolphinSettings = .load(game.id)
-            dolphinPreparingJIT = true; dolphinJITRequested = true; phase3Status = "Preparing Dolphin JIT"
+    @MainActor private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease, phase3JITReady: Bool? = nil) {
+        let ownsSharedJIT = game.runtimeID == "dolphin" || game.runtimeID == "azahar"
+        if ownsSharedJIT, phase3JITReady == nil {
+            if game.runtimeID == "dolphin" { dolphinSettings = .load(game.id) }
+            let name = game.runtimeID == "azahar" ? "Azahar" : "Dolphin"
+            phase3PreparingJIT = true; phase3JITRequested = true; phase3Status = "Preparing \(name) JIT"
             JITCoordinator.shared.enable(requiresAttachedDebugger: true) { result in
-                self.dolphinPreparingJIT = false
+                self.phase3PreparingJIT = false
                 guard self.lease == owner else { return }
                 if self.requested == .stop { self.queue.async { self.complete(owner) }; return }
                 switch result {
                 case .success:
-                    self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, dolphinJITReady: true)
+                    self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, phase3JITReady: true)
                 case .failure(let failure):
-                    let message = "Dolphin needs the shared JIT system. Open JIT Setup and try again. " + failure.localizedDescription
+                    let message = "\(name) needs the shared JIT system. Check JIT Settings and try again. " + failure.localizedDescription
                     self.queue.async { self.fail(message, owner: owner) }
                 }
             }
             return
         }
-        if game.runtimeID == "dolphin", dolphinJITReady != true {
+        if ownsSharedJIT, phase3JITReady != true {
             queue.async { self.fail(IridiumRuntimeError.jitRequired.localizedDescription, owner: owner) }; return
         }
         guard let frameworks = Bundle.main.privateFrameworksURL else {
@@ -235,10 +237,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             error = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
+        if game.runtimeID == "azahar", !ir_phase3_azahar_configure_jit(jit26_prepare_region) {
+            ir_phase3_stop(); error = "The 3DS core could not configure shared JIT."; return
+        }
         if game.runtimeID == "dolphin" {
             dolphinSettings = .load(game.id); dolphinStateStatus = nil; dolphinStatePending = false
             lock.lock(); dolphinControllers = [GCController?](repeating: nil, count: 4); lock.unlock()
-            var options = dolphinSettings.native; options.use_jit = dolphinJITReady == true
+            var options = dolphinSettings.native; options.use_jit = phase3JITReady == true
             guard ir_phase3_dolphin_configure(options, { player, output in
                 guard let output else { return }
                 IridiumConsoleSession.shared.fillDolphinInput(player, output)
@@ -631,6 +636,25 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func resume() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .paused, !dolphinStatePending else { return }
+        if phase3Controller != nil, phase3JITRequested, !isDebuggerAttached() {
+            guard !phase3PreparingJIT else { return }
+            phase3PreparingJIT = true
+            lock.lock(); let generation = intentGeneration; lock.unlock()
+            MainActor.assumeIsolated {
+                JITCoordinator.shared.enable(requiresAttachedDebugger: true) { [weak self] result in
+                    guard let self, self.lease == owner else { return }
+                    self.phase3PreparingJIT = false
+                    if self.requested == .stop { ir_phase3_stop(); return }
+                    self.lock.lock(); let currentGeneration = self.intentGeneration; self.lock.unlock()
+                    guard self.phase == .paused, currentGeneration == generation else { return }
+                    switch result {
+                    case .success: self.error = nil; self.resume()
+                    case .failure(let failure): self.error = failure.localizedDescription
+                    }
+                }
+            }
+            return
+        }
         lock.lock(); intent.resume(); intentGeneration &+= 1; lock.unlock()
         phase = .starting
         diagnostics.phase = "resume requested"
@@ -662,9 +686,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         phase = .stopping; releaseButtons()
         diagnostics.phase = "stop requested"
         watchStop(owner)
+        if phase3PreparingJIT { return } // Its callback stops the engine after JIT returns.
         if phase3Controller != nil { ir_phase3_stop(); return }
         if nativePSPController != nil { ir_psp_native_stop(); return }
-        if dolphinPreparingJIT { return } // Keep ownership until the helper returns or restart is required.
         if let preparedJIT, !preparedJIT.finished { return } // Its owned cleanup releases this lease.
         queue.async { [self] in
             guard queueOwner == owner, requested == .stop else { return }
@@ -727,7 +751,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             guard self.lease == owner, !self.finalizing else { return }
             self.finalizing = true
-            if self.game?.runtimeID == "dolphin", self.dolphinJITRequested {
+            if self.phase3JITRequested {
                 self.phase = .stopping
                 self.stopWatch = UUID() // The engine stopped; the shared helper has its own bounded wait.
                 self.phase3Status = "Closing the shared JIT session"
