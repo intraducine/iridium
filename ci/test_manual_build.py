@@ -154,9 +154,12 @@ class ManualBuildTests(unittest.TestCase):
         self.assertNotIn('if [', initialize)
         self.assertIn('git submodule update --init --depth 1 vendor/Azahar', initialize)
         self.assertIn('git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast', initialize)
-        engines = step('Prepare Dolphin, Azahar, Play!, and Flycast')
-        self.assertNotIn('\n        if:', engines)
-        self.assertIn('python3 ci/build-phase3.py --engine all --sdk iphoneos', engines)
+        for engine in ('psp', 'sameboy', 'host', 'dolphin', 'azahar', 'play', 'flycast'):
+            engines = step('Compile ' + engine)
+            self.assertNotIn('\n        if:', engines)
+            self.assertIn('python3 ci/engine-components.py ' + engine, engines)
+            self.assertLess(text.index('Retain ' + engine + ' compilation'), text.index('name: Build without signing'))
+        self.assertIn('--reuse-psp-component', step('Build without signing'))
         self.assertIn('IRIDIUM_PHASE3: "1"', step('Build without signing'))
 
     def test_default_and_legacy_dispatch_use_the_same_complete_build(self):

@@ -83,6 +83,17 @@ def build(output, sdk=None, target=None):
     else:
         cc, nm, ar = os.environ.get('CC', 'cc'), 'nm', 'ar'
         platform = []
+    compiler = run([cc, '--version']).strip()
+    sdk_build = run(['xcrun', '--sdk', sdk, '--show-sdk-build-version']).strip() if sdk else None
+    try:
+        previous = verify_component(output)
+        if (previous.get('sdk') == sdk and previous.get('target') == target
+                and previous.get('compiler') == compiler and previous.get('platformFlags') == platform
+                and previous.get('sdkBuildVersion') == sdk_build):
+            print('Reusing verified SameBoy:', output / 'libIridiumSameBoy.a')
+            return output / 'libIridiumSameBoy.a'
+    except (OSError, ValueError, KeyError):
+        pass
     # The official core has its own complete Libretro adapter. No RetroArch or
     # libretro-common implementation is required by this pinned release.
     boots = read_bootroms(CORE)
@@ -142,6 +153,7 @@ def build(output, sdk=None, target=None):
     (output / 'source-manifest.json').write_text(json.dumps({
         'revision': REVISION, 'version': version, 'sourceCount': len(sources),
         'definedSymbols': len(actual), 'jit': False, 'sdk': sdk, 'target': target,
+        'compiler': compiler, 'platformFlags': platform, 'sdkBuildVersion': sdk_build,
         'audioRate': 'frontend RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE',
         'compilerFlags': [flag.replace(str(ROOT), '$IRIDIUM_SOURCE') for flag in flags],
         'adapterSHA256': hashlib.sha256((CORE / 'libretro/libretro.c').read_bytes()).hexdigest(),

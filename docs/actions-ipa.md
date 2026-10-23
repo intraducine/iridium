@@ -52,16 +52,23 @@ no maintainer account or signing credentials are used.
 
 ## Saved build outputs
 
-Successful native and i386 builds are uploaded **before** app compilation and
-packaging. Each compiler stage has its own artifact, retained for 14 days.
+Successful Madeira native/i386, PSP, SameBoy, shared player, Dolphin, Azahar,
+Play! and Flycast builds are uploaded **before** app compilation and packaging.
+Each compiler stage has its own artifact, retained for 14 days. PSP's saved
+output includes FFmpeg/MoltenVK's linked player, resources, notices and locked
+source archives. Console outputs retain generated inputs needed by source audits.
+An app-only edit restores these components without invoking their compilers.
+Each component's source, adapter, recipe and toolchain still invalidate its output.
+The app step validates the prepared PSP component and reuses the verified SameBoy
+archive. Source collection and final app/package audits still run for every build.
 Reuse requires a trusted manual producer, matching source pins and recipes,
 matching compiler/SDK details, checksums and workspace paths. The saved
-completion record also checks age and every retained output. The i386 stage
+Madeira completion record also checks age and every retained output. The i386 stage
 rebuilds missing, changed or expired outputs. Native reuse requires a complete
 schema-2 receipt; on a miss, existing unverified compiler substages stop before
 bootstrap. Reusing an artifact does not upload another copy or extend its lifetime.
 Set `reuse_assets=false` for a fresh hosted build.
-Local completion records use the same 14-day limit.
+Local Madeira completion records use the same 14-day limit.
 
 Native checkpoint packaging validates the completed receipt and every recorded
 output before creating a producer artifact. Restoration validates the extracted
