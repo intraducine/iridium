@@ -34,9 +34,9 @@ def verify_tree(archive, target):
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
-def build(sdk, jobs=4):
-    entries=json.loads(INPUTS.read_text())
-    root=ROOT/'.build/ppsspp/moltenvk-source'
+def build(sdk, jobs=4, *, inputs=INPUTS, version='1.2.9', build_root=ROOT/'.build/ppsspp'):
+    entries=json.loads(inputs.read_text())
+    root=build_root/'moltenvk-source'
     spec=importlib.util.spec_from_file_location('mvk_inputs',ROOT/'ci/fetch-runtime-inputs.py')
     fetch=importlib.util.module_from_spec(spec);spec.loader.exec_module(fetch)
     trees = {}
@@ -51,16 +51,23 @@ def build(sdk, jobs=4):
             raise ValueError('MoltenVK source archive missing or changed: '+item['name'])
         trees[item['name']] = verify_tree(archive, target)
     mvk=root/'MoltenVK';external=mvk/'External';external.mkdir(exist_ok=True)
+    names={item['name'] for item in entries}
     for name in ('cereal','Vulkan-Headers','SPIRV-Cross','glslang','Vulkan-Tools','Volk'):
+        if name not in names: continue
         link=external/name
         if not link.exists():link.symlink_to(root/name,target_is_directory=True)
         if link.resolve()!=root/name:raise ValueError('Unexpected MoltenVK dependency link')
-    glslang=root/'glslang';(glslang/'External').mkdir(exist_ok=True)
-    for name,link in (('SPIRV-Tools',glslang/'External/spirv-tools'),('SPIRV-Headers',root/'SPIRV-Tools/external/spirv-headers')):
+    links=[('SPIRV-Headers',root/'SPIRV-Tools/external/spirv-headers')]
+    if 'glslang' in names:
+        glslang=root/'glslang';(glslang/'External').mkdir(exist_ok=True)
+        links.append(('SPIRV-Tools',glslang/'External/spirv-tools'))
+        subprocess.run(['python3','build_info.py','.', '-i','build_info.h.tmpl','-o','build/include/glslang/build_info.h'],cwd=glslang,check=True)
+    else:
+        links.append(('SPIRV-Tools',external/'SPIRV-Tools'))
+    for name,link in links:
         link.parent.mkdir(exist_ok=True)
         if not link.exists():link.symlink_to(root/name,target_is_directory=True)
         if link.resolve()!=root/name:raise ValueError('Unexpected SPIR-V dependency link')
-    subprocess.run(['python3','build_info.py','.', '-i','build_info.h.tmpl','-o','build/include/glslang/build_info.h'],cwd=glslang,check=True)
     with zipfile.ZipFile(mvk/'Templates/spirv-tools/build.zip') as z:
         for item in z.infolist():
             if item.filename.startswith('__MACOSX/'):continue
@@ -83,14 +90,14 @@ def build(sdk, jobs=4):
                  'MACOSX_DEPLOYMENT_TARGET=12.0','CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','DEVELOPMENT_TEAM=']
         subprocess.run(command,cwd=mvk,check=True)
         return command
-    dependencies=ROOT/'.build/ppsspp/moltenvk-derived'/suffix
-    packaged=ROOT/'.build/ppsspp/moltenvk-derived'/('package-'+suffix)
+    dependencies=build_root/'moltenvk-derived'/suffix
+    packaged=build_root/'moltenvk-derived'/('package-'+suffix)
     commands=[compile('ExternalDependencies.xcodeproj','ExternalDependencies-iOS',dependencies),
               compile('MoltenVKPackaging.xcodeproj','MoltenVK Package (iOS only)',packaged)]
     archive=packaged/'Build/Products'/('Release-'+suffix)/'libMoltenVK.a'
     if subprocess.check_output(['xcrun','lipo','-archs',str(archive)],text=True).strip()!='arm64':
         raise ValueError('Unexpected MoltenVK architecture')
-    receipt={'version':'1.2.9','sourceInputs':entries,'sourceArchiveSHA256':digest(INPUTS),
+    receipt={'version':version,'sourceInputs':entries,'sourceArchiveSHA256':digest(inputs),
              'sourceTreeSHA256':trees,'sdk':sdk,'sdkVersion':subprocess.check_output(['xcrun','--sdk',sdk,'--show-sdk-version'],text=True).strip(),
              'toolchain':toolchain,'archiveSHA256':digest(archive),
              'commands':[[arg.replace(str(ROOT),'$IRIDIUM_SOURCE') for arg in cmd] for cmd in commands],

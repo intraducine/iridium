@@ -4266,7 +4266,6 @@ struct TouchControlsOverlay: View {
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-            .contentShape(Rectangle())
             .gesture(scalePinch, including: m.editing ? .all : .subviews)
             .onAppear { applyDefaultLayout(geo); configureGamepad(landscape: landscape) }
             .onChange(of: geo.size) { _, _ in applyDefaultLayout(geo); configureGamepad(landscape: landscape) }

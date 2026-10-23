@@ -1,4 +1,5 @@
 """Phase 3 build reuse and corresponding-source boundaries."""
+from host_tests import module_cache
 import importlib.util
 import os
 import re
@@ -24,8 +25,65 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 class Phase3Tests(unittest.TestCase):
 
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for resume checks')
+    def test_shared_jit_resume_waits_for_live_debugger_and_preserves_stop(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        resume = source[source.index('    func resume() {'):source.index('        lock.lock(); intent.resume();', source.index('    func resume() {'))]
+        fixture = '''import Foundation
+@MainActor var attached = false
+@MainActor var stopped = 0
+@MainActor func isDebuggerAttached() -> Bool { attached }
+@MainActor func ir_phase3_stop() { stopped += 1 }
+@MainActor final class JITCoordinator {
+    static let shared = JITCoordinator()
+    var calls = 0
+    var callback: ((Result<Void, Error>) -> Void)?
+    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
+        precondition(requiresAttachedDebugger); calls += 1; callback = completion
+    }
+    func finish(_ result: Result<Void, Error>) { let cb = callback; callback = nil; cb?(result) }
+}
+@MainActor final class Host {
+    enum Phase { case paused, running }
+    enum Request { case play, stop }
+    var lease: Int? = 1, phase = Phase.paused, requested = Request.play
+    var dolphinStatePending = false, phase3JITRequested = true, phase3PreparingJIT = false
+    var phase3Controller: Int? = 1, resumed = 0, error: String?
+    let lock = NSLock()
+    var intentGeneration = 0
+RESUME
+        resumed += 1; phase = .running
+    }
+}
+MainActor.assumeIsolated {
+    let service = JITCoordinator.shared
+    let ready = Host(); attached = true; ready.resume()
+    precondition(ready.resumed == 1 && service.calls == 0)
+    let lost = Host(); attached = false; lost.resume(); lost.resume()
+    precondition(lost.resumed == 0 && service.calls == 1 && lost.phase3PreparingJIT)
+    attached = true; service.finish(.success(()))
+    precondition(lost.resumed == 1 && !lost.phase3PreparingJIT)
+    let cancelled = Host(); attached = false; cancelled.resume(); cancelled.requested = .stop
+    service.finish(.success(()))
+    precondition(cancelled.resumed == 0 && stopped == 1)
+    let failed = Host(); failed.resume()
+    service.finish(.failure(NSError(domain: "fixture", code: 1)))
+    precondition(failed.resumed == 0 && failed.phase == .paused && failed.error != nil)
+    let stale = Host(); stale.resume(); stale.lease = 2
+    service.finish(.success(()))
+    precondition(stale.resumed == 0 && stopped == 1)
+    let backgrounded = Host(); backgrounded.resume(); backgrounded.intentGeneration += 1
+    attached = true; service.finish(.success(()))
+    precondition(backgrounded.resumed == 0 && !backgrounded.phase3PreparingJIT)
+}
+'''.replace('RESUME', resume)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / 'main.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(root / 'main.swift'), '-o', str(root / 'check')], check=True, timeout=30)
+            subprocess.run([str(root / 'check')], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for Dolphin launch checks')
-    def test_dolphin_launch_requires_shared_jit_and_preserves_cancellation(self):
+    def test_dolphin_and_azahar_launch_require_shared_jit_and_preserve_cancellation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         launch = source[source.index('    @MainActor private func openPhase3('):source.index('        guard let frameworks =', source.index('    @MainActor private func openPhase3('))]
         settings = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumDolphinSettings.swift').read_text()
@@ -47,7 +105,7 @@ enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: St
 final class Queue { func async(execute: () -> Void) { execute() } }
 @MainActor final class Host {
     enum Request { case play, stop }
-    var requested = Request.play, dolphinPreparingJIT = false, dolphinJITRequested = false
+    var requested = Request.play, phase3PreparingJIT = false, phase3JITRequested = false
     var lease = 1, phase3Status = "", dolphinSettings = IridiumDolphinSettings()
     var nativeStarts = 0, completions = 0, error: String?
     let queue = Queue()
@@ -56,9 +114,9 @@ final class Queue { func async(execute: () -> Void) { execute() } }
 LAUNCH
         nativeStarts += 1
     }
-    func start(_ ready: Bool? = nil) {
+    func start(_ ready: Bool? = nil, runtimeID: String = "dolphin") {
         let url = URL(fileURLWithPath: "/fixture")
-        openPhase3(game: IridiumConsoleGame(), url: url, folder: url, system: url, owner: lease, dolphinJITReady: ready)
+        openPhase3(game: IridiumConsoleGame(runtimeID: runtimeID), url: url, folder: url, system: url, owner: lease, phase3JITReady: ready)
     }
 }
 MainActor.assumeIsolated {
@@ -69,27 +127,29 @@ MainActor.assumeIsolated {
     defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
     let restored = IridiumDolphinSettings.load(id)
     precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
-    let failed = Host(); failed.start()
-    precondition(failed.nativeStarts == 0 && failed.dolphinPreparingJIT && failed.dolphinJITRequested)
+    for runtimeID in ["dolphin", "azahar"] {
+    let failed = Host(); failed.start(runtimeID: runtimeID)
+    precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
-    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT Setup"))
-    precondition(!failed.dolphinPreparingJIT)
-    let cancelled = Host(); cancelled.start(); cancelled.requested = .stop
+    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("shared JIT"))
+    precondition(!failed.phase3PreparingJIT)
+    let cancelled = Host(); cancelled.start(runtimeID: runtimeID); cancelled.requested = .stop
     JITCoordinator.shared.finish(.success(()))
     precondition(cancelled.nativeStarts == 0 && cancelled.completions == 1)
-    let stale = Host(); stale.start(); stale.lease = 2
+    let stale = Host(); stale.start(runtimeID: runtimeID); stale.lease = 2
     JITCoordinator.shared.finish(.success(()))
     precondition(stale.nativeStarts == 0 && stale.completions == 0)
-    let ready = Host(); ready.start(); JITCoordinator.shared.finish(.success(()))
-    precondition(ready.nativeStarts == 1 && ready.error == nil && !ready.dolphinPreparingJIT)
-    let invalid = Host(); invalid.start(false)
+    let ready = Host(); ready.start(runtimeID: runtimeID); JITCoordinator.shared.finish(.success(()))
+    precondition(ready.nativeStarts == 1 && ready.error == nil && !ready.phase3PreparingJIT)
+    let invalid = Host(); invalid.start(false, runtimeID: runtimeID)
     precondition(invalid.nativeStarts == 0 && invalid.completions == 1)
+    }
 }
 '''.replace('SETTINGS', settings).replace('LAUNCH', launch)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); unit = folder / 'main.swift'; unit.write_text(fixture)
             binary = folder / 'check'
-            subprocess.run(['swiftc', str(unit), '-o', str(binary)], check=True, timeout=30)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(unit), '-o', str(binary)], check=True, timeout=30)
             subprocess.run([str(binary)], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin native JIT gate')

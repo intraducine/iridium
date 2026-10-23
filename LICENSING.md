@@ -62,6 +62,12 @@ matching Azahar source and receipts. See
 instructions and limits. A dynamic-library boundary is not a license exception
 or a determination of aggregation.
 
+Azahar's native Vulkan renderer links source-built MoltenVK 1.4.1. Its separate
+closure is pinned in `ci/azahar-moltenvk-source-inputs.json`. The builder retains
+the Apache-2.0, MIT/Khronos and BSD dependency grants in its Phase 3 notice tree.
+The corresponding source package includes every archive in that closure and the
+linked archive receipt. These records do not resolve the combined-app review.
+
 The multi-runtime branch additionally links SameBoy's Libretro core at the
 revision in `UPSTREAM-SOURCES.json`. The selected Core, Libretro adapter and
 replacement boot ROMs use SameBoy's Expat (MIT) license. The Libretro API header

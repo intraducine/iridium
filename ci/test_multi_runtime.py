@@ -134,10 +134,10 @@ CONTINUATION
 }
 @main struct Check {
     @MainActor static func main() {
-        for platform in [IridiumPlatform.wii, .gameCube, .psp] {
+        for platform in [IridiumPlatform.wii, .gameCube, .psp, .nintendo3DS] {
             for enabled in [false, true] {
                 let host = Host(); host.jitState.enabled = enabled
-                let runtime = platform == .psp ? "ppsspp" : "dolphin"
+                let runtime = platform == .psp ? "ppsspp" : (platform == .nintendo3DS ? "azahar" : "dolphin")
                 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
                     runtimeID: runtime, fileExtension: "iso", importedAt: Date())
                 let count = nativeStarts.count; host.start(game)
@@ -159,7 +159,7 @@ CONTINUATION
             runtimeID: "dolphin", fileExtension: "iso", importedAt: Date())
         let count = nativeStarts.count; blocked.start(game)
         precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
-        print("PASS shipping Play: Dolphin/PSP own JIT; other required engines auto-enable once; busy admission retained")
+        print("PASS shipping Play: Dolphin/3DS/PSP own JIT; other required engines auto-enable once; busy admission retained")
     }
 }
 '''.replace('LAUNCH', launch).replace('CONTINUATION', continuation)

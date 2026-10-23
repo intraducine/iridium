@@ -10,7 +10,7 @@ for an upstream video callback and reports failures without simulating playback.
 | Engine | Selected source | Adapter policy |
 | --- | --- | --- |
 | Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. ARM64 JIT and native vertex loader require the shared helper and execution probe. No interpreter fallback. HLE DSP without DSP JIT. |
-| Azahar, Nintendo 3DS | Official `2126.2`, `219d743a1e698101fe1ab8bef43e6563126c3c27` | Digest-verified official iOS Libretro binary and matching unified source. CPU/shader interpreters and software graphics. Simulator core built from that source. |
+| Azahar, Nintendo 3DS | Official `2126.2`, `219d743a1e698101fe1ab8bef43e6563126c3c27` | Built from the digest-verified official unified source. CPU and shader JIT use the shared JIT memory service and an execution/rewrite probe. The main Vulkan renderer presents through source-built MoltenVK 1.4.1 and Metal. Simulator JIT is unavailable. |
 | Play!, PlayStation 2 | Official `0.77`, `fa75cea31a33f5ab7a2008ed0d90dc74353e9cef` | Upstream Libretro VM, OpenGL ES GS and CodeGen. Its own executable-memory probe is required. Restart after a session because configuration uses a process singleton. |
 | Flycast, Dreamcast/arcade | Official `v2.7`, `5aa091fde632fb332c8d8c34e280d62dc951954c` | Upstream Libretro runtime and ES3 renderer. Device requires its own executable-memory probe; simulator recompilers are compiled out upstream. This release dropped supported iOS distribution; the adapter remains device unverified. |
 
@@ -33,18 +33,18 @@ overlay uses that shared memory service instead of a separate breakpoint
 protocol or helper script. It rejects MAP_FAILED before requesting preparation.
 Helper readiness alone never selects native JIT. The probe returns 42, rewrites
 the block, then returns 7. This check does not establish later arena sizes or
-guest JIT behavior. Azahar's software renderer can be too slow for a game.
+guest JIT behavior. GPU rendering and game speed require separate device checks.
 Play!/Flycast may remain unavailable if iOS rejects their upstream allocators.
 
-Dolphin uses `JITCoordinator`, as Madeira and PSP do. The coordinator owns
+Dolphin and Azahar use `JITCoordinator`, as Madeira and PSP do. The coordinator owns
 provider selection, setup, single-flight admission and network preparation.
-Dolphin requests a live debugger when it needs fresh executable memory; an
+Dolphin and Azahar request a live debugger for fresh executable memory; an
 existing Madeira pool alone cannot prepare a different engine's memory.
 The native boundary checks CS_DEBUGGED and live attachment before allocation.
 Each engine retains its own code-memory ownership and execution checks.
 The shared script writes complete 64-bit addresses and checks every page-write
 reply. This avoids address truncation in the pinned StikJIT batch formatter.
-After Dolphin stops, the coordinator detaches only its own active built-in
+After either engine stops, the coordinator detaches only its own active built-in
 helper. It waits for the original helper operation, the detach call, a cleared
 live-debugger flag and successful network restoration before releasing admission.
 An unknown debugger or uncertain cleanup requires restart instead of an engine
@@ -175,13 +175,22 @@ python3 ci/package-unsigned-ipa.py \
   .build/phase3-ipa
 ```
 
-The recipe verifies the two official Azahar asset digests. Source collection
-supplies the unified source; the iOS binary can be fetched and verified again.
-To replace that binary with a source build, use the pinned upstream
-`.github/workflows/libretro.yml` iOS recipe, retain export/install-name checks,
-and update the receipt to identify the replacement. Simulator components build
-with `python3 ci/build-phase3.py --engine all --sdk iphonesimulator --jobs 3`.
-The simulator Azahar recipe selects software rendering and disables Vulkan.
+The recipe verifies the official Azahar assets and builds the device and
+simulator components from the unified source. Corresponding source includes
+that archive and the checked overlays. The Oaknut code allocator receives the
+shared `jit26_prepare_region` callback, keeps separate writable and executable
+aliases, and flushes each alias after code changes. Dynarmic and the shader JIT
+write through the writable alias. Dynarmic allocates its generated lock code
+on first use, after the shared callback is installed. It uses checked memory so it
+does not replace the shared debugger's Mach exception handlers. Runtime status
+distinguishes the allocator probe from completed guest CPU and shader execution.
+Simulator components build with
+`python3 ci/build-phase3.py --engine all --sdk iphonesimulator --jobs 3`, but
+Azahar's required JIT probe does not pass on Simulator. Graphics use the main
+Vulkan renderer, including its device, scheduler and presentation queue, with an
+iOS CAMetalLayer. The libretro interface retains input, audio and save handling.
+MoltenVK 1.4.1 matches the pinned main app. Its complete source closure is locked
+in `ci/azahar-moltenvk-source-inputs.json` and built by the shared MoltenVK recipe.
 
 The manual IPA workflow always includes all four console engine components.
 `python3 ci/dispatch-build.py` builds the exact committed branch head with all
@@ -193,7 +202,8 @@ exports, platform, binary hashes, resources and notices. Only zlib's verified
 byte-identical `zconf.h` → `zconf.h.included` CMake rename is tolerated in vendor
 source. Final app audits recheck all components/resources. Corresponding source
 contains initialized pinned dependencies, overlay recipes, the Azahar unified
-source, receipts, notices and build/replacement instructions. It excludes Apple
+source, the separate MoltenVK source closure, receipts, notices and
+build/replacement instructions. It excludes Apple
 SDKs, signing credentials, games and private logs. [LICENSING.md](../LICENSING.md)
 still controls the unresolved combined-app distribution review.
 
@@ -218,7 +228,8 @@ each engine distinguish compilation, video, input, audio, saves and shutdown.
 - [ ] **Dolphin:** device/simulator component audits; legal GameCube/Wii homebrew
   video; input/audio; pause/background/resume; card/config persistence; clean
   close followed by another console launch.
-- [ ] **Azahar:** device/source digests and simulator source build; legal 3DS
+- [ ] **Azahar:** source digests and device component audit; shared JIT allocation,
+  execution/rewrite and guest CPU/shader execution; legal 3DS
   homebrew on both screens; lower-screen touch/input; audio; pause/resume; saves;
   clean close followed by another console launch.
 - [ ] **Play!:** component audits; rejected JIT remains unavailable; supported

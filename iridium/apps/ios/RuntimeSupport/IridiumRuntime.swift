@@ -54,7 +54,7 @@ enum IridiumRuntimeRegistry {
     static let dolphin = IridiumRuntimeDescriptor(id: "dolphin", name: "Dolphin", platforms: [.gameCube, .wii],
         jit: .required, supportsPause: true, restartAfterStop: false)
     static let azahar = IridiumRuntimeDescriptor(id: "azahar", name: "Azahar", platforms: [.nintendo3DS],
-        jit: .none, supportsPause: true, restartAfterStop: false)
+        jit: .required, supportsPause: true, restartAfterStop: false)
     // Play's app configuration is a process-lifetime upstream singleton. Its
     // per-game data root cannot safely change until a new process is started.
     static let play = IridiumRuntimeDescriptor(id: "play", name: "Play!", platforms: [.playStation2],
