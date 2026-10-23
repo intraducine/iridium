@@ -15,6 +15,10 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Reuse matching completed runtime and console component builds
         type: boolean
         default: true
+      release_build:
+        description: Include the full source archive and release audit artifacts
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -253,9 +257,10 @@ jobs:
           IRIDIUM_PHASE3: "1"
         run: python3 ci/madeira-frontend.py app --reuse-psp-component
       - name: Record app binaries for final audit
+        if: inputs.release_build
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain app link maps for final audit
-        if: always() && steps.app_build.outcome == 'success'
+        if: always() && inputs.release_build && steps.app_build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-link-audit-${{ github.sha }}
@@ -265,8 +270,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Collect matching source and component records
+        if: inputs.release_build
         run: python3 ci/collect-madeira-source.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain source archive for release audit
+        if: inputs.release_build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-source-${{ github.sha }}
@@ -277,7 +284,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Check final binary audit before packaging
-        run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package
+        env:
+          RELEASE_BUILD: ${{ inputs.release_build }}
+        run: |
+          if [ "$RELEASE_BUILD" = true ]; then
+            python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package
+          else
+            python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package --test-build
+          fi
       - name: Prepare and audit sideloading package
         run: python3 ci/package-unsigned-ipa.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output
       - name: Upload sideloading IPA

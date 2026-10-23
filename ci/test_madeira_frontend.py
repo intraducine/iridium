@@ -125,6 +125,14 @@ class FrontendImportTests(unittest.TestCase):
             with patch.object(module, 'required_for_profile', return_value={}):
                 self.assertEqual(module.blockers(root, profile='madeira-frontend'), [])
                 self.assertTrue(module.blockers(root, profile='madeira-frontend', package=True))
+                self.assertEqual(module.blockers(root, profile='madeira-frontend', package=True, test_build=True), [])
+                blocker = root / 'ci/binary-package-blockers.json'
+                blocker.write_text('["Final binary review pending"]')
+                self.assertEqual(module.blockers(root, profile='madeira-frontend', package=True, test_build=True),
+                                 ['Source/license audit: Final binary review pending'])
+                blocker.unlink()
+                self.assertTrue(module.blockers(root, profile='madeira-frontend', package=True, test_build=True))
+                blocker.write_text('[]')
                 out = root / '.build/ipa-output'
                 out.mkdir(parents=True)
                 archive = out / 'Iridium-corresponding-source.tar.gz'

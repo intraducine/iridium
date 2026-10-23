@@ -162,6 +162,21 @@ class ManualBuildTests(unittest.TestCase):
         self.assertIn('--reuse-psp-component', step('Build without signing'))
         self.assertIn('IRIDIUM_PHASE3: "1"', step('Build without signing'))
 
+    def test_fast_default_skips_only_release_collection_and_uploads(self):
+        workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        self.assertRegex(workflow, r'release_build:\n        description: [^\n]+\n        type: boolean\n        default: false')
+        steps = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)', workflow, re.M | re.S))
+        release_steps = ('Record app binaries for final audit', 'Retain app link maps for final audit',
+                         'Collect matching source and component records', 'Retain source archive for release audit')
+        for name, item in steps.items():
+            if name in release_steps:
+                self.assertRegex(item, r'        if: [^\n]*inputs.release_build')
+            else:
+                self.assertNotRegex(item, r'        if: [^\n]*release_build')
+        gate = steps['Check final binary audit before packaging']
+        self.assertIn('if [ "$RELEASE_BUILD" = true ]', gate)
+        self.assertIn('--package --test-build', gate)
+
     def test_default_and_legacy_dispatch_use_the_same_complete_build(self):
         import contextlib
         import io
@@ -173,7 +188,7 @@ class ManualBuildTests(unittest.TestCase):
                     patch.object(dispatch, 'dispatch', return_value='build-url') as run, \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 dispatch.main()
-                run.assert_called_once_with('main', expected)
+                run.assert_called_once_with('main', expected, release_build=False)
                 self.assertEqual(output.getvalue().strip(), 'build-url')
 
     def test_dispatch_checks_and_cancels_only_its_own_run(self):
@@ -202,6 +217,25 @@ class ManualBuildTests(unittest.TestCase):
                 dispatch.check_commit(invalid, invalid)
         workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
         self.assertLess(workflow.index("ci/dispatch-build.py --check"), workflow.index("ci/compiled-components.py select"))
+
+    def test_release_dispatch_is_explicit(self):
+        import contextlib
+        import io
+        import json
+        import sys
+        expected = 'a' * 40
+        with patch.object(dispatch.uuid, 'uuid4') as token, patch.object(dispatch, 'gh') as gh:
+            token.return_value.hex = 'token'
+            gh.side_effect = ['', json.dumps({'workflow_runs': [{'display_title': 'build · token',
+                'head_sha': expected, 'html_url': 'build-url'}]})]
+            self.assertEqual(dispatch.dispatch('main', expected, release_build=True), 'build-url')
+            self.assertEqual(gh.call_args_list[0].args[-2:], ('-f', 'release_build=true'))
+        with patch.object(sys, 'argv', ['dispatch-build.py', '--release']), \
+                patch.object(dispatch.subprocess, 'check_output', side_effect=[expected, 'main']), \
+                patch.object(dispatch, 'dispatch', return_value='build-url') as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            dispatch.main()
+            run.assert_called_once_with('main', expected, release_build=True)
 
     def test_pinned_graphics_tools_bootstrap_before_sync(self):
         script = (ROOT / "ci/prepare-graphics.sh").read_text()
