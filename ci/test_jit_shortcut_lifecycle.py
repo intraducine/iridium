@@ -1,4 +1,5 @@
 """Execute the generated shipping JIT/Shortcut methods with controlled endpoints."""
+from host_tests import module_cache
 from pathlib import Path
 import os
 import shutil
@@ -400,7 +401,7 @@ MainActor.assumeIsolated { runChecks() }
             source = Path(folder) / 'main.swift'
             source.write_text(swift)
             binary = Path(folder) / 'check'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(Path(folder) / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumJITRequest.swift'),
                             str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=30)

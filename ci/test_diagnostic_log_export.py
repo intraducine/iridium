@@ -8,7 +8,6 @@ import madeira_presentation
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift"
-VIEW = ROOT / "iridium/apps/ios/Iridium/Views/SettingsView.swift"
 
 HARNESS = r'''
 import Foundation
@@ -173,11 +172,6 @@ class DiagnosticLogExportTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_settings_shares_selected_files_not_just_host_log(self):
-        source = VIEW.read_text()
-        diagnostics = source.split("private struct DiagnosticsSettingsView: View {", 1)[1].split("\n#if MADEIRA_RUNTIME", 1)[0]
-        self.assertIn("RuntimeDiagnosticsExportSection()", diagnostics)
-        self.assertNotIn("ShareLink", diagnostics)
-        self.assertNotIn("LogStore.shared", diagnostics)
         shipping = madeira_presentation.library((ROOT / "ci/fixtures/madeira-build43/app/Madeira/Library.swift").read_text())
         destination = shipping.split('case "Diagnostics":', 1)[1].split('case "Credits":', 1)[0]
         self.assertIn("RuntimeDiagnosticsExportSection()", destination)

@@ -3,6 +3,7 @@
 All settings and permission fixtures use a consumer-local temporary directory.
 No native runtime, game, signing material or user configuration is involved.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -62,7 +63,7 @@ int main(int argc, char **argv) { @autoreleasepool {
 ''', text=True, check=True, timeout=30)
             binary = directory / 'sync-checks'
             subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors',
-                            '-module-cache-path', str(directory / 'module-cache'),
+                            '-module-cache-path', module_cache('macosx'),
                             str(IOS / 'MadeiraSupport/MadeiraSyncEngine.swift'),
                             str(IOS / 'MadeiraSupportTests/SyncEngineCheck.swift'), '-o', str(binary)],
                            check=True, timeout=90)

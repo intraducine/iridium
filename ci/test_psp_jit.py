@@ -1,4 +1,5 @@
 """Execute the launch continuation and bounded native execution probe."""
+from host_tests import module_cache
 from pathlib import Path
 import platform
 import shutil
@@ -67,7 +68,7 @@ import Foundation
             folder = Path(directory)
             main = folder / 'checks.swift'; main.write_text(fixture)
             binary = folder / 'checks'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(folder / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumJITRequest.swift'),
                             str(main), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=20)

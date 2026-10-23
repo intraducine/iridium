@@ -3,6 +3,7 @@
 Set IRIDIUM_CHROME_SIMULATOR to a booted simulator. Native runtime execution is
 replaced at the worker boundary; this does not reproduce an HL2/phone session.
 """
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import json
@@ -241,7 +242,7 @@ final class FixtureScene:UIResponder,UIWindowSceneDelegate {
                 source.write_text('import UIKit\nimport SwiftUI\nimport GameController\nimport os\n'+host+menu+fixture.replace('    RESERVATION',reservation).replace('    LAUNCH',launch))
                 info={'CFBundleIdentifier':'dev.iridium.chrome-fixture.'+variant,'CFBundleExecutable':'Fixture','CFBundleName':'Fixture','CFBundlePackageType':'APPL','CFBundleVersion':'1','CFBundleShortVersionString':'1.0','MinimumOSVersion':'18.0','UILaunchScreen':{},'UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait','UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight'],'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,'UISceneConfigurations':{}}}
                 (bundle/'Info.plist').write_bytes(plistlib.dumps(info))
-                result=subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-target','arm64-apple-ios18.0-simulator','-sdk',sdk,'-module-cache-path',str(root/'cache'),'-import-objc-header',str(root/'Bridge.h'),str(source),str(root/'native.o'),'-framework','UIKit','-framework','SwiftUI','-o',str(bundle/'Fixture')],capture_output=True,text=True,timeout=90)
+                result=subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library','-target','arm64-apple-ios18.0-simulator','-sdk',sdk,'-module-cache-path',module_cache('iphonesimulator'),'-import-objc-header',str(root/'Bridge.h'),str(source),str(root/'native.o'),'-framework','UIKit','-framework','SwiftUI','-o',str(bundle/'Fixture')],capture_output=True,text=True,timeout=90)
                 self.assertEqual(result.returncode,0,result.stderr)
                 try:
                     subprocess.run(['xcrun','simctl','install',device,str(bundle)],check=True,capture_output=True)

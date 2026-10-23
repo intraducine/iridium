@@ -3,6 +3,7 @@
 
 No Wine, game data, signing, device state, or Apple UI framework is needed.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -391,7 +392,7 @@ class IridiumFilesImportTests(unittest.TestCase):
         cls.executable = directory / "check"
         build = subprocess.run([
             "swiftc", "-swift-version", "6", "-warnings-as-errors",
-            "-module-cache-path", str(directory / "module-cache"),
+            "-module-cache-path", module_cache('macosx'),
             str(SOURCE), str(harness), "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=120)
         if build.returncode:

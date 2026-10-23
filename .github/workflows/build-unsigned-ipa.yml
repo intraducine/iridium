@@ -46,10 +46,13 @@ jobs:
           git submodule update --init --depth 1 vendor/Azahar
           git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast
       - name: Check source privacy and standards
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 check-public-source.py
           python3 ci/check-standards.py
-          python3 -B -m unittest discover -s ci -p 'test_*.py'
+          command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
+          python3 ci/host_tests.py --reuse
       - name: Prepare Apple Silicon build tools
         run: |
           python3 ci/local_build_tools.py --madeira --write-env .build/madeira-build-tools.env

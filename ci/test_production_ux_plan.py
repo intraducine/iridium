@@ -1,4 +1,5 @@
 """Execute shared setup navigation/persistence, route encoding and artwork sizing."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil,subprocess,tempfile,unittest
 ROOT=Path(__file__).resolve().parents[1]
@@ -161,7 +162,7 @@ print("PASS routes: all four destinations, exact script/PID request preserved, f
     def compile_run(self,code,library=False):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);source=root/'main.swift';binary=root/'check';source.write_text(code)
-            subprocess.run(['swiftc',*(['-parse-as-library'] if library else []),'-module-cache-path',str(root/'cache'),str(source),'-o',str(binary)],check=True,timeout=90)
+            subprocess.run(['swiftc',*(['-parse-as-library'] if library else []),'-module-cache-path',module_cache('macosx'),str(source),'-o',str(binary)],check=True,timeout=90)
             subprocess.run([str(binary)],check=True,timeout=20)
 
 

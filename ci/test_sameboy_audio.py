@@ -1,4 +1,5 @@
 """Execute production buffering/clock policy and legacy RTC restore behavior."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,7 +17,7 @@ class SameBoyAudioTests(unittest.TestCase):
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'check'
             subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors', '-module-cache-path',
-                            str(folder / 'cache'), *map(str, sources), str(source), '-o', str(binary)], check=True)
+                            module_cache('macosx'), *map(str, sources), str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=20)
 
     def test_jitter_prefill_recovery_bounds_and_pause_reset(self):

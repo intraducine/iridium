@@ -1,4 +1,5 @@
 """Run shipping overlay registration and touch state across session transitions."""
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import shutil
@@ -87,7 +88,7 @@ print("PASS shipping registration/state: A+LS, launch, running, menu/resume, phy
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); main = root/'main.swift'; binary = root/'check'
             main.write_text('import Foundation\n' + model + touch + fixture + method + cases)
-            result = subprocess.run(['swiftc', '-module-cache-path', str(root/'cache'),
+            result = subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'),
                                      str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift'),
                                      str(main), '-o', str(binary)], text=True, capture_output=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

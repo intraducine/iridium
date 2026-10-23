@@ -1,4 +1,5 @@
 """Execute production installation detection and scoped correction persistence."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -100,7 +101,7 @@ STATE
             swift = root / 'main.swift'
             binary = root / 'installation-check'
             swift.write_text(fixture + policy + checks)
-            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', module_cache('macosx'),
                             str(swift), '-o', str(binary)], check=True, timeout=90)
             subprocess.run([str(binary)], check=True, timeout=20)
 

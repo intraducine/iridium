@@ -1,4 +1,5 @@
 """Execute the shipping Setup controller routing policy with real mocked actions."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -163,7 +164,7 @@ print("PASS Setup controller: active page, ordered reveal, exact actions, disabl
             swift = root / "main.swift"
             binary = root / "setup-controller-check"
             swift.write_text(policy + checks)
-            subprocess.run(["swiftc", "-module-cache-path", str(root / "cache"), str(swift), "-o", str(binary)], check=True, timeout=90)
+            subprocess.run(["swiftc", "-module-cache-path", module_cache('macosx'), str(swift), "-o", str(binary)], check=True, timeout=90)
             subprocess.run([str(binary)], check=True, timeout=20)
 
 
