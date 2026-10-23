@@ -70,7 +70,7 @@ def source_state(source):
     return revisions
 
 
-def fixed_inputs(engine):
+def input_paths(engine):
     names = ['ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
              'iridium/apps/ios/RuntimeBridge/IRPhase3.h']
     bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': [],
@@ -78,7 +78,11 @@ def fixed_inputs(engine):
               'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
     if engine == 'host': names += ['vendor/Flycast/core/deps/libretro-common/include/libretro.h']
-    return {name: digest(ROOT / name) for name in names}
+    return names
+
+
+def fixed_inputs(engine):
+    return {name: digest(ROOT / name) for name in input_paths(engine)}
 
 
 def verify_inputs(record):

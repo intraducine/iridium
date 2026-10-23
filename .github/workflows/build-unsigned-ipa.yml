@@ -12,7 +12,7 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         required: false
         type: string
       reuse_assets:
-        description: Reuse matching completed Madeira component builds
+        description: Reuse matching completed runtime and console component builds
         type: boolean
         default: true
 permissions:
@@ -148,19 +148,110 @@ jobs:
           retention-days: 14
       - name: Check build prerequisites
         run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend
-      - name: Prepare Dolphin, Azahar, Play!, and Flycast
+      - name: Compile psp
+        id: compiled_psp
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p .build/phase3-downloads
-          gh release download 2126.2 --repo azahar-emu/azahar --pattern azahar-libretro-ios-arm64-2126.2.zip --pattern azahar-unified-source-2126.2.tar.xz --dir .build/phase3-downloads
-          python3 ci/build-phase3.py --engine all --sdk iphoneos --jobs 3
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py psp
+      - name: Retain psp compilation
+        if: steps.compiled_psp.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_psp.outputs.artifact }}
+          path: .build/psp-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile sameboy
+        id: compiled_sameboy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py sameboy
+      - name: Retain sameboy compilation
+        if: steps.compiled_sameboy.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_sameboy.outputs.artifact }}
+          path: .build/sameboy-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile host
+        id: compiled_host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py host
+      - name: Retain host compilation
+        if: steps.compiled_host.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_host.outputs.artifact }}
+          path: .build/host-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile dolphin
+        id: compiled_dolphin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py dolphin
+      - name: Retain dolphin compilation
+        if: steps.compiled_dolphin.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_dolphin.outputs.artifact }}
+          path: .build/dolphin-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile azahar
+        id: compiled_azahar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py azahar
+      - name: Retain azahar compilation
+        if: steps.compiled_azahar.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_azahar.outputs.artifact }}
+          path: .build/azahar-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile play
+        id: compiled_play
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py play
+      - name: Retain play compilation
+        if: steps.compiled_play.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_play.outputs.artifact }}
+          path: .build/play-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile flycast
+        id: compiled_flycast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py flycast
+      - name: Retain flycast compilation
+        if: steps.compiled_flycast.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_flycast.outputs.artifact }}
+          path: .build/flycast-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
       - name: Build without signing
         id: app_build
         env:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           IRIDIUM_PHASE3: "1"
-        run: python3 ci/madeira-frontend.py app
+        run: python3 ci/madeira-frontend.py app --reuse-psp-component
       - name: Record app binaries for final audit
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain app link maps for final audit
