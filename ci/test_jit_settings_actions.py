@@ -1,4 +1,5 @@
 """Exercise the shipping Settings JIT entry and pairing-recovery actions."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -116,7 +117,7 @@ print("PASS production Settings actions: \(cases) enable preflights, live pairin
             binary = folder / 'check'
             main.write_text(fixture)
             result = subprocess.run(
-                ['swiftc', '-swift-version', '5', '-module-cache-path', str(folder / 'cache'),
+                ['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                  str(main), '-o', str(binary)], capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=15)

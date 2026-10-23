@@ -1,4 +1,5 @@
 """Production registry/store checks; core execution is an explicit build check."""
+from host_tests import module_cache
 import importlib.util
 import hashlib
 import json
@@ -270,7 +271,7 @@ print("PASS shipping preflight: active Windows/launch/server/owner, prior Window
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'checks'
-            subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-module-cache-path', str(folder / 'cache'),
+            subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                             str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=20)

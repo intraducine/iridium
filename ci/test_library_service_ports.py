@@ -1,4 +1,5 @@
 """Exercise the shipping adapter ports without an engine, network, or real saves."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -88,5 +89,5 @@ enum SaveBackup {
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'check.swift'; binary = folder / 'check'
             source.write_text(fixture + code + cases)
-            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', str(folder / 'cache'), str(source), '-o', str(binary)], check=True, timeout=60)
+            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', module_cache('macosx'), str(source), '-o', str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=15)

@@ -2,6 +2,7 @@
 
 This exercises session UI state, not device JIT execution or SwiftUI rendering.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -121,7 +122,7 @@ print("PASS current-session execution status: " + CommandLine.arguments[1])
         main = folder / 'main.swift'; main.write_text(harness)
         cls.binary = folder / 'status'
         result = subprocess.run(['swiftc', '-swift-version', '5', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
-                                 '-module-cache-path', str(folder / 'cache'),
+                                 '-module-cache-path', module_cache('macosx'),
                                  str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                                  str(FRONTEND / 'IridiumExecutionStatus.swift'), str(main),
                                  '-o', str(cls.binary)], capture_output=True, text=True)

@@ -1,4 +1,5 @@
 """Execute the simulator action boundary; no native game code is invoked."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -51,7 +52,7 @@ print("PASS: missing files request location; a present file reports the runtime 
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); main = folder / 'main.swift'; binary = folder / 'check'
             main.write_text(fixture + code + cases)
-            subprocess.run(['swiftc', '-module-cache-path', str(folder / 'cache'), str(main), '-o', str(binary)], check=True, timeout=60)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(main), '-o', str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=15)
 
 

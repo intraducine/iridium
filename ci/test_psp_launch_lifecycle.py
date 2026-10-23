@@ -1,4 +1,5 @@
 """Execute the production PSP launch owner with explicit helper/OS boundaries."""
+from host_tests import module_cache
 from pathlib import Path
 import platform
 import shutil
@@ -213,7 +214,7 @@ final class IridiumJITDiagnostic: @unchecked Sendable {
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'boundary.c').write_text(native);(root/'main.swift').write_text(fixture)
             subprocess.run(['clang','-I',str(BRIDGE),'-c',str(root/'boundary.c'),'-o',str(root/'boundary.o')],check=True)
-            command=['swiftc','-swift-version','5','-parse-as-library','-module-cache-path',str(root/'cache'),'-import-objc-header',str(BRIDGE/'IRPSPNativeBridge.h'),str(ROOT/'iridium/apps/ios/MadeiraSupport/IridiumJITHelperSnapshot.swift'),str(ROOT/'iridium/apps/ios/MadeiraSupport/IridiumPSPHelperProtocol.swift'),str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPSPExecutableLaunch.swift'),str(root/'main.swift'),str(root/'boundary.o'),'-o',str(root/'check')]
+            command=['swiftc','-swift-version','5','-parse-as-library','-module-cache-path',module_cache('macosx'),'-import-objc-header',str(BRIDGE/'IRPSPNativeBridge.h'),str(ROOT/'iridium/apps/ios/MadeiraSupport/IridiumJITHelperSnapshot.swift'),str(ROOT/'iridium/apps/ios/MadeiraSupport/IridiumPSPHelperProtocol.swift'),str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPSPExecutableLaunch.swift'),str(root/'main.swift'),str(root/'boundary.o'),'-o',str(root/'check')]
             result=subprocess.run(command,capture_output=True,text=True,timeout=90);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             result=subprocess.run([str(root/'check')],capture_output=True,text=True,timeout=25);self.assertEqual(result.returncode,0,result.stdout+result.stderr);print(result.stdout.strip())
 

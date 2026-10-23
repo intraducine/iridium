@@ -3,6 +3,7 @@
 UIKit and SwiftUI are not simulated. The shipping adapter supplies every method
 under test; the fixture supplies only their stored model fields and JSON inputs.
 """
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import shutil
@@ -370,7 +371,7 @@ class ConsoleControlPersistenceTests(unittest.TestCase):
             profiles = profiles.replace('import Combine', '').replace(': ObservableObject', '').replace('@Published ', '')
             source.write_text(STUBS.split('final class Model {')[0] + profiles + '\nfinal class Model {' + STUBS.split('final class Model {')[1] + production_fragment() + CASES)
             executable = root / ('ConsolePersistence' + root.name.replace('-', ''))
-            subprocess.run(['swiftc', '-module-cache-path', str(root/'cache'), '-swift-version', '5', str(source), '-o', str(executable)],
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), '-swift-version', '5', str(source), '-o', str(executable)],
                            check=True, timeout=90)
             subprocess.run([str(executable)], check=True, timeout=30)
 

@@ -1,4 +1,5 @@
 """Exercise the shared observer's real notification subscriptions and snapshots."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -67,7 +68,7 @@ print("PASS shared observer: controller/keyboard/pointer connect, disconnect, fo
         with tempfile.TemporaryDirectory() as folder:
             folder=Path(folder);main=folder/'main.swift';binary=folder/'check'
             main.write_text(fixture+code+cases)
-            subprocess.run(['swiftc','-module-cache-path',str(folder/'cache'),str(main),'-o',str(binary)],check=True,timeout=60)
+            subprocess.run(['swiftc','-module-cache-path',module_cache('macosx'),str(main),'-o',str(binary)],check=True,timeout=60)
             subprocess.run([str(binary)],check=True,timeout=15)
 
 if __name__=='__main__': unittest.main()

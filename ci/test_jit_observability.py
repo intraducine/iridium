@@ -1,4 +1,5 @@
 """Pinned-emitter UB regression and secret-free helper observations; no device."""
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import json
@@ -338,7 +339,7 @@ print("PASS private first fault exact/bounded/0600/once, read-only snapshot, leg
             root = Path(directory); logs = root / 'logs'; logs.mkdir()
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/MadeiraSupport'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(support / 'IridiumJITHelperDiagnostic.swift'),
                             str(support / 'IridiumJITHelperSnapshot.swift'),
                             str(ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'),
@@ -390,7 +391,7 @@ print("PASS strict fields, secret redaction, concurrent cap, rotation and symlin
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); logs = root / 'logs'; logs.mkdir()
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/MadeiraSupport/IridiumJITHelperDiagnostic.swift'),
                             str(ROOT / 'iridium/apps/ios/MadeiraSupport/IridiumJITHelperSnapshot.swift'),
                             str(main), '-o', str(binary)], check=True)

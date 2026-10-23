@@ -1,11 +1,12 @@
 """Exercise the production Activity presentation without ActivityKit or a login."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 CHECKS = r'''
 import Foundation
@@ -147,7 +148,7 @@ class LiveActivityPresentationTests(unittest.TestCase):
             host.write_text(ACTIVITY_HOST + attributes + source + ACTIVITY_CHECKS)
             executable = directory / 'activity-checks'
             subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library',
-                           '-module-cache-path', str(directory / 'module-cache'),
+                           '-module-cache-path', module_cache('macosx'),
                            str(ROOT / 'iridium/apps/ios/Iridium/SteamDownloadQueue.swift'),
                            str(host), '-o', str(executable)], check=True, timeout=180)
             subprocess.run([str(executable)], check=True, timeout=60)
@@ -160,7 +161,7 @@ class LiveActivityPresentationTests(unittest.TestCase):
             host.write_text(CHECKS)
             executable = directory / 'presentation-checks'
             subprocess.run(['swiftc', '-swift-version', '6', '-parse-as-library',
-                           '-module-cache-path', str(directory / 'module-cache'),
+                           '-module-cache-path', module_cache('macosx'),
                            str(ROOT / 'iridium/apps/ios/SteamDownloadWidget/SteamDownloadPresentation.swift'),
                            str(host), '-o', str(executable)], check=True, timeout=180)
             subprocess.run([str(executable)], check=True, timeout=60)

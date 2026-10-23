@@ -1,0 +1,25 @@
+name: Legacy recovery source checks
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  legacy:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+          lfs: false
+      - name: Check retained frontend and recovery runtime
+        run: |
+          for check in TouchController HostArena LiveContainerStartupJIT StartupJITStatus LibraryStatus; do
+            python3 "iridium/apps/ios/MadeiraSupportTests/${check}Check.py"
+          done
+          for check in audio-wow64 audio-downmix d3d9-splitlock d9-upload-commit fastsync nsi-network readonly-link section-abort image-retire lazy-windows nav-keys swap-coverage unixlib-binder win32u-zero-bits wow-context wow-cpu-area wow-sweep filtering-cap scene-batching; do
+            python3 "testrepos/Madeira/build/host-tests/check-$check.py"
+          done
+          python3 iridium/apps/ios/MadeiraSupportTests/ReviewRegressionCheck.py --group lifecycle
+          PYTHONPATH=ci python3 -B -m unittest discover -s ci/legacy -p 'test_*.py'

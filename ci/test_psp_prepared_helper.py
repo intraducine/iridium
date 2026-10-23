@@ -1,4 +1,5 @@
 """Run the exact PSP script and typed receipt/export plumbing without a device."""
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import json
@@ -47,7 +48,7 @@ if let failure { fputs(failure + "\n", stderr); exit(1) }
             root = Path(directory); main = root / 'main.swift'; main.write_text(fixture)
             inputs = root / 'inputs.json'; inputs.write_text(json.dumps([source, baseline, harness]))
             binary = root / 'check'
-            subprocess.run(['swiftc', '-module-cache-path', str(root/'cache'), '-framework', 'JavaScriptCore', str(main), '-o', str(binary)], check=True)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), '-framework', 'JavaScriptCore', str(main), '-o', str(binary)], check=True)
             result = subprocess.run([str(binary), str(inputs)], capture_output=True, text=True, timeout=20)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             print('JavaScriptCore: ' + result.stdout.strip())
@@ -281,7 +282,7 @@ static func main() throws {
 '''
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); source = root / 'main.swift'; source.write_text(fixture); binary = root / 'check'
-            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', str(root/'cache'),
+            subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', module_cache('macosx'),
                             str(ROOT/'iridium/apps/ios/MadeiraSupport/IridiumJITHelperSnapshot.swift'), str(psp.SUPPORT),str(source),'-o',str(binary)],check=True)
             result=subprocess.run([str(binary),str(root)],capture_output=True,text=True,timeout=15)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr);print(result.stdout.strip())

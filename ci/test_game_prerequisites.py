@@ -3,7 +3,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
@@ -63,13 +62,6 @@ int main(int argc, char **argv) {
             subprocess.run(["cc", "-x", "c", "-", "-o", binary],
                            input=harness, text=True, check=True, capture_output=True, timeout=30)
             subprocess.run([binary, str(executable)], check=True, capture_output=True, timeout=5)
-
-    @unittest.skipUnless(shutil.which("xcrun"), "requires Apple Swift compiler")
-    def test_adapter_launch_and_cancellation(self):
-        subprocess.run([
-            sys.executable, str(IOS / "MadeiraSupportTests/ReviewRegressionCheck.py"),
-            "--group", "lifecycle",
-        ], check=True, capture_output=True, timeout=120)
 
     @unittest.skipUnless(shutil.which("xcrun"), "requires Apple Swift compiler")
     def test_script_and_prefix_preparation(self):

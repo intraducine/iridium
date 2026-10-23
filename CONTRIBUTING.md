@@ -68,6 +68,14 @@ existing tests; do not create a parallel framework. Reversible copy-only changes
 need review, not a test that repeats their text. Changes to tests or checks must
 not quietly weaken the rule they enforce.
 
+Source checks run once for each PR update and each main commit. The manual IPA
+build reuses a successful source-check result only for its exact commit and host
+test environment. It waits for a matching check in progress, and runs the suite
+when no verified result is available. Privacy and standards checks still run.
+Host fixtures share temporary compiler modules within one test run, separated
+by SDK. Legacy frontend checks remain in the manual Legacy recovery source
+checks workflow; they do not validate the shipping frontend.
+
 Report these evidence levels separately:
 
 | Evidence | What it establishes |
