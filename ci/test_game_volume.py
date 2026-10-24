@@ -14,6 +14,42 @@ import ppsspp_native_overlay
 
 
 class GameVolumeTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('swiftc'), 'Apple SwiftUI compiler required')
+    def test_main_thread_launch_calls_compile_and_set_gain_before_returning(self):
+        calls = [next(line.strip() for line in (ROOT / name).read_text().splitlines()
+                      if 'IridiumGameAudio.shared.begin(' in line) for name in (
+            'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift',
+            'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift')]
+        fixture = '''import Foundation
+struct Entry { let id = UUID(); let runtimeID = "dolphin" }
+struct IridiumDolphinSettings {
+    let muted: Bool? = true
+    static func load(_ game: UUID) -> Self { Self() }
+}
+func console(_ game: Entry) { CONSOLE }
+func windows(_ entry: Entry) { WINDOWS }
+let game = Entry(), entry = Entry()
+console(game)
+MainActor.assumeIsolated {
+    precondition(IridiumGameAudio.shared.volume == 0 && ir_audio_volume_get() == 0)
+    IridiumGameAudio.shared.setVolume(0.37)
+}
+windows(entry)
+precondition(ir_audio_volume_get() == 1)
+console(game)
+precondition(abs(ir_audio_volume_get() - 0.37) < 0.0001)
+UserDefaults.standard.removeObject(forKey: "GameVolume.\\(game.id)")
+'''.replace('CONSOLE', calls[0]).replace('WINDOWS', calls[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); main = root / 'main.swift'; main.write_text(fixture)
+            obj = root / 'audio.o'; executable = root / 'check'
+            subprocess.run(['cc', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(obj)], check=True)
+            subprocess.run(['swiftc', '-swift-version', '5', '-import-objc-header', str(BRIDGE / 'IRAudioVolume.h'),
+                            str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumGameVolume.swift'),
+                            str(ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumGameAudio.swift'),
+                            str(main), str(obj), '-o', str(executable)], check=True)
+            subprocess.run([str(executable)], check=True, timeout=10)
+
     @unittest.skipUnless(shutil.which('cc') and shutil.which('c++'), 'C and C++ compilers required')
     def test_pcm_and_native_binding_in_c_and_cpp(self):
         fixture = r'''#include "IRAudioVolume.h"

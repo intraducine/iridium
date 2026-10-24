@@ -421,7 +421,7 @@ final class LibraryModel: ObservableObject {
         MetalBackedView.presentCountAtLaunch = launchPresent; laidOutAfterFirstPresent = false
         launching = true; overlayFields = entry.overlayFields ?? ["FPS", "Frame time", "RAM", "Battery"]
         displayMode = entry.displayMode
-        IridiumGameAudio.shared.begin(entry.id)
+        MainActor.assumeIsolated { IridiumGameAudio.shared.begin(entry.id) }
         activeEntry = entry; current = entry.id; menu = false; performance = entry.performance; liveLogs = entry.liveLogs
         LogStore.shared.setDisplayActive(entry.liveLogs)
         fpsMode = entry.fpsMode; sessionMessage = "Starting…"

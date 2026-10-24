@@ -112,7 +112,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             let owner = try ownership.acquire(runtime)
             lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
             releaseButtons()
-            IridiumGameAudio.shared.begin(game.id, legacyMuted: game.runtimeID == "dolphin" && IridiumDolphinSettings.load(game.id).muted == true)
+            MainActor.assumeIsolated { IridiumGameAudio.shared.begin(game.id, legacyMuted: game.runtimeID == "dolphin" && IridiumDolphinSettings.load(game.id).muted == true) }
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
