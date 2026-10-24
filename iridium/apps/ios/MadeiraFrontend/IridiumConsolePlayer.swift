@@ -212,7 +212,6 @@ struct IridiumConsolePlayer: View {
                                     menuRow("Resolution \(scale)×", session.dolphinSettings.resolution == scale ? "checkmark.circle.fill" : "circle")
                                 }
                                 menuRow("Aspect: \(aspectName)", "aspectratio")
-                                menuRow(session.dolphinSettings.muted == true ? "Game Sound: Off" : "Game Sound: On", "speaker.wave.2")
                                 if session.game?.platform == .wii {
                                     menuRow(remoteName, "gamecontroller")
                                     menuRow(session.dolphinSettings.motion ? "Phone Motion: On" : "Phone Motion: Off", "gyroscope")
@@ -280,7 +279,7 @@ struct IridiumConsolePlayer: View {
         case "Aspect: \(aspectName)": session.setDolphin { $0.aspect = ($0.aspect + 1) % 3 }
         case remoteName where isDolphin: session.setDolphin { $0.remote = ($0.remote + 1) % 3 }
         case "Phone Motion: On", "Phone Motion: Off": session.setDolphin { $0.motion.toggle() }
-        case "Game Sound: On", "Game Sound: Off": session.setDolphin { $0.muted = !($0.muted == true) }
+        case "Volume": break
         case "Players: \(session.dolphinSettings.players)": session.setDolphin { $0.players = $0.players % 4 + 1 }
         case "Dual Core: On", "Dual Core: Off": session.setDolphin { $0.dualCore.toggle() }
         case "Close Game": closeConfirmation = IridiumCloseConfirmation(); confirmClose = true
@@ -323,6 +322,9 @@ struct IridiumConsolePlayer: View {
             return
         }
         if value == "back" { if menuPage == "Session" { resume() } else { menuPage = "Session"; menuFocus = "Resume" }; return }
+        if menuPage == "Session", menuFocus == "Volume", value == "left" || value == "right" {
+            IridiumGameAudio.shared.adjust(value); return
+        }
         if menuPage == "Controls" {
             let order = IridiumPlayerMenuNavigation.touchControlItems(enabled: controls.visible,
                 controller: controller.isActive, overrideEnabled: controller.forceTouchVisible) + ["Edit Controls"]
@@ -342,7 +344,7 @@ struct IridiumConsolePlayer: View {
         case "Session": order = IridiumSessionMenuActions.items(windows: false).map { $0.0 }
             + (isPSP ? ["PSP Settings", "Save States"] : isDolphin ? ["Dolphin Settings", "Save States"] : []) + ["Close Game"]
         case "PSP Settings": order = (1...4).map { "Resolution \($0)×" }
-        case "Dolphin Settings": order = (1...4).map { "Resolution \($0)×" } + ["Aspect: \(aspectName)", session.dolphinSettings.muted == true ? "Game Sound: Off" : "Game Sound: On"]
+        case "Dolphin Settings": order = (1...4).map { "Resolution \($0)×" } + ["Aspect: \(aspectName)"]
             + (session.game?.platform == .wii ? [remoteName, session.dolphinSettings.motion ? "Phone Motion: On" : "Phone Motion: Off"] : [])
             + ["Players: \(session.dolphinSettings.players)", session.dolphinSettings.dualCore ? "Dual Core: On" : "Dual Core: Off"]
         case "Save States": order = ["Slot \(stateSlot + 1)", "Save State and Resume", "Load State and Resume"]

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <algorithm>
 #include "IRDolphinAPI.h"
+#include "IRAudioVolume.h"
 #include "IRJITExecutionProbe.h"
 #include <filesystem>
 #include <cstring>
@@ -383,6 +384,7 @@ extern "C" void ir_native_engine_stop() {
         } catch (...) {uncertainShutdown(p);}
     });
 }
+extern "C" void ir_native_engine_set_volume(float level) { ir_audio_volume_set(level); }
 extern "C" uint64_t ir_native_engine_frames(){return active?active->frames.load():0;}
 
 static void configureDolphin(IRDolphinOptions options,IRDolphinPoll poll,IRDolphinJITPrepare prepare) {

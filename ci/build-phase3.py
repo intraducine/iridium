@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 PINS = {name: (Path(pin['path']).name, pin['revision'], pin['releaseTag'])
         for name in ('dolphin', 'azahar', 'play', 'flycast') for pin in [engine_pins.get(name)]}
-NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames')}
+NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames', 'set_volume')}
 DOLPHIN_EXPORTS = NATIVE_EXPORTS | {'_ir_dolphin_api'}
 AZAHAR_DOWNLOADS = {item['filename']: item['sha256']
                     for item in engine_pins.get('azahar')['artifacts'].values()}
@@ -72,6 +72,8 @@ def input_paths(engine):
               'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
     if engine != 'host': names += ['ci/phase3_' + engine + '.py', 'ci/' + engine + '-targets.cmake']
+    if engine in ('host', 'dolphin'):
+        names += ['iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h']
     if engine == 'host': names += ['vendor/Flycast/core/deps/libretro-common/include/libretro.h']
     if engine == 'azahar': names += [engine_pins.get('azahar')['buildDependencies']['moltenVK']['inputs'], 'ci/build-ppsspp-moltenvk.py']
     return names
@@ -256,7 +258,7 @@ def host(sdk):
     arguments = ['xcrun', '--sdk', sdk, 'clang++', '-std=c++17', '-fobjc-arc', '-dynamiclib', '-O2',
         '-target', target, '-isysroot', output('xcrun', '--sdk', sdk, '--show-sdk-path'),
         '-I', ROOT / 'vendor/Flycast/core/deps/libretro-common/include', '-I', BRIDGE,
-        BRIDGE / 'IRRetroPlayer.mm', '-Wl,-exported_symbols_list,' + str(exports),
+        BRIDGE / 'IRRetroPlayer.mm', BRIDGE / 'IRAudioVolume.c', '-Wl,-exported_symbols_list,' + str(exports),
         '-framework', 'UIKit', '-framework', 'AVFAudio', '-framework', 'CoreGraphics',
         '-framework', 'OpenGLES', '-framework', 'QuartzCore', '-install_name', '@rpath/' + binary.name, '-o', binary]
     run(*arguments)

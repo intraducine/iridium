@@ -106,6 +106,13 @@ Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
 
 ## Shared JIT and controls
 
+Per-game volume uses a shared saved gain and menu slider. SameBoy, native PSP,
+Dolphin, the Libretro host, and Wine apply it to their final PCM output. Native
+engine exports pass the saved gain into each retained image. Wine mixes its
+streams before applying the app gain, so guest mixer settings remain intact.
+Legacy Dolphin mute settings remain the default until a game volume is saved.
+System and Mac output volumes are unchanged.
+
 Madeira, PSP, Dolphin, and Azahar use the shared coordinator. The script preserves
 64-bit addresses, validates page replies, and stops on SDK connection failure.
 Cleanup requires the owned helper receipt, debugger release, and restored networking.

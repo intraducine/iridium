@@ -58,6 +58,11 @@ def source_fixture():
         (root / 'ci').mkdir()
         for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
+        for name in ('ci/madeira_audio_volume.py', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
+                     'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'):
+            destination = root / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes((build.ROOT / name).read_bytes())
         pins = json.loads((build.ROOT / 'UPSTREAM-SOURCES.json').read_text())
         pins['frontend_runtime'].update(revision=revision, dependencies={})
         pins['frontend_runtime']['buildDependencies']['freetype']['revision'] = freetype_revision

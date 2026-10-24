@@ -30,7 +30,6 @@ struct IridiumDolphinGameOptions: View {
                 ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
             }
             Toggle("Dual Core", isOn: value(\.dualCore))
-            Toggle("Mute Game", isOn: Binding(get: { settings.muted == true }, set: { settings.muted = $0; settings.save(game.id) }))
             NavigationLink { IridiumDolphinFiles(game: game) } label: {
                 Label("Save and Wii System Files", systemImage: "folder")
             }

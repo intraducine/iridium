@@ -20,7 +20,7 @@ RELEASE = engine_pins.get('ppsspp')['releaseTag']
 EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 'ext/freetype', 'assets/debugger')
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
-EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames',
+EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames', 'set_volume',
     'exec_version', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')}
 
 
@@ -71,13 +71,13 @@ def compiled_inputs(source, destination):
             relative = path.relative_to(destination / 'source').as_posix()
             if relative not in overlay.PATCHED: raise ValueError('Undeclared native source hook')
             name = 'embedding/' + relative
-        elif path in (NATIVE / 'IRPPSSPPNative.mm', NATIVE / 'IRPPSSPPCodecCheck.c', NATIVE / 'IRJITExecutionProbe.c', NATIVE / 'IRPSPExecutableMemory.cpp'):
+        elif path in (NATIVE / 'IRPPSSPPNative.mm', NATIVE / 'IRPPSSPPCodecCheck.c', NATIVE / 'IRAudioVolume.c', NATIVE / 'IRJITExecutionProbe.c', NATIVE / 'IRPSPExecutableMemory.cpp'):
             name = 'Iridium/' + path.name
         elif path.is_relative_to(destination / 'build'):
             name = 'generated/' + path.relative_to(destination / 'build').as_posix()
         else: raise ValueError('Compiler input is outside the reviewed native player')
         hashes[name] = digest(path)
-    if not all('Iridium/' + n in hashes for n in ('IRPPSSPPNative.mm', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c', 'IRPSPExecutableMemory.cpp')):
+    if not all('Iridium/' + n in hashes for n in ('IRPPSSPPNative.mm', 'IRPPSSPPCodecCheck.c', 'IRAudioVolume.c', 'IRJITExecutionProbe.c', 'IRPSPExecutableMemory.cpp')):
         raise ValueError('The native player and media check were not both compiled')
     return hashes
 
@@ -298,6 +298,7 @@ def build(source, destination, sdk, jobs):
         codeBlockHeaderAudit=codeblock_audit,
         licensedAtlases=json.loads(atlases.MANIFEST.read_text()),
         configureArguments=[portable(a) for a in command], embeddingHooks={n: digest(destination / 'source' / n) for n in overlay.PATCHED},
+        audioVolumeHeaderSHA256=digest(NATIVE / 'IRAudioVolume.h'),
         diagnosticHeaderSHA256=digest(NATIVE / 'IRJITDiagnostic.h'),
         executableMemoryHeaderSHA256=digest(NATIVE / 'IRPSPExecutableMemory.h'),
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),

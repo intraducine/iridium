@@ -767,6 +767,7 @@ int main() {
 #include <atomic>
 #include <cassert>
 #include <cstring>
+#include "IRAudioVolume.h"
 using UInt32=unsigned;using OSStatus=int;using AudioUnitRenderActionFlags=unsigned;
 struct AudioTimeStamp {};constexpr int noErr=0;
 struct AudioBuffer { void* mData;unsigned mDataByteSize; };
@@ -788,9 +789,16 @@ int main() {
     assert(samples[0]==32767*expected/100 && samples[1]==-32768*expected/100);
     assert(samples[2]==samples[0] && samples[3]==samples[1]);
   }
+  sound.SetVolume(100);ir_audio_volume_set(0.25f);
+  CoreAudioSound::callback(&sound,nullptr,nullptr,0,2,&buffers);
+  assert(samples[0]==8191 && samples[1]==-8192);
+  ir_audio_volume_set(0);
+  CoreAudioSound::callback(&sound,nullptr,nullptr,0,2,&buffers);
+  assert(samples[0]==0 && samples[1]==0);
 }
 ''')
-                    subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+                    subprocess.run(['c++', '-std=c++17', '-I', str(ROOT / 'iridium/apps/ios/RuntimeBridge'), str(main),
+                                    str(ROOT / 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c'), '-o', str(executable)], check=True, timeout=30)
                     subprocess.run([str(executable)], check=True, timeout=5)
                 source.write_text('upstream changed\n')
                 with self.assertRaises(ValueError): builder.generated('dolphin', root / 'output')

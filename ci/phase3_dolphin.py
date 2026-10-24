@@ -55,15 +55,15 @@ def generated(ROOT, directory):
     audio_overlay.parent.mkdir(parents=True, exist_ok=True)
     audio_overlay.write_text(audio_header)
     # RemoteIO has no HAL output-volume control. Apply gain to its PCM output.
-    audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>')
+    audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>\n#include "IRAudioVolume.h"')
     audio = audio.replace(mix, mix + '''
-    const int volume = sound->m_volume.load(std::memory_order_relaxed);
+    const float volume = sound->m_volume.load(std::memory_order_relaxed) / 100.0f * ir_audio_volume_get();
     auto* samples = static_cast<short*>(buffer.mData);
     if (volume == 0)
       std::memset(samples, 0, buffer.mDataByteSize);
-    else if (volume != 100)
+    else if (volume != 1)
       for (UInt32 sample = 0; sample < buffer.mDataByteSize / sizeof(short); ++sample)
-        samples[sample] = static_cast<short>(static_cast<int>(samples[sample]) * volume / 100);
+        samples[sample] = static_cast<short>(samples[sample] * volume);
 ''')
     audio = audio.replace(initial_volume, '')
     audio = audio[:audio.index('void CoreAudioSound::SetVolume(int volume)')] + '''void CoreAudioSound::SetVolume(int volume)

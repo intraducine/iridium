@@ -28,6 +28,9 @@ class CheckedBuildTests(unittest.TestCase):
             recipe = root / 'build/ntdll-unix/build.sh'
             recipe.parent.mkdir(parents=True)
             recipe.write_text(text)
+            (recipe.parent / 'audio_null_ios.c').write_text(
+                'static OSStatus ios_audio_render_cb(void) {\n'
+                '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}')
             obj = recipe.parent / 'obj'; obj.mkdir()
             for name in re.findall(r'\$OBJ_DIR/([^"/]+\.o)', text[text.index('ar rcs '):]):
                 (obj / name).write_bytes(b'stale object')
@@ -38,7 +41,7 @@ class CheckedBuildTests(unittest.TestCase):
             executable(root / 'build/crypto-unix/gen_gnutls_symtab.sh', 'exit 0')
             executable(root / 'bin/xcrun', 'case "$*" in *--show-sdk-path*) echo /fake/sdk; exit 0;; *) exit 1;; esac')
             env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'])
-            with patch.object(build, 'UPSTREAM', root):
+            with patch.object(build, 'UPSTREAM', root), patch.object(build, 'OUTPUT', root / 'output'):
                 with self.assertRaises(subprocess.CalledProcessError):
                     build.run_checked_recipe('ntdll-unix', env=env)
             self.assertEqual(output.read_bytes(), b'previous app archive')

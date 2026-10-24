@@ -110,6 +110,17 @@ class EnginePinsTests(unittest.TestCase):
                     target = root / path; target.write_text(target.read_text() + '\n# Changed engine adapter\n')
                     git('add', '.'); git('commit', '-qm', 'one engine adapter')
                     check(name)
+            for path in ('iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
+                         'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'):
+                git('reset', '--hard', revision)
+                target = root / path; target.write_text(target.read_text() + '\n// Changed audio gain\n')
+                git('add', '.'); git('commit', '-qm', 'shared audio input')
+                for stage in engine_pins.STAGES:
+                    with self.subTest(audio=path, consumer=stage):
+                        if stage in ('madeira-native', 'psp', 'host', 'dolphin'):
+                            with self.assertRaisesRegex(ValueError, 'Changed producer input'):
+                                reuse.compatible(root, revision, stage)
+                        else: reuse.compatible(root, revision, stage)
 
     def test_receipt_pin_hash_is_scoped_and_rejects_an_old_engine(self):
         with tempfile.TemporaryDirectory() as folder:
