@@ -442,6 +442,7 @@ struct GestureZonePanel: View {
             HStack {
                 Text(zone.kind == .swipe ? "Swipe length" : "Sensitivity").font(.subheadline)
                 Slider(value: binding(\.sensitivity), in: 0.25...3)
+                    .accessibilityLabel(zone.kind == .swipe ? "Swipe length" : "Sensitivity")
             }
         }
         .padding(14)
