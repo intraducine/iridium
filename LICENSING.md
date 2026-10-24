@@ -1,13 +1,12 @@
 # Licensing
 
-Original Iridium code and publication tools are **AGPL-3.0-only**, unless a
-file has a more specific notice. The full text is in [LICENSE](LICENSE).
-Third-party code keeps its own license and copyright notices.
+Original Iridium code is **AGPL-3.0-only**, unless a file states otherwise.
+See [LICENSE](LICENSE). Third-party licenses and copyright notices remain in
+force; this summary does not replace them.
 
-## Frontend app components
+## Components
 
-The frontend app uses `vendor/Madeira` at the revision in
-[UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json). Its major components are:
+Current revisions are in [UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json).
 
 | Component | Applicable terms |
 | --- | --- |
@@ -29,191 +28,79 @@ The frontend app uses `vendor/Madeira` at the revision in
 | Wine's bundled libxml2 and libxslt; NVAPI headers | MIT with their respective copyright notices |
 | Apple Metal Shader Converter | Apple's converter agreement; headers Apache-2.0 |
 
-The component's own notice controls if a summary differs. In particular,
-Madeira's top-level Wine table describes its GPL fork; the pinned Wine branch's
-`LICENSE-MADEIRA.md` specifies LGPL-2.1-or-later.
+Madeira's pinned Wine branch specifies LGPL-2.1-or-later in its own
+`LICENSE-MADEIRA.md`; its older top-level GPL summary does not override that file.
+Madeira's Converter Exception covers only the copyright named by the exception.
+It grants no rights to Apple's library or unrelated components.
 
-The app includes notices from `vendor/Madeira/LICENSES/`, the runtime's `legal/`
-folder, Dock, and the converter. Iridium's AGPL text is added to the app's
-`licenses` folder. Keep these notices with redistributed copies. Changes are
-recorded in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md).
+| Console component | Terms |
+| --- | --- |
+| SameBoy Core, Libretro adapter, replacement boot ROMs | Expat/MIT; Libretro API header has its own MIT notice |
+| DolphiniOS, Azahar, Flycast | GPL-2.0-or-later and file/dependency-specific terms |
+| Play! | BSD-2-Clause and dependency-specific terms |
+| PPSSPP | GPL-family, including GPLv3 libkirk/xBRZ; LGPL-2.1-or-later at3_standalone; dependency-specific terms |
+| PSP MoltenVK 1.2.9 and Azahar MoltenVK 1.4.1 | Apache-2.0 and dependency-specific MIT/Khronos/BSD terms |
 
-GPLv3 and AGPLv3 section 13 permit combining covered components under their
-respective terms. This does not relicense upstream code. Madeira's Converter
-Exception applies only to the copyright it covers and does not grant rights to
-Apple's library or change Iridium's license. Games run by the app remain
-separate works.
+Selected GPL-or-later components may use GPLv3 when combined with AGPLv3.
+Original grants remain intact. A dynamic-library boundary is not a license
+exception or a determination that components are separate works.
 
-## Source and library replacement
+## Notices and source
 
-The console engine components include DolphiniOS Dolphin, Azahar and Flycast under their upstream
-GPL-2.0-or-later and file/dependency-specific terms, and Play! under BSD-2-Clause
-and dependency-specific terms. Selected GPL-or-later components may use GPLv3
-when combined with AGPLv3 components; original grants/notices remain intact.
-The Dolphin embedding adapter retains GPL-2.0-or-later attribution. This does
-not resolve the combined-app Metal Shader Converter question below or authorize
-a public release.
+- Retain the app's `licenses` directory, Madeira runtime/Dock/converter notices,
+  and per-file notices. Adaptations are listed in [CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md).
+- Deliver exact matching dependency sources, local patches, generators, component
+  records, and usable build/relink instructions with an IPA. Keep source beside
+  the binary at a permanent versioned URL; an expiring Actions artifact is insufficient.
+- Complete buildable application source can provide LGPL replacement material.
+  Include required tools/inputs and Installation Information where applicable.
+  Preserve the right to modify LGPL libraries and reverse engineer the app to
+  debug those changes. Replacement binaries need not match release checksums.
+- Keep games, commercial artwork, Apple SDKs, disk images, Microsoft installers,
+  private logs, and signing/pairing material out of source packages. Wine Mono
+  downloads have their own notices and are excluded from the frontend package.
 
-The console engine builder copies dependency notice trees with relative paths,
-including Azahar's official unified-source closure, into `licenses/Phase3`.
-Source collection includes pinned dependencies, generated adaptation recipes,
-matching Azahar source and receipts. See
-[docs/console-engines.md](docs/console-engines.md) for build/replacement
-instructions and limits. A dynamic-library boundary is not a license exception
-or a determination of aggregation.
-
-Azahar's native Vulkan renderer links source-built MoltenVK 1.4.1. Its separate
-closure is pinned in `ci/azahar-moltenvk-source-inputs.json`. The builder retains
-the Apache-2.0, MIT/Khronos and BSD dependency grants in its Phase 3 notice tree.
-The corresponding source package includes every archive in that closure and the
-linked archive receipt. These records do not resolve the combined-app review.
-
-The multi-runtime branch additionally links SameBoy's Libretro core at the
-revision in `UPSTREAM-SOURCES.json`. The selected Core, Libretro adapter and
-replacement boot ROMs use SameBoy's Expat (MIT) license. The Libretro API header
-retains its separate MIT notice. The upstream iOS and HexFiend frontends are not
-linked. The build preserves those notices in `licenses/LICENSE-SAMEBOY*.txt`,
-and source collection includes the pinned submodule, boot-ROM assembly,
-generated boot data and its reproducible generation recipe.
-The boot ROMs are SameBoy's replacement implementation, not supplied console
-firmware. The generated private symbol prefix and the generated Libretro
-adapter's 48 kHz public-API setting are Iridium build adaptations; upstream
-source files and emulation Core logic are not modified. This does not import RetroArch or grant
-rights to third-party game content. No additional emulator's license has been
-approved merely because it appears in the candidate research.
-
-The PSP component uses pinned PPSSPP and its selected dependencies, with original
-per-file grants preserved. This includes GPL-family PPSSPP code, GPLv3 libkirk
-and xBRZ material, LGPL-2.1-or-later at3_standalone, and permissive dependencies.
-The native iOS player links MoltenVK 1.2.9 built from the digest-locked source
-closure in `ci/moltenvk-source-inputs.json`, with original Apache-2.0 and dependency
-notices. It does not link the release submodule's opaque prebuilt archive. Its
-receipt records the verified expanded source and actual linked archive hashes.
-The native iOS player includes upstream FFmpeg media decoders, graphics and
-frontend resources. FFmpeg is rebuilt from its release dependency source using
-the upstream selected-codec recipe. The generated `licenses/PPSSPP` directory contains upstream terms,
-GPLv3/LGPLv2.1 texts and source attribution; the build receipt records selected
-source pins and actual compiled units. It is not a blanket relicense.
-
-The eighteen bundled PGF replacement fonts retain the selected release's bytes.
-Their historical headers before upstream name camouflage identify Source Han
-Sans (Japanese/Korean), Ume Hy Gothic and Ume P Mincho (Latin). Full SIL OFL 1.1
-and Ume unrestricted grants, license-source checksums, historical blob IDs and
-release-file checksums are preserved in
-`iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts/PGF-PROVENANCE.json`. That
-records family provenance and redistribution terms; it does not assert exact
-original TTF versions or reproduce all manual glyph/metric adjustments.
-
-The five bundled TTF assets identify SIL Open Font License 1.1 in their embedded
-name records. Their original copyright/author/license records, checksums and
-full pinned upstream OFL texts are preserved beside the PGF notices. The
-Roboto-only asciifont atlas has an identified OFL input.
-
-New native component builds replace the separate UI font_atlas and PSP ppge_atlas
-resources with the owned assets in RuntimeSupport/PPSSPPAtlases. The replacement
-recipe uses the pinned release's upstream host rasterizer with locked, unmodified
-OFL inputs: Roboto Condensed, Source Han Sans 2.005R, and six Noto families. Full
-terms and embedded copyright/author records are in the PPSSPPFonts notices;
-ci/psp-atlas-inputs.json records exact downloads and checksums. The resource receipt
-records generation inputs, actual production-loader checks, preserved glyphs,
-icon texels and reviewed metrics. Glyph shaping/BiDi and device layout acceptance
-are not established by those checks.
-
-The original upstream atlas generators reference Arial Unicode and Kozuka Gothic
-files absent from the snapshot. Their original assets are retained in the local
-upstream checkout, excluded from new corresponding-source deliveries by exact
-checksums, and replaced when the native resources are packaged. Older personal
-builds and their corresponding source remain intact and do not gain these
-replacement resources retroactively. Microsoft's font FAQ does not supply an
-applicable bitmap-conversion grant: https://learn.microsoft.com/en-us/typography/fonts/font-faq .
-User-game font extraction, if invoked by upstream, stays in that game's writable
-memory-stick directory.
-
-Before public binary distribution, review the combined component terms,
-including PPSSPP dependencies and the proprietary Metal Shader Converter.
-Madeira's Converter Exception does not automatically extend to PPSSPP or other
-copyright holders. Separating a dylib is an engineering boundary, not by itself
-a determination of copyright aggregation or permission. Private validation and
-successful compilation do not establish clearance for a public release.
-The pinned Madeira `docs/LICENSING.md` expressly requires review of the assembled
-app before public release. Apple's supplied converter agreement section 2.B
-permits dylib distribution solely for shader conversion, subject to its other
-terms. Madeira's adopted exception covers its author-owned components and
-specified contributions, while LGPL Wine/media retain their own relink and
-notice obligations. The native PPSSPP image does not link or reference the
-converter, but the host loads both runtimes in one process and embeds PPSSPP's
-controller via its C boundary. The reviewed engineering boundary alone does not
-establish that this is a GPL section-5 aggregate or extend the exception to
-PPSSPP, libkirk, xBRZ or other independent GPL copyright holders. That combined
-work determination remains unresolved; the build recipe is not permission to
-ignore it.
-
-An IPA release must include matching source, modifications, license texts,
-third-party notices, a component manifest, and usable build/relink instructions.
-Keep them available with that release. A changing branch or an expiring Actions
-artifact is not permanent source delivery.
-
-The frontend source collector includes the repository, required dependency
-sources, tracked Madeira crypto and FFmpeg archives, pairing crates, generated build
-inputs and instructions. The component manifest records source revisions,
-packaged binaries and final static link inputs. See
-[build and replacement instructions](docs/actions-ipa.md) and
+Build receipts and source collection retain the console dependency sources,
+MoltenVK archives, FFmpeg codec source, and original notices. Exact reviewed
+unused signing fixtures and prebuilt archives are excluded by path and digest;
+changed files fail the audit. See [build/replacement](docs/actions-ipa.md) and
 [release requirements](docs/releasing.md).
 
-LGPL-2.1 section 6(a) permits application object code and/or source code as
-replacement material. A complete buildable application source package can
-supply a relink path without a separate object-file kit. Include all required
-generators, dependencies and link inputs. Preserve rights to modify the LGPL
-library and reverse engineer the application to debug those changes. Apply
-LGPLv3 section 4 to components using that version, including Installation
-Information where required. Rebuilt libraries can have different checksums.
+## Fonts and retained components
 
-Do not include game files, commercial artwork, Apple SDKs, Developer Disk
-Images, Microsoft installers, or personal signing and pairing material in the
-source package. Wine Mono is downloaded from WineHQ on request; the frontend
-release package excludes it. Its own notices apply to that download.
+PSP font provenance, original grants, checksums, and historical blob IDs are in
+`iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts/PGF-PROVENANCE.json` and its
+adjacent notices. PGF inputs identify Source Han Sans (SIL OFL) and Ume fonts
+(unrestricted grant); bundled TTF inputs retain OFL records. These records do not
+identify every original TTF version or later glyph adjustment.
 
-## Other repository components
+New UI/PSP atlases use locked, unmodified OFL inputs through the upstream
+rasterizer. The recipe retains notices and source and excludes only exact
+superseded atlas bytes. Original Arial Unicode/Kozuka references do not establish
+redistribution permission. Older delivered builds are unchanged.
 
-Retained integration and recovery source keeps its embedded terms:
+The retained FEX fork is MIT with component notices; Wine is LGPL-2.1-or-later.
+Madeira modifications retain their file-specific GPL terms and exceptions.
+Moonlight-derived controls retain GPL-3.0 and their bundled notice. StikJIT
+modifications retain MPL-2.0; idevice retains MIT. ANGLE, GStreamer/Cerbero,
+codecs, fonts, and other retained dependencies keep their own notices.
 
-- `iridium-fex-ios/`: FEX MIT and component notices.
-- `iridium-wine-ios/`: Wine LGPL-2.1-or-later and component notices.
-- `testrepos/Madeira/`: Madeira GPL-3.0-or-later and its dependency notices,
-  including the Wine LGPL branch and DXMT D3D9/DXSO LGPL material.
-- Madeira-derived Iridium material retains GPL-3.0-or-later. Notices are in
-  `iridium/apps/ios/MadeiraSupport/Notices/` and
-  `iridium/apps/ios/BuiltinJIT/StikJITNotices/`.
-- Moonlight touch-controller images and derived material retain GPL-3.0;
-  the notice is `iridium/apps/ios/MadeiraSupport/Notices/Moonlight-LICENSE.txt`.
-- StikJIT modifications retain MPL-2.0 where applicable; idevice retains MIT.
-- ANGLE, GStreamer/Cerbero, codecs, fonts, tests and other retained dependencies
-  keep their own license files. These are not linked by the frontend target.
+## Distribution limits
 
-Public upstream author names and copyright notices are attribution. Original
-grants remain in effect.
+Public binary distribution still requires combined-app review, including
+PPSSPP's independent GPL copyright holders and Apple's Metal Shader Converter.
+Madeira's exception does not automatically extend to them. The converter
+agreement permits distribution only under its stated conditions. A successful
+build or separate dylib does not resolve these questions.
 
-## Apple toolchain terms
+Retain applicable Apple LLVM/NCSA and Swift compiler-runtime notices. System
+Library and compiler exclusions depend on the actual license version; they do
+not grant redistribution permission or rights to Apple SDK source. Apple-specific
+compiler-runtime coverage remains a residual risk. Public unsigned-IPA contractual
+permission is a separate acknowledged risk. Do not require byte-identical builds
+or per-object source matching without a license reason.
 
-Xcode's installed acknowledgements include the LLVM University of Illinois/NCSA
-notice and separate Swift runtime terms. Retain the applicable notices. These
-do not grant source rights to Apple's SDKs. Xcode and the SDK remain external
-build prerequisites.
-
-GPLv3 and AGPLv3 section 1 exclude qualifying System Libraries from Corresponding
-Source and include compilers as Major Components. Compiler-supplied support
-routines may qualify under this definition. LGPL-2.1 section 6 has a separate
-exception for normally supplied major-component material, subject to its stated
-condition when that component accompanies the executable. Apply the actual
-license version; the GPLv3 definition does not replace the LGPL-2.1 provision.
-These exceptions address source obligations, not redistribution permission.
-
-Apple-specific compiler-runtime license coverage remains a residual risk.
-Public unsigned-IPA distribution has a separate acknowledged Apple contractual
-risk outside the open-source compliance review. No byte-identical rebuild or
-per-object source comparison is required without a license reason for it.
-
-References: [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html),
+See [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html),
 [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html),
-[LLVM license policy](https://llvm.org/docs/DeveloperPolicy.html), and
-[Apple Xcode agreement](https://www.apple.com/legal/sla/docs/xcode.pdf).
+[LLVM policy](https://llvm.org/docs/DeveloperPolicy.html), and the
+[Xcode agreement](https://www.apple.com/legal/sla/docs/xcode.pdf).
