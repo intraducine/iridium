@@ -23,9 +23,11 @@ def production_geometry():
     controls = CONTROLS.read_text()
     profiles = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumControlProfiles.swift').read_text()
     profiles = profiles.replace('import Combine', '').replace(': ObservableObject', '').replace('@Published ', '')
+    presets = (ROOT / 'iridium/apps/ios/App/Controls/TouchControlPresets.swift').read_text()
+    zones = presets[presets.index('enum GestureZoneKind:'):presets.index('/// The screen a built-in layout')]
     runtime = (ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift').read_text()
     platform = runtime[runtime.index('enum IridiumPlatform:'):runtime.index('struct IridiumRuntimeDescriptor:')]
-    return ('import Foundation\n' + platform + upstream[start:end] + profiles
+    return ('import Foundation\n' + platform + upstream[start:end] + zones + profiles
             + '\nenum TouchControlsModel { static let baseDiameter: CGFloat = 64 }\n'
             + controls[controls.index('enum IridiumConsoleControlLayout {'):])
 

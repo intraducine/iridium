@@ -44,6 +44,8 @@ struct LibraryEntry: Codable, Identifiable {
     /// Session menu shows it and an edit is written back to it; nil for controls
     /// no layout holds. Older files have none.
     var controlLayout: String?
+    /// The game's gesture zones (GestureZones.swift), kept with its controls. Older files have none.
+    var zones: [GestureZone]?
     var lastPlayed: Date?
     var graphicsAPI: String?
     var folderBytes: Int64?

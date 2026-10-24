@@ -439,6 +439,12 @@
         "path": "Windows/WiniosGamepad.c",
         "stripImportPrefix": false
       }
+    ],
+    "GestureZones.swift": [
+      {
+        "path": "Controls/GestureZones.swift",
+        "stripImportPrefix": false
+      }
     ]
   },
   "baselineSHA256": {
