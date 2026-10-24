@@ -86,6 +86,17 @@ bootstrap. Reusing an artifact does not upload another copy or extend its lifeti
 Set `reuse_assets=false` for a fresh hosted build.
 Local Madeira completion records use the same 14-day limit.
 
+The workflow also caches runtime Git objects and up to 3 GiB of compiler
+results. Submodule checkout still selects and verifies the pinned revisions.
+CMake engine builds use ccache, which
+checks the actual compiler, arguments, source and headers. Changed recipes
+still invalidate complete component artifacts; unchanged compilation units can
+reuse compiler results. Neither cache changes build flags or relaxes receipt,
+source, package or release checks. Both caches start empty on their first run.
+Azahar's source overlays and target setup have separate recipe files, so edits
+to those files do not invalidate Dolphin, Play! or Flycast. Azahar artifacts
+retain its expanded source and MoltenVK verification inputs as well as binaries.
+
 Native checkpoint packaging validates the completed receipt and every recorded
 output before creating a producer artifact. Restoration validates the extracted
 native generation against current recipe/tool and complete tracked upstream source

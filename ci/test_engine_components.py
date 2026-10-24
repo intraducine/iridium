@@ -40,16 +40,20 @@ class EngineComponentsTests(unittest.TestCase):
                 record = {'compiledInputs': {}}
                 generated = root / '.build/phase3' / engine / 'iphoneos/build/generated.c'
                 if engine in engines.phase3.PINS: record['compiledInputs'][generated.relative_to(root).as_posix()] = 'fixture'
+                if engine == 'azahar':
+                    record['compiledInputs']['.build/phase3-downloads/azahar-unified-source-2126.2/src/core.cpp'] = 'fixture'
+                    record['compiledInputs']['.build/azahar/moltenvk-source/MoltenVK/core.cpp'] = 'fixture'
                 def compile_component(name):
                     self.assertEqual(name, engine)
                     for base in engines.PATHS[name]:
                         path = root / base
-                        if path.suffix:
+                        if path.suffix and not base.endswith('azahar-unified-source-2126.2'):
                             path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'compiled fixture')
                         else:
                             path.mkdir(parents=True, exist_ok=True); (path / 'resource.txt').write_bytes(b'resource')
-                    if record['compiledInputs']:
-                        generated.parent.mkdir(parents=True, exist_ok=True); generated.write_text('generated source')
+                    for name in record['compiledInputs']:
+                        path = root / name
+                        path.parent.mkdir(parents=True, exist_ok=True); path.write_text('generated source')
                 compiler = stack.enter_context(patch.object(engines, 'compile', side_effect=compile_component))
                 stack.enter_context(patch.object(engines, 'validate', return_value=record))
                 available = False
@@ -87,12 +91,69 @@ class EngineComponentsTests(unittest.TestCase):
                 self.assertEqual(compiler.call_count, 1, 'app edit restarted the compiler')
                 self.assertIn('rebuilt=false', output.read_text())
                 for name in engines.PATHS[engine]: self.assertTrue((root / name).exists(), name)
-                if record['compiledInputs']: self.assertEqual(generated.read_text(), 'generated source')
+                for name in record['compiledInputs']:
+                    self.assertEqual((root / name).read_text(), 'generated source')
                 source = next(root.glob('vendor/**/source.c'))
                 source.write_text('changed compiler source')
                 git('add', '.'); git('commit', '-qm', 'core change fixture')
                 engines.ensure(engine)
                 self.assertEqual(compiler.call_count, 2, 'core edit reused stale compilation')
+
+    def test_azahar_recipe_edits_do_not_invalidate_other_engines(self):
+        reuse = engines.components.reuse
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+            git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid')
+            git('remote', 'add', 'origin', str(root))
+            for name in {reuse.WORKFLOW, 'ci/compiled-components.py',
+                         *(name for paths in engines.INPUTS.values() for name in (*paths, 'ci/engine-components.py'))}:
+                path = root / name
+                if name.startswith('vendor/') and not path.suffix: path /= 'source.c'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                original = engines.ROOT / name
+                path.write_bytes(original.read_bytes() if original.is_file() else b'fixture')
+            git('add', '.'); git('commit', '-qm', 'engine inputs')
+            revision = git('rev-parse', 'HEAD')
+            for name in ('ci/phase3_azahar.py', 'ci/azahar-targets.cmake'):
+                path = root / name; path.write_text(path.read_text() + '\n# Azahar-only edit\n')
+            git('add', '.'); git('commit', '-qm', 'Azahar-only inputs')
+            for engine in engines.PATHS:
+                with self.subTest(engine=engine):
+                    if engine == 'azahar':
+                        with self.assertRaisesRegex(ValueError, 'Changed producer input'):
+                            reuse.compatible(root, revision, engine)
+                    else:
+                        reuse.compatible(root, revision, engine)
+            path = root / 'ci/build-phase3.py'; path.write_text(path.read_text() + '\n# Common compiler change\n')
+            git('add', '.'); git('commit', '-qm', 'Common compiler input')
+            with self.assertRaisesRegex(ValueError, 'Changed producer input'):
+                reuse.compatible(root, revision, 'dolphin')
+
+    @unittest.skipUnless(shutil.which('cmake') and shutil.which('ccache'), 'CMake and ccache required')
+    def test_compiler_cache_reuses_objects_and_invalidates_changed_headers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.20)\nproject(CacheFixture C)\nadd_executable(check main.c)\n')
+            (root / 'main.c').write_text('#include "value.h"\nint main(void) { return VALUE; }\n')
+            header = root / 'value.h'; header.write_text('#define VALUE 3\n')
+            env = dict(os.environ, CMAKE_C_COMPILER_LAUNCHER=shutil.which('ccache'),
+                       CCACHE_DIR=str(root / 'cache'), CCACHE_COMPILERCHECK='content', CCACHE_MAXSIZE='4M')
+            def run(*args):
+                return subprocess.run(args, cwd=root, env=env, check=True, capture_output=True, text=True).stdout
+            run('cmake', '-S', '.', '-B', 'build', '-G', 'Ninja')
+            run('ccache', '--zero-stats')
+            def build(value):
+                run('cmake', '--build', 'build')
+                self.assertEqual(subprocess.run([str(root / 'build/check')]).returncode, value)
+            build(3)
+            next((root / 'build').rglob('*.o')).unlink()
+            build(3)
+            stats = dict(line.split() for line in run('ccache', '--print-stats').splitlines())
+            self.assertGreater(int(stats.get('direct_cache_hit', 0)) + int(stats.get('preprocessed_cache_hit', 0)), 0)
+            header.write_text('#define VALUE 7\n')
+            build(7)
 
     def test_disabled_reuse_builds_and_retains_without_querying_github(self):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {

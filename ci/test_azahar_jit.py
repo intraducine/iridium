@@ -20,7 +20,8 @@ class AzaharJITTests(unittest.TestCase):
         builder = importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'ci').mkdir()
-            shutil.copy2(ROOT / 'ci/build-ppsspp-moltenvk.py', root / 'ci/build-ppsspp-moltenvk.py')
+            for name in ('build-ppsspp-moltenvk.py', 'phase3_azahar.py'):
+                shutil.copy2(ROOT / 'ci' / name, root / 'ci' / name)
             source = root / '.build/azahar/moltenvk-source/MoltenVK'
             source.mkdir(parents=True); (source / 'source.cpp').write_bytes(b'original')
             download = root / '.build/runtime-downloads'; download.mkdir()
@@ -83,11 +84,10 @@ int main(){
 
     @unittest.skipUnless(shutil.which('cmake'), 'CMake required')
     def test_build_replaces_architecture_wrappers_and_rejects_duplicate_sources(self):
-        hook = (ROOT / 'ci/phase3-targets.cmake').read_text()
+        hook = (ROOT / 'ci/azahar-targets.cmake').read_text()
         selection = next(line.strip() for line in hook.splitlines() if 'list(FILTER sources EXCLUDE REGEX' in line)
-        recipe = (ROOT / 'ci/build-phase3.py').read_text()
-        start = recipe.index("    if engine == 'azahar':\n        commands = json.loads", recipe.index('    run(*arguments)'))
-        validation = textwrap.dedent(recipe[start:recipe.index("    run('cmake', '--build'", start)])
+        spec = importlib.util.spec_from_file_location('azahar_compile_checks', ROOT / 'ci/phase3_azahar.py')
+        recipe = importlib.util.module_from_spec(spec); spec.loader.exec_module(recipe)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / 'check.cmake'
@@ -99,7 +99,7 @@ int main(){
             import json
             def check(commands):
                 (root / 'compile_commands.json').write_text(json.dumps(commands))
-                exec(validation, {'engine': 'azahar', 'build_dir': root, 'embedding': overlay, 'Path': Path, 'json': json})
+                recipe.check_compile_commands(root, overlay)
             check(valid)
             for commands in (valid + [{'file': str(root / 'arch_gen/common/spin_lock_arm64.cpp')}],
                              valid[1:],
