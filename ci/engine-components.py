@@ -56,6 +56,12 @@ for engine in ('host', *phase3.PINS):
         PATHS[engine] += tuple(folder + name for name in ('assets', 'licenses', 'embedding'))
     if engine == 'azahar':
         PATHS[engine] += tuple('.build/phase3-downloads/' + name for name in phase3.AZAHAR_DOWNLOADS)
+        PATHS[engine] += ('.build/phase3-downloads/azahar-unified-source-2126.2',
+                         '.build/azahar/moltenvk-source',
+                         '.build/azahar/moltenvk-derived/package-iphoneos/component.json',
+                         '.build/azahar/moltenvk-derived/package-iphoneos/Build/Products/Release-iphoneos/libMoltenVK.a')
+        PATHS[engine] += tuple('.build/runtime-downloads/' + item['sha256'] + '.tar'
+                              for item in json.loads((ROOT / 'ci/azahar-moltenvk-source-inputs.json').read_text()))
     INPUTS[engine] = ('vendor/' + ('Flycast' if engine == 'host' else phase3.PINS[engine][0]),
                      *phase3.input_paths(engine))
 components.PATHS.update(PATHS)

@@ -44,7 +44,21 @@ jobs:
         run: |
           test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
           echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Identify pinned runtime sources
+        id: runtime_sources
+        run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore runtime Git objects
+        if: inputs.reuse_assets
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .git/modules/vendor
+          key: runtime-git-v1-${{ runner.os }}-${{ steps.runtime_sources.outputs.key }}
+          restore-keys: runtime-git-v1-${{ runner.os }}-
       - name: Initialize the pinned runtime sources
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: submodule.fetchJobs
+          GIT_CONFIG_VALUE_0: "8"
         run: |
           git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
           python3 ci/build-ppsspp-native.py --initialize
@@ -81,6 +95,22 @@ jobs:
             fi
             "$tool" --version
           done
+      - name: Prepare compiler cache
+        run: |
+          command -v ccache || HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.build/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=3G" >> "$GITHUB_ENV"
+          for language in C CXX OBJC OBJCXX; do
+            echo "CMAKE_${language}_COMPILER_LAUNCHER=$(command -v ccache)" >> "$GITHUB_ENV"
+          done
+      - name: Restore compiler cache
+        if: inputs.reuse_assets
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/ccache
+          key: compiler-v1-${{ runner.os }}-${{ env.NATIVE_TOOLCHAIN }}-${{ github.sha }}
+          restore-keys: compiler-v1-${{ runner.os }}-${{ env.NATIVE_TOOLCHAIN }}-
       - name: Select completed native compilation
         id: compiled_madeira_native
         env:
@@ -260,6 +290,9 @@ jobs:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           IRIDIUM_PHASE3: "1"
         run: python3 ci/madeira-frontend.py app --reuse-psp-component
+      - name: Report compiler cache
+        if: always()
+        run: command -v ccache >/dev/null && ccache --show-stats || true
       - name: Record app binaries for final audit
         if: inputs.release_build
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
