@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Select retained manual-build artifacts only when their producer inputs match."""
 import ast
+import engine_pins
 import importlib.util
 import hashlib
 import json
@@ -90,7 +91,7 @@ FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tre
 FRONTEND_APP_METADATA = frozenset(('PSP_PRIVACY_DESCRIPTIONS',))
 FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
-                              'time', 'sys', 'tempfile', 'madeira_presentation'))
+                              'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins'))
 # This reviewed route cannot run app preparation during a compiler action.
 # A new CLI shape uses whole-file comparison until its isolation is reviewed.
 FRONTEND_MAIN = """if __name__ == '__main__':
@@ -129,6 +130,10 @@ def frontend_compiler_source(text):
     app_names = FRONTEND_APP_FUNCTIONS | FRONTEND_APP_METADATA
     main = ast.dump(ast.parse(FRONTEND_MAIN).body[0])
     root = ast.dump(ast.parse("Path(__file__).resolve().parents[1]", mode='eval').body)
+    pin_values = {name: ast.dump(ast.parse(value, mode='eval').body) for name, value in (
+        ('REVISION', "engine_pins.get('madeira')['revision']"),
+        ('PSP_REVISION', "engine_pins.get('ppsspp')['revision']"),
+        ('FREETYPE_REVISION', "engine_pins.get('madeira')['buildDependencies']['freetype']['revision']"))}
     if not tree.body or ast.dump(tree.body[-1]) != main:
         return text
     def app_reference(table):
@@ -181,7 +186,7 @@ def frontend_compiler_source(text):
             if name in names:
                 return text
             names.add(name)
-            # Reviewed module initialization is literals and checkout paths;
+            # Reviewed initialization is literals, checkout paths and exact pin reads;
             # arbitrary module-time calls could invoke otherwise unused code.
             try:
                 value = ast.literal_eval(node.value)
@@ -199,6 +204,7 @@ def frontend_compiler_source(text):
                 while isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div) and isinstance(value.right, ast.Constant):
                     value = value.left
                 if not ((name == 'ROOT' and ast.dump(node.value) == root)
+                        or pin_values.get(name) == ast.dump(node.value)
                         or isinstance(value, ast.Name) and value.id == 'ROOT'):
                     return text
         elif isinstance(node, ast.If) and node is tree.body[-1] and ast.dump(node) == main:
@@ -325,10 +331,17 @@ def compatible(root, revision, stage):
              'prefix': PREFIX_INPUTS, 'linux-userland': linux.INPUTS + ('check-public-source.py',), **COMPONENT_INPUTS}[stage]
     if stage in COMPONENT_INPUTS:
         paths += ('ci/compiled-components.py',)
+    if stage in ('madeira-native', 'madeira-windows'):
+        paths += ('ci/engine_pins.py', engine_pins.MANIFEST)
     mirror_only = stage == 'media' and media_mirror_transport_only(root, revision)
     for path in paths:
         if mirror_only and path in ('ci/prepare-media-sdk.sh', SPANDSP_MIRROR_PATCH):
             continue
+        if path == engine_pins.MANIFEST and stage in engine_pins.STAGES:
+            old = git(root, 'ls-tree', revision, '--', path)
+            if old and engine_pins.selected(stage, json.loads(git(root, 'show', revision + ':' + path))) == engine_pins.selected(stage, json.loads(git(root, 'show', 'HEAD:' + path))):
+                continue
+            raise ValueError('Changed producer engine pin: ' + stage)
         # ls-tree returns an empty result for absent inputs, so old producers
         # without newly required scripts are invalidated without a Git error.
         if path == 'ci/prepare-media-sdk.sh':

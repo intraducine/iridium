@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reuse audited console outputs through the existing trusted compiler artifacts."""
 import argparse
+import engine_pins
 import hashlib
 import importlib.util
 import json
@@ -27,7 +28,7 @@ BRIDGE = 'iridium/apps/ios/RuntimeBridge/'
 PATHS = {
     'psp': (PSP + 'libIridiumPPSSPPNative.dylib', PSP + 'component.json', PSP + 'assets', PSP + 'licenses',
             '.build/psp-atlas-fonts') + tuple('.build/runtime-downloads/' + item['sha256'] + '.tar'
-                for item in json.loads((ROOT / 'ci/moltenvk-source-inputs.json').read_text())),
+                for item in json.loads((ROOT / engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs']).read_text())),
     'sameboy': tuple('.build/sameboy/iphoneos/' + name for name in
                     ('libIridiumSameBoy.a', 'SameBoyNamespace.h', 'source-manifest.json')),
 }
@@ -37,7 +38,7 @@ INPUTS = {
             'ci/ppsspp_native_overlay.py', 'ci/ppsspp_sensor_overlay.py', 'ci/ppsspp_picker_overlay.py',
             'ci/ppsspp_callback_overlay.py', 'ci/ppsspp_frontend_overlay.py', 'ci/ppsspp_gl_sync_overlay.py',
             'ci/ppsspp_exec_overlay.py', 'ci/ppsspp_atlas_resources.py', 'ci/psp-atlas-resources.json',
-            'ci/psp-atlas-inputs.json', 'ci/psp-atlas-host', 'ci/moltenvk-source-inputs.json',
+            'ci/psp-atlas-inputs.json', 'ci/psp-atlas-host', engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs'],
             'ci/fetch-runtime-inputs.py', 'iridium/apps/ios/RuntimeSupport/PPSSPPAtlases',
             'iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts',
             'iridium/apps/ios/MadeiraSupport/Notices/MoltenVK') + tuple(BRIDGE + name for name in
@@ -56,14 +57,16 @@ for engine in ('host', *phase3.PINS):
         PATHS[engine] += tuple(folder + name for name in ('assets', 'licenses', 'embedding'))
     if engine == 'azahar':
         PATHS[engine] += tuple('.build/phase3-downloads/' + name for name in phase3.AZAHAR_DOWNLOADS)
-        PATHS[engine] += ('.build/phase3-downloads/azahar-unified-source-2126.2',
+        PATHS[engine] += ('.build/phase3-downloads/' + phase3.azahar_module().source_archive().removesuffix('.tar.xz'),
                          '.build/azahar/moltenvk-source',
                          '.build/azahar/moltenvk-derived/package-iphoneos/component.json',
                          '.build/azahar/moltenvk-derived/package-iphoneos/Build/Products/Release-iphoneos/libMoltenVK.a')
         PATHS[engine] += tuple('.build/runtime-downloads/' + item['sha256'] + '.tar'
-                              for item in json.loads((ROOT / 'ci/azahar-moltenvk-source-inputs.json').read_text()))
-    INPUTS[engine] = ('vendor/' + ('Flycast' if engine == 'host' else phase3.PINS[engine][0]),
+                              for item in json.loads((ROOT / engine_pins.get('azahar')['buildDependencies']['moltenVK']['inputs']).read_text()))
+    INPUTS[engine] = (engine_pins.get(engine_pins.STAGES[engine])['path'],
                      *phase3.input_paths(engine))
+for engine in INPUTS:
+    INPUTS[engine] += ('ci/engine_pins.py', engine_pins.MANIFEST)
 components.PATHS.update(PATHS)
 # Generated compiler inputs are restored for the existing source audit, without object files.
 for engine in ('host', *phase3.PINS):
@@ -84,7 +87,7 @@ def validate(engine):
         record = json.loads((directory / 'component.json').read_text())
         if record.get('sdk') != 'iphoneos' or record.get('binary') != 'libIridiumPPSSPPNative.dylib':
             raise ValueError('PSP platform or binary differs')
-        if record.get('revision') != builder.REVISION or record.get('sourceRevisions') != builder.revisions(ROOT / 'vendor/PPSSPP'):
+        if record.get('enginePin') != engine_pins.selected('psp') or record.get('revision') != builder.REVISION or record.get('sourceRevisions') != builder.revisions(ROOT / 'vendor/PPSSPP'):
             raise ValueError('PSP source revisions differ')
         if builder.digest(directory / record['binary']) != record['sha256']:
             raise ValueError('PSP binary checksum differs')
@@ -127,7 +130,8 @@ def compile(engine):
         if engine == 'azahar':
             folder = ROOT / '.build/phase3-downloads'
             folder.mkdir(parents=True, exist_ok=True)
-            subprocess.run(['gh', 'release', 'download', '2126.2', '--repo', 'azahar-emu/azahar',
+            subprocess.run(['gh', 'release', 'download', engine_pins.get('azahar')['releaseTag'],
+                            '--repo', engine_pins.get('azahar')['upstream'].removeprefix('https://github.com/'),
                             '--dir', str(folder), *[arg for name in phase3.AZAHAR_DOWNLOADS
                                                    for arg in ('--pattern', name)]], check=True)
         command = ['ci/build-phase3.py', '--engine', engine, '--sdk', 'iphoneos', '--jobs', '3']

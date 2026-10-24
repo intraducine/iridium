@@ -14,7 +14,12 @@
     "app_sources": "iridium/apps/ios/App",
     "app_project": "iridium/apps/ios/AppProject",
     "native_contract": "ci/engine-integrations/madeira-api.json",
-    "staging": "ci/madeira-frontend.py"
+    "staging": "ci/madeira-frontend.py",
+    "buildDependencies": {
+      "freetype": {
+        "revision": "42608f77f20749dd6ddc9e0536788eaad70ea4b5"
+      }
+    }
   },
   "snapshots": [
     {
@@ -149,7 +154,13 @@
       "execution": "interpreter",
       "version": "1.0.4",
       "adaptation": "Private symbol namespace; unchanged Core/Libretro; frontend target sample rate 96 kHz and standalone iOS model/color/high-pass defaults",
-      "bootROMs": "ci/sameboy-bootroms.json; regenerate with ci/sameboy_bootroms.py and pinned RGBDS 0.9.4"
+      "bootROMs": "ci/sameboy-bootroms.json; regenerate with ci/sameboy_bootroms.py and pinned RGBDS 0.9.4",
+      "buildDependencies": {
+        "rgbds": {
+          "revision": "d1829ed92327a9f9210ffd45d865331f24dfa4e6",
+          "releaseTag": "v0.9.4"
+        }
+      }
     },
     {
       "id": "ppsspp",
@@ -165,7 +176,13 @@
       "adaptation": "Declared generated iOS embedding/lifecycle hooks; emulator CPU/GPU/media internals unchanged",
       "assets": "Complete native upstream assets; build receipt hashes every delivered file",
       "version": "1.20.4",
-      "releaseTag": "v1.20.4"
+      "releaseTag": "v1.20.4",
+      "buildDependencies": {
+        "moltenVK": {
+          "version": "1.2.9",
+          "inputs": "ci/moltenvk-source-inputs.json"
+        }
+      }
     },
     {
       "id": "dolphin",
@@ -192,7 +209,23 @@
       ],
       "license": "GPL-2.0-or-later and dependency-specific terms",
       "build": "ci/build-phase3.py",
-      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/console-engines.md for platform adapters, complete source and unverified limits."
+      "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/console-engines.md for platform adapters, complete source and unverified limits.",
+      "buildDependencies": {
+        "moltenVK": {
+          "version": "1.4.1",
+          "inputs": "ci/azahar-moltenvk-source-inputs.json"
+        }
+      },
+      "artifacts": {
+        "source": {
+          "filename": "azahar-unified-source-2126.2.tar.xz",
+          "sha256": "85c8b56fac703df04720125044b8ff887997911858a6cde545dfb1107ba4cd26"
+        },
+        "reference": {
+          "filename": "azahar-libretro-ios-arm64-2126.2.zip",
+          "sha256": "18e78a721884438b11a3588f96d19e09895f0dbb5c716448343ab185972bc451"
+        }
+      }
     },
     {
       "id": "play",

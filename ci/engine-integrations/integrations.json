@@ -1,7 +1,6 @@
 {
   "schema": 1,
   "madeira": {
-    "revision": "279fd0f83170425db002fe25d6bd62f6355f497d",
     "appAdapter": "iridium/apps/ios/App/Adapters/Madeira",
     "nativeAPI": "ci/engine-integrations/madeira-api.json",
     "nativeBuild": "ci/madeira-frontend.py",
@@ -13,7 +12,6 @@
     ]
   },
   "ppsspp": {
-    "revision": "fa50bb1976065c4f8b1b47af227d367fe9771555",
     "adapter": "iridium/apps/ios/RuntimeBridge/IRPPSSPPNative.mm",
     "patches": [
       "ci/ppsspp_callback_overlay.py",
@@ -41,5 +39,6 @@
       "Per-engine revision, source identity, asset and export receipts",
       "Runtime lease, pause/resume, save path and teardown behavior"
     ]
-  }
+  },
+  "pins": "UPSTREAM-SOURCES.json"
 }

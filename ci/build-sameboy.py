@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the pinned interpreter core, with private symbols, without a frontend."""
 import argparse
+import engine_pins
 import concurrent.futures
 import hashlib
 import json
@@ -18,11 +19,12 @@ PREFIX = 'iridium_sb_'
 def build_input_hashes():
     paths = [CORE / 'version.mk', CORE / 'LICENSE', CORE / 'Makefile', CORE / 'libretro/Makefile', CORE / 'libretro/Makefile.common',
              ROOT / 'ci/build-sameboy.py', ROOT / 'ci/sameboy_bootroms.py',
-             ROOT / 'ci/sameboy-bootroms.json']
+             ROOT / 'ci/sameboy-bootroms.json', ROOT / 'ci/engine_pins.py']
     paths += [p for directory in ('Core', 'libretro', 'BootROMs')
               for p in sorted((CORE / directory).rglob('*')) if p.is_file()
               and (p.suffix in {'.c', '.h', '.inc', '.asm', '.png'} or p.name == 'Makefile')]
-    return {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+    return {**{p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
+            'enginePin': hashlib.sha256(json.dumps(engine_pins.selected('sameboy'), sort_keys=True).encode()).hexdigest()}
 
 
 def verify_component(folder):

@@ -1,155 +1,67 @@
-# Release policy
+# Releases
 
-## Version and scope
+Builds and publication require explicit maintainer approval. Keep builds manual
+and use the exact reviewed commit with passing source checks.
 
-Use Semantic Versioning: `MAJOR.MINOR.PATCH`, with optional prerelease labels
-such as `0.2.0-beta.1`. Tags use a `v` prefix. Before 1.0, document incompatible
-changes explicitly and use a minor version increase. After 1.0, incompatible
-changes to the supported runtime SDK, library/save formats, configuration, or
-other documented public contracts require a major version. Additive behavior
-uses a minor version; compatible fixes use a patch. Never reuse a released tag
-or replace a published artifact silently.
+## Version and notes
 
-The published v0.1.0 description is `docs/releases/0.1.0.md`. Keep historical
-release descriptions tied to their original artifacts. Choose a new version
-and description for a later release.
+Use Semantic Versioning and `vMAJOR.MINOR.PATCH` tags. The maintainer chooses the
+version. Before 1.0, describe incompatible changes and increase the minor version.
+After 1.0, breaking public contracts require a major version. Keep the numeric
+app version and unique CI build number consistent across the app and extensions.
+Never reuse a released tag or silently replace its assets.
 
-The maintainer chooses the release version. Do not infer it from the number of
-commits. Set the app's marketing version to the numeric release core and record
-the unique CI build number separately. Prerelease status belongs in the tag and
-release notes. Verify actual bundle metadata, including helper extensions,
-before publishing. No version is assigned by this policy change.
-
-## One source for the description
-
-Copy `docs/releases/TEMPLATE.md` to `docs/releases/VERSION.md`. Replace every
-placeholder and retain all headings. Lead with the IPA download, requirements, and a short installation flow. Use
-short player-facing changes and known issues. Keep source, license, checksum,
-and build evidence inside the template's collapsed details section. Put notices
-and build/relink instructions in one source-guide ZIP, with one checksum file
-for the downloadable assets. Split large source archives only when required by
-the hosting limit. Preserve the complete source and required notices; simplifying
-the page must not remove them. Avoid internal audit history and unsupported
-compatibility claims.
-
-The reviewed file is the GitHub release description. Do not use automatic
-GitHub-generated notes as the final description. Validate and render it with:
+Copy [TEMPLATE.md](releases/TEMPLATE.md) to `releases/VERSION.md`. Keep its headings
+and evidence fields. Lead with installation and user-visible changes. Keep source
+and build details collapsed. Validate with:
 
 ```sh
 python3 ci/check-standards.py
 python3 ci/check-standards.py --release VERSION
 ```
 
-The second command writes the checked description to stdout. It does not create
-a release. When publication is explicitly authorized, use the reviewed file as
-`gh release create ... --notes-file docs/releases/VERSION.md`. Create a draft
-first, inspect the actual assets and description, then publish deliberately.
-Do not use a placeholder command as proof that publication happened.
+Use the reviewed file as the release body. Historical notes describe their
+original artifacts; do not apply current compatibility claims to old releases.
 
-## Test builds and release builds
+## Publish
 
-Manual IPA builds default to fast test mode. This builds the same complete app
-and keeps source, component, privacy, package-blocker and signature checks.
-It skips the full corresponding-source archive and release audit uploads.
-Use this mode for development and device tests.
+1. Review `ci/binary-release-blockers.json` and `ci/binary-package-blockers.json`.
+   Resolve entries with evidence; do not remove them to bypass checks.
+2. Start a release-mode build: `python3 ci/dispatch-build.py --release`.
+   Default test builds omit source and release-audit uploads and cannot be
+   promoted without the missing matching materials and checks.
+3. Inspect the actual IPA, source archive, component manifest, link maps,
+   checksums, bundle versions, and signature audit. Check privacy and licenses.
+4. Test the stated games and device paths. Record untested items and migration
+   or save risks. Builds alone do not establish device compatibility.
+5. Tag the verified commit and create a draft with the reviewed notes. Attach
+   the IPA, matching source, source guide with notices/relink instructions, and
+   checksums. Split source archives only for hosting limits.
+6. Verify downloads and checksums, then publish with authorization.
 
-A release candidate requires `release_build=true` in Actions or
-`python3 ci/dispatch-build.py --release`. This adds source collection, the
-component manifest, link audit and archive checksum gate. It does not publish.
-Do not use a test artifact as a public release without these matching materials
-and checks. The build mode does not change upstream license or source obligations.
+Keep matching source and notices at permanent versioned release URLs. Actions
+artifacts expire. Preserve old source, checksums, and data-safe recovery steps
+when issuing a fix release.
 
-## Release sequence
+## Source and signing
 
-1. Select an exact source commit after review and green source checks. Review
-   outstanding issues, `ci/binary-release-blockers.json` (build readiness), and
-   `ci/binary-package-blockers.json` (final binary review); never clear entries
-   just to make CI green. Record the evidence that resolves each entry.
-2. Start the manual build in release mode only when requested. Retain its commit,
-   run URL, dependency revisions, source archive, notices, and checksums. Fix failures
-   through reviewed source changes, then choose another manual run.
-3. Audit the actual IPA and corresponding source. Check every nested executable
-   is unsigned except the main app's anonymous ad-hoc increased-memory-limit
-   carrier. Verify its sole entitlement, empty CMS payload, absent team identity,
-   and bundle resource seal with the packaging audit. No credential or pairing
-   material may be present, and bundle versions must match.
-   Confirm the source archive includes local patches and required build inputs.
-4. Perform the release's stated simulator/device tests. Do not claim untested
-   games or input/audio paths work. If device checks are unavailable, label the
-   release experimental and list that limitation clearly.
-5. Complete the release description. Include installation and signing limits,
-   JIT requirements, migration/save advice, test evidence, and known problems.
-6. With publication authorization, tag the verified commit and make a draft.
-   Attach the sideloading IPA, exact corresponding-source archive, checksums, and
-   required notices. Check downloads and checksum verification before publishing.
-7. If a serious regression appears, mark the release as affected and publish a
-   new fix version. Preserve old source and checksums. Give data-safe recovery
-   instructions; never advise deleting saves as a routine rollback.
+The source package must include the exact checkout and dependencies, patches,
+generators, build/relink instructions, notices, and `COMPONENT-MANIFEST.json`.
+Record each component's license, revision, modifications, build entry, and bundle
+outputs. Use the final binary inventory and static link maps; dynamic imports
+alone do not identify static dependencies. Do not add per-object requirements
+without a license reason.
 
-Actions artifacts are temporary test outputs, not permanent release source
-hosting. A published binary needs accessible matching source beside it. Retain
-both together. No maintainer signing certificate is used at any stage.
-The historical `Iridium-unsigned.ipa` filename is retained; the anonymous carrier
-does not replace the recipient's app and helper signing before installation.
+Exclude Apple SDKs, game data, private logs, and signing or pairing material.
+A complete buildable source package can supply LGPL replacement material;
+modified rebuilds do not need to match release hashes. See [replacement commands](actions-ipa.md).
 
-## Enforcement and limits
+Packaging allows only the main app's anonymous increased-memory-limit carrier;
+helpers remain unsigned. Check its sole entitlement, empty CMS payload, absent
+team identity, and resource seal. Recipients must sign the app and extensions.
+The carrier grants no provisioning rights.
 
-CI validates release filenames, headings, placeholders, and evidence fields.
-Reviewers verify the truth of the evidence, license coverage, migration safety,
-and artifact correspondence. Automated text checks cannot establish those facts.
-Repository branch protections and human approval remain separate controls.
-
-References:
-- https://semver.org/spec/v2.0.0.html
-- https://keepachangelog.com/en/1.1.0/
-- https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository
-
-The final binary review gate runs after Xcode and before IPA packaging or upload.
-In release mode, app link maps are generated and retained for 14 days even when
-that gate blocks packaging. A missing or invalid final-review record blocks packaging.
-This permits an audit build without treating it as an approved release.
-
-The audit artifact also records each native binary's bundle-relative path, size,
-SHA-256 digest and dynamic library references. It contains no executable payloads.
-Compare static dependencies using the link maps; dynamic references alone cannot
-establish static-library source coverage. Inventory failures block packaging.
-
-## Source package and component records
-
-Keep three decisions separate for each component: permission to distribute,
-source/notice obligations, and engineering evidence. Use `UNRESOLVED` when the
-available evidence does not establish a decision. Record Apple contractual
-permission for the intended distribution route separately from component grants.
-A System Library source exclusion does not itself grant redistribution rights.
-
-Deliver one versioned `Iridium-corresponding-source.tar.gz` beside the IPA.
-It contains the exact checkout (including submodule sources), dependency source
-archives, patches, generated inputs or their generators, build and replacement
-instructions, licenses, notices, and a component manifest. Keep the archive and
-its checksum at a permanent versioned release URL for as long as required by
-the distribution method; an expiring Actions artifact is not that URL.
-Do not include Apple SDKs, compiler object files, signing material or game data.
-Document externally obtained toolchain prerequisites and applicable exclusions.
-
-Use the accepted component manifest and static-archive mappings. Each major
-component needs its license, source revision or archive, modifications, build
-entry point, notice location, and bundle outputs. Existing detailed records may
-remain as evidence; do not expand them into per-object requirements. The inventory belongs to the build it describes. The Madeira frontend workflow
-collects a new component manifest from its final bundle and link maps. A new
-dependency needs a license/source record, not a new forensic audit of unchanged
-components. Do not apply an older build's binary counts to a changed runtime.
-
-Use release hashes to identify what was shipped and to check transfers.
-Do not compare a modified rebuild to the release hash as a license test.
-A complete buildable source package can provide LGPL replacement material;
-a separate application object kit is needed only if the chosen compliance route
-or missing buildable application source requires it. A marker test is optional.
-See the replacement commands in [the build instructions](actions-ipa.md).
-
-## Open-source audit scope
-
-Use the completion rule in LICENSING.md. Device tests do not gate open-source
-compliance completion. Apple compiler-runtime uncertainty is a residual licensing
-risk; public unsigned-IPA contractual authorization is a separate acknowledged
-risk outside this audit. Do not research those questions indefinitely or require
-exact Apple object-source matching without affirmative evidence of a prohibition.
+Keep distribution permission, source obligations, and runtime evidence separate.
+Unresolved component decisions remain `UNRESOLVED`. Apple compiler-runtime
+coverage and unsigned-IPA contractual permission remain separate risks described
+in [LICENSING.md](../LICENSING.md); device tests do not resolve them.

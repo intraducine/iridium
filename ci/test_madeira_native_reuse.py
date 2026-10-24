@@ -56,9 +56,12 @@ def source_fixture():
         freetype = upstream / 'research/freetype'; freetype.mkdir(parents=True)
         freetype_revision = commit(freetype, ['freetype.c'])
         (root / 'ci').mkdir()
-        for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py'):
+        for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
-        (root / 'UPSTREAM-SOURCES.json').write_text(json.dumps({'frontend_runtime': {'dependencies': {}}}))
+        pins = json.loads((build.ROOT / 'UPSTREAM-SOURCES.json').read_text())
+        pins['frontend_runtime'].update(revision=revision, dependencies={})
+        pins['frontend_runtime']['buildDependencies']['freetype']['revision'] = freetype_revision
+        (root / 'UPSTREAM-SOURCES.json').write_text(json.dumps(pins))
         (root / 'SOURCE-REVISIONS.json').write_text(json.dumps({
             'vendor/Madeira': revision, 'vendor/Madeira/research/freetype': freetype_revision}))
         with patch.object(build, 'ROOT', root), patch.object(build, 'UPSTREAM', upstream), \
@@ -68,6 +71,24 @@ def source_fixture():
 
 
 class NativeReuseTests(unittest.TestCase):
+    def test_console_pin_edits_keep_local_native_checkpoint_and_own_inputs_invalidate_it(self):
+        with source_fixture() as (root, upstream):
+            manifest = root / 'UPSTREAM-SOURCES.json'
+            original = manifest.read_text()
+            before = build.native_inputs()
+            for entry in json.loads(original)['console_runtimes']:
+                data = json.loads(original)
+                next(item for item in data['console_runtimes'] if item['id'] == entry['id'])['revision'] = '1' * 40
+                manifest.write_text(json.dumps(data))
+                self.assertEqual(before, build.native_inputs(), entry['id'])
+            data = json.loads(original)
+            data['frontend_runtime']['buildDependencies']['freetype']['revision'] = '1' * 40
+            manifest.write_text(json.dumps(data))
+            self.assertNotEqual(before, build.native_inputs())
+            manifest.write_text(original)
+            helper = root / 'ci/engine_pins.py'; helper.write_text(helper.read_text() + '\n# Changed reader\n')
+            self.assertNotEqual(before, build.native_inputs())
+
     def check_rejected(self, root, message, inputs=None):
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
         output = io.StringIO()

@@ -1,33 +1,33 @@
 # Iridium VERSION
 
-[Required: one short sentence about the release; say if it is experimental.]
+[Required: one sentence; identify experimental releases.]
 
 ## Download
 
-[Required: direct IPA download link, minimum OS, JIT/game-file requirements. Tell players which file to download.]
+[Required: IPA link, minimum OS, JIT and game-file requirements.]
 
 ## Install
 
-[Required: a short numbered installation flow using actual app labels. Include a brief data-safe update note.]
+[Required: short install steps and a data-safe update note.]
 
 ## What's new
 
-[Required: short user-visible changes. Omit internal build and audit history.]
+[Required: short user-visible changes.]
 
 ## Known issues
 
-[Required: current limits or problems that affect players.]
+[Required: current player-facing limits.]
 
 <details>
-<summary>Source code, licenses, and build details</summary>
+<summary>Source, licenses, and build</summary>
 
 ## Source and licenses
 
-[Required: matching source assets, a single source guide with notices and build/relink instructions, one download checksum file, and exact verification/reassembly commands. Keep this section collapsed.]
+[Required: matching source, source guide/notices, checksums, and verification or reassembly commands.]
 
 Source commit: [Required: full 40-character commit]
 Build run: [Required: GitHub Actions run URL]
 
-[Required: actual app/helper version and build number, test results, and relevant limits.]
+[Required: app/helper version and build number, tests, and untested paths.]
 
 </details>
