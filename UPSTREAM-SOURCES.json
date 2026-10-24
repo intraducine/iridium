@@ -2,7 +2,7 @@
   "frontend_runtime": {
     "path": "vendor/Madeira",
     "upstream": "https://github.com/willfaust/Madeira",
-    "revision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+    "revision": "e3a88fddb8daed1f5ac28a45dcb4663d65192629",
     "dependencies": {
       "FEX": "f59cab95659e8add0c88f0c76ec1cf483c536dbf",
       "wine": "9129e9684daaeae70da9435e7c6060e59392634e",

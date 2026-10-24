@@ -369,7 +369,32 @@ class ConsoleControlPersistenceTests(unittest.TestCase):
             source = root / 'main.swift'
             profiles = (ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumControlProfiles.swift').read_text()
             profiles = profiles.replace('import Combine', '').replace(': ObservableObject', '').replace('@Published ', '')
-            source.write_text(STUBS.split('final class Model {')[0] + profiles + '\nfinal class Model {' + STUBS.split('final class Model {')[1] + production_fragment() + CASES)
+            shipping = (ROOT/'iridium/apps/ios/App/Adapters/Madeira/ContentView.swift').read_text()
+            controls = shipping[shipping.index('enum ControlAction:'):shipping.index('final class TouchControlsModel:')]
+            presets = (ROOT/'iridium/apps/ios/App/Controls/TouchControlPresets.swift').read_text()
+            zones = presets[presets.index('enum GestureZoneKind:'):presets.index('/// The screen a built-in layout')]
+            prefix = STUBS[:STUBS.index('enum ControlAction:')] + '\n#if canImport(CoreGraphics)\nimport CoreGraphics\n#endif\n' + controls + zones
+            prefix += '\nfinal class GestureZonesModel { static let shared = GestureZonesModel(); var zones: [GestureZone] = []; var selected: UUID?; func flush() {} }\n'
+            zone_checks = r'''
+var zone = GestureZone()
+let layout = IridiumControlLayoutState(controls: initial, visible: true, size: 1, zones: [zone])
+try layout.validate(for: .windows)
+let roundTrip = try JSONDecoder().decode(IridiumControlLayoutState.self, from: JSONEncoder().encode(layout))
+precondition(roundTrip == layout)
+do { try layout.validate(for: .psp); preconditionFailure("Windows zones reached a console profile") } catch {}
+var invalid = layout; invalid.zones![0].w = .infinity
+do { try invalid.validate(for: .windows); preconditionFailure("Invalid zone accepted") } catch {}
+invalid = layout; invalid.zones!.append(zone)
+do { try invalid.validate(for: .windows); preconditionFailure("Duplicate zone accepted") } catch {}
+GestureZonesModel.shared.zones = [zone]
+let settingsOwner = UUID()
+try model.iridiumBeginSettings(owner: settingsOwner, platform: .windows, state: layout, admission: true)
+GestureZonesModel.shared.zones = []
+precondition(model.iridiumEndSettings(owner: settingsOwner))
+precondition(GestureZonesModel.shared.zones == [zone])
+print("PASS: zone migration, profile round-trip, platform isolation, validation and editor restoration")
+'''
+            source.write_text(prefix + profiles + '\nfinal class Model {' + STUBS.split('final class Model {')[1] + production_fragment() + CASES + zone_checks)
             executable = root / ('ConsolePersistence' + root.name.replace('-', ''))
             subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), '-swift-version', '5', str(source), '-o', str(executable)],
                            check=True, timeout=90)

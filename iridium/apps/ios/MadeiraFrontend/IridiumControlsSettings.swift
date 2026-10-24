@@ -25,7 +25,7 @@ struct IridiumControlsSettingsView: View {
         library.entries.filter { $0.desktop != true }.map { entry in
             IridiumControlTarget(platform: .windows, title: artwork.title(IridiumGame(windows: entry)), gameID: entry.id,
                 windowsLayout: entry.controls.map { IridiumControlLayoutState(controls: $0, visible: entry.touchControls,
-                    size: entry.controlSize ?? 1, opacity: entry.controlOpacity ?? 0.7) })
+                    size: entry.controlSize ?? 1, opacity: entry.controlOpacity ?? 0.7, zones: entry.zones) })
         } + consoles.games.map { .init(platform: $0.platform, title: artwork.title(IridiumGame(console: $0)), gameID: $0.id) }
     }
     var body: some View {
@@ -231,7 +231,8 @@ struct IridiumWindowsControllerSettings: View {
 }
 
 private struct IridiumWindowsMappingEditor: View {
-    @State var entry: LibraryEntry
+    @State private var entry: LibraryEntry
+    init(entry: LibraryEntry) { _entry = State(initialValue: entry) }
     @Environment(\.dismiss) private var dismiss
     var body: some View {
       ScrollViewReader { proxy in
@@ -267,6 +268,7 @@ struct IridiumTouchLayoutEditor: View {
     var editing: any IridiumControlEditing = IridiumMadeiraControlAdapter()
     let target: IridiumControlTarget
     @ObservedObject private var model = TouchControlsModel.shared
+    @ObservedObject private var zones = GestureZonesModel.shared
     @ObservedObject private var profiles = IridiumControlProfileStore.shared
     @Environment(\.dismiss) private var dismiss
     @State private var owner = UUID()
@@ -280,7 +282,8 @@ struct IridiumTouchLayoutEditor: View {
     @State private var builtIn: IridiumControlLayoutState?
     @State private var selectedControl = 0
     private var state: IridiumControlLayoutState {
-        .init(controls: model.controls, visible: model.visible, size: model.sizeScale, automatic: nil, opacity: model.iridiumSettingsOpacity)
+        .init(controls: model.controls, visible: model.visible, size: model.sizeScale, automatic: nil,
+              opacity: model.iridiumSettingsOpacity, zones: target.platform == .windows ? GestureZonesModel.shared.zones : nil)
     }
     var body: some View {
         NavigationStack {
@@ -307,7 +310,7 @@ struct IridiumTouchLayoutEditor: View {
                         }.padding(.horizontal).padding(.vertical, 10)
                         Text("Drag to move · Pinch to resize").font(.caption).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 6)
-                            .contentShape(Rectangle()).onTapGesture { model.selected = nil }
+                            .contentShape(Rectangle()).onTapGesture { model.selected = nil; zones.selected = nil }
                         ZStack {
                             Color(white: 0.04)
                             TouchControlsOverlay(iridiumEmbedded: true, iridiumSettings: true)
@@ -331,13 +334,28 @@ struct IridiumTouchLayoutEditor: View {
                     if size.width > 0, size.height > 0 { begin(size: geometry.size) }
                 }
               }.scrollBounceBehavior(.basedOnSize)
+                .overlay {
+                    if target.platform == .windows, let i = zones.index(of: zones.selected) {
+                        GestureZonePanel(zone: zones.zones[i], screen: geometry.size, safeInsets: geometry.safeAreaInsets)
+                    }
+                }
             }
             .background { Color.black.overlay { IridiumControlDeselectSurface() } }.navigationTitle(target.gameID == nil ? target.title + " Defaults" : target.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { close() } }
                 ToolbarItemGroup(placement: .confirmationAction) {
-                    if ready { Button("Add Control", systemImage: "plus") { addControl() }.labelStyle(.iconOnly) }
+                    if ready {
+                        if target.platform == .windows {
+                            Menu("Add", systemImage: "plus") {
+                                Button("Control") { addControl() }
+                                Button("Gesture Zone") { model.selected = nil; zones.add() }
+                                    .disabled(zones.zones.count >= 64)
+                            }.labelStyle(.iconOnly).accessibilityLabel("Add control or gesture zone")
+                        } else {
+                            Button("Add Control", systemImage: "plus") { addControl() }.labelStyle(.iconOnly)
+                        }
+                    }
                     Button("Save") { save() }.disabled(!ready)
                 }
             }
@@ -384,7 +402,8 @@ struct IridiumTouchLayoutEditor: View {
     private func defaults(size: CGSize) -> IridiumControlLayoutState {
         if target.platform == .windows {
             let values = model.controls.isEmpty ? ControlPresetLayout.xbox(for: .referencePhone) : model.controls
-            return .init(controls: values, visible: model.visible, size: model.sizeScale, automatic: true, opacity: 0.7)
+            return .init(controls: values, visible: model.visible, size: model.sizeScale, automatic: true,
+                         opacity: 0.7, zones: GestureZonesModel.shared.zones)
         }
         let canvas = CGSize(width: size.width, height: max(320, size.height - 180))
         return .init(controls: IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(target.platform.rawValue), size: canvas), visible: true, size: 1, automatic: true, opacity: 0.78)
@@ -399,6 +418,8 @@ struct IridiumTouchLayoutEditor: View {
     }
     private func apply(_ layout: IridiumControlLayoutState) {
         model.selected = nil; model.controls = layout.controls; model.visible = layout.visible
+        zones.selected = nil
+        if target.platform == .windows { GestureZonesModel.shared.zones = layout.zones ?? [] }
         model.sizeScale = layout.size; model.iridiumSettingsOpacity = layout.opacity ?? 0.78; initial = state
     }
     private func load(_ profile: IridiumControlProfile) { apply(profile.layout); selectedProfile = profile.id; inherited = false }
@@ -453,7 +474,7 @@ struct IridiumControlDeselectSurface: View {
     @ObservedObject private var model = TouchControlsModel.shared
     var body: some View {
         Color.clear.contentShape(Rectangle())
-            .onTapGesture { if model.editing { model.selected = nil } }
+            .onTapGesture { if model.editing { model.selected = nil; GestureZonesModel.shared.selected = nil } }
             .accessibilityHidden(true)
     }
 }

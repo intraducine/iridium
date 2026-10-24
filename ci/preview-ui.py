@@ -123,7 +123,7 @@ def prepare():
 ''')
     jit = destination / 'JITSetup.swift'
     text = jit.read_text()
-    for signature in ['func enable(completion: @escaping (Result<Void, Error>) -> Void) {',
+    for signature in ['func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {',
                       'func enableBuiltIn(completion: @escaping (Result<Void, Error>) -> Void = { _ in }) {']:
         assert text.count(signature) == 1
         text = text.replace(signature, signature + '\n        error = "JIT is only available on an iPhone or iPad."\n        completion(.failure(NSError(domain: "IridiumPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "JIT is only available on an iPhone or iPad."])))\n        return\n')
@@ -154,7 +154,7 @@ def prepare():
         for i, parameter in enumerate(x for x in declaration.get('inner', []) if x['kind'] == 'ParmVarDecl'):
             kind = parameter['type']['qualType']
             parameters.append(kind.replace('(*)', f'(*p{i})') if '(*)' in kind else kind + f' p{i}')
-        value = '' if result == 'void' else 'return "";' if result == 'const char *' else 'return 0;'
+        value = '' if result == 'void' else 'return "";' if result == 'const char *' else f'return ({result}){{0}};'
         lines.append(f'{result} {name}({", ".join(parameters) or "void"}) {{ {value} }}')
     (destination / 'PreviewNative.m').write_text('\n'.join(lines))
     return project_dir

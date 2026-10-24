@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "madeiraRevision": "279fd0f83170425db002fe25d6bd62f6355f497d",
+  "madeiraRevision": "e3a88fddb8daed1f5ac28a45dcb4663d65192629",
   "api": {
     "functions": {
       "jit_region_create": "JITRegion *(size_t)",
@@ -32,6 +32,8 @@
       "madeira_early_intruder_tag": "unsigned int",
       "madeira_early_intruder_prot": "unsigned int",
       "madeira_early_pool_size": "unsigned long",
+      "madeira_early_pool_placeholder": "void (unsigned long *, unsigned long *)",
+      "madeira_early_pool_intruder": "void (unsigned long *, unsigned long *, unsigned int *)",
       "fex_initialize": "_Bool (void)",
       "fex_shutdown": "void (void)",
       "fex_test_execute": "int64_t (void)",
@@ -43,7 +45,14 @@
       "wineserver_stop": "void (void)",
       "wineserver_inject_client_fd": "void (int)",
       "wine_process_start": "int (const char *)",
+      "madeira_stdin_master": "int",
+      "madeira_stdin_is_open": "int (void)",
+      "madeira_stdin_write": "long (const void *, unsigned long)",
+      "madeira_stdin_close": "void (void)",
+      "madeira_stdout_is_open": "int (void)",
+      "madeira_stdout_read": "long (void *, unsigned long)",
       "wine_process_is_running": "int (void)",
+      "wine_process_exit_code": "int (void)",
       "wine_launched_process_did_exit": "void (int)",
       "wine_crash_exit_status": "int (uint32_t *)",
       "wine_exit_status_reset": "void (void)",
@@ -69,6 +78,8 @@
       "winios_post_touch_move": "void (int, int)",
       "winios_post_touch_up": "void (int, int)",
       "winios_post_key": "void (int, int)",
+      "winios_try_post_text": "int (unsigned int, int, int, int)",
+      "winios_cancel_text": "void (void)",
       "winios_set_compositor_frame": "void (double, double, double, double)",
       "winios_set_desktop_rect": "void (double, double, double, double, int)",
       "winios_pointer": "void (int, int, unsigned int, unsigned int)",
@@ -374,6 +385,10 @@
         ],
         [
           "restore_sent",
+          "unsigned char"
+        ],
+        [
+          "caption",
           "unsigned char"
         ],
         [
