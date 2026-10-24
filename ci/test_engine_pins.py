@@ -112,19 +112,29 @@ class EnginePinsTests(unittest.TestCase):
                     check(name)
 
     def test_receipt_pin_hash_is_scoped_and_rejects_an_old_engine(self):
-        baseline = {name: engines.phase3.fixed_inputs(name) for name in ('host', *engines.phase3.PINS)}
-        original = engine_pins.selected
-        def changed(stage, data=None):
-            selected = original(stage, data)
-            if stage == 'azahar': selected['revision'] = '0' * 40
-            return selected
-        with patch.object(engine_pins, 'selected', side_effect=changed):
-            for name in baseline:
-                if name == 'azahar':
-                    self.assertNotEqual(baseline[name], engines.phase3.fixed_inputs(name))
-                    with self.assertRaisesRegex(ValueError, 'recipe or ABI changed'):
-                        engines.phase3.verify_inputs({'engine': name, 'buildInputs': baseline[name]})
-                else: self.assertEqual(baseline[name], engines.phase3.fixed_inputs(name))
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            names = ('host', *engines.phase3.PINS)
+            for name in names:
+                for path in engines.phase3.input_paths(name):
+                    target = root / path; target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text('fixture input: ' + path + '\n')
+            with patch.object(engines.phase3, 'ROOT', root):
+                baseline = {name: engines.phase3.fixed_inputs(name) for name in names}
+                original = engine_pins.selected
+                def changed(stage, data=None):
+                    selected = original(stage, data)
+                    if stage == 'azahar': selected['revision'] = '0' * 40
+                    return selected
+                with patch.object(engine_pins, 'selected', side_effect=changed):
+                    for name in baseline:
+                        if name == 'azahar':
+                            self.assertNotEqual(baseline[name], engines.phase3.fixed_inputs(name))
+                            with self.assertRaisesRegex(ValueError, 'recipe or ABI changed'):
+                                engines.phase3.verify_inputs({'engine': name, 'buildInputs': baseline[name]})
+                        else: self.assertEqual(baseline[name], engines.phase3.fixed_inputs(name))
+                (root / 'vendor/Flycast/core/deps/libretro-common/include/libretro.h').unlink()
+                with self.assertRaises(FileNotFoundError): engines.phase3.fixed_inputs('host')
 
 
 if __name__ == '__main__': unittest.main()
