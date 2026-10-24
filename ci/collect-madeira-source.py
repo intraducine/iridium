@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Collect the frontend's build inputs, notices and final component inventory."""
+import engine_pins
 import hashlib
 import importlib.util
 import json
@@ -11,7 +12,7 @@ import tempfile
 import ppsspp_atlas_resources as atlas
 
 ROOT = Path(__file__).resolve().parents[1]
-FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
+FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 
 
 def load(name, filename):
@@ -39,7 +40,7 @@ def binary_component(name):
     if name == 'Frameworks/libIridiumPPSSPPNative.dylib': return 'PPSSPP and its selected native dependencies'
     advanced = {'libIridiumRetroPlayer.dylib': 'Iridium shared Libretro player',
                 'libIridiumDolphin.dylib': 'DolphiniOS Dolphin and selected dependencies',
-                'azahar_libretro.dylib': 'Azahar official iOS core and selected dependencies',
+                'azahar_libretro.dylib': 'Azahar and selected dependencies',
                 'play_libretro_ios.dylib': 'Play! and selected dependencies',
                 'flycast_libretro.dylib': 'Flycast and selected dependencies'}
     if p.parent.as_posix() == 'Frameworks' and p.name in advanced: return advanced[p.name]
@@ -173,7 +174,7 @@ def collect(app, output, maps):
             shutil.copy2(archive, dest)
         psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
         psp_atlases = atlas.collect_inputs(stage, psp_receipt, ROOT)
-        psp_external = json.loads((ROOT / 'ci/moltenvk-source-inputs.json').read_text())
+        psp_external = json.loads((ROOT / engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs']).read_text())
         if not psp_external or psp_external != psp_receipt.get('moltenVK', {}).get('sourceInputs'):
             raise ValueError('Linked MoltenVK source closure differs from the source manifest')
         for item in psp_external:
@@ -209,6 +210,16 @@ def collect(app, output, maps):
                 destination = stage / '.build/phase3-downloads' / filename
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
+            azahar_external = json.loads((ROOT / engine_pins.get('azahar')['buildDependencies']['moltenVK']['inputs']).read_text())
+            if azahar_external != phase3_receipts['azahar'].get('moltenVK', {}).get('sourceInputs'):
+                raise ValueError('Linked Azahar MoltenVK closure differs from its source manifest')
+            for item in azahar_external:
+                archive = ROOT / '.build/runtime-downloads' / (item['sha256'] + '.tar')
+                if not archive.is_file() or phase3.digest(archive) != item['sha256']:
+                    raise ValueError('Missing linked Azahar external source: ' + item['name'])
+                destination = stage / '.build/runtime-downloads' / archive.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(archive, destination)
             (stage / 'PHASE3-BUILD-RECEIPTS.json').write_text(json.dumps(phase3_receipts, indent=2) + '\n')
         manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
                     'phase3_build_receipts': 'PHASE3-BUILD-RECEIPTS.json' if phase3_receipts else None,

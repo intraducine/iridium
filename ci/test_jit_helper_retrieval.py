@@ -1,4 +1,5 @@
 """Exercise generated helper/host JSON retrieval and real diagnostic export locally."""
+from host_tests import module_cache
 from pathlib import Path
 import platform
 import shutil
@@ -226,7 +227,7 @@ final class FixtureContext: NSExtensionContext {
             runtime = root / 'RuntimeDiagnosticLogFiles.swift'
             runtime.write_text((ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift').read_text().replace('consoleSink = RuntimeConsoleLogSink()', 'consoleSink = RuntimeConsoleLogSink(directory: fixtureAppDirectory)'))
             build = subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library',
-                                    '-module-cache-path', str(root / 'cache'), str(source),
+                                    '-module-cache-path', module_cache('macosx'), str(source),
                                     str(runtime),
                                     '-o', str(binary)], capture_output=True, text=True, timeout=90)
             self.assertEqual(build.returncode, 0, build.stdout + build.stderr)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the release-pinned native PPSSPP iOS player and complete resources."""
+import engine_pins
 import argparse
 import hashlib
 import importlib.util
@@ -15,7 +16,7 @@ import ppsspp_atlas_resources as atlases
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = overlay.REVISION
-RELEASE = 'v1.20.4'
+RELEASE = engine_pins.get('ppsspp')['releaseTag']
 EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 'ext/freetype', 'assets/debugger')
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
@@ -256,6 +257,7 @@ def build(source, destination, sdk, jobs):
     source = source.resolve(strict=True); destination = destination.resolve()
     if destination == source or source in destination.parents:
         raise ValueError('Native build outputs must stay outside upstream source')
+    pin = engine_pins.selected('psp')
     before = revisions(source)
     atlas_spec = importlib.util.spec_from_file_location('native_atlas_inputs', ROOT / 'ci/build-ppsspp-atlases.py')
     atlas_inputs = importlib.util.module_from_spec(atlas_spec); atlas_spec.loader.exec_module(atlas_inputs)
@@ -281,7 +283,7 @@ def build(source, destination, sdk, jobs):
     shutil.copy2(source / 'ffmpeg/LICENSE.md', destination / 'licenses/LICENSE-PSP-FFMPEG.md')
     shutil.copytree(ROOT / 'iridium/apps/ios/MadeiraSupport/Notices/MoltenVK', destination / 'licenses/MoltenVK', dirs_exist_ok=True)
     shutil.copytree(ROOT / 'iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts', destination / 'licenses/Fonts', dirs_exist_ok=True)
-    if before != revisions(source):
+    if before != revisions(source) or pin != engine_pins.selected('psp'):
         raise ValueError('Source pin changed during native compilation')
     def portable(arg):
         text = str(arg)
@@ -289,7 +291,7 @@ def build(source, destination, sdk, jobs):
             text = text.replace(str(path), label)
         return text
     codecs['arguments'] = [portable(a) for a in codecs['arguments']]
-    record = dict(**boundary, revision=REVISION, release=RELEASE, sourceRevisions=before, sdk=sdk,
+    record = dict(**boundary, enginePin=pin, revision=REVISION, release=RELEASE, sourceRevisions=before, sdk=sdk,
         componentType='native-ios-player', binary=delivered.name, sha256=digest(delivered),
         compiledInputSHA256=compiled_inputs(source, destination), assetSHA256=hashes, codecs=codecs,
         moltenVK=mvk_receipt, linkedArchiveSHA256=linked_archives(destination), glSyncHeaderAudit=header_audit,

@@ -1,95 +1,46 @@
 # Iridium
 
-![iOS](https://img.shields.io/badge/iOS-supported-black?style=flat-square&logo=apple)
-![Release](https://img.shields.io/github/v/release/intraducine/iridium?style=flat-square)
-![Downloads](https://img.shields.io/github/downloads/intraducine/iridium/total?style=flat-square)
-![License](https://img.shields.io/github/license/intraducine/iridium?style=flat-square)
+Iridium is an iPhone and iPad game launcher with Windows support through
+[Madeira](https://github.com/willfaust/Madeira) and console emulation through
+SameBoy, PPSSPP, Dolphin, Azahar, Play!, and Flycast.
 
-Iridium is an iPhone and iPad frontend for [Madeira](https://github.com/willfaust/Madeira)
-with an experimental multi-runtime library on this branch.
-Its library, game options, settings, Steam pages, setup, and player menus share
-Iridium's artwork and Apple-style navigation. Madeira provides game launch,
-JIT, input, Steam, downloads, saves, and the runtime. Compatibility varies by
-game and device.
+It provides a shared library, artwork, touch controls, controller and keyboard
+input, Steam access, and per-game settings. Compatibility varies by game and
+device. Play! and Flycast still need device validation.
 
-The additional runtimes are SameBoy for Game Boy/Game Boy Color and an
-experimental embedded PPSSPP v1.20.4 native iOS player for PSP. Use
-**Add Game → Import Game Boy or PSP Game** for an uncompressed `.gb`, `.gbc`,
-`.elf`, `.iso`, `.cso` or `.pbp` file you are entitled to use. It appears on the
-same library shelf; Game Options identifies its platform and runtime. Console
-games have their own player, touch/keyboard/controller input and audio. SameBoy
-battery/RTC saves and PSP memory sticks are isolated per game. The native PSP player retains upstream settings, media decoding, touch controls
-and graphics backends, with OpenGL and the IR interpreter as initial defaults.
-Native JIT remains unavailable until its allocator is verified for this host.
-Performance and compatibility remain experimental. Compilation and
-synthetic tests do not establish physical-device or commercial-game compatibility.
+## Install
 
-Windows games still use Madeira's original backend, options, saves and JIT flow.
-After a Windows session has run, restart Iridium before switching to another
-runtime. Other console and Android candidates remain unavailable pending
-implementation, validation and redistribution review.
-See [runtime architecture and validation](docs/multi-runtime.md).
+Download the IPA from [Releases](https://github.com/intraducine/iridium/releases).
+Sign the app and its extensions with a compatible sideloading tool, or use
+LiveContainer. Supply your own game files.
 
-Use **Add Game → Steam Library** for Madeira's Steam features. For local files,
-copy the game folder into **Iridium → wine → drive_c** in Files, then use
-**Add Game → Choose Executable**. Existing Iridium libraries can be copied with
-**Add Game → Import Existing Iridium Games**. Original folders and saves stay
-in place. A conflicting save stops import instead of overwriting either copy.
+The app requires iOS/iPadOS 18 or later. JIT requirements depend on the engine
+and installation method; see [JIT setup](iridium/docs/builtin-stikjit-ios27.md).
+Back up saves before updating and keep the existing app data.
 
-| Directory | Purpose |
-| --- | --- |
-| `vendor/Madeira/` | Pinned Madeira native runtime and its dependency submodules |
-| `iridium/apps/ios/App/`, `AppProject/`, `MadeiraFrontend/` | Maintained Iridium app, models, services, native adapters and project template |
-| `iridium/apps/ios/RuntimeSupport/`, `RuntimeBridge/` | Runtime contracts, isolated library and native core bridge |
-| `vendor/SameBoy/` | Pinned interpreter core and its permissive support sources |
-| `vendor/PPSSPP/` | Pinned PSP component; unchanged upstream source and selected dependencies |
-| `ci/madeira-frontend.py`, `ci/iridium_app_sources.py` | App-owned staging and checked native build preparation |
-| Other runtime and application directories | Retained migration and recovery source; excluded from the frontend target |
+## Build
 
-Original Iridium code is **AGPL-3.0-only**. Third-party code retains its own licenses. Read [LICENSING.md](LICENSING.md) before redistributing. Madeira is credited for the runtime approach and implementation.
-
-## Getting the source
-
-Clone this repository. The frontend builder initializes the required Madeira
-submodules at their committed revisions. It does not initialize FEX's large test
-repositories. The current pin is recorded in [UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json).
-Upstream updates require native API and integration checks, a reviewed pin update and rebuild.
-See [runtime integration and ownership](docs/runtime-integration.md).
-
-## Build a sideloading IPA locally
-
-Use an Apple Silicon Mac, Xcode 27 with the Metal tools, Python 3.11 or newer,
-Homebrew, and Rust. Run this command from the repository root:
+For Windows, GB/GBC, and PSP, use an Apple Silicon Mac with Xcode 27,
+Homebrew, Python 3.11+, and Rust:
 
 ```sh
+git clone https://github.com/intraducine/iridium.git
+cd iridium
 bash ci/build-madeira-ipa.sh
 ```
 
-The script prepares Madeira's native libraries, builds its app with the Iridium
-presentation, checks the package, and prints the path to `Iridium-unsigned.ipa`.
-The configuration is Debug, as used by Madeira's guest-runtime build. The
-package tool strips debug sections from the delivered copy. Native outputs are
-saved before packaging and reused for up to 14 days when their inputs and
-archive checks match. Xcode also keeps its incremental app build.
+For Dolphin, Azahar, Play!, and Flycast, continue with the
+[console build steps](docs/console-engines.md#build-and-replace).
+The [build guide](docs/actions-ipa.md) also covers manual Actions builds and
+library replacement.
 
-The main app targets iOS 18 and later. The built-in JIT helper requires iOS 26
-or later; use external JIT on earlier versions. See the
-[build guide](docs/actions-ipa.md) for local and GitHub Actions commands.
+## Documentation
 
-Packaging adds an anonymous ad-hoc signature to the main executable carrying
-only `com.apple.developer.kernel.increased-memory-limit=true`; helpers remain
-unsigned. The existing filename is retained for download compatibility.
-Re-sign the app and sign its helper extensions with a suitable sideloading tool
-before installation.
+- [Using Iridium](iridium/docs/product-experience.md)
+- [Runtime integration](docs/runtime-integration.md)
+- [Console engines](docs/console-engines.md)
+- [Contributing](CONTRIBUTING.md)
+- [Release process](docs/releasing.md)
 
-## Privacy and contributions
-
-Run `python3 check-public-source.py` before contributing. You can pass private strings as arguments for a targeted local scan; do not add those strings to public workflows. This scan does not guarantee anonymity.
-
-Do not commit signing certificates, private keys, provisioning profiles, pairing records, personal device logs, build outputs, or game assets. Required upstream author credits remain intact.
-
-## Project standards
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for implementation, review, validation,
-privacy, and dependency rules. Follow [the release policy](docs/releasing.md)
-and its fixed description template for every release. Builds remain manual.
+Original Iridium code is AGPL-3.0-only. Third-party components keep their own
+licenses. See [LICENSING.md](LICENSING.md) and [upstream changes](CHANGES-FROM-UPSTREAM.md).

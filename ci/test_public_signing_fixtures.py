@@ -77,6 +77,25 @@ class PublicSigningFixtureTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(NAME + ': private identifier 1', result.stdout)
 
+    def test_fast_scan_preserves_case_insensitive_patterns_and_literal_identifiers(self):
+        cases = {
+            'private key': b'-----begin ' + b'ec private key-----',
+            'access token': b'GiThUb_' + b'PaT_' + b'example' * 5,
+            'device identifier': b'00008' + b'aBc-' + b'0123aBcD' * 2,
+            'configured signing team': b'development_team: ' + b'AbCdEf0123',
+        }
+        file = self.root / 'candidate.txt'
+        for category, data in cases.items():
+            with self.subTest(category=category):
+                file.write_bytes(b'ordinary source\n' * 1000 + data)
+                result = self.scan()
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('candidate.txt: ' + category, result.stdout)
+        file.write_bytes(b'ordinary source\n' * 1000)
+        self.assertEqual(self.scan().returncode, 0)
+        file.write_bytes(b'Literal.+[Identifier]')
+        self.assertIn('candidate.txt: private identifier 1', self.scan('literal.+[identifier]').stdout)
+
     def test_public_pem_source_exception_is_exact_and_keeps_other_patterns(self):
         name = 'vendor/Engine/public-example.c'
         data = b'-----BEGIN ' + b'PRIVATE KEY-----\npublic synthetic marker\n'

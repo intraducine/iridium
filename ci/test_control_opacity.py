@@ -1,4 +1,5 @@
 """Exercise the shipped control schema and visual math, without changing input."""
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import shutil
@@ -54,7 +55,7 @@ print("PASS shipping optional opacity schema, legacy default, preset round-trip,
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); main = root / 'main.swift'; main.write_text('import Foundation\n' + model + preset + fixture)
             executable = root / 'check'
-            subprocess.run(['swiftc', '-module-cache-path', str(root/'cache'),
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'),
                             str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift'), str(main), '-o', str(executable)], check=True)
             result = subprocess.run([str(executable)], text=True, capture_output=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -1,4 +1,5 @@
 """Execute journal durability/failure boundaries without a phone or live debugger."""
+from host_tests import module_cache
 from pathlib import Path
 import platform
 import shutil
@@ -61,7 +62,7 @@ import Foundation
                 'consoleSink = RuntimeConsoleLogSink()',
                 'consoleSink = RuntimeConsoleLogSink(directory: URL(fileURLWithPath: CommandLine.arguments[1]))'))
             binary = root / 'check'
-            command = ['swiftc', '-swift-version', '5', '-parse-as-library', '-module-cache-path', str(root / 'cache'),
+            command = ['swiftc', '-swift-version', '5', '-parse-as-library', '-module-cache-path', module_cache('macosx'),
                        '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                        str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumJITDiagnostic.swift'),
                        str(runtime), str(main), str(bridge), str(audio), '-o', str(binary)]
@@ -140,7 +141,7 @@ import Foundation
             subprocess.run(['clang', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(audio)], check=True)
             main = root / 'checks.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/RuntimeSupport'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                             str(support / 'IridiumJITDiagnostic.swift'), str(support / 'IridiumJITRequest.swift'),
                             str(main), str(bridge), str(audio), '-o', str(binary)], check=True)
@@ -364,7 +365,7 @@ import Foundation
             subprocess.run(['clang', '-c', str(BRIDGE / 'IRAudioVolume.c'), '-o', str(audio)], check=True)
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/RuntimeSupport'
-            subprocess.run(['swiftc', '-parse-as-library', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-parse-as-library', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             '-import-objc-header', str(BRIDGE / 'IRPSPNativeBridge.h'),
                             str(support / 'IridiumJITDiagnostic.swift'), str(support / 'IridiumJITRequest.swift'),
                             str(main), str(bridge), str(audio), '-o', str(binary)], check=True)

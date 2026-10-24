@@ -1,10 +1,14 @@
 name: Source checks
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: source-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   privacy:
     # Host fixtures need Apple frameworks and the app build's Swift toolchain.
@@ -16,6 +20,10 @@ jobs:
           persist-credentials: false
           submodules: false
           lfs: false
+      - name: Select pinned Xcode
+        run: |
+          test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
+          echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
       - name: Check out the pinned frontend and console sources
         run: git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP vendor/Dolphin
       - name: Verify host test tools
@@ -24,24 +32,20 @@ jobs:
           xcrun swiftc --version
           xcrun --find clang++
           command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
+      - name: Identify host test tools
+        id: host_tests
+        run: python3 ci/host_tests.py --record
       - name: Reject private material and oversized files
         run: python3 check-public-source.py
       - name: Check repository standards
         run: python3 ci/check-standards.py
-      - name: Check touch controller wiring
-        run: python3 iridium/apps/ios/MadeiraSupportTests/TouchControllerCheck.py
-      - name: Check FEX arena reservation
-        run: python3 iridium/apps/ios/MadeiraSupportTests/HostArenaCheck.py
-      - name: Check LiveContainer startup JIT policy
-        run: python3 iridium/apps/ios/MadeiraSupportTests/LiveContainerStartupJITCheck.py
-      - name: Check startup JIT status reporting
-        run: python3 iridium/apps/ios/MadeiraSupportTests/StartupJITStatusCheck.py
-      - name: Check library status UI
-        run: python3 iridium/apps/ios/MadeiraSupportTests/LibraryStatusCheck.py
-      - name: Check imported Madeira runtime
-        run: |
-          for check in audio-wow64 audio-downmix d3d9-splitlock d9-upload-commit fastsync nsi-network readonly-link section-abort image-retire lazy-windows nav-keys swap-coverage unixlib-binder win32u-zero-bits wow-context wow-cpu-area wow-sweep filtering-cap scene-batching; do
-            python3 "testrepos/Madeira/build/host-tests/check-$check.py"
-          done
       - name: Check manual build safeguards
         run: python3 -B -m unittest discover -s ci -p 'test_*.py'
+      - name: Retain passed host test identity
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.host_tests.outputs.artifact }}
+          path: .build/host-tests/result.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14

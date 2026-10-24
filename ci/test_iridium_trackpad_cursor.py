@@ -1,4 +1,5 @@
 """Execute shipping touch-cursor policy and live guest-to-host projection."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -158,7 +159,7 @@ print("PASS shipping cursor gates, iPad pinned focus/stick transitions, real GC 
 '''.replace('ACTUAL',actual).replace('GC_MOVEMENT_CALLBACK',callback).replace('POINTER_POLICY',policy).replace('PROJECTION',block((ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift').read_text(),'enum IridiumPointerProjection'))
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);main=root/'main.swift';main.write_text(code);binary=root/'check'
-            subprocess.run(['swiftc','-swift-version','5','-module-cache-path',str(root/'cache'),
+            subprocess.run(['swiftc','-swift-version','5','-module-cache-path',module_cache('macosx'),
                 str(main),'-o',str(binary)],check=True,timeout=90)
             subprocess.run([str(binary)],check=True,timeout=15)
 

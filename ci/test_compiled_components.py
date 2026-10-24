@@ -30,6 +30,10 @@ class CompiledComponentsTests(unittest.TestCase):
                                 'names = fixture_stage(app)')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
+        before = source.replace('Wii and PSP controls use device motion while you play.',
+                                'PSP tilt controls use device motion while you play.')
+        self.assertNotEqual(before, source)
+        self.assertEqual(original, reuse.frontend_compiler_source(before))
 
     def test_frontend_compiler_helpers_and_global_inputs_remain_exact(self):
         source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
@@ -62,6 +66,9 @@ class CompiledComponentsTests(unittest.TestCase):
             source + '\nprepare = native\n',
             source + '\nif True:\n    native = prepare\n',
             helper('    prepare()\n'),
+            helper('    return PSP_PRIVACY_DESCRIPTIONS\n'),
+            helper('    return module.PSP_PRIVACY_DESCRIPTIONS\n'),
+            helper('    return globals()["PSP_PRIVACY_DESCRIPTIONS"]\n'),
             helper('    callback()\n', 'callback=prepare'),
             helper('    def nested():\n        prepare()\n    nested()\n'),
             helper('    return globals()["prepare"]\n'),
@@ -80,9 +87,19 @@ class CompiledComponentsTests(unittest.TestCase):
             source.replace('def prepare():', 'def prepare(value=bootstrap()):'),
             source.replace('def prepare():', 'def prepare() -> bootstrap():'),
             source.replace('def prepare():', 'async def prepare():'),
+            source.replace('PSP_PRIVACY_DESCRIPTIONS = {',
+                           'PSP_PRIVACY_DESCRIPTIONS = build_metadata()\nUNREVIEWED_METADATA = {'),
+            source.replace("'NSMotionUsageDescription':", '42:'),
+            source.replace('PSP_PRIVACY_DESCRIPTIONS = {',
+                           'OTHER_INPUT = 1; PSP_PRIVACY_DESCRIPTIONS = {'),
+            source.replace('}\ndef overlay', '}; OTHER_INPUT = 1\ndef overlay'),
+            source.replace('PSP_PRIVACY_DESCRIPTIONS = {',
+                           'PSP_PRIVACY_DESCRIPTIONS = {"note": "' + 'é' * 40 +
+                           '"}; OTHER_INPUT = 1\nUNREVIEWED_METADATA = {'),
             source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
             source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
             source.replace("'native': lambda: native(reuse_only=args.reuse_only)", "'native': prepare"),
+            source.replace("engine_pins.get('madeira')['revision']", "engine_pins.get(prepare())['revision']"),
             source + '\ninvalid python !\n',
         ]
         for index, changed in enumerate(variants):
@@ -100,12 +117,15 @@ class CompiledComponentsTests(unittest.TestCase):
             script = root / 'ci/madeira-frontend.py'
             script.parent.mkdir()
             source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
-            script.write_text(source)
+            script.write_text(source.replace('Wii and PSP controls use device motion while you play.',
+                                             'PSP tilt controls use device motion while you play.'))
             workflow = root / reuse.WORKFLOW
             workflow.parent.mkdir(parents=True)
             workflow.write_text((components.ROOT / reuse.WORKFLOW).read_text())
             contract = root / 'ci/compiled-components.py'
             contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
+            for name in ('ci/engine_pins.py', 'UPSTREAM-SOURCES.json'):
+                (root / name).write_bytes((components.ROOT / name).read_bytes())
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit(); revision = git('rev-parse', 'HEAD')

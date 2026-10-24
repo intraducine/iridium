@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the Iridium-owned app against pinned native engine components."""
+import engine_pins
 import argparse
 from pathlib import Path
 import plistlib
@@ -22,9 +23,9 @@ FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
 RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
 RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
-REVISION = '279fd0f83170425db002fe25d6bd62f6355f497d'
-PSP_REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
-FREETYPE_REVISION = '42608f77f20749dd6ddc9e0536788eaad70ea4b5'
+REVISION = engine_pins.get('madeira')['revision']
+PSP_REVISION = engine_pins.get('ppsspp')['revision']
+FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
@@ -196,7 +197,7 @@ def prepare():
     header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
-    if psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
+    if psp.get('enginePin') != engine_pins.selected('psp') or psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
         raise ValueError('Build and audit the pinned PSP component before preparing the app')
     check_psp_jit_interface(psp)
     psp_gl_sync.validate_component(psp, ROOT / 'vendor/PPSSPP')
@@ -620,13 +621,14 @@ def native_inputs():
     if not major.isdigit() or int(major) < 3:
         raise ValueError('Native build requires Bison >= 3.0 before bootstrap: ' + repr(bison))
     return {'revision': REVISION,
+            'enginePin': engine_pins.selected('madeira-native', json.loads((ROOT / engine_pins.MANIFEST).read_text())),
             'recipes': {name: hashlib.sha256(inspect.getsource(fn).encode()).hexdigest() for name, fn in (
                 ('build_native', build_native), ('bootstrap', bootstrap), ('toolchains', toolchains),
                 ('prepare_freetype', prepare_freetype), ('verify_pin', verify_pin),
                 ('native_source_inventory', native_source_inventory), ('native_source_identity', native_source_identity),
                 ('run_checked_recipe', run_checked_recipe), ('stage_crypto_libraries', stage_crypto_libraries))},
             'files': {name: file_digest(ROOT / name) for name in (
-                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
+                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py',
                 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h')},
             'cryptoLibraries': list(CRYPTO_LIBRARIES), 'tools': tools, 'upstreamSources': native_source_identity()}
 

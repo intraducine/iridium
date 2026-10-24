@@ -3,6 +3,7 @@
 The fixture uses synthetic metadata and delayed local completions. It does not
 download artwork, compile an emulator, or claim device/UI validation.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
@@ -279,7 +280,7 @@ class IridiumArtworkStateTests(unittest.TestCase):
             executable = folder / 'artwork-checks'
             subprocess.run([
                 'swiftc', '-swift-version', '6', '-parse-as-library',
-                '-module-cache-path', str(folder / 'module-cache'),
+                '-module-cache-path', module_cache('macosx'),
                 str(IOS / 'RuntimeSupport/IridiumRuntime.swift'),
                 str(IOS / 'MadeiraFrontend/IridiumArtworkState.swift'),
                 str(fixture), '-o', str(executable),

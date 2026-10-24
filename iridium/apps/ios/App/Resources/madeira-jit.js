@@ -174,6 +174,10 @@ while (!detached) {
     let brkResponse = pending !== null ? pending : send_command(`c`);
     pending = null;
     iridiumJITStop(brkResponse);
+    // StikJIT returns an empty string after a transport error. Do not resend forever.
+    if (typeof brkResponse !== 'string' || brkResponse === '' || /^E[0-9a-f]{2}$/i.test(brkResponse)) {
+        throw new Error('JIT debugger connection ended without a stop reply.');
+    }
 
     // W/X = inferior exited; nothing left to debug.
     if (typeof brkResponse === 'string' && /^[WX]/.test(brkResponse)) {

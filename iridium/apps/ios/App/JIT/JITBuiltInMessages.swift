@@ -54,6 +54,7 @@ struct MadeiraJITRequest: Codable, Sendable {
         var diagnosticAttemptID: String? = nil
         var diagnosticRecords: [String]? = nil
         var pspReceipt: IridiumPSPHelperReceipt? = nil
+        var debuggerReleased: Bool? = nil
     }
 }
 
@@ -84,6 +85,7 @@ enum IridiumJITHelperSnapshot {
         #"\Autc=[0-9]{1,12}\.[0-9]{6} attempt=[0-9a-f]{16} (IRJIT2 .+)\z"#)
 
     static func validPayload(_ line: String) -> Bool {
+        if line == "IRJIT2 stage=helper.return clean=0" || line == "IRJIT2 stage=helper.return clean=1" { return true }
         let full = NSRange(line.startIndex..., in: line)
         if setup.firstMatch(in: line, range: full) != nil || begin.firstMatch(in: line, range: full) != nil { return true }
         guard let match = stop.firstMatch(in: line, range: full),

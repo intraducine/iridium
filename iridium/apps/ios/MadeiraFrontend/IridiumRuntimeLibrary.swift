@@ -199,7 +199,7 @@ struct IridiumConsoleOptions: View {
         guard let runtime = resolvedRuntime else { return "This game’s emulator is unavailable." }
         switch runtime.id {
         case "dolphin": return "Dolphin requires the shared JIT system. Each launch checks that JIT works before the game starts."
-        case "azahar": return "Some 3DS games may run slowly."
+        case "azahar": return "3DS requires the shared JIT system. Each launch checks that JIT works before the game starts."
         case "play": return "Fully close and reopen Iridium after finishing a PlayStation 2 game."
         default: return ""
         }

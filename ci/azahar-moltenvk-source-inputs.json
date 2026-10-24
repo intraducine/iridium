@@ -1,0 +1,58 @@
+[
+  {
+    "name": "MoltenVK",
+    "repository": "KhronosGroup/MoltenVK",
+    "revision": "db445ff2042d9ce348c439ad8451112f354b8d2a",
+    "url": "https://codeload.github.com/KhronosGroup/MoltenVK/tar.gz/db445ff2042d9ce348c439ad8451112f354b8d2a",
+    "sha256": "54e1881e8f10c7dcc4828c14d3e0fc699a6f6c563a78ba8a631c626c836ae429"
+  },
+  {
+    "name": "SPIRV-Cross",
+    "repository": "KhronosGroup/SPIRV-Cross",
+    "revision": "adec7acbf41a988713cdb85f93f26c8ca5ea863e",
+    "url": "https://codeload.github.com/KhronosGroup/SPIRV-Cross/tar.gz/adec7acbf41a988713cdb85f93f26c8ca5ea863e",
+    "sha256": "1bed78fb2c43c877058c21bf1d9bfa2332df935960c6901bb141f4ef34cd9f03"
+  },
+  {
+    "name": "SPIRV-Headers",
+    "repository": "KhronosGroup/SPIRV-Headers",
+    "revision": "b824a462d4256d720bebb40e78b9eb8f78bbb305",
+    "url": "https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/b824a462d4256d720bebb40e78b9eb8f78bbb305",
+    "sha256": "c693867f10a7760ef1bcf85419d51783586768cc2c601d03841bc6a8b2554b9c"
+  },
+  {
+    "name": "SPIRV-Tools",
+    "repository": "KhronosGroup/SPIRV-Tools",
+    "revision": "262bdab48146c937467f826699a40da0fdfc0f1a",
+    "url": "https://codeload.github.com/KhronosGroup/SPIRV-Tools/tar.gz/262bdab48146c937467f826699a40da0fdfc0f1a",
+    "sha256": "8f830936b057003be77e90d37068ff6066eb87a1bab0033f8f2f5feaa966ce56"
+  },
+  {
+    "name": "Volk",
+    "repository": "zeux/volk",
+    "revision": "59660878571aa99e3c9a366bb1d19fdcd701f0e7",
+    "url": "https://codeload.github.com/zeux/volk/tar.gz/59660878571aa99e3c9a366bb1d19fdcd701f0e7",
+    "sha256": "2917f61cce3354733e880a0294129fc172eccb07a6d90cc45841fafbf192db00"
+  },
+  {
+    "name": "Vulkan-Headers",
+    "repository": "KhronosGroup/Vulkan-Headers",
+    "revision": "6aefb8eb95c8e170d0805fd0f2d02832ec1e099a",
+    "url": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/6aefb8eb95c8e170d0805fd0f2d02832ec1e099a",
+    "sha256": "f7e54b9e95a3da54802d62ce7b4995cbad03ae2e4325c26377ea4ec04d0429f1"
+  },
+  {
+    "name": "Vulkan-Tools",
+    "repository": "KhronosGroup/Vulkan-Tools",
+    "revision": "013058f74e2356347f8d9317233bc769816c9dfb",
+    "url": "https://codeload.github.com/KhronosGroup/Vulkan-Tools/tar.gz/013058f74e2356347f8d9317233bc769816c9dfb",
+    "sha256": "1e099b6a945109d33e8e078fc5a226377bb130175786273ce1594a840331c64c"
+  },
+  {
+    "name": "cereal",
+    "repository": "USCiLab/cereal",
+    "revision": "a56bad8bbb770ee266e930c95d37fff2a5be7fea",
+    "url": "https://codeload.github.com/USCiLab/cereal/tar.gz/a56bad8bbb770ee266e930c95d37fff2a5be7fea",
+    "sha256": "12e10fb541270632f6683286ce8c7e8c321fe4addb53fa91ed498b95c1758f93"
+  }
+]

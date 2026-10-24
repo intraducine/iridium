@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 """Build pinned Phase 3 upstream iOS components and retain complete receipts."""
 import argparse
+import engine_pins
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import sys
-import tarfile
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
-PINS = {
-    'dolphin': ('Dolphin', '7cac54161659421ed95c2cd1c0b0746539a4cd38', 'v5.0.0b6'),
-    'azahar': ('Azahar', '219d743a1e698101fe1ab8bef43e6563126c3c27', '2126.2'),
-    'play': ('Play', 'fa75cea31a33f5ab7a2008ed0d90dc74353e9cef', '0.77'),
-    'flycast': ('Flycast', '5aa091fde632fb332c8d8c34e280d62dc951954c', 'v2.7'),
-}
+PINS = {name: (Path(pin['path']).name, pin['revision'], pin['releaseTag'])
+        for name in ('dolphin', 'azahar', 'play', 'flycast') for pin in [engine_pins.get(name)]}
 NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames', 'set_volume')}
 DOLPHIN_EXPORTS = NATIVE_EXPORTS | {'_ir_dolphin_api'}
-AZAHAR_DOWNLOADS = {
-    'azahar-libretro-ios-arm64-2126.2.zip': '18e78a721884438b11a3588f96d19e09895f0dbb5c716448343ab185972bc451',
-    'azahar-unified-source-2126.2.tar.xz': '85c8b56fac703df04720125044b8ff887997911858a6cde545dfb1107ba4cd26',
-}
+AZAHAR_DOWNLOADS = {item['filename']: item['sha256']
+                    for item in engine_pins.get('azahar')['artifacts'].values()}
 
 
 def digest(path):
@@ -70,24 +64,31 @@ def source_state(source):
     return revisions
 
 
-def fixed_inputs(engine):
-    names = ['ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
+def input_paths(engine):
+    names = ['ci/engine_pins.py', 'ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
              'iridium/apps/ios/RuntimeBridge/IRPhase3.h']
-    bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': [],
+    bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
+    if engine != 'host': names += ['ci/phase3_' + engine + '.py', 'ci/' + engine + '-targets.cmake']
     if engine in ('host', 'dolphin'):
         names += ['iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h']
     if engine == 'host': names += ['vendor/Flycast/core/deps/libretro-common/include/libretro.h']
-    return {name: digest(ROOT / name) for name in names}
+    if engine == 'azahar': names += [engine_pins.get('azahar')['buildDependencies']['moltenVK']['inputs'], 'ci/build-ppsspp-moltenvk.py']
+    return names
+
+
+def fixed_inputs(engine):
+    return {**{name: digest(ROOT / name) for name in input_paths(engine)},
+            'enginePin': hashlib.sha256(json.dumps(engine_pins.selected(engine), sort_keys=True).encode()).hexdigest()}
 
 
 def verify_inputs(record):
     if record.get('buildInputs') != fixed_inputs(record['engine']):
         raise ValueError('Phase 3 build recipe or ABI changed: ' + record['engine'])
     if record['engine'] != 'host':
-        source = ROOT / 'vendor' / PINS[record['engine']][0]
+        source = ROOT / engine_pins.get(record['engine'])['path']
         if record.get('sourceRevisions') != source_state(source):
             raise ValueError('Phase 3 dependency revisions changed: ' + record['engine'])
     for name, expected in record.get('compiledInputs', {}).items():
@@ -97,6 +98,24 @@ def verify_inputs(record):
         directory = ROOT / '.build/phase3' / record['engine'] / record['sdk'] / 'embedding'
         if digest(directory / name) != expected:
             raise ValueError('Phase 3 generated adapter changed: ' + name)
+    if record['engine'] == 'azahar':
+        library, moltenvk = azahar_moltenvk(record['sdk'])
+        if record.get('moltenVK') != moltenvk or digest(library) != moltenvk['archiveSHA256']:
+            raise ValueError('Azahar linked MoltenVK source closure changed')
+
+
+def engine_module(engine):
+    spec = importlib.util.spec_from_file_location('phase3_' + engine, ROOT / 'ci' / ('phase3_' + engine + '.py'))
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module
+
+
+def azahar_module():
+    return engine_module('azahar')
+
+
+def azahar_moltenvk(sdk, jobs=None):
+    return azahar_module().moltenvk(ROOT, sdk, jobs)
 
 
 def public_arguments(arguments):
@@ -107,161 +126,16 @@ def generated(engine, destination):
     directory = destination / 'embedding'
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'native.exports').write_text('\n'.join(sorted(DOLPHIN_EXPORTS if engine == 'dolphin' else NATIVE_EXPORTS)) + '\n')
-    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else ''))
+    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else '') + ('_ir_phase3_core_prepare_jit\n_ir_phase3_core_jit_status\n_ir_phase3_core_set_metal_surface\n' if engine == 'azahar' else ''))
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
+    if engine == 'azahar':
+        azahar_module().generated(ROOT, directory)
     if engine == 'dolphin':
-        code_block = (ROOT / 'vendor/Dolphin/Source/Core/Common/CodeBlock.h').read_text()
-        alias = '    writable_region_diff = Common::AllocateWritableRegionAndGetDiff(region, size);'
-        release = ('    Common::FreeWritableRegion(region, total_region_size, writable_region_diff);\n'
-                   '    Common::FreeExecutableMemory(region, total_region_size);')
-        if code_block.count(alias) != 1 or code_block.count(release) != 1:
-            raise ValueError('Dolphin iOS code-block allocation hooks changed')
-        # CachedInterpreter owns ordinary RW pages, not an executable region.
-        code_block = code_block.replace(alias, '    if constexpr (executable)\n  ' + alias)
-        code_block = code_block.replace(release,
-            '    if constexpr (executable)\n    {\n' +
-            '\n'.join('  ' + line for line in release.splitlines()) +
-            '\n    }\n    else\n      Common::FreeMemoryPages(region, total_region_size);')
-        overlay = directory / 'include/Common/CodeBlock.h'
-        overlay.parent.mkdir(parents=True, exist_ok=True)
-        overlay.write_text(code_block)
-        memory = (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').read_text()
-        mapping = 'static_cast<u8*>(mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0))'
-        if memory.count('if (!rx_ptr)') != 1 or memory.count(mapping) != 1:
-            raise ValueError('Dolphin TXM mapping failure hook changed')
-        request_start = memory.index('  asm (')
-        request_end = memory.index('\n\n  vm_address_t rw_region', request_start)
-        # Use the shared debugger allocation path, as Madeira does. Preparing
-        # an app-created RX mapping was rejected by TXM on the physical phone.
-        memory = memory[:request_start] + memory[request_end:]
-        memory = memory.replace(mapping, 'static_cast<u8*>(ir_dolphin_jit_prepare(nullptr, size))')
-        memory = memory.replace('namespace Common',
-            'extern "C" void* ir_dolphin_jit_prepare(void*, size_t);\n\nnamespace Common', 1)
-        (directory / 'MemoryUtil_iOS_LuckTXM.cpp').write_text(memory.replace('if (!rx_ptr)', 'if (!rx_ptr || rx_ptr == MAP_FAILED)'))
-        state = (ROOT / 'vendor/Dolphin/Source/Core/Core/State.cpp').read_text()
-        callback = 'if (s_on_after_load_callback)'
-        if state.count(callback) != 1:
-            raise ValueError('Dolphin state completion hook changed')
-        # The upstream completion callback also fires for failed loads.
-        (directory / 'State.cpp').write_text(state.replace(callback,
-            'if (loadedSuccessfully && s_on_after_load_callback)'))
-        audio_root = ROOT / 'vendor/Dolphin/Source/Core/AudioCommon'
-        audio_header = (audio_root / 'CoreAudioSoundStream.h').read_text()
-        audio = (audio_root / 'CoreAudioSoundStream.cpp').read_text()
-        mix = '    sound->m_mixer->Mix(static_cast<short*>(buffer.mData), buffer.mDataByteSize / 4);'
-        initial_volume = ('  err = AudioUnitSetParameter(audio_unit, kHALOutputParam_Volume, kAudioUnitScope_Output, 0,\n'
-                          '                              m_volume / 100., 0);\n'
-                          '  if (err != noErr)\n    ERROR_LOG_FMT(AUDIO, "error setting volume");\n')
-        if (audio_header.count('  int m_volume;') != 1 or audio.count(mix) != 1 or
-                audio.count(initial_volume) != 1 or audio.count('void CoreAudioSound::SetVolume(int volume)') != 1):
-            raise ValueError('Dolphin iOS audio hooks changed')
-        audio_header = audio_header.replace('#pragma once', '#pragma once\n#include <atomic>')
-        audio_header = audio_header.replace('  bool Init() override;', '  ~CoreAudioSound() override;\n  bool Init() override;')
-        audio_header = audio_header.replace('  AudioUnit audio_unit;', '  AudioUnit audio_unit = nullptr;')
-        audio_header = audio_header.replace('  int m_volume;', '  std::atomic<int> m_volume{100};')
-        audio_overlay = directory / 'include/AudioCommon/CoreAudioSoundStream.h'
-        audio_overlay.parent.mkdir(parents=True, exist_ok=True)
-        audio_overlay.write_text(audio_header)
-        # RemoteIO has no HAL output-volume control. Apply gain to its PCM output.
-        audio = audio.replace('#include <AudioUnit/AudioUnit.h>', '#include <AudioUnit/AudioUnit.h>\n#include <algorithm>\n#include <cstring>\n#include "IRAudioVolume.h"')
-        audio = audio.replace(mix, mix + '''
-    const float volume = sound->m_volume.load(std::memory_order_relaxed) / 100.0f * ir_audio_volume_get();
-    auto* samples = static_cast<short*>(buffer.mData);
-    if (volume == 0)
-      std::memset(samples, 0, buffer.mDataByteSize);
-    else if (volume != 1)
-      for (UInt32 sample = 0; sample < buffer.mDataByteSize / sizeof(short); ++sample)
-        samples[sample] = static_cast<short>(samples[sample] * volume);
-''')
-        audio = audio.replace(initial_volume, '')
-        audio = audio[:audio.index('void CoreAudioSound::SetVolume(int volume)')] + '''void CoreAudioSound::SetVolume(int volume)
-{
-  m_volume.store(std::clamp(volume, 0, 100), std::memory_order_relaxed);
-}
-
-CoreAudioSound::~CoreAudioSound()
-{
-  if (audio_unit)
-  {
-    AudioOutputUnitStop(audio_unit);
-    AudioUnitUninitialize(audio_unit);
-    AudioComponentInstanceDispose(audio_unit);
-  }
-}
-'''
-        (directory / 'CoreAudioSoundStream.cpp').write_text(audio)
-        # Supported mbedTLS user configuration: its public self-test keys are
-        # unnecessary in a player. Preserve TLS/PEM support and all source.
-        (directory / 'mbedtls-user-config.h').write_text(
-            '#undef MBEDTLS_SELF_TEST\n#undef MBEDTLS_CERTS_C\n')
-        metal = (ROOT / 'vendor/Dolphin/Source/Core/VideoBackends/Metal/MTLUtil.mm').read_text()
-        capability = 'backend_info->bSupportsFramebufferFetch = [device supportsFamily:MTLGPUFamilyApple1];'
-        if metal.count(capability) != 1:
-            raise ValueError('Dolphin Metal framebuffer-fetch capability hook changed')
-        # Simulator advertises an Apple GPU family but rejects render-target
-        # reads. Select the upstream non-fetch shader path on that platform.
-        (directory / 'MTLUtil.mm').write_text(metal.replace(capability,
-            capability[:-1] + ' && !TARGET_OS_SIMULATOR;'))
+        engine_module(engine).generated(ROOT, directory)
     if engine == 'play':
-        source = ROOT / 'vendor/Play'
-        main = (source / 'Source/ui_libretro/main_libretro.cpp').read_text()
-        hook = '#include "DefaultAppConfig.h"'
-        if main.count(hook) != 1:
-            raise ValueError('Play configuration hook changed')
-        replacement = '''extern "C" const char *ir_play_save_root();
-fs::path CAppConfig::GetBasePath() const { return fs::path(ir_play_save_root()); }'''
-        # Pause the independently running VM while pumping its owner-thread GS
-        # mailbox. Release() is teardown and must not be used for a pause.
-        pause = '''
-extern "C" bool ir_phase3_core_pause(bool paused) {
-    if (!m_virtualMachine || !first_run) return true;
-    if (!paused) {
-        m_virtualMachine->Resume();
-        return m_virtualMachine->GetStatus() == CVirtualMachine::RUNNING;
-    }
-    m_virtualMachine->PauseAsync();
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    auto gs = static_cast<CGSH_OpenGL_Libretro*>(m_virtualMachine->GetGSHandler());
-    while (m_virtualMachine->GetStatus() != CVirtualMachine::PAUSED) {
-        if (std::chrono::steady_clock::now() >= deadline) return false;
-        if (gs) gs->FlushMailBox();
-        std::this_thread::yield();
-    }
-    return true;
-}
-'''
-        (directory / 'main_libretro.cpp').write_text('#include <chrono>\n' + main.replace(hook, replacement) + pause)
-        memory = (source / 'deps/CodeGen/src/MemoryFunction.cpp').read_text()
-        allocation = 'vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);'
-        if memory.count(allocation) != 1:
-            raise ValueError('Play allocation hook changed')
-        memory = '#include <stdexcept>\n' + memory.replace(allocation,
-            'if (' + allocation[:-1] + ' != KERN_SUCCESS) throw std::runtime_error("Executable allocation failed");')
-        # Upstream assertions disappear in Release. Fail before executing or
-        # rewriting a page when any of the three W^X transitions was rejected.
-        if memory.count('assert(result == 0);') != 3:
-            raise ValueError('Play protection hooks changed')
-        memory = memory.replace('assert(result == 0);', 'if (result != KERN_SUCCESS) throw std::runtime_error("Executable protection failed");')
-        (directory / 'MemoryFunction.cpp').write_text(memory)
+        engine_module(engine).generated(ROOT, directory)
     if engine == 'flycast':
-        main = (ROOT / 'vendor/Flycast/shell/libretro/libretro.cpp').read_text()
-        if main.count('static bool first_run = true;') != 1:
-            raise ValueError('Flycast session hook changed')
-        (directory / 'libretro.cpp').write_text(main + '''
-extern "C" bool ir_phase3_core_pause(bool paused) {
-    if (first_run) return true;
-    if (paused) emu.stop();
-    else emu.start();
-    return emu.running() != paused;
-}
-''')
-        glsm = (ROOT / 'vendor/Flycast/core/deps/libretro-common/glsm/glsm.c').read_text()
-        hook = '#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;'
-        if glsm.count(hook) != 1: raise ValueError('Flycast GLES context hook changed')
-        # This target compiles the ES3 renderer/symbol loader. Its pinned GLSM
-        # otherwise advertises ES2 regardless of HAVE_OPENGLES3.
-        replacement = '#ifdef HAVE_OPENGLES3\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES3;\n#elif defined(HAVE_OPENGLES)\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;'
-        (directory / 'glsm.c').write_text(glsm.replace(hook, replacement))
+        engine_module(engine).generated(ROOT, directory)
     return directory
 
 
@@ -271,7 +145,7 @@ def audit(binary, sdk, native=False):
         expected = DOLPHIN_EXPORTS if binary.name == 'libIridiumDolphin.dylib' else NATIVE_EXPORTS
         if symbols != expected:
             raise ValueError('Native player exports differ: ' + str(symbols ^ expected))
-    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause'} for s in symbols):
+    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause', '_ir_phase3_core_prepare_jit', '_ir_phase3_core_jit_status', '_ir_phase3_core_set_metal_surface'} for s in symbols):
         raise ValueError('Upstream C++ symbols escape the core boundary')
     if not native and '_retro_run' not in symbols:
         raise ValueError('Missing upstream core interface')
@@ -306,74 +180,39 @@ def notices(source, destination, allowed=None):
 def build(engine, sdk, jobs):
     inputs = fixed_inputs(engine)
     name, revision, release = PINS[engine]
-    source = ROOT / 'vendor' / name
+    source = ROOT / engine_pins.get(engine)['path']
     if output('git', '-C', source, 'rev-parse', 'HEAD') != revision:
         raise ValueError('Unexpected upstream pin for ' + name)
     source_state(source)
     destination = ROOT / '.build/phase3' / engine / sdk
     destination.mkdir(parents=True, exist_ok=True)
-    embedding = generated(engine, destination)
     binary_name = {'dolphin': 'libIridiumDolphin.dylib', 'azahar': 'azahar_libretro.dylib',
                    'play': 'play_libretro_ios.dylib', 'flycast': 'flycast_libretro.dylib'}[engine]
     binary = destination / binary_name
     arguments = []
     if engine == 'azahar':
-        downloads = ROOT / '.build/phase3-downloads'
-        for filename, expected in AZAHAR_DOWNLOADS.items():
-            if digest(downloads / filename) != expected:
-                raise ValueError('Official release artifact digest differs: ' + filename)
-        expanded = downloads / 'azahar-unified-source-2126.2'
-        if not expanded.exists():
-            with tarfile.open(downloads / 'azahar-unified-source-2126.2.tar.xz') as archive:
-                archive.extractall(downloads, filter='data')
-        if (expanded / 'GIT-COMMIT').read_text().strip() != revision:
-            raise ValueError('Azahar unified source pin differs')
-        archive_files = []
-        with tarfile.open(downloads / 'azahar-unified-source-2126.2.tar.xz') as archive:
-            for member in archive:
-                relative = Path(member.name).relative_to(expanded.name)
-                target = expanded / relative
-                if member.isfile():
-                    if target.is_symlink() or digest(target) != hashlib.file_digest(archive.extractfile(member), 'sha256').hexdigest():
-                        raise ValueError('Azahar expanded source changed: ' + relative.as_posix())
-                    archive_files.append(relative)
-                elif member.issym() and (not target.is_symlink() or Path(target.readlink()) != Path(member.linkname)):
-                    raise ValueError('Azahar expanded source link changed')
-    if engine == 'azahar' and sdk == 'iphoneos':
-        with zipfile.ZipFile(downloads / 'azahar-libretro-ios-arm64-2126.2.zip') as archive:
-            if archive.namelist() != [binary_name]:
-                raise ValueError('Unexpected official archive layout')
-            binary.write_bytes(archive.read(binary_name))
-        arguments = ['Official iOS release artifact; source recipe: vendor/Azahar/.github/workflows/libretro.yml']
+        expanded, archive_files = azahar_module().prepare_source(ROOT, revision, AZAHAR_DOWNLOADS)
+    embedding = generated(engine, destination)
+    build_dir = destination / 'build'
+    arguments = ['cmake', '-S', str(expanded if engine == 'azahar' else source), '-B', str(build_dir), '-G', 'Ninja',
+        '-DCMAKE_TOOLCHAIN_FILE=' + str(embedding / 'toolchain.cmake'), '-DCMAKE_OSX_SYSROOT=' + sdk,
+        '-DCMAKE_OSX_ARCHITECTURES=arm64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=18.0',
+        '-DCMAKE_POLICY_VERSION_MINIMUM=3.5', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
+        '-DCMAKE_PROJECT_INCLUDE=' + str(ROOT / 'ci/phase3-cmake-hook.cmake'),
+        '-DIRIDIUM_ROOT=' + str(ROOT), '-DIRIDIUM_PHASE3_GENERATED=' + str(embedding),
+        '-DIRIDIUM_PHASE3_TARGET_HOOK=' + str(ROOT / 'ci/phase3-targets.cmake')]
+    adapter = engine_module(engine)
+    if engine == 'azahar':
+        moltenvk_library, moltenvk_receipt = azahar_moltenvk(sdk, jobs)
+        arguments += adapter.arguments(moltenvk_library)
     else:
-        build_dir = destination / 'build'
-        arguments = ['cmake', '-S', str(expanded if engine == 'azahar' else source), '-B', str(build_dir), '-G', 'Ninja',
-            '-DCMAKE_TOOLCHAIN_FILE=' + str(embedding / 'toolchain.cmake'), '-DCMAKE_OSX_SYSROOT=' + sdk,
-            '-DCMAKE_OSX_ARCHITECTURES=arm64', '-DCMAKE_OSX_DEPLOYMENT_TARGET=18.0',
-            '-DCMAKE_POLICY_VERSION_MINIMUM=3.5', '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON',
-            '-DCMAKE_PROJECT_INCLUDE=' + str(ROOT / 'ci/phase3-cmake-hook.cmake'),
-            '-DIRIDIUM_ROOT=' + str(ROOT), '-DIRIDIUM_PHASE3_GENERATED=' + str(embedding),
-            '-DIRIDIUM_PHASE3_TARGET_HOOK=' + str(ROOT / 'ci/phase3-targets.cmake')]
-        if engine == 'dolphin':
-            arguments += ['-DENABLE_VULKAN=OFF', '-DENABLE_TESTS=OFF', '-DUSE_MGBA=OFF', '-DENABLE_LLVM=OFF',
-                '-DENABLE_ANALYTICS=OFF', '-DUSE_RETRO_ACHIEVEMENTS=OFF', '-DUSE_SYSTEM_LIBS=OFF', '-DWITH_NEON=OFF',
-                '-DCMAKE_CXX_FLAGS=-DFMT_CONSTEVAL=']
-            target, relative = 'dolphin', 'Source/iOS/Library/libIridiumDolphin.dylib'
-        elif engine == 'azahar':
-            arguments += ['-DENABLE_LIBRETRO=ON', '-DENABLE_VULKAN=OFF', '-DENABLE_OPT=OFF',
-                '-DENABLE_LTO=OFF', '-DCITRA_USE_PRECOMPILED_HEADERS=OFF', '-DCITRA_WARNINGS_AS_ERRORS=OFF',
-                '-DCMAKE_C_FLAGS=-DIOS', '-DCMAKE_CXX_FLAGS=-DIOS']
-            target, relative = 'citra_libretro', 'bin/Release/azahar_libretro.dylib'
-        elif engine == 'play':
-            arguments += ['-DTARGET_IOS=ON', '-DBUILD_PLAY=OFF', '-DBUILD_TESTS=OFF', '-DBUILD_LIBRETRO_CORE=ON']
-            target, relative = 'play_libretro', 'Source/ui_libretro/play_libretro_ios.dylib'
-        else:
-            arguments += ['-DLIBRETRO=ON', '-DUSE_VULKAN=OFF', '-DUSE_HOST_LIBZIP=OFF', '-DUSE_OPENMP=OFF',
-                '-DENABLE_CTEST=OFF', '-DUSE_BREAKPAD=OFF', '-DUSE_UPNP=OFF', '-DCMAKE_C_FLAGS=-DIOS', '-DCMAKE_CXX_FLAGS=-DIOS']
-            target, relative = 'flycast_libretro', binary_name
-        run(*arguments)
-        run('cmake', '--build', build_dir, '--target', target, '-j', jobs)
-        shutil.copy2(build_dir / relative, binary)
+        arguments += adapter.arguments()
+    target, relative = adapter.TARGET, adapter.OUTPUT
+    run(*arguments)
+    if engine == 'azahar':
+        azahar_module().check_compile_commands(build_dir, embedding)
+    run('cmake', '--build', build_dir, '--target', target, '-j', jobs)
+    shutil.copy2(build_dir / relative, binary)
     record = audit(binary, sdk, native=engine == 'dolphin')
     if fixed_inputs(engine) != inputs:
         raise ValueError('Phase 3 build inputs changed during compilation: ' + engine)
@@ -381,18 +220,14 @@ def build(engine, sdk, jobs):
                   buildInputs=fixed_inputs(engine), sourceRevisions=source_state(source),
                   recipeSHA256=digest(Path(__file__)),
                   embedding={p.relative_to(embedding).as_posix(): digest(p) for p in embedding.rglob('*') if p.is_file()})
-    bridge_sources = {'dolphin': ['IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': [],
+    bridge_sources = {'dolphin': ['IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRPhase3.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
         'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
         'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}[engine]
     record['adapterSources'] = {name: digest(BRIDGE / name) for name in bridge_sources}
     if engine == 'azahar':
-        # The binary's official source archive includes its dependency closure;
-        # the shallow root checkout alone does not contain their notices.
-        expanded = ROOT / '.build/phase3-downloads/azahar-unified-source-2126.2'
-        if not expanded.exists():
-            with tarfile.open(downloads / 'azahar-unified-source-2126.2.tar.xz') as archive:
-                archive.extractall(downloads, filter='data')
         notices(expanded, destination, allowed=archive_files)
+        record['moltenVK'] = moltenvk_receipt
+        azahar_module().collect_licenses(ROOT, destination, moltenvk_receipt)
     else:
         notices(source, destination)
     assets = destination / 'assets'
@@ -404,7 +239,7 @@ def build(engine, sdk, jobs):
         shutil.copy2(source / 'GameConfig.xml', assets / 'GameConfig.xml')
     if engine == 'azahar':
         record['officialArtifacts'] = AZAHAR_DOWNLOADS
-    if engine != 'azahar' or sdk == 'iphonesimulator':
+    if engine != 'host':
         commands = json.loads((build_dir / 'compile_commands.json').read_text())
         record['compiledInputs'] = {Path(item['file']).resolve().relative_to(ROOT).as_posix(): digest(Path(item['file'])) for item in commands}
     record['files'] = {p.relative_to(destination).as_posix(): digest(p)

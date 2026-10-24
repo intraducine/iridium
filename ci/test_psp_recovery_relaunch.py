@@ -1,4 +1,5 @@
 """Crash two processes during production recovery; use the real PSP broker gate."""
+from host_tests import module_cache
 from pathlib import Path
 import platform
 import shutil
@@ -125,7 +126,7 @@ MainActor.assumeIsolated {checks()}
 '''.replace('NETWORK',network).replace('BROKER',broker)
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);source=root/'main.swift';source.write_text(fixture);binary=root/'check'
-            result=subprocess.run(['swiftc','-swift-version','5','-module-cache-path',str(root/'cache'),str(source),'-o',str(binary)],capture_output=True,text=True,timeout=60)
+            result=subprocess.run(['swiftc','-swift-version','5','-module-cache-path',module_cache('macosx'),str(source),'-o',str(binary)],capture_output=True,text=True,timeout=60)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             for phase in ['start','relaunch1','relaunch2']:
                 result=subprocess.run([str(binary),str(root),phase],capture_output=True,text=True,timeout=10)

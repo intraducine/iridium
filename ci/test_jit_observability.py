@@ -1,4 +1,5 @@
 """Pinned-emitter UB regression and secret-free helper observations; no device."""
+from host_tests import module_cache
 from pathlib import Path
 import importlib.util
 import json
@@ -91,6 +92,24 @@ int main() {
 
 @unittest.skipUnless(shutil.which('node'), 'Node required for isolated script fixture')
 class HelperScriptTests(unittest.TestCase):
+    def test_shared_script_ends_after_lost_debugger_reply(self):
+        source = (ROOT / 'iridium/apps/ios/App/Resources/madeira-jit.js').read_text()
+        harness = r'''
+const vm = require('vm'), assert = require('assert');
+const source = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+for (const reply of ['', null, 'E09']) {
+  let continues = 0;
+  assert.throws(() => vm.runInNewContext(source, {
+    get_pid: () => 42, log: () => {}, send_command: command => {
+      if (command === 'c') { continues++; return reply; }
+      return command.startsWith('vAttach') ? 'T05' : 'OK';
+    }
+  }, {timeout: 1000}), /connection ended without a stop reply/);
+  assert.equal(continues, 1);
+}
+'''
+        subprocess.run(['node', '-e', harness], input=json.dumps(source), text=True, check=True, timeout=10)
+
     def test_shared_region_keeps_high_address_bits_and_checks_every_reply(self):
         source = (ROOT / 'iridium/apps/ios/App/Resources/madeira-jit.js').read_text()
         harness = r'''
@@ -278,6 +297,34 @@ console.log(JSON.stringify(diagnostics));
 
 @unittest.skipUnless(platform.system() == 'Darwin' and shutil.which('swiftc'), 'Darwin Swift compiler required')
 class HelperJournalTests(unittest.TestCase):
+    def test_owned_helper_records_sdk_return_without_error_text(self):
+        helper_source = (ROOT / 'iridium/apps/ios/App/JIT/Helper/MadeiraJITHelper.swift').read_text()
+        messages = (ROOT / 'iridium/apps/ios/App/JIT/JITBuiltInMessages.swift').read_text()
+        fixture = '''import Foundation
+import Darwin
+let directory = URL(fileURLWithPath: CommandLine.arguments[1])
+do {
+    let writer = IridiumJITHelperDiagnostic(directory: directory)
+    writer.sdkReturned(clean: false)
+    writer.sdkReturned(clean: true)
+    writer.receive("IRJIT2 stage=helper.return clean=0 SECRET")
+}
+let records = IridiumJITHelperSnapshot.read(in: directory)
+precondition(records.count == 3)
+precondition(records[1].hasSuffix("IRJIT2 stage=helper.return clean=0"))
+precondition(records[2].hasSuffix("IRJIT2 stage=helper.return clean=1"))
+precondition(!records.joined().contains("SECRET"))
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'journal.swift').write_text('import Foundation\nimport Darwin\n' +
+                helper_source[helper_source.index('final class IridiumJITHelperDiagnostic'):])
+            (root / 'messages.swift').write_text(messages)
+            (root / 'main.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'), str(root / 'journal.swift'),
+                            str(root / 'messages.swift'), str(root / 'main.swift'), '-o', str(root / 'check')], check=True)
+            subprocess.run([str(root / 'check'), directory], check=True, capture_output=True, timeout=15)
+
     def test_private_fault_survives_but_system_log_mirror_and_export_omit_locations(self):
         fixture = r'''
 import Foundation
@@ -338,7 +385,7 @@ print("PASS private first fault exact/bounded/0600/once, read-only snapshot, leg
             root = Path(directory); logs = root / 'logs'; logs.mkdir()
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
             support = ROOT / 'iridium/apps/ios/MadeiraSupport'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(support / 'IridiumJITHelperDiagnostic.swift'),
                             str(support / 'IridiumJITHelperSnapshot.swift'),
                             str(ROOT / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift'),
@@ -390,7 +437,7 @@ print("PASS strict fields, secret redaction, concurrent cap, rotation and symlin
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); logs = root / 'logs'; logs.mkdir()
             main = root / 'main.swift'; main.write_text(fixture); binary = root / 'check'
-            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', str(root / 'cache'),
+            subprocess.run(['swiftc', '-swift-version', '5', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/MadeiraSupport/IridiumJITHelperDiagnostic.swift'),
                             str(ROOT / 'iridium/apps/ios/MadeiraSupport/IridiumJITHelperSnapshot.swift'),
                             str(main), '-o', str(binary)], check=True)

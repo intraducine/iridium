@@ -61,6 +61,7 @@ private enum MadeiraJITWork {
                          })
         }
         var pspJournal: IridiumPSPHelperJournal?
+        var debuggerReleased = false
         let manager = FileManager.default
         let root = manager.urls(for: .libraryDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("StikJIT", isDirectory: true)
@@ -124,16 +125,22 @@ private enum MadeiraJITWork {
                     pspJournal = journal
                 }
                 let diagnostic = IridiumJITHelperDiagnostic(attemptID: request.diagnosticAttemptID ?? IridiumJITHelperSnapshot.newAttemptID())
-                try StikJIT.enableJIT(
-                    targetPID: targetPID,
-                    pairingFile: pairingURL,
-                    ddiPaths: paths,
-                    script: .customBase64(scriptBase64),
-                    forceScript: true,
-                    preparationProgress: {
-                        if pspJournal == nil { NSLog("[MadeiraJIT] prepare: %@", String(describing: $0)) }
-                    },
-                    progress: { diagnostic.receive($0); pspJournal?.receive($0) })
+                var sdkReturnedClean = false
+                do {
+                    // StikJIT releases its debug session and tunnel on both return paths.
+                    defer { debuggerReleased = true; diagnostic.sdkReturned(clean: sdkReturnedClean) }
+                    try StikJIT.enableJIT(
+                        targetPID: targetPID,
+                        pairingFile: pairingURL,
+                        ddiPaths: paths,
+                        script: .customBase64(scriptBase64),
+                        forceScript: true,
+                        preparationProgress: {
+                            if pspJournal == nil { NSLog("[MadeiraJIT] prepare: %@", String(describing: $0)) }
+                        },
+                        progress: { diagnostic.receive($0); pspJournal?.receive($0) })
+                    sdkReturnedClean = true
+                }
                 pspJournal?.sdkReturned(clean: true)
                 if let pspJournal {
                     let receipt = pspJournal.receipt
@@ -143,7 +150,7 @@ private enum MadeiraJITWork {
                 }
                 return .init(success: true,
                              message: "Madeira detached cleanly from its built-in JIT helper.",
-                             txmPresent: StikJIT.isTXMPresent)
+                             txmPresent: StikJIT.isTXMPresent, debuggerReleased: debuggerReleased)
             case .resetDDI, .diagnostics:
                 preconditionFailure("Handled above")
             }
@@ -155,7 +162,7 @@ private enum MadeiraJITWork {
                              pspReceipt: pspJournal.receipt)
             }
             return .init(success: false, message: error.localizedDescription,
-                         txmPresent: StikJIT.isTXMPresent)
+                         txmPresent: StikJIT.isTXMPresent, debuggerReleased: debuggerReleased)
         }
     }
 }
@@ -227,6 +234,10 @@ final class IridiumJITHelperDiagnostic {
     }
 
     deinit { if descriptor >= 0 { close(descriptor) } }
+
+    func sdkReturned(clean: Bool) {
+        append("IRJIT2 stage=helper.return clean=\(clean ? 1 : 0)")
+    }
 
     func receive(_ message: String) {
         // StikJIT may prepend a progress label. Never retain that prefix or any

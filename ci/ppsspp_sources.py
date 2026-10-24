@@ -1,10 +1,11 @@
 """Source pins and notices shared by the native PPSSPP component builder."""
+import engine_pins
 from pathlib import Path
 import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
+REVISION = engine_pins.get('ppsspp')['revision']
 
 DEPENDENCIES = (
     'libretro/libretro-common', 'ext/SPIRV-Cross', 'ext/armips', 'ext/glslang',

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify or regenerate SameBoy's upstream replacement boot-ROM build inputs."""
+import engine_pins
 import argparse
 import hashlib
 import json
@@ -7,9 +8,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-REVISION = '98da08c3117a7bf39c7329fc662c0d18cb54707d'
-RGBDS_REVISION = 'd1829ed92327a9f9210ffd45d865331f24dfa4e6'
-RGBDS_VERSION = 'v0.9.4'
+REVISION = engine_pins.get('sameboy')['revision']
+RGBDS_REVISION = engine_pins.get('sameboy')['buildDependencies']['rgbds']['revision']
+RGBDS_VERSION = engine_pins.get('sameboy')['buildDependencies']['rgbds']['releaseTag']
 MODELS = {'agb': 2304, 'cgb': 2304, 'cgb0': 2304, 'dmg': 256,
           'mgb': 256, 'sgb': 256, 'sgb2': 256}
 ROOT = Path(__file__).resolve().parents[1]

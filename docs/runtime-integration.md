@@ -1,95 +1,65 @@
-# App ownership and runtime integration
+# Runtime integration
 
-Iridium owns its app entry point, library records, screens, settings, artwork,
-onboarding, Steam client, controls, save UI and project template. `App/` adopts
-GPL-3.0-or-later Madeira code from revision
-`279fd0f83170425db002fe25d6bd62f6355f497d`; this is a maintained fork, not a claim
-that these implementations were written independently. `App/source-ownership.json`
-records the original source units and build 43 source hashes. `App/Origin/`
-preserves Madeira's license and converter exception; existing per-file notices
-remain. `MadeiraFrontend/` and `RuntimeSupport/` remain first-party sources.
-The on-disk `madeira-library.json`, game IDs, Wine paths and save locations are
-unchanged. Names retained for that compatibility do not transfer model ownership
-to the engine checkout.
+Iridium owns the app entry, library, artwork, settings, setup, Steam UI, and
+controls. Engines provide execution through native adapters. Source revisions
+are recorded in [UPSTREAM-SOURCES.json](../UPSTREAM-SOURCES.json).
 
-## Boundaries
+## Source layout
 
-`App/Models/IridiumWindowsLibrary.swift` holds the persisted Windows game record.
-Native environment application is in the `LibraryEntry` extension in
-`App/Adapters/Madeira/IridiumMadeiraLaunchProfile.swift`. The retained Windows
-session coordinator, display bridge and library service live beside it. They
-continue to own the existing cloud preflight, JIT continuation, runtime leases,
-worker, counters and graceful stop. This is an adapter of the existing lifecycle,
-not a second runtime state machine.
+| Path | Responsibility |
+| --- | --- |
+| `iridium/apps/ios/App` | Maintained app models, services, and Madeira adapter |
+| `iridium/apps/ios/MadeiraFrontend` | Shared library and player UI |
+| `iridium/apps/ios/RuntimeBridge` | Engine C interfaces, input, audio, and lifecycle adapters |
+| `iridium/apps/ios/AppProject` | App project, metadata, and entitlements |
+| `vendor` | Pinned engine sources and dependencies |
+| `ci` | Build, source collection, component receipts, and checks |
 
-`App/Services/IridiumLibraryServices.swift` defines the UI's launch, JIT, Steam,
-control editing and save operations. Production adapters delegate to the existing
-state owners. The unified library consumes launch/JIT/Steam services; controls
-settings consume the editing service (including native process admission); saves
-settings consume the save service. The simulator supplies unavailable launch
-callbacks and cannot launch mock titles. UI observation uses Iridium-owned
-ObservableObject stores directly. These are deliberately not wrapped in another
-copy of the same published state.
+`App` includes Madeira-derived code from
+`279fd0f83170425db002fe25d6bd62f6355f497d`. Its source-ownership manifest and
+`App/Origin` retain import hashes, licenses, and the Converter Exception.
+The build stages maintained sources through `ci/iridium_app_sources.py`;
+upstream UI changes do not rewrite the app.
 
-Console engines continue through `IridiumRuntimeDriver`, console session and
-`RuntimeBridge` C interfaces. SameBoy, PSP and console engine component receipts and
-native ABI/export audits remain mandatory. Windows native functions cross the
-retained C/Objective-C bridging header. The Windows coordinator still contains
-engine-specific presentation and platform integration; it is maintained in the
-adapter directory and must be tested when that native contract changes.
+## Engine boundaries
 
-## Build inputs
+The unified library retains Windows records and separate console records.
+`IridiumRuntimeDriver` declares engine capabilities and lifecycle requirements.
+Only one native runtime may own the process. Windows requires an app restart
+before switching engines; uncertain teardown also retains ownership until restart.
 
-`ci/iridium_app_sources.py` enumerates the owned source tree. Staging removes all
-upstream Swift, copies the app's maintained sources/resources and uses the owned
-project template under `AppProject/`. Source membership is generated from that
-tree. The template has no obsolete main-target Swift references and no personal
-development team. Native relative paths describe the documented out-of-tree
-staging layout; no developer machine or DerivedData path is committed.
-App metadata, entitlements and asset catalogs are also maintained here. Native
-C/Objective-C, bridging headers, engine resources, libraries and build recipes
-still come from their pinned engine checkouts and are validated separately.
+Console engines use isolated binaries and checked C interfaces. Components have
+separate pins, build outputs, resources, and receipts. Shared JIT handles provider
+selection and launch admission; each engine validates its own executable memory.
+Changing one engine need not change another, but its adapter and dependencies
+must remain compatible. See [console engines](console-engines.md).
 
-`madeira-frontend.overlay()` is a compatibility reader for existing host tests:
-it returns maintained shipping source by its old logical unit name. It performs
-no text substitution. The historical `madeira_presentation*`, player, control and
-JIT overlay modules remain as build 43 migration fixtures for existing behavioral
-regression tests. Their original inputs are frozen under `ci/fixtures/madeira-build43/`, with
-licenses and source hashes. They are not invoked by preparation, verification or
-packaging and never read a future engine pin’s UI; they are not an upgrade requirement. New changes belong in maintained Swift/JS.
+Windows keeps `madeira-library.json`, game IDs, Wine paths, and saves. Console
+records use `Documents/IridiumRuntimes/library.json`; games and saves are isolated
+by runtime and UUID. Corrupt libraries block writes. Removing an entry retains
+files. Imports reject unsafe paths and conflicting saves.
 
-## Updating an engine
+## Engine updates
 
-1. Inspect the candidate locally, without changing the pin. Run
+1. Inspect the candidate and its licenses. For Madeira, run
    `python3 ci/check-engine-upgrade.py --madeira-source /path/to/candidate`.
-   It compiles real native headers with the iOS SDK and compares functions,
-   globals, callback typedefs and public record fields against the reviewed API
-   contract in `ci/engine-integrations/`. It never reads upstream UI text. App preparation also runs this check automatically.
-2. Review native integration obligations listed in the integration manifest.
-   API compatibility alone does not prove runtime behavior or binary ABI safety.
-3. Update the pin and provenance together only after review. Rebuild native
-   components rather than resealing old receipts. Run focused compatibility,
-   JIT lifecycle, input, cloud, saves and ownership tests, then the full source
-   checks, actual app build and portrait/landscape simulator checks.
-4. Test actual games on authorized hardware before claiming device compatibility.
-   Generate corresponding source, check component/license/asset/package audits,
-   and verify the replacement IPA before atomic delivery.
+2. Review the native contract in `ci/engine-integrations`, build inputs, resources,
+   and adaptation recipes. Update pins and provenance together.
+3. Rebuild affected components and run focused tests plus the [source checks](../CONTRIBUTING.md#checks).
+4. Build the app and test games on the target device before claiming compatibility.
+   Update source collection and notices with any dependency change.
 
-A compatible upstream UI redesign requires no source rewriting. A native API,
-resource layout, build recipe or integration patch change can still require
-adapter/build work; this is not a plug-and-play engine upgrade guarantee.
+API checks do not establish binary or game compatibility. Version changes may
+require adapter work; arbitrary prebuilt engines are not interchangeable.
 
-## First-game setup
+## Retained development code
 
-Onboarding is maintained in `MadeiraFrontend/IridiumOnboarding.swift`. It opens
-existing Files import, Steam sign-in/library, controls and JIT screens rather
-than implementing parallel services. A successful import records its game ID and
-runtime capability for guidance. PSP's optional JIT choice writes the existing
-per-game setting. Windows controls keep their legacy layout fallback.
+`iridium/packages/core`, `profiles`, and `runtime` retain the earlier store,
+tuning, and runtime-bundle contracts. Device tiers are tuning metadata, not
+user-visible compatibility guarantees. The [runtime SDK](../iridium-runtime-sdk/README.md)
+and adjacent FEX/Wine bridges support that earlier path. They are separate from
+the current native Madeira backend.
 
-Setup preferences use the existing `iridium.setup` namespace. Revision 2 retains
-raw step identifiers and exact skip/resume positions, including the former .NET
-step. Completion queues one library action and consumes it after the owning modal
-has dismissed; missing game records return to Files rather than selecting a stale
-ID. Native game/launch/server admission remains authoritative. No library schema,
-save path, JIT readiness flag or engine pin changes as part of this flow.
+The frozen build-43 overlays in `ci/fixtures` support migration regression tests.
+They do not generate shipping app sources. New app changes belong in the
+maintained Swift and JavaScript files.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the pinned interpreter core, with private symbols, without a frontend."""
 import argparse
+import engine_pins
 import concurrent.futures
 import hashlib
 import json
@@ -18,11 +19,12 @@ PREFIX = 'iridium_sb_'
 def build_input_hashes():
     paths = [CORE / 'version.mk', CORE / 'LICENSE', CORE / 'Makefile', CORE / 'libretro/Makefile', CORE / 'libretro/Makefile.common',
              ROOT / 'ci/build-sameboy.py', ROOT / 'ci/sameboy_bootroms.py',
-             ROOT / 'ci/sameboy-bootroms.json']
+             ROOT / 'ci/sameboy-bootroms.json', ROOT / 'ci/engine_pins.py']
     paths += [p for directory in ('Core', 'libretro', 'BootROMs')
               for p in sorted((CORE / directory).rglob('*')) if p.is_file()
               and (p.suffix in {'.c', '.h', '.inc', '.asm', '.png'} or p.name == 'Makefile')]
-    return {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+    return {**{p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
+            'enginePin': hashlib.sha256(json.dumps(engine_pins.selected('sameboy'), sort_keys=True).encode()).hexdigest()}
 
 
 def verify_component(folder):
@@ -83,6 +85,17 @@ def build(output, sdk=None, target=None):
     else:
         cc, nm, ar = os.environ.get('CC', 'cc'), 'nm', 'ar'
         platform = []
+    compiler = run([cc, '--version']).strip()
+    sdk_build = run(['xcrun', '--sdk', sdk, '--show-sdk-build-version']).strip() if sdk else None
+    try:
+        previous = verify_component(output)
+        if (previous.get('sdk') == sdk and previous.get('target') == target
+                and previous.get('compiler') == compiler and previous.get('platformFlags') == platform
+                and previous.get('sdkBuildVersion') == sdk_build):
+            print('Reusing verified SameBoy:', output / 'libIridiumSameBoy.a')
+            return output / 'libIridiumSameBoy.a'
+    except (OSError, ValueError, KeyError):
+        pass
     # The official core has its own complete Libretro adapter. No RetroArch or
     # libretro-common implementation is required by this pinned release.
     boots = read_bootroms(CORE)
@@ -142,6 +155,7 @@ def build(output, sdk=None, target=None):
     (output / 'source-manifest.json').write_text(json.dumps({
         'revision': REVISION, 'version': version, 'sourceCount': len(sources),
         'definedSymbols': len(actual), 'jit': False, 'sdk': sdk, 'target': target,
+        'compiler': compiler, 'platformFlags': platform, 'sdkBuildVersion': sdk_build,
         'audioRate': 'frontend RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE',
         'compilerFlags': [flag.replace(str(ROOT), '$IRIDIUM_SOURCE') for flag in flags],
         'adapterSHA256': hashlib.sha256((CORE / 'libretro/libretro.c').read_bytes()).hexdigest(),

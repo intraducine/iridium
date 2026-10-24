@@ -4,13 +4,14 @@ The host substitutes platform state only. It compiles all production Core and
 Profiles sources and extracts unchanged AppViewModel method bodies. All files
 and game records are synthetic and local to a temporary directory.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / 'iridium/apps/ios/Iridium'
 
 
@@ -20,7 +21,7 @@ class GameArgumentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='iridium-argument-checks-') as temporary:
             directory = Path(temporary)
             compiler = ['swiftc', '-swift-version', '6', '-module-cache-path',
-                        str(directory / 'module-cache')]
+                        module_cache('macosx')]
             for name, package in [('IridiumCore', 'core'), ('IridiumProfiles', 'profiles')]:
                 sources = sorted((ROOT / f'iridium/packages/{package}/Sources/{name}').glob('*.swift'))
                 subprocess.run(compiler + ['-emit-library', '-static', '-emit-module',

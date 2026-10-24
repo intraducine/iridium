@@ -3,13 +3,14 @@
 No Security framework is imported, no real Keychain is queried, and the native
 framework is replaced before compilation. Queue files stay in a temporary root.
 """
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / 'iridium/apps/ios/Iridium'
 
 HOST = r'''
@@ -644,7 +645,7 @@ class SteamSessionTests(unittest.TestCase):
             binary = Path(directory) / 'session-checks'
             subprocess.run([
                 'swiftc', '-swift-version', '5', '-parse-as-library',
-                '-module-cache-path', str(Path(directory) / 'module-cache'),
+                '-module-cache-path', module_cache('macosx'),
                 str(APP / 'SteamDownloadQueue.swift'), str(APP / 'SteamCloudModels.swift'),
                 str(APP / 'SteamCloudFileAccess.swift'), str(APP / 'SteamChunkTransfer.swift'), str(source), '-o', str(binary),
             ], check=True, timeout=180)

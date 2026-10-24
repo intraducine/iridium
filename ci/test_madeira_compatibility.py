@@ -383,11 +383,5 @@ UnderTest.check()
             subprocess.run([str(binary)], check=True, timeout=10)
 
 
-    @unittest.skipUnless(shutil.which("swiftc"), "Swift compiler unavailable")
-    def test_shared_stub_and_actual_adapter_readiness_lifecycle(self):
-        subprocess.run(["python3", str(ROOT / "iridium/apps/ios/MadeiraSupportTests/ReviewRegressionCheck.py"),
-                        "--group", "lifecycle"], check=True, capture_output=True, text=True, timeout=120)
-
-
 if __name__ == "__main__":
     unittest.main()

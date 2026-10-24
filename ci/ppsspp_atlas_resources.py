@@ -1,4 +1,5 @@
 """Locked native PSP atlas resources and generation helpers (no engine overlay)."""
+import engine_pins
 import hashlib
 import json
 from pathlib import Path
@@ -10,7 +11,7 @@ HOST = ROOT / 'ci/psp-atlas-host'
 RESOURCE_ROOT = ROOT / 'iridium/apps/ios/RuntimeSupport/PPSSPPAtlases'
 MANIFEST = ROOT / 'ci/psp-atlas-resources.json'
 FONT_LOCK = ROOT / 'ci/psp-atlas-inputs.json'
-REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
+REVISION = engine_pins.get('ppsspp')['revision']
 FILES = tuple(a + '_atlas.' + ext for a in ('font', 'ppge') for ext in ('meta', 'zim'))
 
 

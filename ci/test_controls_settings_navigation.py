@@ -1,4 +1,5 @@
 """Execute Controls' shipping registrations, preference bindings and ownership guards."""
+from host_tests import module_cache
 from pathlib import Path
 import re
 import shutil
@@ -218,7 +219,7 @@ METHODS
             folder = Path(folder)
             swift, binary = folder / "main.swift", folder / "controls-check"
             swift.write_text(policy + fixture)
-            subprocess.run(["swiftc", "-parse-as-library", "-module-cache-path", str(folder / "cache"), str(swift), "-o", str(binary)], check=True, timeout=90)
+            subprocess.run(["swiftc", "-parse-as-library", "-module-cache-path", module_cache('macosx'), str(swift), "-o", str(binary)], check=True, timeout=90)
             subprocess.run([str(binary)], check=True, timeout=20)
 
 

@@ -1,4 +1,5 @@
 """Execute local identity readers and confidence rules without private game data."""
+from host_tests import module_cache
 from pathlib import Path
 import shutil
 import struct
@@ -63,7 +64,7 @@ func measuredPERead(_ file:FileHandle,offset:Int,count:Int) throws -> Data? {
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder);source=path/'TracedIdentity.swift';source.write_text(traced)
             main=path/'Check.swift';main.write_text(check);binary=path/'check'
-            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',str(path/'cache'),
+            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),
                 str(ROOT/'iridium/apps/ios/App/Steam/SteamKeyValues.swift'),str(source),str(main),'-o',str(binary)],check=True,timeout=120)
@@ -151,7 +152,7 @@ static func main() throws {
                 data=pe('Bad');data[offset:offset+4]=b'\xff'*4;malformed.append(data)
             for index,data in enumerate(malformed):write(f'Malformed/{index}.exe',data)
             main=path/'Check.swift';main.write_text(code);binary=path/'check'
-            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',str(path/'cache'),
+            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),
                 str(ROOT/'iridium/apps/ios/App/Steam/SteamKeyValues.swift'),
@@ -183,7 +184,7 @@ static func main() {
 '''
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder);main=path/'Check.swift';main.write_text(code);binary=path/'check'
-            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',str(path/'cache'),
+            subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),str(main),'-o',str(binary)],check=True,timeout=120)
             subprocess.run([str(binary)],check=True,timeout=10)

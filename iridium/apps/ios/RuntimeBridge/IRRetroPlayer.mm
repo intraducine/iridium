@@ -2,12 +2,16 @@
 // Hosts upstream libretro implementations. No guest CPU/GPU/media code lives here.
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAEAGLLayer.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <OpenGLES/ES3/gl.h>
 #import <OpenGLES/ES3/glext.h>
 #import <AVFAudio/AVFAudio.h>
 #include <atomic>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstdio>
+#include <cstring>
 #include <map>
 #include <string>
 #include <vector>
@@ -20,6 +24,11 @@
 @end
 @implementation IRRetroSurface
 + (Class)layerClass { return CAEAGLLayer.class; }
+@end
+@interface IRAzaharSurface : UIView
+@end
+@implementation IRAzaharSurface
++ (Class)layerClass { return CAMetalLayer.class; }
 @end
 
 struct RetroAPI {
@@ -38,6 +47,8 @@ struct RetroAPI {
     decltype(&retro_run) run;
     decltype(&retro_set_controller_port_device) controller;
     bool (*pause)(bool);
+    unsigned (*jitStatus)(void);
+    bool (*metalSurface)(void *);
 };
 
 @interface IRRetroPlayer : UIViewController {
@@ -55,7 +66,7 @@ struct RetroAPI {
     retro_frame_time_callback frameTime;
     retro_pixel_format pixelFormat;
     EAGLContext *context;
-    IRRetroSurface *surface;
+    UIView *surface;
     UIImageView *software;
     AVAudioEngine *audioEngine;
     AVAudioSourceNode *audioSource;
@@ -68,13 +79,16 @@ struct RetroAPI {
     GLint width, height;
     unsigned maxWidth, maxHeight;
     bool initialized, initializationEntered, loaded, loadEntered, loadReturned, paused, jit, failed;
-    bool starting, finishing, audioSessionOwned, cleanupUncertain;
+    bool starting, finishing, audioSessionOwned, cleanupUncertain, metalReady;
     NSString *previousAudioCategory, *previousAudioMode;
     AVAudioSessionCategoryOptions previousAudioOptions;
     id audioConfigurationObserver, audioInterruptionObserver;
     void *coreImage;
     double displayAspect;
     double currentFPS, initialAudioRate;
+    double diagnosticTime;
+    uint64_t diagnosticFrames;
+    unsigned reportedJIT;
     std::atomic<bool> resizeQueued;
     bool needsContextReset, hardwareSelected, shutdownRequested;
 }
@@ -267,13 +281,15 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 }
 - (void)loadView {
     UIView *root = [[UIView alloc] initWithFrame:CGRectZero]; root.backgroundColor = UIColor.blackColor;
-    surface = [[IRRetroSurface alloc] initWithFrame:root.bounds];
+    surface = api.metalSurface ? [[IRAzaharSurface alloc] initWithFrame:root.bounds] : [[IRRetroSurface alloc] initWithFrame:root.bounds];
     surface.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     surface.contentScaleFactor = UIScreen.mainScreen.scale;
-    ((CAEAGLLayer *)surface.layer).drawableProperties = @{kEAGLDrawablePropertyRetainedBacking: @NO, kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8};
+    if(api.metalSurface)metalReady=api.metalSurface((__bridge void *)surface.layer);
+    else ((CAEAGLLayer *)surface.layer).drawableProperties = @{kEAGLDrawablePropertyRetainedBacking: @NO, kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8};
     [root addSubview:surface];
     software = [[UIImageView alloc] initWithFrame:root.bounds];
     software.contentMode = UIViewContentModeScaleAspectFit;
+    software.hidden=api.metalSurface!=nullptr;
     software.autoresizingMask = surface.autoresizingMask;
     [root addSubview:software]; self.view = root;
 }
@@ -283,6 +299,12 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    if(api.metalSurface) {
+        CGSize size=self.view.bounds.size;
+        CGFloat w=MIN(size.width,size.height*400.0/480.0),h=w*480.0/400.0;
+        surface.frame=CGRectMake((size.width-w)/2,(size.height-h)/2,w,h);
+        return;
+    }
     if(resizeQueued.exchange(true))return;
     dispatch_async(owner, ^{
         if(self->hardwareSelected&&self->loaded&&!self->stopped&&self->displayColor) {
@@ -307,9 +329,12 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 - (void)startCore {
     if (starting || finishing || stopped.load()) return;
     starting = true;
+    if(api.metalSurface&&!metalReady) {report(3,"The 3DS Metal display could not start.");[self finish];return;}
     if(engine=="play" || engine=="flycast") {
         api.pause=(bool(*)(bool))dlsym(coreImage,"ir_phase3_core_pause");
         if(!api.pause) {report(3,"This emulator is unavailable. Reinstall Iridium and try again.");[self finish];return;}
+    }
+    if(engine=="azahar" || engine=="play" || engine=="flycast") {
 #if TARGET_OS_SIMULATOR
         // Flycast deliberately compiles every CPU/DSP recompiler out for the
         // simulator. Its iOS entry point still asks the host for this flag.
@@ -323,6 +348,10 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         bool verified=probe && probe();
 #endif
         if(!verified) { report(3,"This emulator cannot start on this device right now. Check Launch Support and try again.");[self finish];return; }
+        if(engine=="azahar") {
+            api.jitStatus=(unsigned(*)(void))dlsym(coreImage,"ir_phase3_core_jit_status");
+            if(!api.jitStatus) {report(3,"The 3DS JIT interface is incomplete.");[self finish];return;}
+        }
 #if TARGET_OS_SIMULATOR
         if(engine!="flycast")
 #endif
@@ -340,7 +369,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         report(3,"The engine audio session could not start.");[self finish];return;
     }
     api.environment(environment); api.video(videoFrame); api.audio(audioSample); api.batch(audioBatch); api.poll(pollInput); api.input(inputState);
-    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
+    if(!api.metalSurface)context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
     [EAGLContext setCurrentContext:context];
     initializationEntered=true;api.init();initialized=true;
     retro_game_info content{}; content.path = game.c_str();
@@ -381,6 +410,9 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     samples.resize(audioCapacity * 2);
     AVAudioFormat *format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:rate channels:2];
     audioEngine = [[AVAudioEngine alloc] init];
+    // Quiet device tests mute only this engine's audio graph.
+    const char *testMute = getenv("IRIDIUM_TEST_MUTE_AUDIO");
+    if(testMute && !strcmp(testMute,"1"))audioEngine.mainMixerNode.outputVolume=0;
     IRRetroPlayer *p = self;
     audioSource = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL *silent, const AudioTimeStamp *, AVAudioFrameCount count, AudioBufferList *buffers) {
         uint32_t read = p->readAudio.load(std::memory_order_relaxed), write = p->writeAudio.load(std::memory_order_acquire);
@@ -414,6 +446,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         });
     }];
     muted.store(paused);
+    diagnosticTime=CFAbsoluteTimeGetCurrent();diagnosticFrames=0;reportedJIT=0;
     clock = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, owner);
     dispatch_source_set_timer(clock, dispatch_time(DISPATCH_TIME_NOW, 0), (uint64_t)(NSEC_PER_SEC / fps), NSEC_PER_MSEC);
     dispatch_source_set_event_handler(clock, ^{
@@ -423,7 +456,23 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         if (self->paused) return;
         [EAGLContext setCurrentContext:self->context];
         if (self->frameTime.callback) self->frameTime.callback((retro_usec_t)(1000000 / self->currentFPS));
-        try { self->api.run(); }
+        try {
+            self->api.run();
+            if(self->api.jitStatus) {
+                unsigned status=self->api.jitStatus();
+                if((status&1)&&!(self->reportedJIT&1))report(0,"Azahar CPU JIT completed guest execution.");
+                if((status&2)&&!(self->reportedJIT&2))report(0,"Azahar shader JIT completed shader execution.");
+                self->reportedJIT=status;
+                double now=CFAbsoluteTimeGetCurrent();
+                if(now-self->diagnosticTime>=5) {
+                    uint64_t frames=self->frameCount.load();
+                    char message[160];
+                    std::snprintf(message,sizeof message,"Azahar fps=%.2f target=%.2f cpu_jit=%u shader_jit=%u",(frames-self->diagnosticFrames)/(now-self->diagnosticTime),self->currentFPS,status&1,(status>>1)&1);
+                    report(0,message);
+                    self->diagnosticTime=now;self->diagnosticFrames=frames;
+                }
+            }
+        }
         catch (...) {
             report(3,"This game stopped unexpectedly. Your saves have been kept.");
             [self finish];
@@ -433,11 +482,15 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     });
     dispatch_resume(clock);
     [EAGLContext setCurrentContext:nil];
-    report(0, hardwareSelected ? "Upstream core loaded; OpenGL ES; waiting for video." : "Upstream core loaded; software renderer; waiting for video.");
+    report(0, api.metalSurface ? "Azahar loaded; upstream Vulkan renderer on Metal; waiting for video." : hardwareSelected ? "Upstream core loaded; OpenGL ES; waiting for video." : "Upstream core loaded; software renderer; waiting for video.");
 }
 - (void)video:(const void *)data width:(unsigned)w height:(unsigned)h pitch:(size_t)pitch {
     if (!data || paused || finishing || stopped.load() || !w || !h || w > 4096 || h > 4096) return;
     if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+        if(api.metalSurface) {
+            if(frameCount.fetch_add(1)==0)report(1,"Azahar submitted its first Vulkan frame to Metal.");
+            return;
+        }
         if (!hardwareSelected || w > maxWidth || h > maxHeight) { shutdownRequested = true; report(3, "The core exceeded the configured render target."); return; }
         glBindFramebuffer(GL_READ_FRAMEBUFFER, renderTarget); glBindFramebuffer(GL_DRAW_FRAMEBUFFER, displayTarget);
         glDisable(GL_SCISSOR_TEST); glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
@@ -487,6 +540,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     // it drains upstream's mailbox. Other cores destroy their context first.
     if(engine != "play" && hardwareSelected && hardware.context_destroy) hardware.context_destroy();
     if(initialized) api.deinit();
+    if(api.metalSurface)api.metalSurface(nullptr);
     } catch (...) {
         // An upstream worker may still own this image/context. The frontend's
         // stop deadline retains its lease and requires a process restart.
@@ -524,8 +578,8 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
     p->pixelFormat=RETRO_PIXEL_FORMAT_XRGB8888;
     // Deterministic launch policy, independent of a previous core's options.
     if(p->engine=="azahar") {
-        p->options["citra_graphics_api"]="Software";p->options["citra_use_cpu_jit"]="disabled";
-        p->options["citra_use_shader_jit"]="disabled";
+        p->options["citra_graphics_api"]="Vulkan";p->options["citra_use_cpu_jit"]="enabled";
+        p->options["citra_use_shader_jit"]="enabled";
         p->options["citra_layout_option"]="default";p->options["citra_swap_screen"]="Top";
     }
     p->frameCount.store(0);p->muted.store(true);p->imagePending.store(false);p->resizeQueued.store(false);p->stopped.store(false);
@@ -537,6 +591,7 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
     BIND(batch,retro_set_audio_sample_batch);BIND(poll,retro_set_input_poll);BIND(input,retro_set_input_state);
     BIND(info,retro_get_system_info);BIND(av,retro_get_system_av_info);BIND(init,retro_init);BIND(deinit,retro_deinit);
     BIND(load,retro_load_game);BIND(unload,retro_unload_game);BIND(run,retro_run);BIND(controller,retro_set_controller_port_device);
+    if(p->engine=="azahar") {BIND(metalSurface,ir_phase3_core_set_metal_surface);}
 #undef BIND
     auto version=(unsigned(*)(void))dlsym(image,"retro_api_version");
     if(!version||version()!=RETRO_API_VERSION)return nullptr;

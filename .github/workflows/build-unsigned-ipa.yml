@@ -12,9 +12,13 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         required: false
         type: string
       reuse_assets:
-        description: Reuse matching completed Madeira component builds
+        description: Reuse matching completed runtime and console component builds
         type: boolean
         default: true
+      release_build:
+        description: Include the full source archive and release audit artifacts
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -36,7 +40,25 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
+      - name: Select pinned Xcode
+        run: |
+          test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
+          echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Identify pinned runtime sources
+        id: runtime_sources
+        run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Restore runtime Git objects
+        if: inputs.reuse_assets
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .git/modules/vendor
+          key: runtime-git-v1-${{ runner.os }}-${{ steps.runtime_sources.outputs.key }}
+          restore-keys: runtime-git-v1-${{ runner.os }}-
       - name: Initialize the pinned runtime sources
+        env:
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: submodule.fetchJobs
+          GIT_CONFIG_VALUE_0: "8"
         run: |
           git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP
           python3 ci/build-ppsspp-native.py --initialize
@@ -46,10 +68,13 @@ jobs:
           git submodule update --init --depth 1 vendor/Azahar
           git submodule update --init --recursive --depth 1 vendor/Dolphin vendor/Play vendor/Flycast
       - name: Check source privacy and standards
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 check-public-source.py
           python3 ci/check-standards.py
-          python3 -B -m unittest discover -s ci -p 'test_*.py'
+          command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
+          python3 ci/host_tests.py --reuse
       - name: Prepare Apple Silicon build tools
         run: |
           python3 ci/local_build_tools.py --madeira --write-env .build/madeira-build-tools.env
@@ -70,6 +95,22 @@ jobs:
             fi
             "$tool" --version
           done
+      - name: Prepare compiler cache
+        run: |
+          command -v ccache || HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.build/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=3G" >> "$GITHUB_ENV"
+          for language in C CXX OBJC OBJCXX; do
+            echo "CMAKE_${language}_COMPILER_LAUNCHER=$(command -v ccache)" >> "$GITHUB_ENV"
+          done
+      - name: Restore compiler cache
+        if: inputs.reuse_assets
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/ccache
+          key: compiler-v1-${{ runner.os }}-${{ env.NATIVE_TOOLCHAIN }}-${{ github.sha }}
+          restore-keys: compiler-v1-${{ runner.os }}-${{ env.NATIVE_TOOLCHAIN }}-
       - name: Select completed native compilation
         id: compiled_madeira_native
         env:
@@ -145,23 +186,118 @@ jobs:
           retention-days: 14
       - name: Check build prerequisites
         run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend
-      - name: Prepare Dolphin, Azahar, Play!, and Flycast
+      - name: Compile psp
+        id: compiled_psp
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p .build/phase3-downloads
-          gh release download 2126.2 --repo azahar-emu/azahar --pattern azahar-libretro-ios-arm64-2126.2.zip --pattern azahar-unified-source-2126.2.tar.xz --dir .build/phase3-downloads
-          python3 ci/build-phase3.py --engine all --sdk iphoneos --jobs 3
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py psp
+      - name: Retain psp compilation
+        if: steps.compiled_psp.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_psp.outputs.artifact }}
+          path: .build/psp-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile sameboy
+        id: compiled_sameboy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py sameboy
+      - name: Retain sameboy compilation
+        if: steps.compiled_sameboy.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_sameboy.outputs.artifact }}
+          path: .build/sameboy-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile host
+        id: compiled_host
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py host
+      - name: Retain host compilation
+        if: steps.compiled_host.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_host.outputs.artifact }}
+          path: .build/host-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile dolphin
+        id: compiled_dolphin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py dolphin
+      - name: Retain dolphin compilation
+        if: steps.compiled_dolphin.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_dolphin.outputs.artifact }}
+          path: .build/dolphin-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile azahar
+        id: compiled_azahar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py azahar
+      - name: Retain azahar compilation
+        if: steps.compiled_azahar.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_azahar.outputs.artifact }}
+          path: .build/azahar-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile play
+        id: compiled_play
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py play
+      - name: Retain play compilation
+        if: steps.compiled_play.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_play.outputs.artifact }}
+          path: .build/play-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile flycast
+        id: compiled_flycast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/engine-components.py flycast
+      - name: Retain flycast compilation
+        if: steps.compiled_flycast.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_flycast.outputs.artifact }}
+          path: .build/flycast-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
       - name: Build without signing
         id: app_build
         env:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           IRIDIUM_PHASE3: "1"
-        run: python3 ci/madeira-frontend.py app
+        run: python3 ci/madeira-frontend.py app --reuse-psp-component
+      - name: Report compiler cache
+        if: always()
+        run: command -v ccache >/dev/null && ccache --show-stats || true
       - name: Record app binaries for final audit
+        if: inputs.release_build
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain app link maps for final audit
-        if: always() && steps.app_build.outcome == 'success'
+        if: always() && inputs.release_build && steps.app_build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-link-audit-${{ github.sha }}
@@ -171,8 +307,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Collect matching source and component records
+        if: inputs.release_build
         run: python3 ci/collect-madeira-source.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain source archive for release audit
+        if: inputs.release_build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-source-${{ github.sha }}
@@ -183,7 +321,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Check final binary audit before packaging
-        run: python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package
+        env:
+          RELEASE_BUILD: ${{ inputs.release_build }}
+        run: |
+          if [ "$RELEASE_BUILD" = true ]; then
+            python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package
+          else
+            python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package --test-build
+          fi
       - name: Prepare and audit sideloading package
         run: python3 ci/package-unsigned-ipa.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output
       - name: Upload sideloading IPA

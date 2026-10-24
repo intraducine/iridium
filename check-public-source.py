@@ -14,6 +14,12 @@ PATTERNS = {
     "device identifier": rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b",
     "configured signing team": rb"(?m)^\s*DEVELOPMENT_TEAM\s*:\s*[A-Z0-9]{10}\s*$",
 }
+MARKERS = {
+    "private key": (b"private key-----",),
+    "access token": (b"ghp_", b"github_pat_", b"akia"),
+    "device identifier": (b"00008",),
+    "configured signing team": (b"development_team",),
+}
 # Pass private identifiers as arguments for a targeted local scan. Do not commit them.
 for index, value in enumerate(sys.argv[1:]):
     PATTERNS[f"private identifier {index + 1}"] = re.escape(value.encode())
@@ -56,6 +62,7 @@ for path in source_files(ROOT):
     if not path.is_file() or ".git" in path.relative_to(ROOT).parts or path == Path(__file__).resolve():
         continue
     data = path.read_bytes()
+    folded = data.lower()
     unused = PUBLIC_UNUSED_ARCHIVES.get(path.relative_to(ROOT).as_posix(), {})
     reviewed_unused = not path.is_symlink() and unused.get('sha256') == hashlib.sha256(data).hexdigest()
     if path.stat().st_size >= 50 * 1024 * 1024 and not reviewed_unused:
@@ -65,6 +72,9 @@ for path in source_files(ROOT):
     if data.startswith(b"version https://git-lfs.github.com/spec/v1"):
         findings.append((path.relative_to(ROOT), "LFS pointer"))
     for category, pattern in PATTERNS.items():
+        # Most upstream files have no candidate. Avoid four full regex scans.
+        if category in MARKERS and not any(marker in folded for marker in MARKERS[category]):
+            continue
         if re.search(pattern, data, re.IGNORECASE):
             if category == 'private key' and hashlib.sha256(data).hexdigest() in PUBLIC_SELF_TEST.get(str(path.relative_to(ROOT)), set()):
                 continue
