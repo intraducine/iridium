@@ -99,6 +99,7 @@ class CompiledComponentsTests(unittest.TestCase):
             source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
             source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
             source.replace("'native': lambda: native(reuse_only=args.reuse_only)", "'native': prepare"),
+            source.replace("engine_pins.get('madeira')['revision']", "engine_pins.get(prepare())['revision']"),
             source + '\ninvalid python !\n',
         ]
         for index, changed in enumerate(variants):
@@ -123,6 +124,8 @@ class CompiledComponentsTests(unittest.TestCase):
             workflow.write_text((components.ROOT / reuse.WORKFLOW).read_text())
             contract = root / 'ci/compiled-components.py'
             contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
+            for name in ('ci/engine_pins.py', 'UPSTREAM-SOURCES.json'):
+                (root / name).write_bytes((components.ROOT / name).read_bytes())
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit(); revision = git('rev-parse', 'HEAD')

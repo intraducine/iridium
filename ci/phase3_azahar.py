@@ -1,4 +1,5 @@
 """Azahar-only source overlays and dependency checks for the shared builder."""
+import engine_pins
 import hashlib
 import importlib.util
 import json
@@ -7,22 +8,27 @@ import tarfile
 from pathlib import Path
 
 
+def source_archive():
+    return engine_pins.get('azahar')['artifacts']['source']['filename']
+
+
 def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def moltenvk(ROOT, sdk, jobs=None):
-    manifest = ROOT / 'ci/azahar-moltenvk-source-inputs.json'
+    pin = engine_pins.get('azahar')['buildDependencies']['moltenVK']
+    manifest = ROOT / pin['inputs']
     spec = importlib.util.spec_from_file_location('azahar_moltenvk', ROOT / 'ci/build-ppsspp-moltenvk.py')
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     directory = ROOT / '.build/azahar/moltenvk-derived' / ('package-' + sdk)
     library = directory / 'Build/Products' / ('Release-' + sdk) / 'libMoltenVK.a'
     receipt = directory / 'component.json'
     if jobs is not None and not receipt.is_file():
-        return module.build(sdk, jobs, inputs=manifest, version='1.4.1', build_root=ROOT / '.build/azahar')
+        return module.build(sdk, jobs, inputs=manifest, version=pin['version'], build_root=ROOT / '.build/azahar')
     record = json.loads(receipt.read_text())
-    if record.get('version') != '1.4.1' or record.get('sourceInputs') != json.loads(manifest.read_text()) or record.get('sourceArchiveSHA256') != digest(manifest) or record.get('archiveSHA256') != digest(library):
+    if record.get('version') != pin['version'] or record.get('sourceInputs') != json.loads(manifest.read_text()) or record.get('sourceArchiveSHA256') != digest(manifest) or record.get('archiveSHA256') != digest(library):
         raise ValueError('Azahar MoltenVK receipt differs from its pinned inputs')
     for item in record['sourceInputs']:
         archive = ROOT / '.build/runtime-downloads' / (item['sha256'] + '.tar')
@@ -32,7 +38,7 @@ def moltenvk(ROOT, sdk, jobs=None):
 
 
 def generated(ROOT, directory):
-    source = ROOT / '.build/phase3-downloads/azahar-unified-source-2126.2'
+    source = ROOT / '.build/phase3-downloads' / source_archive().removesuffix('.tar.xz')
     def replace(text, old, new, count=1):
         if text.count(old) != count:
             raise ValueError('Azahar shared JIT source hook changed: ' + old)
@@ -115,14 +121,14 @@ def prepare_source(ROOT, revision, downloads_spec):
     for filename, expected in downloads_spec.items():
         if digest(downloads / filename) != expected:
             raise ValueError('Official release artifact digest differs: ' + filename)
-    expanded = downloads / 'azahar-unified-source-2126.2'
+    expanded = downloads / source_archive().removesuffix('.tar.xz')
     if not expanded.exists():
-        with tarfile.open(downloads / 'azahar-unified-source-2126.2.tar.xz') as archive:
+        with tarfile.open(downloads / source_archive()) as archive:
             archive.extractall(downloads, filter='data')
     if (expanded / 'GIT-COMMIT').read_text().strip() != revision:
         raise ValueError('Azahar unified source pin differs')
     archive_files = []
-    with tarfile.open(downloads / 'azahar-unified-source-2126.2.tar.xz') as archive:
+    with tarfile.open(downloads / source_archive()) as archive:
         for member in archive:
             relative = Path(member.name).relative_to(expanded.name)
             target = expanded / relative
@@ -152,3 +158,6 @@ def collect_licenses(ROOT, destination, moltenvk_receipt):
                 target = destination / 'licenses/MoltenVK' / item['name'] / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_root / relative, target)
+
+
+TARGET, OUTPUT = 'citra_libretro', 'bin/Release/azahar_libretro.dylib'

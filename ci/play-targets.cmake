@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+get_target_property(sources play_libretro SOURCES)
+list(REMOVE_ITEM sources main_libretro.cpp)
+set_property(TARGET play_libretro PROPERTY SOURCES "${sources}")
+target_sources(play_libretro PRIVATE "${IRIDIUM_PHASE3_GENERATED}/main_libretro.cpp" "${bridge}/IRPlayProbe.cpp" "${bridge}/IRJITExecutionProbe.c")
+target_include_directories(play_libretro PRIVATE "${bridge}" "${CMAKE_SOURCE_DIR}/Source/ui_libretro")
+get_target_property(sources CodeGen SOURCES)
+list(REMOVE_ITEM sources src/MemoryFunction.cpp)
+set_property(TARGET CodeGen PROPERTY SOURCES "${sources}")
+target_sources(CodeGen PRIVATE "${IRIDIUM_PHASE3_GENERATED}/MemoryFunction.cpp")
+target_link_options(play_libretro PRIVATE "-Wl,-exported_symbols_list,${IRIDIUM_PHASE3_GENERATED}/retro.exports")

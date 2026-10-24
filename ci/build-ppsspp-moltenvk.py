@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build MoltenVK 1.2.9 from the already reviewed, digest-locked source closure."""
+"""Build each engine's MoltenVK from its digest-locked source closure."""
+import engine_pins
 import hashlib
 import importlib.util
 import json
@@ -10,7 +11,8 @@ import zipfile
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-INPUTS=ROOT/'ci/moltenvk-source-inputs.json'
+PIN=engine_pins.get('ppsspp')['buildDependencies']['moltenVK']
+INPUTS=ROOT/PIN['inputs']
 
 
 def digest(path):
@@ -34,7 +36,7 @@ def verify_tree(archive, target):
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
-def build(sdk, jobs=4, *, inputs=INPUTS, version='1.2.9', build_root=ROOT/'.build/ppsspp'):
+def build(sdk, jobs=4, *, inputs=INPUTS, version=PIN['version'], build_root=ROOT/'.build/ppsspp'):
     entries=json.loads(inputs.read_text())
     root=build_root/'moltenvk-source'
     spec=importlib.util.spec_from_file_location('mvk_inputs',ROOT/'ci/fetch-runtime-inputs.py')

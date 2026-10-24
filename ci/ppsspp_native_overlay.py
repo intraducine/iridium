@@ -1,4 +1,5 @@
 """Embed the pinned iOS frontend with declared ownership and GL sync fixes."""
+import engine_pins
 from pathlib import Path
 import ppsspp_sensor_overlay as sensors
 import ppsspp_picker_overlay as picker
@@ -7,7 +8,7 @@ import ppsspp_frontend_overlay as frontend
 import ppsspp_gl_sync_overlay as gl_sync
 import ppsspp_exec_overlay as executable
 
-REVISION = 'fa50bb1976065c4f8b1b47af227d367fe9771555'
+REVISION = engine_pins.get('ppsspp')['revision']
 
 
 def replace(text, old, new):

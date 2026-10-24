@@ -7,6 +7,37 @@ for an upstream video callback and reports failures without simulating playback.
 
 ## Pinned implementations
 
+`UPSTREAM-SOURCES.json` selects the Madeira, SameBoy, PPSSPP, Dolphin, Azahar,
+Play! and Flycast revisions. It also selects the engine-specific MoltenVK
+versions, Azahar release archives, RGBDS build tool and Madeira FreeType revision.
+Builders, packaging checks and source collection read these pins through
+`ci/engine_pins.py`. The submodule gitlinks remain the checkout lock and must
+match the selected revisions.
+
+To update one engine:
+
+1. Update its entry in `UPSTREAM-SOURCES.json` and its submodule gitlink. For a
+   fork, also update the matching URL in `.gitmodules`.
+2. Review its adapter against that source. Phase 3 overlays and target rules
+   live in `ci/phase3_<engine>.py` and `ci/<engine>-targets.cmake`. PPSSPP and
+   SameBoy retain their separate builders. Shared JIT stays in the app service;
+   an engine adapter must use its existing callback and ownership contract.
+3. Update the selected dependency source manifests when dependencies change.
+   Regenerate affected atlas/boot-ROM records and review API contracts and
+   license records. Those records describe audited inputs; they do not select
+   a second engine version and must not be relabelled without verification.
+4. Stage the matching submodule gitlink, then run `python3 ci/engine_pins.py`.
+   Run the repository source checks and build the changed component. Run device
+   tests for rendering, input, saves, pause/resume, JIT cleanup and another launch.
+
+Saved compilation is checked against only the selected engine's pin and its
+own adapter files, plus shared compiler inputs. A change to one engine pin or
+adapter does not invalidate other engines. The shared host consumes Flycast's
+libretro header, so a Flycast pin change also invalidates that host. Changes to
+shared build code or interfaces still invalidate their consumers. Different
+MoltenVK versions remain in separate engine outputs. A version change is a
+build-time selection and still needs a compatible adapter and a new app package.
+
 | Engine | Selected source | Adapter policy |
 | --- | --- | --- |
 | Dolphin, GameCube/Wii | DolphiniOS `v5.0.0b6`, `7cac54161659421ed95c2cd1c0b0746539a4cd38` | Upstream core, host queue, Metal, CoreAudio and iOS input profiles. ARM64 JIT and native vertex loader require the shared helper and execution probe. No interpreter fallback. HLE DSP without DSP JIT. |

@@ -195,7 +195,7 @@ int main(){
 
     @unittest.skipUnless(shutil.which('clang++') and (ROOT / 'vendor/Dolphin/Source/Core/Core/PowerPC/Interpreter/Interpreter_FPUtils.h').is_file(), 'Dolphin source and Clang required')
     def test_dolphin_interpreter_preserves_guest_rounding_modes(self):
-        recipe = (ROOT / 'ci/phase3-targets.cmake').read_text()
+        recipe = (ROOT / 'ci/dolphin-targets.cmake').read_text()
         flags = {}
         for target in ('core', 'common'):
             match = re.search(r'target_compile_options\(' + target + r' PRIVATE ([^)]+)\)', recipe)
@@ -567,6 +567,8 @@ extern "C" const char* ir_play_save_root() { return "isolated-root"; }
             memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'
             memory.parent.mkdir(parents=True)
             memory.write_text('vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);\n' + 'assert(result == 0);\n' * 3)
+            (root / 'ci').mkdir()
+            shutil.copy2(ROOT / 'ci/phase3_play.py', root / 'ci/phase3_play.py')
             with patch.object(builder, 'ROOT', root): generated = builder.generated('play', root / 'output')
             main = generated / 'main_libretro.cpp'
             main.write_text(main.read_text() + '''
@@ -658,6 +660,8 @@ int main() {
             source.write_text('#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;\n#endif\n')
             main = root / 'vendor/Flycast/shell/libretro/libretro.cpp'
             main.parent.mkdir(parents=True); main.write_text('static bool first_run = true;\n')
+            (root / 'ci').mkdir()
+            shutil.copy2(ROOT / 'ci/phase3_flycast.py', root / 'ci/phase3_flycast.py')
             with patch.object(builder, 'ROOT', root):
                 generated = builder.generated('flycast', root / 'output')
                 self.assertIn('#ifdef HAVE_OPENGLES3', (generated / 'glsm.c').read_text())
@@ -732,6 +736,8 @@ bool CoreAudioSound::Init() {
 }
 void CoreAudioSound::SetVolume(int volume) {}
 ''')
+            (root / 'ci').mkdir()
+            shutil.copy2(ROOT / 'ci/phase3_dolphin.py', root / 'ci/phase3_dolphin.py')
             with patch.object(builder, 'ROOT', root):
                 generated = builder.generated('dolphin', root / 'output')
                 self.assertIn(capability[:-1] + ' && !TARGET_OS_SIMULATOR;',
