@@ -135,6 +135,8 @@ jobs:
         env:
           RESTORED_NATIVE_RUN_ID: ${{ steps.compiled_madeira_native.outputs.run_id }}
         run: |
+          # FEX supplies its own ccache wrapper; a second launcher recurses.
+          unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
           if [ -n "$RESTORED_NATIVE_RUN_ID" ]; then
             python3 ci/madeira-frontend.py native --reuse-only
           else

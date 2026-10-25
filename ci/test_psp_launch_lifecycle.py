@@ -20,7 +20,9 @@ class PreparedLaunchTests(unittest.TestCase):
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
+const IRJITMemoryAPI *ir_jit_memory_api(void) { return NULL; }
 extern int fixture_mode(void);
+bool ir_psp_native_exec_supports_shared(const char *component) { (void)component;return fixture_mode()>=40; }
 extern void fixture_prepared(void *,unsigned long,unsigned);
 extern void fixture_sdk_returned(void);
 extern void fixture_record(int);
@@ -33,6 +35,10 @@ bool ir_psp_self_trace_clear_diagnostic(IRPSPObservationDiagnostic *r) {
     return true;
 }
 static pthread_t captured_worker;
+int ir_psp_native_exec_prepare_shared(const char *p,uint64_t a,const IRJITMemoryAPI *api,IRPSPJITDiagnostic *j) {
+    (void)p;(void)a;(void)api;(void)j;captured_worker=pthread_self();
+    return fixture_mode()==42||fixture_mode()==45?5:0;
+}
 static unsigned observations;
 void fixture_worker_check(void) { assert(pthread_equal(pthread_self(),captured_worker)); }
 IRPSPTeardownObservation *ir_psp_teardown_capture_diagnostic(IRPSPObservationDiagnostic *r) {
@@ -73,7 +79,7 @@ int ir_psp_native_exec_shutdown(const IRPSPExecShutdown *r) { fixture_record(2);
 int ir_psp_native_exec_restored(uint64_t a,bool ok) { (void)a;fixture_record(3);return ok?0:1; }
 int ir_psp_native_exec_restored_diagnostic(uint64_t a,bool ok,IRPSPJITDiagnostic *j) { (void)j;fixture_worker_check();return ir_psp_native_exec_restored(a,ok); }
 void ir_psp_native_exec_cancel(uint64_t a) { (void)a;fixture_record(4); }
-int ir_psp_native_exec_end(uint64_t a) { (void)a;fixture_worker_check();fixture_record(5);return 0; }
+int ir_psp_native_exec_end(uint64_t a) { (void)a;fixture_worker_check();fixture_record(5);return fixture_mode()==45?6:0; }
 '''
         fixture=r'''
 import Foundation
@@ -135,16 +141,26 @@ final class IridiumJITDiagnostic: @unchecked Sendable {
     }
     func prepare(component:String,host:UnsafePointer<IRPSPExecHost>)->Int32 {ir_psp_native_exec_prepare(component,host,nil)}
     func restored(admission:UInt64)->Int32 {ir_psp_native_exec_restored_diagnostic(admission,true,nil)}
+    func prepareShared(component:String,admission:UInt64,api:UnsafePointer<IRJITMemoryAPI>?)->Int32 {
+        Environment.shared.record("shared.prepare")
+        if Environment.shared.mode==44 {Environment.shared.cancelLaunch?()}
+        return ir_psp_native_exec_prepare_shared(component,admission,api,nil)
+    }
     func check(component:String)->Int32 {
         fixtureWorkerCheck();Environment.shared.record("probe")
         if Environment.shared.mode==8 {Environment.shared.parked.wait()}
-        return Environment.shared.mode==7 ? 0:1
+        return [7,43].contains(Environment.shared.mode) ? 0:1
     }
 }
 @MainActor final class JITCoordinator {
     static let shared=JITCoordinator()
     var owner:UUID?,final:((Bool,Result<MadeiraJITRequest.Response,Error>)->Void)?
     var pspRecoveryPending:Bool { Environment.shared.mode==12 }
+    var consoleMemoryRequiresRestart:Bool { Environment.shared.mode==47 }
+    func prepareConsoleMemory(completion:@escaping (Result<Void,Error>)->Void) {
+        Environment.shared.record("shared.enable")
+        if [41,47].contains(Environment.shared.mode) {completion(.failure(CancellationError()))} else {completion(.success(()))}
+    }
     func beginPSP(attempt:String,hash:String,script:Data,shouldProceed:@escaping ()->Bool,started:@escaping ()->Void,final:@escaping (Bool,Result<MadeiraJITRequest.Response,Error>)->Void)->UUID? {
         let e=Environment.shared;e.record("begin.helper");precondition(e.records().first=="durable.attempt")
         guard owner==nil,shouldProceed() else{return nil}
@@ -167,7 +183,7 @@ final class IridiumJITDiagnostic: @unchecked Sendable {
 @main struct Check {
     @MainActor static func main() async {
         var retained:[IridiumPSPExecutableLaunch]=[]
-        for mode:Int32 in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,32,33,34,35] {
+        for mode:Int32 in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,32,33,34,35,40,41,42,43,44,45,47] {
             let e=Environment.shared;e.mode=mode;e.events=[];e.receipt=nil;e.cancelLaunch=nil
             JITCoordinator.shared.owner=nil;JITCoordinator.shared.final=nil
             let diagnostic=IridiumJITDiagnostic()
@@ -180,6 +196,18 @@ final class IridiumJITDiagnostic: @unchecked Sendable {
             retained.append(launch)
             if mode==8 {e.parked.signal();try! await Task.sleep(nanoseconds:100000000)}
             let events=e.records()
+            if mode>=40 {
+                precondition(!events.contains("begin.helper") && !events.contains("network.restore"))
+                switch outcome {
+                case .ready: precondition(mode==40 && events.contains("probe"))
+                case .fallback: precondition([41,42,43,44].contains(mode))
+                case .restart: precondition([45,47].contains(mode))
+                }
+                if [41,47].contains(mode) { precondition(!events.contains("shared.prepare")) }
+                if [42,43,44,45].contains(mode) { precondition(events.contains("end")) }
+                if [42,44,45].contains(mode) { precondition(!events.contains("probe")) }
+                continue
+            }
             switch outcome {
             case .ready:
                 precondition(mode==0 && JITCoordinator.shared.owner==nil)

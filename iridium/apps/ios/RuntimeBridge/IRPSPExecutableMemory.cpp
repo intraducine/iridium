@@ -22,6 +22,7 @@ struct Claim;
 struct Arena { uint8_t *rx = nullptr, *rw = nullptr; size_t bytes = 0; Claim *claim = nullptr; };
 std::mutex mutex;
 IRPSPExecHost host{};
+IRJITMemoryAPI sharedMemory{};
 Phase phase = Phase::empty;
 bool request = false, failure = false, detachReturned = false;
 size_t claimsUsed = 0;
@@ -181,6 +182,11 @@ bool idle() {
 bool cleanMappings() {
     bool ok = true;
     for (auto it = arenas.rbegin(); it != arenas.rend(); ++it) {
+        if (sharedMemory.release) {
+            if (it->rx && !sharedMemory.release(it->rx, it->bytes)) { ok = false; continue; }
+            it->rx = it->rw = nullptr;
+            continue;
+        }
         if (it->rw && unmapView(it->rw, it->bytes)) it->rw = nullptr;
         if (it->rw) { ok = false; continue; }
         if (it->rx && unmapView(it->rx, it->bytes)) it->rx = nullptr;
@@ -191,6 +197,63 @@ bool cleanMappings() {
 }
 
 uint32_t ir_native_psp_exec_version(void) { return IR_PSP_EXEC_VERSION; }
+int ir_native_psp_exec_prepare_shared(uint64_t owner, const IRJITMemoryAPI *api, const IRJITDiagnosticSink *sink) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!owner || !api || api->size != sizeof(*api) || api->version != 1 || !api->allocate || !api->release ||
+        request || failure || !idle() || (phase != Phase::empty && phase != Phase::native) ||
+        (phase == Phase::native && (!probeProven || !sharedMemory.allocate)) || host.generation == UINT64_MAX)
+        return IR_PSP_EXEC_IDENTITY;
+    if (sharedMemory.allocate && (sharedMemory.allocate != api->allocate || sharedMemory.release != api->release))
+        return IR_PSP_EXEC_IDENTITY;
+    sharedMemory = *api;
+    host.admission = owner; ++host.generation;
+    phase = Phase::preparing; probeProven = false;
+    for (size_t i = 0; i < arenas.size(); ++i) {
+        auto &a = arenas[i]; a.bytes = sizes[i];
+        if (!a.rx) {
+            void *rx = nullptr, *rw = nullptr;
+            if (!api->allocate(a.bytes, &rx, &rw)) { phase = Phase::failed; return IR_PSP_EXEC_PREPARATION; }
+            a.rx = static_cast<uint8_t *>(rx); a.rw = static_cast<uint8_t *>(rw);
+        }
+        if (a.rx == a.rw) {
+            phase = Phase::failed; return IR_PSP_EXEC_MAPPING;
+        }
+        for (auto *view : {a.rx, a.rw}) {
+            uintptr_t address = (uintptr_t)view;
+            if (!address || (address & (page - 1)) || a.bytes > UINTPTR_MAX - address) {
+                phase = Phase::failed; return IR_PSP_EXEC_RANGE;
+            }
+            auto other = view == a.rx ? a.rw : a.rx;
+            if (range((uintptr_t)view, a.bytes, (uintptr_t)other, 1)) { phase = Phase::failed; return IR_PSP_EXEC_RANGE; }
+            for (size_t j = 0; j < i; ++j) for (auto *previous : {arenas[j].rx, arenas[j].rw}) {
+                if (range((uintptr_t)previous, arenas[j].bytes, (uintptr_t)view, 1) ||
+                    range((uintptr_t)view, a.bytes, (uintptr_t)previous, 1)) {
+                    phase = Phase::failed; return IR_PSP_EXEC_RANGE;
+                }
+            }
+        }
+#if !defined(IR_PSP_EXEC_FIXTURE)
+        if (!recordViews(sink, (unsigned)i + 1, 6, a)) { phase = Phase::failed; return IR_PSP_EXEC_PREPARATION; }
+        if (!query(a.rx, a.bytes, VM_PROT_READ | VM_PROT_EXECUTE, sink, (unsigned)i + 1, queryRX) ||
+            !query(a.rw, a.bytes, VM_PROT_READ | VM_PROT_WRITE, sink, (unsigned)i + 1, queryRW)) {
+            phase = Phase::failed; return IR_PSP_EXEC_MAPPING;
+        }
+#else
+        (void)sink;
+#endif
+        for (size_t n = 0; n < a.bytes; n += page) {
+            if (a.rx[n] != 0 || a.rw[n] != 0) { phase = Phase::failed; return IR_PSP_EXEC_PREPARATION; }
+            a.rw[n] = 0x35;
+            bool coherent = a.rx[n] == 0x35;
+            a.rw[n] = 0;
+            if (!coherent || a.rx[n] != 0) { phase = Phase::failed; return IR_PSP_EXEC_PREPARATION; }
+        }
+    }
+    // No claims or readers survive shutdown. New identities still increase monotonically.
+    claims = {}; claimsUsed = 0;
+    phase = Phase::restored;
+    return IR_PSP_EXEC_OK;
+}
 static int prepare(const IRPSPExecHost *value, const IRJITDiagnosticSink *sink) {
     unsigned rejected = 0;
     {
@@ -349,7 +412,7 @@ int ir_native_psp_exec_end(uint64_t owner) {
     if (phase != Phase::empty && owner != host.admission) return IR_PSP_EXEC_IDENTITY;
     if (!idle()) return IR_PSP_EXEC_UNCERTAIN;
     if (!cleanMappings()) { phase = Phase::closing; return IR_PSP_EXEC_MAPPING; }
-    host = {}; arenas = {}; claims = {}; claimsUsed = 0; probeProven = false; detachReturned = false; phase = Phase::empty; failure = false;
+    host = {}; sharedMemory = {}; arenas = {}; claims = {}; claimsUsed = 0; probeProven = false; detachReturned = false; phase = Phase::empty; failure = false;
     return IR_PSP_EXEC_OK;
 }
 IRPSPExecClaim ir_psp_exec_claim(unsigned role, size_t bytes, void **rx, void **rw) {
@@ -424,6 +487,7 @@ int ir_psp_exec_reuse_native(uint64_t owner) {
     if (owner != host.admission || phase != Phase::native || failure || !idle() || host.generation == UINT64_MAX) return IR_PSP_EXEC_UNCERTAIN;
     ++host.generation; return IR_PSP_EXEC_OK;
 }
+bool ir_psp_exec_shared_memory(void) { std::lock_guard<std::mutex> lock(mutex); return sharedMemory.allocate != nullptr; }
 bool ir_psp_exec_failed(void) { std::lock_guard<std::mutex> lock(mutex); return failure; }
 void ir_psp_exec_fail(void) { std::lock_guard<std::mutex> lock(mutex); failure = true; }
 IRPSPExecClaim ir_psp_exec_enter(const void *rx) {

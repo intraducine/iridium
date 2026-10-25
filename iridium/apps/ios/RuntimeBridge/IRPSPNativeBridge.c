@@ -251,6 +251,24 @@ int ir_psp_native_exec_prepare(const char *component, const IRPSPExecHost *host,
 #endif
     return executable.prepare(host, &sink);
 }
+bool ir_psp_native_exec_supports_shared(const char *component) {
+    return load(component, NULL) && dlsym(handle, "ir_native_psp_exec_prepare_shared") != NULL;
+}
+int ir_psp_native_exec_prepare_shared(const char *component, uint64_t owner, const IRJITMemoryAPI *api, IRPSPJITDiagnostic *journal) {
+    if (!ir_psp_jit_diagnostic_healthy(journal)) return IR_PSP_EXEC_PREPARATION;
+    IRJITDiagnosticSink sink = {journal, diagnostic_callback};
+    if (!load(component, &sink)) return IR_PSP_EXEC_UNAVAILABLE;
+    int (*prepare)(uint64_t, const IRJITMemoryAPI *, const IRJITDiagnosticSink *) =
+        (int (*)(uint64_t, const IRJITMemoryAPI *, const IRJITDiagnosticSink *))dlsym(handle, "ir_native_psp_exec_prepare_shared");
+    executable.end = (int (*)(uint64_t))dlsym(handle, "ir_native_psp_exec_end");
+    uint32_t (*version)(void) = (uint32_t (*)(void))dlsym(handle, "ir_native_psp_exec_version");
+    if (!prepare || !executable.end || !version || version() != IR_PSP_EXEC_VERSION) return IR_PSP_EXEC_UNAVAILABLE;
+#ifdef __APPLE__
+    if (!record_image(journal, (const void *)diagnostic_callback, true) ||
+        !record_image(journal, (const void *)prepare, false)) return IR_PSP_EXEC_PREPARATION;
+#endif
+    return prepare(owner, api, &sink);
+}
 int ir_psp_native_exec_detach(uint64_t owner) { return executable.detach ? executable.detach(owner) : IR_PSP_EXEC_UNAVAILABLE; }
 int ir_psp_native_exec_shutdown(const IRPSPExecShutdown *receipt) { return executable.shutdown ? executable.shutdown(receipt) : IR_PSP_EXEC_UNAVAILABLE; }
 int ir_psp_native_exec_restored_diagnostic(uint64_t owner, bool success, IRPSPJITDiagnostic *journal) {

@@ -11,6 +11,16 @@
 
 static std::atomic<IRPhase3JITPrepare> prepare_region{nullptr};
 static std::atomic<unsigned> executed{0};
+static IRJITMemoryAPI memory_api{};
+extern "C" bool ir_phase3_core_prepare_memory(const IRJITMemoryAPI *api) {
+    if (!api || api->size != sizeof(*api) || api->version != 1 || !api->allocate || !api->release) return false;
+    if (memory_api.allocate && (memory_api.allocate != api->allocate || memory_api.release != api->release)) return false;
+    memory_api = *api; executed.store(0); return true;
+}
+extern "C" void ir_azahar_jit_release(void *rx, void *rw, size_t bytes) {
+    if (memory_api.release) memory_api.release(rx, bytes);
+    else { munmap(rw, bytes); munmap(rx, bytes); }
+}
 
 extern "C" bool ir_phase3_core_prepare_jit(IRPhase3JITPrepare prepare) {
     if (!prepare) return false;
@@ -22,7 +32,12 @@ extern "C" bool ir_phase3_core_prepare_jit(IRPhase3JITPrepare prepare) {
 extern "C" void *ir_azahar_jit_allocate(size_t size, void **write_pointer) {
     const size_t page = getpagesize();
     auto prepare = prepare_region.load();
-    if (!prepare || !write_pointer || !size || size > 128 * 1024 * 1024) return nullptr;
+    if (!write_pointer || !size || size > 128 * 1024 * 1024) return nullptr;
+    if (memory_api.allocate) {
+        void *rx = nullptr; *write_pointer = nullptr;
+        return memory_api.allocate(size, &rx, write_pointer) ? rx : nullptr;
+    }
+    if (!prepare) return nullptr;
     *write_pointer = nullptr;
     size = (size + page - 1) & ~(page - 1);
     void *rx = prepare(nullptr, size);

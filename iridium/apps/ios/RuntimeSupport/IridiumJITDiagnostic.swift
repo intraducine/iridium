@@ -7,6 +7,9 @@ import Foundation
 /// Each queued closure/worker retains this owner. Cancel/timeout never close it.
 final class IridiumJITDiagnostic: @unchecked Sendable {
     private let handle: OpaquePointer
+    func prepareShared(component: String, admission: UInt64, api: UnsafePointer<IRJITMemoryAPI>?) -> Int32 {
+        component.withCString { ir_psp_native_exec_prepare_shared($0, admission, api, handle) }
+    }
     private let io = DispatchQueue(label: "software.iridium.psp-jit-stages", qos: .utility)
     private init(_ handle: OpaquePointer) { self.handle = handle }
     deinit { ir_psp_jit_diagnostic_close(handle) }

@@ -11,12 +11,22 @@ struct IridiumControlLayoutState: Codable, Equatable {
     var size: Double
     var automatic: Bool?
     var opacity: Double?
+    var zones: [GestureZone]?
 
     func validate(for platform: IridiumPlatform) throws {
         guard version == 1, controls.count <= 128,
               Set(controls.map(\.id)).count == controls.count,
               size.isFinite, (0.5...2).contains(size),
               opacity.map({ $0.isFinite && (0.15...1).contains($0) }) ?? true,
+              (zones.map { values in
+                  (values.isEmpty || platform == .windows) && values.count <= 64 &&
+                  Set(values.map(\.id)).count == values.count && values.allSatisfy { zone in
+                      [zone.x, zone.y, zone.w, zone.h, zone.sensitivity].allSatisfy(\.isFinite) &&
+                      zone.x >= 0 && zone.y >= 0 && zone.w > 0 && zone.h > 0 &&
+                      zone.x + zone.w <= 1.001 && zone.y + zone.h <= 1.001 &&
+                      (0.25...3).contains(zone.sensitivity)
+                  }
+              } ?? true),
               controls.allSatisfy({ c in
                   c.nx.isFinite && c.ny.isFinite && c.scale.isFinite &&
                   (0...1).contains(c.nx) && (0...1).contains(c.ny) && (0.5...3).contains(c.scale) &&

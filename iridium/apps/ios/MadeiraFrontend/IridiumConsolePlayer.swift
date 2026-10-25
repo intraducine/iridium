@@ -16,6 +16,8 @@ struct IridiumConsolePlayer: View {
     @State private var menuPage = "Session"
     @State private var menuFocus = "Resume"
     @State private var menuGuided = false
+    @State private var menuContentHeight: CGFloat = 600
+    @State private var menuHeaderHeight: CGFloat = 0
     @State private var confirmClose = false
     @State private var closeConfirmation = IridiumCloseConfirmation()
     @State private var helpSection = 0
@@ -167,6 +169,7 @@ struct IridiumConsolePlayer: View {
                 IridiumPlayerMenuHeader(title: menuPage,
                     subtitle: menuPage == "Session" ? "\(platform) · \(session.game?.title ?? "Game")" : nil,
                     back: menuPage == "Session" ? nil : { command("back") }, done: { if session.phase == .restartRequired { session.returnToLibraryAfterTimeout() } else { resume() } })
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuHeaderHeight = $0 }
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
@@ -228,14 +231,15 @@ struct IridiumConsolePlayer: View {
                                     .font(.footnote).foregroundStyle(.secondary)
                                 if let status = stateStatus { Text(status).font(.footnote) }
                             } else { help }
-                        }
+                        }.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { menuContentHeight = $0 }
                     }.id(menuPage).onChange(of: menuFocus) { _, title in
                         if menuGuided { proxy.scrollTo(title, anchor: .center) }
                     }
                         .onChange(of: helpSection) { _, section in proxy.scrollTo("help.\(section)", anchor: .top) }
                 }
             }
-            .padding(22).frame(maxWidth: 460, maxHeight: min(600, max(0, size.height - 24)))
+            .padding(22).frame(maxWidth: 460)
+            .frame(height: min(menuHeaderHeight + 16 + menuContentHeight + 44, min(600, max(0, size.height - 24))))
             .modifier(IridiumGlassSurface(radius: 28))
             .overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.15)))
             .padding(.horizontal, 12)

@@ -45,10 +45,10 @@ def generated(ROOT, directory):
         return text.replace(old, new)
     oaknut = source / 'externals/dynarmic/externals/oaknut/include/oaknut/code_block.hpp'
     code = oaknut.read_text()
-    code = replace(code, 'namespace oaknut {', 'extern "C" void* ir_azahar_jit_allocate(std::size_t, void**);\n\nnamespace oaknut {')
+    code = replace(code, 'namespace oaknut {', 'extern "C" void* ir_azahar_jit_allocate(std::size_t, void**);\nextern "C" void ir_azahar_jit_release(void*, void*, std::size_t);\n\nnamespace oaknut {')
     code = replace(code, '#    if TARGET_OS_IPHONE\n        m_memory = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);',
         '#    if TARGET_OS_IPHONE\n        void* writable = nullptr;\n        m_memory = static_cast<std::uint32_t*>(ir_azahar_jit_allocate(size, &writable));\n        m_wmemory = static_cast<std::uint32_t*>(writable);')
-    code = replace(code, '        munmap(m_memory, m_size);', '#if defined(__APPLE__) && TARGET_OS_IPHONE\n        munmap(m_wmemory, m_size);\n#endif\n        munmap(m_memory, m_size);')
+    code = replace(code, '        munmap(m_memory, m_size);', '#if defined(__APPLE__) && TARGET_OS_IPHONE\n        ir_azahar_jit_release(m_memory, m_wmemory, m_size);\n#else\n        munmap(m_memory, m_size);\n#endif')
     code = replace(code, '    void protect()', '    std::uint32_t* wptr() const\n    {\n#if defined(__APPLE__) && TARGET_OS_IPHONE\n        return m_wmemory;\n#else\n        return m_memory;\n#endif\n    }\n\n    void protect()')
     # iOS keeps separate RW and RX aliases, so generated code stays executable.
     code = replace(code, '#elif defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)', '#elif (defined(__APPLE__) && !TARGET_OS_IPHONE) || defined(__NetBSD__) || defined(__OpenBSD__)', 2)

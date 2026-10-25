@@ -14,7 +14,10 @@ struct SteamSettingsSection: View {
     @ObservedObject private var signIn = SteamSignInModel.shared
     @ObservedObject private var dock = MadeiraDockModel.shared
     @ObservedObject private var onboarding = OnboardingModel.shared
+    @ObservedObject private var cloud = SteamCloudSetting.shared
     @State private var confirmSignOut = false
+    /// Settings › Steam › Game language (SteamLanguage); "" follows the device.
+    @State private var language = SteamLanguage.chosen ?? ""
 
     /// Shown when Steam sign-in or Madeira Dock is available.
     static var shown: Bool { SteamSignIn.isEnabled || MadeiraDock.enabled }
@@ -27,6 +30,16 @@ struct SteamSettingsSection: View {
             } else {
                 Button { open(.steamSignIn) } label: { Label("Sign in to Steam", systemImage: "person.crop.circle.badge.plus") }
             }
+            Picker("Game language", selection: $language) {
+                Text("Device language (\(SteamLanguage.name(SteamLanguage.device)))").tag("")
+                ForEach(SteamLanguage.all, id: \.code) { Text($0.name).tag($0.code) }
+            }
+            .pickerStyle(.navigationLink)
+            .onChange(of: language) { _, value in SteamLanguage.choose(value.isEmpty ? nil : value) }
+            // Off: no Steam Cloud checks, transfers or prompts before Play (docs/STEAM_CLOUD.md).
+            if SteamOwnedLibrary.enabled {
+                Toggle("Steam Cloud saves", isOn: $cloud.on)
+            }
             if MadeiraDock.enabled {
                 Button { open(.dock) } label: { Label("Madeira Dock", systemImage: "shippingbox") }
                 if let status = dock.status {
@@ -36,7 +49,7 @@ struct SteamSettingsSection: View {
         } header: {
             Text("Steam")
         } footer: {
-            Text("Signing out removes this device’s saved Steam sign-in.")
+            Text("Choose the language for new Steam downloads. Games without that language use English. Download an installed game again to change its language. Signing out removes this device’s saved Steam sign-in.")
         }
         .confirmationDialog("Sign out of Steam?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { signIn.signOut() }

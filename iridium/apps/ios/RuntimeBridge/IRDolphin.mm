@@ -14,14 +14,12 @@
 #include <cstdio>
 #include <memory>
 #include <mach/mach.h>
-#include <sys/utsname.h>
 #include <unistd.h>
 #include <libkern/OSCacheControl.h>
 #include "Common/MemoryUtil.h"
 #include "Common/MsgHandler.h"
 #include "Core/WiiUtils.h"
 #include "AudioCommon/AudioCommon.h"
-#include <sys/sysctl.h>
 #include "Core/State.h"
 #include "Core/Config/WiimoteSettings.h"
 #include "Core/HW/SI/SI_Device.h"
@@ -47,6 +45,7 @@
 #include "VideoCommon/VideoEvents.h"
 #include "VideoCommon/VideoConfig.h"
 #include "HostQueue.h"
+#include "IRSharedJITMemory.h"
 dispatch_queue_t DOLHostQueueGetUnderlyingQueue();
 
 @interface IRDolphinPlayer : UIViewController {
@@ -57,7 +56,6 @@ dispatch_queue_t DOLHostQueueGetUnderlyingQueue();
     uint64_t generation;
     IRPhase3Poll input;
     IRDolphinPoll dolphinInput;
-    IRDolphinJITPrepare prepareJIT;
     IRDolphinOptions options;
     std::atomic<uint64_t> inputSamples;
     std::atomic<bool> jitVerified;
@@ -73,9 +71,22 @@ dispatch_queue_t DOLHostQueueGetUnderlyingQueue();
 @end
 static IRDolphinPlayer *active;
 static std::atomic<bool> maintenanceUncertain{false};
-extern "C" void *ir_dolphin_jit_prepare(void *address,size_t bytes) {
-    return active&&active->prepareJIT?active->prepareJIT(address,bytes):nullptr;
+static std::atomic<ptrdiff_t> sharedDifference{0};
+extern "C" void *ir_dolphin_jit_allocate(size_t bytes) {
+    const size_t page = getpagesize();
+    if (!bytes || bytes > SIZE_MAX - (page - 1)) return nullptr;
+    bytes = (bytes + page - 1) & ~(page - 1);
+    void *write = nullptr;
+    void *rx = ir_shared_jit_allocate(bytes, &write);
+    if (!rx) return nullptr;
+    ptrdiff_t difference = (intptr_t)write - (intptr_t)rx;
+    ptrdiff_t expected = 0;
+    sharedDifference.compare_exchange_strong(expected, difference);
+    if (!difference || sharedDifference.load() != difference) { ir_shared_jit_release(rx); return nullptr; }
+    return rx;
 }
+extern "C" void ir_dolphin_jit_release(void *code) { ir_shared_jit_release(code); }
+extern "C" ptrdiff_t ir_dolphin_jit_difference() { return sharedDifference.load(); }
 static bool dolphinAlert(const char *caption,const char *text,bool yesNo,Common::MsgType) {
     if(NSThread.isMainThread)return false;
     NSString *title=[NSString stringWithUTF8String:caption?caption:"Dolphin"];
@@ -115,18 +126,7 @@ static bool prepareNativeJIT() {
 #else
     unsigned flags=0;
     if(csops(getpid(),0,&flags,sizeof flags)!=0||!(flags&0x10000000))return false;
-    int query[]={CTL_KERN,KERN_PROC,KERN_PROC_PID,getpid()};struct kinfo_proc process{};size_t size=sizeof process;
-    if(sysctl(query,4,&process,&size,nullptr,0)!=0||!(process.kp_proc.p_flag&P_TRACED))return false;
-    Common::JitType type=Common::JitType::Legacy;
-    if(@available(iOS 26,*)) {
-        struct utsname machine{};if(uname(&machine)!=0)return false;
-        int major=0,minor=0;bool txm=false;
-        if(@available(iOS 27,*))txm=strcmp(machine.machine,"iPad8,11")&&strcmp(machine.machine,"iPad8,12");
-        else if(sscanf(machine.machine,"iPhone%d,%d",&major,&minor)==2)txm=major>14||(major==14&&minor>=2);
-        else if(sscanf(machine.machine,"iPad%d,%d",&major,&minor)==2)txm=major>14||(major==14&&minor>=5);
-        else return false;
-        type=txm?Common::JitType::LuckTXM:Common::JitType::LuckNoTXM;
-    }
+    const Common::JitType type=Common::JitType::LuckTXM;
     Common::SetJitType(type);
     std::fputs("[Dolphin JIT] stage=allocate\n",stderr);
     Common::AllocateExecutableMemoryRegion();
@@ -308,7 +308,7 @@ static void sampleController(IRDolphinPlayer *p) {
     graphicsSettings(options);
     // Current-run settings outrank per-game INI layers loaded during BootCore.
     if(!options.use_jit||!prepareNativeJIT()) {
-        event(generation,3,"Dolphin could not verify native JIT. Open JIT Setup and try again.");[self finish];return;
+        event(generation,3,"Dolphin’s JIT check failed. Close the game and try again.");[self finish];return;
     }
     jitVerified.store(true);
     Config::SetCurrent(Config::MAIN_CPU_CORE,PowerPC::CPUCore::JITARM64);
@@ -387,8 +387,8 @@ extern "C" void ir_native_engine_stop() {
 extern "C" void ir_native_engine_set_volume(float level) { ir_audio_volume_set(level); }
 extern "C" uint64_t ir_native_engine_frames(){return active?active->frames.load():0;}
 
-static void configureDolphin(IRDolphinOptions options,IRDolphinPoll poll,IRDolphinJITPrepare prepare) {
-    if(active&&!active->started){active->options=validated(options);active->dolphinInput=poll;active->prepareJIT=prepare;}
+static void configureDolphin(IRDolphinOptions options,IRDolphinPoll poll) {
+    if(active&&!active->started){active->options=validated(options);active->dolphinInput=poll;}
 }
 static void updateDolphin(IRDolphinOptions options) {
     IRDolphinPlayer *p=active;if(!p)return;
@@ -434,7 +434,7 @@ static void dolphinState(bool load,unsigned slot) {
     });
 }
 extern "C" const IRDolphinAPI *ir_dolphin_api() {
-    static const IRDolphinAPI api={1,configureDolphin,updateDolphin,dolphinStats,dolphinState,[](const char *root,const char *wad,IRDolphinCompletion completion){
+    static const IRDolphinAPI api={2,configureDolphin,updateDolphin,dolphinStats,dolphinState,[](const char *root,const char *wad,IRDolphinCompletion completion){
         std::string save=root,file=wad;
         DOLHostQueueRunAsync(^{
             if(maintenanceUncertain.load()) {

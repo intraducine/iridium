@@ -44,6 +44,40 @@ final class IridiumPSPExecutableLaunch: @unchecked Sendable {
 
     func cancel() { lock.lock(); cancelled = true; lock.unlock() }
     @MainActor func start() {
+        guard ir_psp_native_exec_supports_shared(component) else { startLegacy(); return }
+        guard !finished, !startRequested else { return }
+        startRequested = true
+        changed("Preparing JIT memory…")
+        JITCoordinator.shared.prepareConsoleMemory { result in
+            guard !self.finished else { return }
+            guard case .success = result else {
+                if JITCoordinator.shared.consoleMemoryRequiresRestart {
+                    self.finish(.restart("The JIT helper did not close. Close and reopen Iridium."))
+                } else { self.fallback(.preparation, "JIT memory could not be prepared.") }
+                return
+            }
+            let receipt = IridiumJITWorkerReceipt()
+            self.onWorker {
+                let prepared = self.diagnostic.prepareShared(component: self.component, admission: self.admission, api: ir_jit_memory_api())
+                let proven = prepared == 0 && !self.isCancelled && self.diagnostic.check(component: self.component) == 1
+                let ended = proven || ir_psp_native_exec_end(self.admission) == 0
+                DispatchQueue.main.async {
+                    receipt.returned = true
+                    guard !self.finished else { return }
+                    if proven && !self.isCancelled { self.finish(.ready) }
+                    else if ended { self.fallback(.probe, "PSP could not verify JIT execution.") }
+                    else { self.finish(.restart("PSP could not release its JIT memory. Close and reopen Iridium.")) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                guard !receipt.returned, !self.finished else { return }
+                self.cancel(); ir_psp_native_exec_cancel(self.admission)
+                self.diagnostic.mark(IR_JIT_TIMEOUT)
+                self.finish(.restart("The PSP JIT check did not finish. Close and reopen Iridium."))
+            }
+        }
+    }
+    @MainActor private func startLegacy() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !finished, !startRequested else { return }
         startRequested = true

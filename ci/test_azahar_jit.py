@@ -172,6 +172,7 @@ int main(){
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+struct IRJITMemoryAPI { unsigned size, version; bool (*allocate)(size_t,void**,void**); bool (*release)(void*,size_t); };
 using IRPhase3JITPrepare=void*(*)(void*,size_t);
 using vm_address_t=uintptr_t;using vm_prot_t=int;using kern_return_t=int;
 constexpr int VM_FLAGS_ANYWHERE=1,VM_INHERIT_NONE=0,KERN_SUCCESS=0,VM_PROT_READ=1,VM_PROT_WRITE=2;

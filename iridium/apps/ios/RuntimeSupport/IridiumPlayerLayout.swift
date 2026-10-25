@@ -125,12 +125,17 @@ enum IridiumConsoleControlMapping {
         case .windows: return nil
         }
     }
-    static func symbol(_ action: String, profile: IridiumPlayerProfile) -> String? {
+    static func symbol(_ action: String, profile: IridiumPlayerProfile, platform: String? = nil) -> String? {
         if let arrow = ["D↑": "arrow.up", "D↓": "arrow.down", "D←": "arrow.left", "D→": "arrow.right"][action] { return arrow }
+        if platform == "playStation2" {
+            return ["A": "circle", "B": "xmark", "X": "triangle", "Y": "square"][action]
+        }
         guard profile == .psp else { return nil }
         return ["A": "xmark", "B": "circle", "X": "square", "Y": "triangle"][action]
     }
     static func label(_ action: String, profile: IridiumPlayerProfile, platform: String? = nil, wiiRemote: Int = 0) -> String {
+        if platform == "dreamcast", let label = ["A": "B", "B": "A", "X": "Y", "Y": "X", "LT": "L", "RT": "R"][action] { return label }
+        if platform == "playStation2", let label = ["A": "Circle", "B": "Cross", "X": "Triangle", "Y": "Square", "LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2"][action] { return label }
         if platform == "wii" {
             let remote = ["Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
             let classic = ["Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]

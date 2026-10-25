@@ -316,7 +316,7 @@ static void forwardNativeLog(const LogMessage &message, void *) {
     // renderer/sensor drains. Upstream native cleanup itself is synchronous.
     if (self.initialized) NativeShutdown();
 #if defined(IRIDIUM_PSP_PREPARED_JIT)
-    int executableClosed = self.restarting && jitVerified.load()
+    int executableClosed = jitVerified.load() && (self.restarting || ir_psp_exec_shared_memory())
         ? ir_psp_exec_reuse_native(ir_psp_exec_admission())
         : ir_native_psp_exec_end(ir_psp_exec_admission());
     if (executableClosed != IR_PSP_EXEC_OK) {

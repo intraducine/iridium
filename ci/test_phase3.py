@@ -25,21 +25,74 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 class Phase3Tests(unittest.TestCase):
 
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for player ownership checks')
+    def test_failed_jit_configuration_releases_retained_player(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        start = source.index('        guard let controller else {')
+        gate = source[start:source.index('        if game.runtimeID == "dolphin" {', start)]
+        handoff = next(line for line in source[start:].splitlines() if line.strip().startswith('phase3Controller ='))
+        fixture = '''import Foundation
+final class UIViewController {
+    static var live = 0
+    init() { Self.live += 1 }
+    deinit { Self.live -= 1 }
+}
+struct Game { var runtimeID: String }
+final class Queue { func async(execute: () -> Void) { execute() } }
+@MainActor var configurationAccepted = false
+@MainActor var stops = 0
+let jit26_prepare_region = 1
+@MainActor func ir_phase3_configure_memory(_ prepare: Int) -> Bool { configurationAccepted }
+func ir_jit_memory_api() -> Int { 1 }
+@MainActor func ir_phase3_stop() { stops += 1 }
+@MainActor final class Host {
+    let queue = Queue(), owner = 1
+    var error: String?, terminalFailure = false, completions = 0
+    var phase3Controller: UIViewController?
+    func complete(_ owner: Int) { completions += 1 }
+    func open(_ controller: UnsafeMutableRawPointer?, game: Game) {
+GATE
+HANDOFF
+    }
+}
+MainActor.assumeIsolated {
+    for runtime in ["azahar", "play", "flycast"] {
+        let failed = Host()
+        failed.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: runtime))
+        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.error != nil && failed.terminalFailure)
+    }
+    precondition(stops == 3)
+    configurationAccepted = true
+    let ready = Host()
+    ready.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: "play"))
+    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.error == nil)
+    ready.phase3Controller = nil
+    precondition(UIViewController.live == 0)
+    let unavailable = Host()
+    unavailable.open(nil, game: Game(runtimeID: "play"))
+    precondition(unavailable.terminalFailure && unavailable.completions == 1 && UIViewController.live == 0)
+}
+'''.replace('GATE', gate).replace('HANDOFF', handoff)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / 'main.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(root / 'main.swift'), '-o', str(root / 'check')], check=True, timeout=30)
+            subprocess.run([str(root / 'check')], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for resume checks')
-    def test_shared_jit_resume_waits_for_live_debugger_and_preserves_stop(self):
+    def test_shared_jit_resume_uses_prepared_memory_and_preserves_stop(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         resume = source[source.index('    func resume() {'):source.index('        lock.lock(); intent.resume();', source.index('    func resume() {'))]
         fixture = '''import Foundation
 @MainActor var attached = false
 @MainActor var stopped = 0
-@MainActor func isDebuggerAttached() -> Bool { attached }
+@MainActor func ir_jit_memory_ready() -> Bool { attached }
 @MainActor func ir_phase3_stop() { stopped += 1 }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
     var calls = 0
     var callback: ((Result<Void, Error>) -> Void)?
-    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
-        precondition(requiresAttachedDebugger); calls += 1; callback = completion
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        calls += 1; callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let cb = callback; callback = nil; cb?(result) }
 }
@@ -83,7 +136,7 @@ MainActor.assumeIsolated {
             subprocess.run([str(root / 'check')], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for Dolphin launch checks')
-    def test_dolphin_and_azahar_launch_require_shared_jit_and_preserve_cancellation(self):
+    def test_advanced_launches_require_shared_jit_and_preserve_cancellation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         launch = source[source.index('    @MainActor private func openPhase3('):source.index('        guard let frameworks =', source.index('    @MainActor private func openPhase3('))]
         settings = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumDolphinSettings.swift').read_text()
@@ -96,9 +149,10 @@ struct IridiumConsoleGame { var runtimeID = "dolphin"; var id = UUID() }
 enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: String { "JIT required" } }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
+    var consoleMemoryRequiresRestart = false
     var callback: ((Result<Void, Error>) -> Void)?
-    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
-        precondition(requiresAttachedDebugger); callback = completion
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let saved = callback; callback = nil; saved?(result) }
 }
@@ -111,6 +165,7 @@ final class Queue { func async(execute: () -> Void) { execute() } }
     let queue = Queue()
     func complete(_ owner: Int) { precondition(owner == lease); completions += 1 }
     func fail(_ message: String, owner: Int) { error = message; complete(owner) }
+    func requireRestart(_ owner: Int) { error = "restart" }
 LAUNCH
         nativeStarts += 1
     }
@@ -127,15 +182,20 @@ MainActor.assumeIsolated {
     defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
     let restored = IridiumDolphinSettings.load(id)
     precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
-    for runtimeID in ["dolphin", "azahar"] {
+    for runtimeID in ["dolphin", "azahar", "play", "flycast"] {
     let failed = Host(); failed.start(runtimeID: runtimeID)
     precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
-    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("shared JIT"))
+    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT could not start"))
     precondition(!failed.phase3PreparingJIT)
     let cancelled = Host(); cancelled.start(runtimeID: runtimeID); cancelled.requested = .stop
     JITCoordinator.shared.finish(.success(()))
     precondition(cancelled.nativeStarts == 0 && cancelled.completions == 1)
+    let unclean = Host(); unclean.start(runtimeID: runtimeID); unclean.requested = .stop
+    JITCoordinator.shared.consoleMemoryRequiresRestart = true
+    JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
+    precondition(unclean.nativeStarts == 0 && unclean.completions == 0 && unclean.error == "restart")
+    JITCoordinator.shared.consoleMemoryRequiresRestart = false
     let stale = Host(); stale.start(runtimeID: runtimeID); stale.lease = 2
     JITCoordinator.shared.finish(.success(()))
     precondition(stale.nativeStarts == 0 && stale.completions == 0)
@@ -328,53 +388,39 @@ Host().check()
     @unittest.skipUnless(shutil.which('c++') and (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').is_file(), 'Dolphin source and C++ compiler required')
     def test_dolphin_allocator_calls_shared_memory_service(self):
         native = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
-        bridge = native[native.index('extern "C" void *ir_dolphin_jit_prepare('):native.index('static bool dolphinAlert(')]
+        bridge = native[native.index('static std::atomic<ptrdiff_t> sharedDifference'):native.index('static bool dolphinAlert(')]
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             generated = builder.generated('dolphin', folder)
-            memory = (generated / 'MemoryUtil_iOS_LuckTXM.cpp').read_text()
-            allocation = memory[memory.index('constexpr size_t EXECUTABLE_REGION_SIZE'):memory.index('ptrdiff_t AllocateWritableRegionAndGetDiff_LuckTXM()')] + '}\n'
+            memory = (generated / 'MemoryUtil_iOS_LuckTXM.cpp').read_text().replace('#include "Common/MemoryUtil.h"', '')
             main = folder / 'allocator.cpp'
-            main.write_text(r'''#include <cassert>
+            main.write_text(r'''#include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include "IRDolphinAPI.h"
-using u8=unsigned char;using vm_address_t=uintptr_t;using vm_prot_t=int;using kern_return_t=int;
-constexpr int PROT_READ=1,PROT_WRITE=2,PROT_EXEC=4,MAP_ANON=1,MAP_PRIVATE=2,KERN_SUCCESS=0,VM_INHERIT_DEFAULT=0;
-static void* const MAP_FAILED=reinterpret_cast<void*>(-1);
-static u8 pages[8192];static int requests=0;static bool mapFails=false,prepareFails=false;
-struct Player { IRDolphinJITPrepare prepareJIT=nullptr; };static Player* active=nullptr;
-''' + bridge + r'''
-static void* sharedPrepare(void* address,size_t bytes) {
-  ++requests;assert(address==nullptr && bytes==536870912);
-  return mapFails?MAP_FAILED:prepareFails?nullptr:pages;
+static int getpagesize() { return 16384; }
+alignas(16384) static char bytes[32768];
+static unsigned allocations, releases;
+static bool fail, wrong;
+void *ir_shared_jit_allocate(size_t size, void **write) {
+    assert(size == 16384); ++allocations;
+    if (fail) return nullptr;
+    *write = bytes + (wrong ? 8192 : 16384); return bytes;
 }
-static int mprotect(void*,size_t,int) {return 0;}
-static int mach_task_self() {return 0;}
-static int vm_remap(int,vm_address_t* address,size_t,int,bool,int,vm_address_t,bool,vm_prot_t*,vm_prot_t*,int) {
-  *address=reinterpret_cast<vm_address_t>(pages+4096);return 0;
-}
-struct lwmem_region_t {void* address;size_t size;};
-static size_t lwmem_assignmem(lwmem_region_t*) {return 1;}
-static const char* LastStrerrorString() {return "fixture";}
-template<class... T> static void PanicAlertFmt(const char*,T...) {}
-''' + allocation + r'''
+void ir_shared_jit_release(void *p) { assert(p == bytes); ++releases; }
+''' + bridge + memory + r'''
 int main() {
-  Player owner;active=&owner;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==0);
-  owner.prepareJIT=sharedPrepare;mapFails=true;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==1 && !g_rx_region);
-  mapFails=false;
-  owner.prepareJIT=sharedPrepare;prepareFails=true;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==2 && !g_rx_region);
-  prepareFails=false;Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
-  assert(g_rx_region==pages && g_rw_region_diff==4096);
+    Common::AllocateExecutableMemoryRegion_LuckTXM(); assert(allocations == 0);
+    fail = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096));
+    fail = false; assert(Common::AllocateExecutableMemory_LuckTXM(4096) == bytes);
+    assert(Common::AllocateWritableRegionAndGetDiff_LuckTXM() == 16384);
+    Common::FreeExecutableMemory_LuckTXM(bytes); assert(releases == 1);
+    wrong = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096) && releases == 2);
 }
 ''')
-            executable=folder/'allocator'
-            subprocess.run(['c++','-std=c++17','-I',str(ROOT/'iridium/apps/ios/RuntimeBridge'),str(main),'-o',str(executable)],check=True,timeout=30)
-            subprocess.run([str(executable)],check=True,timeout=5)
+            executable = folder / 'allocator'
+            subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin installer tests')
     def test_dolphin_installer_reports_cleanup_and_blocks_uncertain_reuse(self):
@@ -540,6 +586,10 @@ int main() {
             root = Path(folder)
             source = root / 'vendor/Play/Source/ui_libretro/main_libretro.cpp'
             source.parent.mkdir(parents=True)
+            shared = source.parent.parent / 'app_shared'
+            shared.mkdir()
+            (shared / 'AppConfig.h').write_text('class CAppConfig {\n\tCAppConfig();\n};\n')
+            for name in ('AppConfig.cpp', 'Log.cpp'): (shared / name).write_text('')
             source.write_text('''#include <filesystem>
 #include <thread>
 #include <cassert>
@@ -562,11 +612,16 @@ struct CPS2VM {
 static CPS2VM vm;
 static CPS2VM* m_virtualMachine = &vm;
 static bool first_run = false;
+void retro_init()\n{\n}\nvoid checkVarsUpdates() {\n\tstatic bool updates = true;\n}
 extern "C" const char* ir_play_save_root() { return "isolated-root"; }
 ''')
             memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'
             memory.parent.mkdir(parents=True)
-            memory.write_text('vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);\n' + 'assert(result == 0);\n' * 3)
+            memory.write_text('\tvm_size_t page_size = 0;\nold allocation\n#elif defined(MEMFUNC_USE_MMAP)\n'
+                'vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size);\n' + ''.join(
+                '\tkern_return_t result = vm_protect(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size, 0, ' + protection + ');\n\tassert(result == 0);\n'
+                for protection in ('VM_PROT_READ | VM_PROT_WRITE', 'VM_PROT_READ | VM_PROT_EXECUTE')))
+            (source.parent.parent / 'BasicBlock.cpp').write_text('auto code = reinterpret_cast<uint8*>(m_function.GetCode());\n' * 2)
             (root / 'ci').mkdir()
             shutil.copy2(ROOT / 'ci/phase3_play.py', root / 'ci/phase3_play.py')
             with patch.object(builder, 'ROOT', root): generated = builder.generated('play', root / 'output')
@@ -660,6 +715,16 @@ int main() {
             source.write_text('#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;\n#endif\n')
             main = root / 'vendor/Flycast/shell/libretro/libretro.cpp'
             main.parent.mkdir(parents=True); main.write_text('static bool first_run = true;\n')
+            memory = root / 'vendor/Flycast/core/linux/posix_vmem.cpp'
+            memory.parent.mkdir(parents=True)
+            memory.write_text('// Prepares the code region for JIT operations\nold allocator\n} // namespace virtmem\n')
+            for name, function in [('rec-ARM64/rec_arm64.cpp', 'jitWriteProtect'),
+                                   ('hw/arm7/arm7_rec_arm64.cpp', 'JITWriteProtect'),
+                                   ('hw/aica/dsp_arm64.cpp', 'JITWriteProtect')]:
+                path = root / 'vendor/Flycast/core' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('static void ' + function + '(bool enable)\n{\nold protection\n}\n' +
+                    ('DynCode = pCodeBuffer;\n' if name.endswith('dsp_arm64.cpp') else ''))
             (root / 'ci').mkdir()
             shutil.copy2(ROOT / 'ci/phase3_flycast.py', root / 'ci/phase3_flycast.py')
             with patch.object(builder, 'ROOT', root):

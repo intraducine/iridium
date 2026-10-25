@@ -127,8 +127,6 @@ def project(source, names):
         settings = objects[config]['buildSettings']
         settings['PRODUCT_NAME'] = 'Iridium'
         settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
-        settings['MARKETING_VERSION'] = '0.2.1'
-        settings['CURRENT_PROJECT_VERSION'] = '1'
         def append(key, additions, unique=True):
             existing = settings.get(key, ['$(inherited)'])
             if isinstance(existing, str): existing = shlex.split(existing)
@@ -142,6 +140,8 @@ def project(source, names):
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
+            value['buildSettings']['MARKETING_VERSION'] = '0.2.1'
+            value['buildSettings']['CURRENT_PROJECT_VERSION'] = '1'
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
             value['buildSettings']['MADEIRA_BUNDLE_IDENTIFIER'] = 'software.iridium'
     return data
@@ -176,7 +176,9 @@ def prepare():
         link = OUTPUT / name
         if not link.is_symlink() and link.exists():
             raise ValueError('Refusing to replace an existing build directory: ' + str(link))
-        if not link.is_symlink(): link.symlink_to((UPSTREAM / name).resolve(), target_is_directory=True)
+        target = (UPSTREAM / name).resolve()
+        if link.is_symlink() and link.resolve() != target: link.unlink()
+        if not link.is_symlink(): link.symlink_to(target, target_is_directory=True)
     for name in ('COPYING', 'LICENSE', 'LICENSE-EXCEPTION.md', 'THIRD-PARTY-NOTICES.md'):
         shutil.copy2(UPSTREAM / name, OUTPUT / name)
     for source, name in [('COPYING', 'LICENSE-MADEIRA-GPL-3.0.txt'), ('LICENSE-EXCEPTION.md', 'LICENSE-MADEIRA-EXCEPTION.txt')]:
@@ -191,10 +193,10 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h'):
+    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('enginePin') != engine_pins.selected('psp') or psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -254,7 +256,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')
@@ -263,10 +265,11 @@ def verify():
 def check_psp_jit_interface(record):
     if ('_ir_native_psp_check_jit' not in record.get('exports', [])
         or '_ir_native_psp_check_jit_diagnostic' not in record.get('exports', [])
-        or not {'_ir_native_psp_exec_version', '_ir_native_psp_exec_prepare', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_detach',
+        or not {'_ir_native_psp_exec_version', '_ir_native_psp_exec_prepare_shared', '_ir_native_psp_exec_prepare', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_detach',
                 '_ir_native_psp_exec_accept_shutdown', '_ir_native_psp_exec_restored', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_exec_advance',
                 '_ir_native_psp_exec_cancel', '_ir_native_psp_exec_end'}.issubset(record.get('exports', []))
         or record.get('diagnosticHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest()
+        or record.get('sharedMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest()
         or record.get('executableMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest()
         or '_ir_native_psp_set_volume' not in record.get('exports', [])
         or record.get('audioVolumeHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest()

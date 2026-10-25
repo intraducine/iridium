@@ -24,6 +24,27 @@ packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
 
 class ManualBuildTests(unittest.TestCase):
+    def test_native_compile_does_not_nest_fex_compiler_caches(self):
+        import os
+        import subprocess
+        text = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        step = text.split('      - name: Compile madeira-native\n', 1)[1].split('      - name:', 1)[0]
+        script = '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / 'python3'
+            executable.write_text('#!/bin/sh\n'
+                                  '[ -z "${CMAKE_C_COMPILER_LAUNCHER+x}" ] || exit 41\n'
+                                  '[ -z "${CMAKE_CXX_COMPILER_LAUNCHER+x}" ] || exit 42\n'
+                                  'printf "%s\\n" "$*"\n')
+            executable.chmod(0o755)
+            for restored in ('', '123'):
+                env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ['PATH'],
+                           CMAKE_C_COMPILER_LAUNCHER='ccache', CMAKE_CXX_COMPILER_LAUNCHER='ccache',
+                           RESTORED_NATIVE_RUN_ID=restored)
+                result = subprocess.run(['bash', '-eu', '-c', script], env=env,
+                                        capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.strip(), 'ci/madeira-frontend.py native' + (' --reuse-only' if restored else ''))
+
     def test_static_input_inventory_preserves_members_and_rejects_missing_archive(self):
         import hashlib
         with tempfile.TemporaryDirectory() as temp:
@@ -291,11 +312,13 @@ class ManualBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app = Path(tmp) / "Iridium.app"
             app.mkdir()
-            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "software.iridium", "CFBundleExecutable": "Iridium"}))
+            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "software.iridium",
+                "CFBundleExecutable": "Iridium", "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
             (app / "Iridium").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
             helper = app / "PlugIns/Helper.appex"
             helper.mkdir(parents=True)
-            (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper"}))
+            (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper",
+                "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
             (helper / "Helper").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
             with self.assertRaisesRegex(ValueError, "Windows fonts"):
                 packager.check_payload(app)

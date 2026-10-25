@@ -42,7 +42,7 @@ final class JITCoordinator {
     var resolvedMethod: JITMethod {
         method == .automatic ? (StikJITHelper.isAvailable ? .stikDebug : .builtIn) : method
     }
-    func enable(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
+    func prepareConsoleMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
 }
 final class OnDevicePairing {
     static let shared = OnDevicePairing()

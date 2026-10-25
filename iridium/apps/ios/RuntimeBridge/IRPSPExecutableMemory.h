@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "IRJITDiagnostic.h"
+#include "IRJITMemory.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,8 @@ typedef struct {
 
 // Additive, separately negotiated API; never infer these services from ABI 3.
 uint32_t ir_native_psp_exec_version(void);
+// Shared-memory extension 1. The app returns only after its helper has closed.
+int ir_native_psp_exec_prepare_shared(uint64_t admission, const IRJITMemoryAPI *, const IRJITDiagnosticSink *);
 int ir_native_psp_exec_prepare(const IRPSPExecHost *);
 int ir_native_psp_exec_prepare_diagnostic(const IRPSPExecHost *, const IRJITDiagnosticSink *);
 int ir_native_psp_exec_detach(uint64_t admission);
@@ -76,6 +79,7 @@ void ir_psp_exec_probe_proven(bool);
 uint64_t ir_psp_exec_generation(void);
 uint64_t ir_psp_exec_admission(void);
 bool ir_psp_exec_native_ready(void);
+bool ir_psp_exec_shared_memory(void);
 int ir_psp_exec_reuse_native(uint64_t admission);
 bool ir_psp_exec_failed(void);
 void ir_psp_exec_fail(void);

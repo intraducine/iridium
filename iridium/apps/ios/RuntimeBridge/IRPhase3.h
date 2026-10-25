@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "IRJITMemory.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,7 +27,8 @@ void ir_phase3_pause(bool);
 void ir_phase3_stop(void);
 uint64_t ir_phase3_frames(void);
 bool ir_phase3_available(const char *engine, const char *frameworks);
-bool ir_phase3_azahar_configure_jit(IRPhase3JITPrepare);
+bool ir_phase3_configure_jit(IRPhase3JITPrepare);
+bool ir_phase3_configure_memory(const IRJITMemoryAPI *);
 #ifdef __cplusplus
 }
 #endif

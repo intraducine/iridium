@@ -90,7 +90,7 @@ class SameBoyBuildTests(unittest.TestCase):
 
 class MultiRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for library launch routing')
-    def test_play_routes_dolphin_to_owned_jit_without_extra_confirmation(self):
+    def test_play_routes_advanced_engines_to_owned_jit_without_extra_confirmation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
         launch = source[source.index('    private func launch(_ game:'):source.index('    private func options(_ game:')]
         marker = '.onChange(of: jitState.enabled) { _, enabled in'
@@ -134,32 +134,25 @@ CONTINUATION
 }
 @main struct Check {
     @MainActor static func main() {
-        for platform in [IridiumPlatform.wii, .gameCube, .psp, .nintendo3DS] {
+        for (platform, runtime) in [(IridiumPlatform.wii, "dolphin"), (.gameCube, "dolphin"),
+                                    (.psp, "ppsspp"), (.nintendo3DS, "azahar"),
+                                    (.playStation2, "play"), (.dreamcast, "flycast")] {
             for enabled in [false, true] {
                 let host = Host(); host.jitState.enabled = enabled
-                let runtime = platform == .psp ? "ppsspp" : (platform == .nintendo3DS ? "azahar" : "dolphin")
                 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
                     runtimeID: runtime, fileExtension: "iso", importedAt: Date())
                 let count = nativeStarts.count; host.start(game)
                 precondition(nativeStarts.count == count + 1 && nativeStarts.last == game.id)
                 precondition(host.enables == 0 && host.pendingSupportGame == nil && host.library.error == nil)
+                host.enabledChanged(true); precondition(nativeStarts.count == count + 1)
             }
-        }
-        for (platform, runtime) in [(IridiumPlatform.playStation2, "play"), (.dreamcast, "flycast")] {
-            let host = Host(), game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
-                runtimeID: runtime, fileExtension: "iso", importedAt: Date())
-            let count = nativeStarts.count; host.start(game)
-            precondition(host.enables == 1 && host.pendingSupportGame?.id == game.id && nativeStarts.count == count)
-            host.jitState.enabled = true; host.enabledChanged(true)
-            precondition(host.pendingSupportGame == nil && nativeStarts.count == count + 1 && nativeStarts.last == game.id)
-            host.enabledChanged(true); precondition(nativeStarts.count == count + 1)
         }
         let blocked = Host(); blocked.consoleSession.busy = true
         let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: .wii,
             runtimeID: "dolphin", fileExtension: "iso", importedAt: Date())
         let count = nativeStarts.count; blocked.start(game)
         precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
-        print("PASS shipping Play: Dolphin/3DS/PSP own JIT; other required engines auto-enable once; busy admission retained")
+        print("PASS shipping Play: all advanced engines own JIT without duplicate launches; busy admission retained")
     }
 }
 '''.replace('LAUNCH', launch).replace('CONTINUATION', continuation)
@@ -211,6 +204,10 @@ import Foundation
 var wineRunning: Int32 = 0, serverRunning: Int32 = 0
 func wine_process_is_running() -> Int32 { wineRunning }
 func wineserver_is_running() -> Int32 { serverRunning }
+final class JITCoordinator {
+    static let shared = JITCoordinator()
+    var busy = false, consoleMemoryRequiresRestart = false
+}
 final class LibraryModel {
     static let shared = LibraryModel()
     static var sessionsThisRun = 0
@@ -247,6 +244,9 @@ let first = try preflight.acquire(game)
 rejects(.busy)
 preflight.ownership.release(first)
 preflight.dolphinMaintenance = true; rejects(.busy); preflight.dolphinMaintenance = false
+JITCoordinator.shared.busy = true; rejects(.busy); JITCoordinator.shared.busy = false
+JITCoordinator.shared.consoleMemoryRequiresRestart = true; rejects(.restartRequired)
+JITCoordinator.shared.consoleMemoryRequiresRestart = false
 LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
 LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
 TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)

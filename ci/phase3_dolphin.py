@@ -18,18 +18,22 @@ def generated(ROOT, directory):
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_text(code_block)
     memory = (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').read_text()
-    mapping = 'static_cast<u8*>(mmap(nullptr, size, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0))'
-    if memory.count('if (!rx_ptr)') != 1 or memory.count(mapping) != 1:
-        raise ValueError('Dolphin TXM mapping failure hook changed')
-    request_start = memory.index('  asm (')
-    request_end = memory.index('\n\n  vm_address_t rw_region', request_start)
-    # Use the shared debugger allocation path, as Madeira does. Preparing
-    # an app-created RX mapping was rejected by TXM on the physical phone.
-    memory = memory[:request_start] + memory[request_end:]
-    memory = memory.replace(mapping, 'static_cast<u8*>(ir_dolphin_jit_prepare(nullptr, size))')
-    memory = memory.replace('namespace Common',
-        'extern "C" void* ir_dolphin_jit_prepare(void*, size_t);\n\nnamespace Common', 1)
-    (directory / 'MemoryUtil_iOS_LuckTXM.cpp').write_text(memory.replace('if (!rx_ptr)', 'if (!rx_ptr || rx_ptr == MAP_FAILED)'))
+    if 'constexpr size_t EXECUTABLE_REGION_SIZE = 536870912;' not in memory:
+        raise ValueError('Dolphin executable memory interface changed')
+    # The app retains the prepared pages. Dolphin releases individual code blocks
+    # after shutdown instead of keeping a private 512 MiB reservation.
+    memory = memory[:memory.index('#include "Common/MemoryUtil.h"')] + '''#include "Common/MemoryUtil.h"
+extern "C" void* ir_dolphin_jit_allocate(size_t);
+extern "C" void ir_dolphin_jit_release(void*);
+extern "C" ptrdiff_t ir_dolphin_jit_difference();
+namespace Common {
+void AllocateExecutableMemoryRegion_LuckTXM() {}
+void* AllocateExecutableMemory_LuckTXM(size_t size) { return ir_dolphin_jit_allocate(size); }
+void FreeExecutableMemory_LuckTXM(void* pointer) { ir_dolphin_jit_release(pointer); }
+ptrdiff_t AllocateWritableRegionAndGetDiff_LuckTXM() { return ir_dolphin_jit_difference(); }
+}
+'''
+    (directory / 'MemoryUtil_iOS_LuckTXM.cpp').write_text(memory)
     state = (ROOT / 'vendor/Dolphin/Source/Core/Core/State.cpp').read_text()
     callback = 'if (s_on_after_load_callback)'
     if state.count(callback) != 1:

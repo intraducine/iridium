@@ -21,23 +21,22 @@ typedef struct {
     float rotation[3]; // Wii coordinates, radians per second
 } IRDolphinInput;
 typedef void (*IRDolphinPoll)(unsigned player, IRDolphinInput *);
-typedef void *(*IRDolphinJITPrepare)(void *address, size_t bytes);
 typedef void (*IRDolphinCompletion)(bool success, bool restart_required, const char *message);
 typedef struct {
     double fps, vps, speed;
     uint64_t frames, input_samples;
     bool jit;
 } IRDolphinStats;
-// Optional Dolphin extension. Other native engines keep their existing ABI.
+// Dolphin extension 2 uses the separately negotiated shared memory interface.
 typedef struct {
     unsigned version;
-    void (*configure)(IRDolphinOptions, IRDolphinPoll, IRDolphinJITPrepare);
+    void (*configure)(IRDolphinOptions, IRDolphinPoll);
     void (*settings)(IRDolphinOptions);
     IRDolphinStats (*stats)(void);
     void (*state)(bool load, unsigned slot);
     void (*install_wad)(const char *save_root, const char *wad, IRDolphinCompletion);
 } IRDolphinAPI;
-bool ir_phase3_dolphin_configure(IRDolphinOptions, IRDolphinPoll, IRDolphinJITPrepare);
+bool ir_phase3_dolphin_configure(IRDolphinOptions, IRDolphinPoll);
 void ir_phase3_dolphin_settings(IRDolphinOptions);
 IRDolphinStats ir_phase3_dolphin_stats(void);
 void ir_phase3_dolphin_state(bool load, unsigned slot);

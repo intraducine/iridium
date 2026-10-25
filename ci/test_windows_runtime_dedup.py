@@ -60,10 +60,28 @@ class WindowsRuntimeDedupTests(unittest.TestCase):
     def minimal_app(self):
         self.write("fonts/tahoma.ttf", b"font fixture")
         self.write("Info.plist", plistlib.dumps({
-            "CFBundleIdentifier": "software.iridium", "CFBundleExecutable": "Iridium"}))
+            "CFBundleIdentifier": "software.iridium", "CFBundleExecutable": "Iridium",
+            "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
         self.write("Iridium", bytes.fromhex("cffaedfe") + b"host")
-        self.write("PlugIns/Helper.appex/Info.plist", plistlib.dumps({"CFBundleExecutable": "Helper"}))
+        self.write("PlugIns/Helper.appex/Info.plist", plistlib.dumps({"CFBundleExecutable": "Helper",
+            "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
         self.write("PlugIns/Helper.appex/Helper", bytes.fromhex("cffaedfe") + b"helper")
+
+    def test_packager_rejects_mismatched_or_missing_helper_versions(self):
+        self.minimal_app()
+        packager.check_payload(self.app)
+        path = self.app / "PlugIns/Helper.appex/Info.plist"
+        original = plistlib.loads(path.read_bytes())
+        for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+            for value in ("0.1.3", None):
+                info = dict(original)
+                if value is None:
+                    info.pop(key)
+                else:
+                    info[key] = value
+                path.write_bytes(plistlib.dumps(info))
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, "Helper version differs"):
+                    packager.check_payload(self.app)
 
     def test_identical_modules_keep_both_paths_and_original_bytes(self):
         canonical, alias = self.pair()

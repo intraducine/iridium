@@ -47,7 +47,7 @@ struct LibraryTitleText: View {
 /// are disabled once it is.
 final class LibraryJITState: ObservableObject {
     static let shared = LibraryJITState()
-    @Published private(set) var enabled = StikJITHelper.ready
+    @Published private(set) var enabled = ir_jit_memory_ready() || StikJITHelper.ready
     private var timer: Timer?
     private init() {
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
@@ -55,7 +55,7 @@ final class LibraryJITState: ObservableObject {
         self.timer = timer
     }
     func refresh() {
-        let now = StikJITHelper.ready
+        let now = ir_jit_memory_ready() || StikJITHelper.ready
         guard now != enabled else { return }
         withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .default) { enabled = now }
     }
@@ -1028,7 +1028,7 @@ struct LibraryGroupedGames<LocalCell: View>: View {
         VStack(alignment: .leading, spacing: 24) {
             if groups.isEmpty {
                 if search.isEmpty {
-                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
                 } else {
                     Text("No games match your search.").foregroundStyle(.secondary)
                 }
@@ -1133,7 +1133,13 @@ struct LibraryView: View {
     @State private var focused: UUID?
     @ObservedObject private var controller = LibraryController.shared
     @ObservedObject private var input = InputSettings.shared
-    @State var tab = 0
+    @State private var tab = 0
+
+    init(play: @escaping (LibraryEntry) -> Void, enableJIT: @escaping () -> Void,
+         startDock: @escaping (DockGame, Bool) -> Void = { _, _ in }, tab: Int = 0) {
+        self.play = play; self.enableJIT = enableJIT; self.startDock = startDock
+        _tab = State(initialValue: tab)
+    }
     // The interface the next start uses (FrontendChoice).
     @State private var developerUI = !FrontendChoice.preferNew
     @State private var restartNotice = false
@@ -1186,7 +1192,7 @@ struct LibraryView: View {
             .toolbar { settingsToolbar }
             .navigationDestination(for: String.self) { page in
                 switch page {
-case "Performance & Compatibility": IridiumCapabilitiesView().iridiumPageSurface().navigationTitle("Performance & Compatibility")
+case "JIT & Memory": IridiumCapabilitiesView().iridiumPageSurface().navigationTitle("JIT & Memory")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
@@ -1231,7 +1237,7 @@ case "Controls": IridiumControlsSettingsView(back: { iridiumNavigate("back") }).
                             .keyboardShortcut(.cancelAction)
                     } }
 case "Madeira · Windows": Form { Group { Section { ForEach(model.entries.filter { $0.desktop != true }) { entry in Button { selected = entry } label: { HStack { Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) } } }
-if model.entries.filter({ $0.desktop != true }).isEmpty { Text("Add a Windows game to change its options.").foregroundStyle(.secondary) } } header: { Text("Games") } footer: { Text("Open a game to change its display, controls and compatibility options.") }
+if model.entries.filter({ $0.desktop != true }).isEmpty { Text("Add a Windows game to change its options.").foregroundStyle(.secondary) } } header: { Text("Games") } footer: { Text("Select a game to change its options.") }
 Section("Preferences") { NavigationLink("Display", value: "Display").id("Display")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Display" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("Saves & Backups", value: "Saves & Backups").id("Saves & Backups")
@@ -1385,7 +1391,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Getting Started", "Controls", "Performance & Compatibility", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Steam", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1446,8 +1452,8 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             Section { if onboarding.available { Button("Getting Started", systemImage: "wand.and.stars") { onboarding.rerun() }.id("Getting Started") }
 NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
-NavigationLink("Performance & Compatibility", value: "Performance & Compatibility").id("Performance & Compatibility")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "Performance & Compatibility" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
+NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 ForEach(IridiumConsoleSystem.all) { system in
@@ -1479,30 +1485,7 @@ ForEach(IridiumConsoleSystem.all) { system in
         ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    Button { selected = model.entries.first(where: { $0.desktop == true }) ?? .desktopEntry } label: {
-                        if liquidMetal.on {
-                            // On the chrome's middle band (dark, or light in light mode), with a soft
-                            // halo of the other tone for the moments a highlight passes under it.
-                            let light = colorScheme == .light
-                            Label("Desktop", systemImage: "desktopcomputer")
-                                .font(.subheadline.weight(.semibold)).foregroundStyle(light ? .black : .white)
-                                .shadow(color: (light ? Color.white : .black).opacity(0.75), radius: 2.5)
-                                .padding(.horizontal, 14).frame(minHeight: 44)
-                                .background(LiquidMetalFill())
-                                // ml1217: the fill does not hit-test, so without this only the
-                                // glyphs took a tap (the plain fill's Capsule did).
-                                .contentShape(Capsule())
-                        } else {
-                            Label("Desktop", systemImage: "desktopcomputer")
-                                .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
-                                .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
-                        }
-                    }.buttonStyle(.plain)
-                        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.4), value: liquidMetal.on)
-                        .id(LibraryEntry.desktopID)
-                        .overlay(RoundedRectangle(cornerRadius: 22).stroke(focused == LibraryEntry.desktopID && controller.connected ? Color.cyan : .clear, lineWidth: 3))
-                }
+                desktopButton
                 // The library's sections, as in the fork: Steam (installed and downloading
                 // Steam games, then Not installed), then Other games, the games you added.
                 // Steam games start through Madeira Dock (SteamGames.swift); an installed one
@@ -1545,7 +1528,7 @@ ForEach(IridiumConsoleSystem.all) { system in
                                           part: steamFirst ? .notInstalled : .all, open: { selected = $0 })
                     }
                 } else if model.entries.filter({ $0.desktop != true && $0.steamAppID == nil }).isEmpty {
-                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
                 } else {
                     cells(entries, width: viewport.size.width)
                 }
@@ -1586,6 +1569,33 @@ ForEach(IridiumConsoleSystem.all) { system in
             if let id { withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.2)) { reader.scrollTo(id, anchor: .center) } }
         }
         }
+        }
+    }
+    /// The Desktop button at the top of the page (both grids).
+    private var desktopButton: some View {
+        HStack {
+            Button { selected = model.entries.first(where: { $0.desktop == true }) ?? .desktopEntry } label: {
+                if liquidMetal.on {
+                    // On the chrome's middle band (dark, or light in light mode), with a soft
+                    // halo of the other tone for the moments a highlight passes under it.
+                    let light = colorScheme == .light
+                    Label("Desktop", systemImage: "desktopcomputer")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(light ? .black : .white)
+                        .shadow(color: (light ? Color.white : .black).opacity(0.75), radius: 2.5)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(LiquidMetalFill())
+                        // ml1217: the fill does not hit-test, so without this only the
+                        // glyphs took a tap (the plain fill's Capsule did).
+                        .contentShape(Capsule())
+                } else {
+                    Label("Desktop", systemImage: "desktopcomputer")
+                        .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                }
+            }.buttonStyle(.plain)
+                .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.4), value: liquidMetal.on)
+                .id(LibraryEntry.desktopID)
+                .overlay(RoundedRectangle(cornerRadius: 22).stroke(focused == LibraryEntry.desktopID && controller.connected ? Color.cyan : .clear, lineWidth: 3))
         }
     }
     private func cells(_ items: [LibraryEntry], width viewportWidth: CGFloat) -> some View {
@@ -1683,7 +1693,12 @@ struct LibraryDetail: View {
     @State private var iridiumGuided = false
     @FocusState private var iridiumKeyboard: Bool
 
-    @State var entry: LibraryEntry
+    @State private var entry: LibraryEntry
+
+    init(iridiumInitialPage: String? = nil, entry: LibraryEntry, play: @escaping (LibraryEntry) -> Void) {
+        self.iridiumInitialPage = iridiumInitialPage; self.play = play
+        _entry = State(initialValue: entry)
+    }
 
     private func iridiumNavigate(_ command: String) {
         if command == "back" {
@@ -1715,6 +1730,8 @@ struct LibraryDetail: View {
     @State private var leaving = false
     @State private var error: String?
     @State private var copiedLink = false
+    /// Where Play is on screen: the starting screen grows out of it (LaunchCurtain).
+    @State private var playFrame: CGRect = .zero
     /// Settings › Sync engine, read when the details open: the fastsync switches
     /// below only apply while it is Fastsync.
     @State private var syncEngine = SyncEngine.current
@@ -1778,6 +1795,11 @@ struct LibraryDetail: View {
             }
         }
         leaving = true
+        let steamCover = entry.coverFile == nil ? entry.steamAppID : nil
+        LaunchCurtain.shared.begin(from: playFrame, appID: steamCover, artwork: steamCover.flatMap { id in
+            SteamGamesRules.artwork(appID: id) { SteamOwnedLibrary.shared.game($0) }.first
+        })
+        model.prepare(entry)
         let profile = entry
         // Give the pressed state a display turn before saving and handing off.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -1850,7 +1872,7 @@ case "Rename & Artwork":
                 Section {
                     IridiumGameControlsButton(target: .init(platform: .windows, title: IridiumArtworkModel.shared.title(IridiumGame(windows: entry)), gameID: entry.id,
                         windowsLayout: entry.controls.map { IridiumControlLayoutState(controls: $0, visible: entry.touchControls,
-                            size: entry.controlSize ?? 1, opacity: entry.controlOpacity ?? 0.7) }))
+                            size: entry.controlSize ?? 1, opacity: entry.controlOpacity ?? 0.7, zones: entry.zones) }))
                 }
                  Section("On screen") {
                     Toggle("Performance overlay", isOn: $entry.performance)
@@ -2108,27 +2130,13 @@ if entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; 
             }
 
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { model.save(entry); dismiss() } } }
-            .sheet(isPresented: $findCover) { SteamSearchView(query: entry.title) { match in entry.steamID = match.id; entry.title = match.name; entry.coverFile = nil } }
-            .fileImporter(isPresented: $importCover, allowedContentTypes: [.image]) { result in
-                do {
-                    let url = try result.get(); let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
-                    let attrs = try url.resourceValues(forKeys: [.fileSizeKey])
-                    guard (attrs.fileSize ?? Int.max) <= 20_000_000 else { throw LibraryError.message("Choose an image smaller than 20 MB.") }
-                    let data = try Data(contentsOf: url)
-                    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                          let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 1200, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary),
-                          let jpeg = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85) else { throw LibraryError.message("This image could not be opened.") }
-                    let dir = LibraryModel.documents.appendingPathComponent("madeira-art", isDirectory: true)
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    let name = entry.id.uuidString + ".jpg"; try jpeg.write(to: dir.appendingPathComponent(name), options: .atomic); entry.coverFile = name
-                } catch { self.error = error.localizedDescription }
-            }
-            .confirmationDialog("Remove this library entry? Your executable and saves stay in drive_c.", isPresented: $remove, titleVisibility: .visible) {
-                Button("Remove", role: .destructive) { leaving = true; model.remove(entry.id); dismiss() }
-            }
             .task {
                 if entry.graphicsAPI == nil, entry.desktop != true, let url = try? LibraryModel.executable(entry.relativePath) { entry.graphicsAPI = LibraryModel.graphicsImports(url) }
             }
+            // Play's checks read the installed games and Dock's client state, which the
+            // Steam page refreshed when it was on this page.
+            .onAppear { if entry.steamAppID != nil { MadeiraDockModel.shared.refresh(); SteamGamesModel.shared.refresh() } }
+            // madeira-bcd: the game's own switches and config file, and its recommended settings.
             .onAppear {
                 migrateEntryOptions()
                 prepareRecommendation()
@@ -2186,8 +2194,12 @@ struct LibraryGameConfigEditor: View {
 /// Game details › Find on Steam: searches the public store by title; choosing
 /// a result gives the entry that app's name and store artwork.
 struct SteamSearchView: View {
-    @State var query: String
+    @State private var query: String
     var select: (SteamMatch) -> Void
+
+    init(query: String, select: @escaping (SteamMatch) -> Void) {
+        _query = State(initialValue: query); self.select = select
+    }
     @Environment(\.dismiss) private var dismiss
     @State private var results: [SteamMatch] = []
     @State private var error: String?
@@ -2653,9 +2665,10 @@ struct RuntimeMemorySyncSettings: View {
     var open: (SettingsSheet) -> Void = { _ in }
     /// Bumped when a Settings sheet closes, so the rows re-read madeira.cfg.
     var refresh = 0
-    /// The keys this section owns; All settings leaves them out.
-    static let featuredKeys: Set<String> = ["pool", "vram-mb", "swap-mb", "env.MADEIRA_SWAP_COVERAGE", "inproc-sync",
-                                            "env.MADEIRA_FASTSYNC", "eco"]
+    /// The keys this section and Settings › Graphics own; All settings and the Settings
+    /// search leave them out.
+    static let featuredKeys: Set<String> = Set(["pool", "vram-mb", "swap-mb", "env.MADEIRA_SWAP_COVERAGE", "inproc-sync",
+                                                "env.MADEIRA_FASTSYNC", "eco"])
     // ml1241: 256 (the launch's lower bound) for the pool, 512 and 1024 for video memory
     // (winemetal accepts vram-mb >= 256), at the user's request.
     static let poolChoices = [0, 256, 512, 640, 768, 1024, 1152]          // 0 = the standard 896 MB
@@ -2738,9 +2751,9 @@ struct RuntimeMemorySyncSettings: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Code translation memory is reserved when a game starts. Low values can prevent large games from running.")
                 Text("Video memory is reported to the game. Automatic is recommended; high values can cause memory-related exits.")
-                Text("Memory fallback uses device storage when memory runs short. It can help a game finish loading, but uses storage and may reduce performance. Turn it on before changing coverage.")
-                Text("Keep the default synchronization method unless a game needs another method. Per-game synchronization options are in Game Options.")
-                Text("Lower power priority can reduce power use and game performance. It can also be changed while playing.")
+                Text("Memory fallback uses storage when RAM runs short. It can slow games down.")
+                Text("Change synchronization only if a game needs it.")
+                Text("Lower power priority reduces speed and power use.")
                 if changed { Text("Close and reopen Iridium to apply these changes.").foregroundStyle(.orange) }
             }
         }
@@ -2790,6 +2803,7 @@ struct LibraryPointerSettings: View {
         return rows
     }
 }
+
 
 struct LibraryPillGlass: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -2892,6 +2906,12 @@ struct LibraryHUD: View {
     @State private var eco = madeira_get_eco() != 0
     @State private var fenceMode = FPSOverlayFenceMode.current
     @State private var launchVisible = false
+    /// The starting screen came up under the Play button's flood (LaunchCurtain): the
+    /// cover's frame it gathers into, and whether it has landed there.
+    @State private var curtained = false
+    @State private var coverFrame: CGRect = .zero
+    /// The artwork the launch flood carried (cover and backdrop), shown here as well.
+    @ObservedObject private var curtain = LaunchCurtain.shared
     /// The Session menu's Controller binds page (keyboard-and-mouse mode).
     @State private var bindsPage = false
     @State private var menuPage = "Session"
@@ -2905,14 +2925,18 @@ struct LibraryHUD: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                if model.launching, let entry = model.activeEntry {
-                    launchBackdrop(entry).overlay(.black.opacity(0.65)).ignoresSafeArea()
+                if model.startingScreen, let entry = model.startingEntry {
+                    // Keep the screen visible if its motion is interrupted.
+                    Color.black.ignoresSafeArea()
+                    launchBackdrop(entry).scaleEffect(launchVisible || reduceMotion ? 1 : 1.12)
+                        .overlay(.black.opacity(0.65)).ignoresSafeArea()
+                        .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 1.1), value: launchVisible)
                     launchView(entry, geometry: geo)
                 }
-                if !model.launching && model.performance { LibraryFloatingItem(isMenu: false, viewport: geo.size, insets: geo.safeAreaInsets) }
-                if model.liveLogs && !model.launching { LibraryLiveLogs().frame(maxWidth: 550, maxHeight: 140).padding(.top, Self.topInset(geo) + 60).padding(.horizontal, 12).allowsHitTesting(false) }
-                if !model.sessionMessage.isEmpty { Text(model.sessionMessage).font(.caption).padding(10).background(.regularMaterial, in: Capsule()).frame(maxWidth: .infinity).padding(.top, Self.topInset(geo) + 12).allowsHitTesting(false) }
-                LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets)
+                if !model.startingScreen && model.performance { LibraryFloatingItem(isMenu: false, viewport: geo.size, insets: geo.safeAreaInsets) }
+                if model.liveLogs && !model.startingScreen { LibraryLiveLogs().frame(maxWidth: 550, maxHeight: 140).padding(.top, Self.topInset(geo) + 60).padding(.horizontal, 12).allowsHitTesting(false) }
+                if !model.sessionMessage.isEmpty && !model.startingScreen { Text(model.sessionMessage).font(.caption).padding(10).background(.regularMaterial, in: Capsule()).frame(maxWidth: .infinity).padding(.top, Self.topInset(geo) + 12).allowsHitTesting(false) }
+                if !model.startingScreen { LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets) }
                 if model.menu {
                     Color.black.opacity(0.5).ignoresSafeArea().onTapGesture { model.menu = false }.allowsHitTesting(!confirmClose).transition(.opacity)
                     (bindsPage ? AnyView(bindsMenu) : AnyView(menu))
@@ -2932,7 +2956,25 @@ struct LibraryHUD: View {
             }
             .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: model.menu)
             .onAppear {
-                withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.35)) { launchVisible = true }
+                // Under the Play button's flood (LaunchCurtain): once laid out, hand the
+                // cover's frame over and let the flood gather into it. Otherwise the
+                // parts arrive in turn (LaunchEntrance).
+                if model.startingScreen, LaunchCurtain.shared.covering {
+                    curtained = true
+                    // Drawn at once, without its own entrance: the flood is the entrance,
+                    // and it runs on Core Animation while this thread starts the session.
+                    var now = Transaction(); now.disablesAnimations = true
+                    withTransaction(now) { launchVisible = true }
+                    let style = launchWideEnabled && geo.size.width > geo.size.height
+                        ? LaunchCurtain.CoverStyle(corner: 20, shadowOpacity: 0.55, shadowRadius: 15, shadowOffset: CGSize(width: 0, height: 14))
+                        : LaunchCurtain.CoverStyle(corner: 14, shadowOpacity: 0.33, shadowRadius: 10, shadowOffset: .zero)
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(160))
+                        LaunchCurtain.shared.handOff(to: coverFrame, style: style, landed: {})
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: reduceMotion ? 0.15 : 0.35)) { launchVisible = true }
+                }
             }
             .preferredColorScheme(.dark)
         }.ignoresSafeArea()
@@ -2949,7 +2991,17 @@ struct LibraryHUD: View {
             else if model.menu { iridiumMenuNavigate(command) }
         }
     }
-    private func launchView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
+    /// Landscape: the cover large on the left, the title, status and controls beside it
+    /// (launchWideView). MADEIRA_LAUNCH_WIDE=0 keeps the centred column in landscape too.
+    private let launchWideEnabled = MadeiraConfig.flag("MADEIRA_LAUNCH_WIDE")   // 0: the starting screen is one centred column in landscape too
+    @ViewBuilder private func launchView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
+        if launchWideEnabled && geo.size.width > geo.size.height {
+            launchWideView(entry, geometry: geo)
+        } else {
+            launchColumnView(entry, geometry: geo)
+        }
+    }
+    private func launchColumnView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
         let compact = geo.size.height < 500
         let available = max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom)
         // A landscape phone would have the live log below the fold; it goes
@@ -2962,8 +3014,12 @@ struct LibraryHUD: View {
             VStack(spacing: compact ? 10 : 18) {
                 launchCover(entry).frame(width: compact ? 90 : 120, height: compact ? 135 : 180)
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
                 Text(entry.title).font(.title2.bold()).multilineTextAlignment(.center)
-                if dockStart.failure == nil { ProgressView().tint(.white) }
+                    .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 0, height: 14), still: curtained))
+                if dockStart.failure == nil {
+                    ProgressView().tint(.white).modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
+                }
                 if let failure = dockStart.failure {
                     Text("Madeira Dock stopped").font(.headline)
                     Text(failure).font(.caption).multilineTextAlignment(.center).frame(maxWidth: 360)
@@ -2976,18 +3032,20 @@ struct LibraryHUD: View {
                             if let note = DockInstallers.note {
                                 Text(note).font(.caption).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center).frame(maxWidth: 360)
                             }
-                            Text("\(Int(context.date.timeIntervalSince(model.launchStartedAt)))s")
+                            Text("\(Int(context.date.timeIntervalSince(model.startingSince)))s")
                                 .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.4))
                         }
                     }
+                    .frame(minHeight: 96, alignment: .top)
+                    .modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
                 } else {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         VStack(spacing: 8) {
-                            Text(model.launchSlow ? "Still starting…" : "Starting your game…").foregroundStyle(.white.opacity(0.7))
-                            Text("\(Int(context.date.timeIntervalSince(model.launchStartedAt)))s")
+                            Text(launchIdleStatus).foregroundStyle(.white.opacity(0.7))
+                            Text("\(Int(context.date.timeIntervalSince(model.startingSince)))s")
                                 .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.4))
                         }
-                    }
+                    }.modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
                 }
                 // The starting screen's controls are one row of glyph-only buttons, so a
                 // short screen does not push them below the fold. The words stay as
@@ -3004,7 +3062,7 @@ struct LibraryHUD: View {
                         launchGlyph("Show desktop", "macwindow") { dockStart.showDesktop(model) }
                             .accessibilityHint("Shows the Windows desktop")
                     }
-                }
+                }.modifier(LaunchEntrance(visible: launchVisible, step: 3, still: curtained))
                 if model.launchSlow && !dockStart.holding {
                     Button("Show game view") { model.showGameView(reason: "button") }.frame(minHeight: 44)
                 }
@@ -3022,6 +3080,86 @@ struct LibraryHUD: View {
         .frame(width: geo.size.width, height: available)
         .padding(.top, geo.safeAreaInsets.top).foregroundStyle(.white).transition(.opacity)
     }
+    /// The landscape starting screen: a large cover left of centre, and beside it the
+    /// title, what the start is doing in smaller type, and the same glyph row as the
+    /// column (close session, live log, show desktop). The live log opens under the row.
+    private func launchWideView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
+        let available = max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom)
+        let showLogs = model.launchLogs
+        let short = available < 440
+        let coverHeight = min(max(available * (showLogs ? 0.6 : 0.68), 150), 470)
+        let leading = max(geo.safeAreaInsets.leading + 28, geo.size.width * 0.09)
+        return HStack(alignment: .center, spacing: max(28, geo.size.width * 0.045)) {
+            launchCover(entry).frame(width: coverHeight * 2 / 3, height: coverHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.55), radius: 30, y: 14)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
+                .modifier(LaunchEntrance(visible: launchVisible, step: 0, rise: CGSize(width: -36, height: 0), scale: 0.86, still: curtained))
+            VStack(alignment: .leading, spacing: short ? 10 : 14) {
+                Text(entry.title).font(.system(size: short ? 28 : 38, weight: .bold))
+                    .lineLimit(2).minimumScaleFactor(0.6)
+                    .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 22, height: 0), still: curtained))
+                launchWideStatus.modifier(LaunchEntrance(visible: launchVisible, step: 2, rise: CGSize(width: 22, height: 0), still: curtained))
+                HStack(spacing: 12) {
+                    if dockStart.failure != nil {
+                        launchGlyph("Close session", "stop.circle") { model.requestQuit() }
+                    }
+                    launchGlyph(showLogs ? "Hide live log" : "Show live log", "text.alignleft", on: showLogs) {
+                        model.toggleLaunchLogs()
+                    }
+                    if dockStart.holding {
+                        launchGlyph("Show desktop", "macwindow") { dockStart.showDesktop(model) }
+                            .accessibilityHint("Shows the Windows desktop")
+                    }
+                    if model.launchSlow && !dockStart.holding {
+                        Button("Show game view") { model.showGameView(reason: "button") }
+                            .font(.subheadline.weight(.semibold)).buttonStyle(.bordered).tint(.white)
+                            .buttonBorderShape(.capsule).frame(minHeight: 44)
+                    }
+                }
+                .padding(.top, short ? 2 : 6)
+                .modifier(LaunchEntrance(visible: launchVisible, step: 3, rise: CGSize(width: 22, height: 0), still: curtained))
+                if showLogs {
+                    LibraryLiveLogs().frame(height: min(170, available * 0.3)).frame(maxWidth: 520)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .frame(maxWidth: 520, alignment: .leading)
+            .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: showLogs)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, leading).padding(.trailing, geo.safeAreaInsets.trailing + 24)
+        .frame(width: geo.size.width, height: available)
+        .padding(.top, geo.safeAreaInsets.top).foregroundStyle(.white)
+    }
+    /// The landscape status: a small spinner and one line of what the start is doing,
+    /// the one-time-install note and the elapsed time under it; or why the Dock stopped.
+    @ViewBuilder private var launchWideStatus: some View {
+        if let failure = dockStart.failure {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Madeira Dock stopped").font(.headline)
+                Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).frame(maxWidth: 440, alignment: .leading)
+            }
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let status = dockStart.active ? dockStatus : launchIdleStatus
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small).tint(.white)
+                        Text(status).font(.subheadline).foregroundStyle(.white.opacity(0.78))
+                            .contentTransition(.opacity).animation(.easeInOut(duration: 0.3), value: status)
+                    }
+                    if dockStart.active, let note = DockInstallers.note {
+                        Text(note).font(.caption).foregroundStyle(.white.opacity(0.6)).frame(maxWidth: 440, alignment: .leading)
+                    }
+                    Text("\(Int(context.date.timeIntervalSince(model.startingSince)))s")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.4))
+                }
+            }
+        }
+    }
     /// A round glyph button for the starting screen's control row.
     private func launchGlyph(_ label: String, _ symbol: String, on: Bool = false,
                              action: @escaping () -> Void) -> some View {
@@ -3036,12 +3174,28 @@ struct LibraryHUD: View {
     }
 
     /// The starting screen's cover and backdrop: a Dock start shows the game's
-    /// Steam artwork by App ID, any other session its library artwork.
+    /// Steam artwork by App ID, any other session its library artwork. A Steam game
+    /// without its own cover shows Steam's while it gets ready too, and the cover the
+    /// launch flood carried when there is one (the same pixels it lands on).
+    private func launchSteamID(_ entry: LibraryEntry) -> Int? {
+        dockStart.appID ?? (entry.coverFile == nil ? entry.steamAppID : nil)
+    }
     @ViewBuilder private func launchCover(_ entry: LibraryEntry) -> some View {
-        if let appID = dockStart.appID { SteamGameArtwork(appID: appID) } else { LibraryArtwork(entry: entry) }
+        if let image = curtain.cover(for: launchSteamID(entry)) {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else if let appID = launchSteamID(entry) { SteamGameArtwork(appID: appID) } else { LibraryArtwork(entry: entry) }
     }
     @ViewBuilder private func launchBackdrop(_ entry: LibraryEntry) -> some View {
-        if let appID = dockStart.appID { SteamLaunchBackdrop(appID: appID) } else { LibraryArtwork(entry: entry, backdrop: true) }
+        if let image = curtain.hero(for: launchSteamID(entry)) {
+            GeometryReader { g in
+                Image(uiImage: image).resizable().scaledToFill().frame(width: g.size.width, height: g.size.height).clipped()
+            }
+        } else if let appID = launchSteamID(entry) { SteamLaunchBackdrop(appID: appID) } else { LibraryArtwork(entry: entry, backdrop: true) }
+    }
+    /// What the start is doing before the Dock reports (or for a game without Dock).
+    private var launchIdleStatus: String {
+        if let entry = model.preparing { return model.startingJIT == entry.id ? "Enabling JIT…" : "Getting ready…" }
+        return model.launchSlow ? "Still starting…" : "Starting your game…"
     }
 
     /// What the Dock start is doing (DockStartStatus), read once a second.
@@ -3455,6 +3609,7 @@ enum LibraryKeyboard {
         fputs("[frontend-keyboard] key-window input activated\n", stderr)
     }
     static func hide() {
+        HardwareInput.shared.cancelPaste()
         if window != nil { fputs("[frontend-keyboard] key-window input deactivated\n", stderr) }
         input?.releaseModifiers(); input?.resignFirstResponder(); window?.isHidden = true
         window = nil; input = nil; previous?.makeKey(); previous = nil
@@ -3464,20 +3619,39 @@ final class LibraryKeyboardWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
 }
 final class LibraryKeyInput: UIView, UIKeyInput {
+    override var keyCommands: [UIKeyCommand]? {
+        let command = UIKeyCommand(input: "v", modifierFlags: .command, action: #selector(paste(_:)))
+        command.wantsPriorityOverSystemBehavior = true
+        return [command]
+    }
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) { return HardwareInput.shared.canPaste && UIPasteboard.general.hasStrings }
+        return super.canPerformAction(action, withSender: sender)
+    }
+    override func paste(_ sender: Any?) {
+        HardwareInput.shared.pasteClipboard()
+    }
+
     var hasText: Bool { true }
     override var canBecomeFirstResponder: Bool { true }
     private var held = Set<Int32>()
+    private weak var accessoryRow: UIStackView?
     var keyboardType: UIKeyboardType { get { .asciiCapable } set {} }
     var autocorrectionType: UITextAutocorrectionType { get { .no } set {} }
     var autocapitalizationType: UITextAutocapitalizationType { get { .none } set {} }
-    override var inputAccessoryView: UIView? {
+    private lazy var accessoryBar = makeAccessoryBar()
+    override var inputAccessoryView: UIView? { accessoryBar }
+    private func makeAccessoryBar() -> UIView {
         let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 650, height: 52)); scroll.backgroundColor = .secondarySystemBackground
         let row = UIStackView(); row.axis = .horizontal; row.spacing = 5
-        for (title, key) in [("Esc", 0x1b), ("Ctrl", 0x11), ("Shift", 0x10), ("Alt", 0x12), ("Tab", 0x09), ("Enter", 0x0d), ("←", 0x25), ("↑", 0x26), ("↓", 0x28), ("→", 0x27), ("Done", 0)] {
+        accessoryRow = row
+        for (title, key) in [("Paste", -1), ("Esc", 0x1b), ("Ctrl", 0x11), ("Shift", 0x10), ("Alt", 0x12), ("Tab", 0x09), ("Enter", 0x0d), ("←", 0x25), ("↑", 0x26), ("↓", 0x28), ("→", 0x27), ("Done", 0)] {
             let button = UIButton(type: .system); button.configuration = .tinted(); button.setTitle(title, for: .normal)
             button.widthAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
+                if key == -1 { HardwareInput.shared.pasteClipboard(); return }
+                HardwareInput.shared.cancelPaste()
                 let vk = Int32(key)
                 if key == 0 { LibraryKeyboard.hide() }
                 else if [0x10, 0x11, 0x12].contains(key) {
@@ -3494,14 +3668,22 @@ final class LibraryKeyInput: UIView, UIKeyInput {
     }
     private func press(_ vk: Int32) { winios_post_key(vk, 1); winios_post_key(vk, 0) }
     func insertText(_ text: String) {
+        if HardwareInput.shared.handlesTyping { return }
+        HardwareInput.shared.cancelPaste()
         for ch in text {
             guard let (vk, shift) = MetalBackedView.vkForChar(ch) else { continue }
             let temporary = shift && !held.contains(0x10)
             if temporary { winios_post_key(0x10, 1) }; press(vk); if temporary { winios_post_key(0x10, 0) }
         }
     }
-    func deleteBackward() { press(0x08) }
-    func releaseModifiers() { for key in held { winios_post_key(key, 0) }; held.removeAll() }
+    func deleteBackward() {
+        if !HardwareInput.shared.handlesTyping { HardwareInput.shared.cancelPaste(); press(0x08) }
+    }
+    func releaseModifiers() {
+        for key in held { winios_post_key(key, 0) }
+        held.removeAll()
+        for case let button as UIButton in accessoryRow?.arrangedSubviews ?? [] { button.isSelected = false }
+    }
 }
 
 /// A desktop session (the Desktop entry) draws through Winios's compositor view,
