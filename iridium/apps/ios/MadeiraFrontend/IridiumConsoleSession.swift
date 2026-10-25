@@ -182,11 +182,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
 
     @MainActor private func openPhase3(game: IridiumConsoleGame, url: URL, folder: URL, system: URL, owner: IridiumRuntimeLease, phase3JITReady: Bool? = nil) {
-        let ownsSharedJIT = game.runtimeID == "dolphin" || game.runtimeID == "azahar"
-        if ownsSharedJIT, phase3JITReady == nil {
+        if phase3JITReady == nil {
             if game.runtimeID == "dolphin" { dolphinSettings = .load(game.id) }
-            let name = game.runtimeID == "azahar" ? "Azahar" : "Dolphin"
-            phase3PreparingJIT = true; phase3JITRequested = true; phase3Status = "Preparing \(name) JIT"
+            phase3PreparingJIT = true; phase3JITRequested = true; phase3Status = "Preparing shared JIT"
             JITCoordinator.shared.enable(requiresAttachedDebugger: true) { result in
                 self.phase3PreparingJIT = false
                 guard self.lease == owner else { return }
@@ -195,13 +193,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 case .success:
                     self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, phase3JITReady: true)
                 case .failure(let failure):
-                    let message = "\(name) needs the shared JIT system. Check JIT Settings and try again. " + failure.localizedDescription
+                    let message = "This emulator needs the shared JIT system. Check JIT Settings and try again. " + failure.localizedDescription
                     self.queue.async { self.fail(message, owner: owner) }
                 }
             }
             return
         }
-        if ownsSharedJIT, phase3JITReady != true {
+        if phase3JITReady != true {
             queue.async { self.fail(IridiumRuntimeError.jitRequired.localizedDescription, owner: owner) }; return
         }
         guard let frameworks = Bundle.main.privateFrameworksURL else {
@@ -238,8 +236,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             error = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
-        if game.runtimeID == "azahar", !ir_phase3_azahar_configure_jit(jit26_prepare_region) {
-            ir_phase3_stop(); error = "The 3DS core could not configure shared JIT."; return
+        let nativeController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
+        if game.runtimeID != "dolphin", !ir_phase3_configure_jit(jit26_prepare_region) {
+            queue.async { self.terminalFailure = true }
+            ir_phase3_stop(); error = "The core could not configure shared JIT."; return
         }
         if game.runtimeID == "dolphin" {
             dolphinSettings = .load(game.id); dolphinStateStatus = nil; dolphinStatePending = false
@@ -249,12 +249,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 guard let output else { return }
                 IridiumConsoleSession.shared.fillDolphinInput(player, output)
             }, jit26_prepare_region) else {
+                queue.async { self.terminalFailure = true }
                 ir_phase3_stop(); error = "This Dolphin component does not support the app interface."; return
             }
             dolphinMotion.start(enabled: dolphinSettings.motion)
             monitorDolphin()
         }
-        phase3Controller = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
+        phase3Controller = nativeController
         diagnostics.phase = "upstream engine starting"
         if requested == .pause { ir_phase3_pause(true) }
     }

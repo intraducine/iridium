@@ -141,6 +141,7 @@ struct IridiumPlayerCloseConfirmation: View {
     let close: () -> Void
     let command: (String) -> Void
     @FocusState private var keyboard: Bool
+    @State private var contentHeight: CGFloat = 420
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -155,8 +156,10 @@ struct IridiumPlayerCloseConfirmation: View {
                             IridiumPlayerMenuRow(title: "Close Game", symbol: "stop.circle",
                                                  selected: selection == "Close Game", destructive: true, action: close)
                         }.padding(22)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                     }.onChange(of: selection) { _, title in proxy.scrollTo(title, anchor: .center) }
-                }.frame(maxWidth: 420, maxHeight: min(420, max(0, geometry.size.height - 32)))
+                }.frame(maxWidth: 420)
+                    .frame(height: min(contentHeight, min(420, max(0, geometry.size.height - 32))))
                     .modifier(IridiumGlassSurface(radius: 28)).padding(16)
             }
         }.accessibilityAddTraits(.isModal)

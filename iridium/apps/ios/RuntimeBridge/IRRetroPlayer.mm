@@ -19,6 +19,7 @@
 #include "libretro.h"
 #include "IRPhase3.h"
 #include "IRAudioVolume.h"
+#include "IRFlycastFaultRoute.h"
 
 @interface IRRetroSurface : UIView
 @end
@@ -54,6 +55,7 @@ struct RetroAPI {
 @interface IRRetroPlayer : UIViewController {
 @public
     RetroAPI api;
+    IRFlycastFaultRoute flycastFaultRoute;
     dispatch_queue_t owner;
     dispatch_source_t clock;
     IRPhase3Event event;
@@ -135,6 +137,10 @@ static bool environment(unsigned command, void *data) {
     case RETRO_ENVIRONMENT_GET_JIT_CAPABLE: *(bool *)data = p->jit; return true;
     case RETRO_ENVIRONMENT_GET_LANGUAGE: *(unsigned *)data = RETRO_LANGUAGE_ENGLISH; return true;
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *(unsigned *)data = 2; return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
+        auto options = (retro_core_options_v2_intl *)data;
+        return options && options->us && environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, options->us);
+    }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: {
         auto definitions = ((retro_core_options_v2 *)data)->definitions;
         for (auto item = definitions; item && item->key; ++item)
@@ -145,6 +151,10 @@ static bool environment(unsigned command, void *data) {
         for (auto item = (retro_core_option_definition *)data; item && item->key; ++item)
             if (!p->options.count(item->key)) p->options[item->key] = item->default_value ? item->default_value : item->values[0].value;
         return true;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
+        auto options = (retro_core_options_intl *)data;
+        return options && options->us && environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, options->us);
     }
     case RETRO_ENVIRONMENT_SET_VARIABLES: {
         for (auto item = (retro_variable *)data; item && item->key; ++item) {
@@ -371,6 +381,9 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     api.environment(environment); api.video(videoFrame); api.audio(audioSample); api.batch(audioBatch); api.poll(pollInput); api.input(inputState);
     if(!api.metalSurface)context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
     [EAGLContext setCurrentContext:context];
+    if(engine=="flycast" && !flycastFaultRoute.begin()) {
+        report(3,"The Dreamcast memory fault handler could not start.");[self finish];return;
+    }
     initializationEntered=true;api.init();initialized=true;
     retro_game_info content{}; content.path = game.c_str();
     loadEntered=true;bool accepted=api.load(&content);loadReturned=true;
@@ -405,6 +418,8 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         needsContextReset = false;
     }
     api.controller(0, RETRO_DEVICE_JOYPAD);
+    // Flycast refreshes expansion slots only after every port is configured.
+    if(engine=="flycast")for(unsigned port=1;port<4;++port)api.controller(port, RETRO_DEVICE_NONE);
     double rate = info.timing.sample_rate, fps = info.timing.fps;
     if (!std::isfinite(rate) || rate < 8000 || rate > 192000 || !std::isfinite(fps) || fps < 1 || fps > 240) { report(3, "The core reported invalid audio or video timing."); [self finish]; return; }
     samples.resize(audioCapacity * 2);
@@ -548,6 +563,9 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         return;
     }
     loaded=false;initialized=false;
+    if(!flycastFaultRoute.restore()) {
+        report(3,"The Dreamcast memory fault handler could not close. Fully close and reopen Iridium.");return;
+    }
     [audioEngine stop];if(audioSource)[audioEngine detachNode:audioSource];if(audioSpeed)[audioEngine detachNode:audioSpeed];audioSource=nil;audioSpeed=nil;audioEngine=nil;
     if(context) {
         glDeleteFramebuffers(1,&renderTarget);glDeleteFramebuffers(1,&displayTarget);

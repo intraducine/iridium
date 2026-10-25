@@ -11,7 +11,7 @@ static Create create;
 static void (*pause_player)(bool), (*stop_player)(void);
 static uint64_t (*frames)(void);
 static const IRDolphinAPI *dolphin;
-static bool (*azahar_prepare_jit)(IRPhase3JITPrepare);
+static bool (*prepare_jit)(IRPhase3JITPrepare);
 // Loaded images deliberately remain resident. Clean shutdown releases the
 // session, never executable code that an upstream worker might still reference.
 static const char *binary(const char *engine) {
@@ -53,12 +53,12 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
     }
     create = next; pause_player = p; stop_player = s; frames = f;
     dolphin = NULL;
-    azahar_prepare_jit = NULL;
-    if (!strcmp(engine, "azahar")) {
+    prepare_jit = NULL;
+    if (strcmp(engine, "dolphin")) {
         void *core_image = dlopen(core, RTLD_NOW | RTLD_LOCAL);
-        if (core_image) azahar_prepare_jit = (bool (*)(IRPhase3JITPrepare))dlsym(core_image, "ir_phase3_core_prepare_jit");
-        if (!azahar_prepare_jit) {
-            event(generation, 3, "The bundled 3DS core does not support shared JIT. Reinstall Iridium."); return NULL;
+        if (core_image) prepare_jit = (bool (*)(IRPhase3JITPrepare))dlsym(core_image, "ir_phase3_core_prepare_jit");
+        if (!prepare_jit) {
+            event(generation, 3, "The bundled core does not support shared JIT. Reinstall Iridium."); return NULL;
         }
     }
     if (!strcmp(engine, "dolphin")) {
@@ -76,8 +76,8 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
 void ir_phase3_pause(bool paused) { if (pause_player) pause_player(paused); }
 void ir_phase3_stop(void) { if (stop_player) stop_player(); }
 uint64_t ir_phase3_frames(void) { return frames ? frames() : 0; }
-bool ir_phase3_azahar_configure_jit(IRPhase3JITPrepare prepare) {
-    return prepare && azahar_prepare_jit && azahar_prepare_jit(prepare);
+bool ir_phase3_configure_jit(IRPhase3JITPrepare prepare) {
+    return prepare && prepare_jit && prepare_jit(prepare);
 }
 bool ir_phase3_dolphin_configure(IRDolphinOptions options, IRDolphinPoll poll, IRDolphinJITPrepare prepare) {
     if (!dolphin || !poll) return false;

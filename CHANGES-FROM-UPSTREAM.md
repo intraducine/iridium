@@ -72,10 +72,16 @@ interfaces. [Console documentation](docs/console-engines.md) lists build entries
   JIT. Generated locks initialize after callback registration. Checked-memory mode
   preserves debugger exception handlers. The main Vulkan renderer uses an iOS
   Metal surface and source-built MoltenVK 1.4.1. Libretro retains input/audio/saves.
-- **Play!:** per-game configuration, checked CodeGen protection results, executable
+- **Play!:** per-game configuration, CodeGen allocations and block-link writes
+  through shared JIT aliases, pooled executable pages for small blocks, executable
   probe, and upstream VM pause with GS mailbox draining.
-- **Flycast:** generated ES3 capability, executable probe, upstream VM stop/resume,
-  and nonvolatile-storage flush.
+- **Flycast:** generated ES3 capability, shared JIT aliases for SH4, ARM7 and DSP
+  code, executable probe, upstream VM stop/resume, and nonvolatile-storage flush.
+  The host registers international core options using its English language
+  selection and configures all Flycast controller ports before the first frame.
+  During Flycast sessions, memory faults follow upstream's iOS signal
+  route while JIT breakpoints stay with the shared debugger. Shutdown restores
+  the previous memory-fault route before releasing JIT.
 
 ## Native PPSSPP
 

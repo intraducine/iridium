@@ -31,17 +31,29 @@ extern "C" bool ir_phase3_core_pause(bool paused) {
 '''
     (directory / 'main_libretro.cpp').write_text('#include <chrono>\n' + main.replace(hook, replacement) + pause)
     memory = (source / 'deps/CodeGen/src/MemoryFunction.cpp').read_text()
-    allocation = 'vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);'
-    if memory.count(allocation) != 1:
-        raise ValueError('Play allocation hook changed')
-    memory = '#include <stdexcept>\n' + memory.replace(allocation,
-        'if (' + allocation[:-1] + ' != KERN_SUCCESS) throw std::runtime_error("Executable allocation failed");')
-    # Upstream assertions disappear in Release. Fail before executing or
-    # rewriting a page when any of the three W^X transitions was rejected.
-    if memory.count('assert(result == 0);') != 3:
-        raise ValueError('Play protection hooks changed')
-    memory = memory.replace('assert(result == 0);', 'if (result != KERN_SUCCESS) throw std::runtime_error("Executable protection failed");')
+    start = memory.index('\tvm_size_t page_size = 0;')
+    end = memory.index('#elif defined(MEMFUNC_USE_MMAP)', start)
+    memory = memory[:start] + '''\tvoid *write = nullptr;
+\tm_code = ir_shared_jit_allocate(size, &write);
+\tif(!m_code) throw std::runtime_error("Shared JIT allocation failed");
+\tm_size = size;
+\tmemcpy(write, code, size);
+''' + memory[end:]
+    release = 'vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size);'
+    if memory.count(release) != 1: raise ValueError('Play release hook changed')
+    memory = memory.replace(release, 'ir_shared_jit_release(m_code);')
+    for protection in ('VM_PROT_READ | VM_PROT_WRITE', 'VM_PROT_READ | VM_PROT_EXECUTE'):
+        hook = '\tkern_return_t result = vm_protect(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size, 0, ' + protection + ');\n\tassert(result == 0);'
+        if memory.count(hook) != 1: raise ValueError('Play modification hook changed')
+        memory = memory.replace(hook, '\t// Shared JIT keeps separate writable and executable addresses.')
+    memory = '#include <stdexcept>\n#include <unistd.h>\n#include "IRSharedJITMemory.h"\n' + memory
     (directory / 'MemoryFunction.cpp').write_text(memory)
+    block = (source / 'Source/BasicBlock.cpp').read_text()
+    hook = 'auto code = reinterpret_cast<uint8*>(m_function.GetCode());'
+    if block.count(hook) != 2: raise ValueError('Play block modification hooks changed')
+    block = block.replace(hook, '''auto code = reinterpret_cast<uint8*>(ir_shared_jit_write(m_function.GetCode()));
+\tif(!code) throw std::runtime_error("Shared JIT write address missing");''')
+    (directory / 'BasicBlock.cpp').write_text('#include <stdexcept>\n#include "IRSharedJITMemory.h"\n' + block)
 
 
 def arguments():

@@ -1,4 +1,5 @@
 """Flycast-only source overlays for the shared builder."""
+import re
 
 
 def generated(ROOT, directory):
@@ -20,6 +21,23 @@ extern "C" bool ir_phase3_core_pause(bool paused) {
     # otherwise advertises ES2 regardless of HAVE_OPENGLES3.
     replacement = '#ifdef HAVE_OPENGLES3\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES3;\n#elif defined(HAVE_OPENGLES)\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;'
     (directory / 'glsm.c').write_text(glsm.replace(hook, replacement))
+    memory = (ROOT / 'vendor/Flycast/core/linux/posix_vmem.cpp').read_text()
+    start = memory.index('// Prepares the code region for JIT operations')
+    end = memory.index('\n} // namespace virtmem', start)
+    (directory / 'posix_vmem.cpp').write_text(memory[:start] + memory[end:])
+    # Upstream's dual-address code generators already translate RW to RX.
+    # Keep their write aliases writable instead of toggling them executable.
+    for path, function in [('core/rec-ARM64/rec_arm64.cpp', 'jitWriteProtect'),
+                           ('core/hw/arm7/arm7_rec_arm64.cpp', 'JITWriteProtect'),
+                           ('core/hw/aica/dsp_arm64.cpp', 'JITWriteProtect')]:
+        text = (ROOT / 'vendor/Flycast' / path).read_text()
+        pattern = r'(static void ' + function + r'\([^\n]*\)\n)\{.*?\n\}'
+        text, count = re.subn(pattern, r'\1{\n}', text, count=1, flags=re.S)
+        if count != 1: raise ValueError('Flycast code write hook changed: ' + path)
+        if path.endswith('dsp_arm64.cpp'):
+            if text.count('DynCode = pCodeBuffer;') != 1: raise ValueError('Flycast DSP entry changed')
+            text = text.replace('DynCode = pCodeBuffer;', 'DynCode = pCodeBuffer + rx_offset;')
+        (directory / path.split('/')[-1]).write_text(text)
 
 
 def arguments():

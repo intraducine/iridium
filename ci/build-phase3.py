@@ -67,9 +67,9 @@ def source_state(source):
 def input_paths(engine):
     names = ['ci/engine_pins.py', 'ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
              'iridium/apps/ios/RuntimeBridge/IRPhase3.h']
-    bridge = {'host': ['IRRetroPlayer.mm'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
-              'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
-              'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
+    bridge = {'host': ['IRRetroPlayer.mm', 'IRFlycastFaultRoute.h'], 'dolphin': ['IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
+              'play': ['IRPlayProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
+              'flycast': ['IRFlycastProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
     if engine != 'host': names += ['ci/phase3_' + engine + '.py', 'ci/' + engine + '-targets.cmake']
     if engine in ('host', 'dolphin'):
@@ -126,7 +126,7 @@ def generated(engine, destination):
     directory = destination / 'embedding'
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'native.exports').write_text('\n'.join(sorted(DOLPHIN_EXPORTS if engine == 'dolphin' else NATIVE_EXPORTS)) + '\n')
-    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else '') + ('_ir_phase3_core_prepare_jit\n_ir_phase3_core_jit_status\n_ir_phase3_core_set_metal_surface\n' if engine == 'azahar' else ''))
+    (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else '') + ('_ir_phase3_core_prepare_jit\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_jit_status\n_ir_phase3_core_set_metal_surface\n' if engine == 'azahar' else ''))
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
     if engine == 'azahar':
         azahar_module().generated(ROOT, directory)
@@ -221,8 +221,8 @@ def build(engine, sdk, jobs):
                   recipeSHA256=digest(Path(__file__)),
                   embedding={p.relative_to(embedding).as_posix(): digest(p) for p in embedding.rglob('*') if p.is_file()})
     bridge_sources = {'dolphin': ['IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRPhase3.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
-        'play': ['IRPlayProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
-        'flycast': ['IRFlycastProbe.cpp', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}[engine]
+        'play': ['IRPlayProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
+        'flycast': ['IRFlycastProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}[engine]
     record['adapterSources'] = {name: digest(BRIDGE / name) for name in bridge_sources}
     if engine == 'azahar':
         notices(expanded, destination, allowed=archive_files)

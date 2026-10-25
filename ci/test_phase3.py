@@ -25,6 +25,58 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 class Phase3Tests(unittest.TestCase):
 
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for player ownership checks')
+    def test_failed_jit_configuration_releases_retained_player(self):
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        start = source.index('        guard let controller else {')
+        gate = source[start:source.index('        if game.runtimeID == "dolphin" {', start)]
+        handoff = next(line for line in source[start:].splitlines() if line.strip().startswith('phase3Controller ='))
+        fixture = '''import Foundation
+final class UIViewController {
+    static var live = 0
+    init() { Self.live += 1 }
+    deinit { Self.live -= 1 }
+}
+struct Game { var runtimeID: String }
+final class Queue { func async(execute: () -> Void) { execute() } }
+@MainActor var configurationAccepted = false
+@MainActor var stops = 0
+let jit26_prepare_region = 1
+@MainActor func ir_phase3_configure_jit(_ prepare: Int) -> Bool { configurationAccepted }
+@MainActor func ir_phase3_stop() { stops += 1 }
+@MainActor final class Host {
+    let queue = Queue(), owner = 1
+    var error: String?, terminalFailure = false, completions = 0
+    var phase3Controller: UIViewController?
+    func complete(_ owner: Int) { completions += 1 }
+    func open(_ controller: UnsafeMutableRawPointer?, game: Game) {
+GATE
+HANDOFF
+    }
+}
+MainActor.assumeIsolated {
+    for runtime in ["azahar", "play", "flycast"] {
+        let failed = Host()
+        failed.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: runtime))
+        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.error != nil && failed.terminalFailure)
+    }
+    precondition(stops == 3)
+    configurationAccepted = true
+    let ready = Host()
+    ready.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: "play"))
+    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.error == nil)
+    ready.phase3Controller = nil
+    precondition(UIViewController.live == 0)
+    let unavailable = Host()
+    unavailable.open(nil, game: Game(runtimeID: "play"))
+    precondition(unavailable.terminalFailure && unavailable.completions == 1 && UIViewController.live == 0)
+}
+'''.replace('GATE', gate).replace('HANDOFF', handoff)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root / 'main.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(root / 'main.swift'), '-o', str(root / 'check')], check=True, timeout=30)
+            subprocess.run([str(root / 'check')], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for resume checks')
     def test_shared_jit_resume_waits_for_live_debugger_and_preserves_stop(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
@@ -83,7 +135,7 @@ MainActor.assumeIsolated {
             subprocess.run([str(root / 'check')], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for Dolphin launch checks')
-    def test_dolphin_and_azahar_launch_require_shared_jit_and_preserve_cancellation(self):
+    def test_advanced_launches_require_shared_jit_and_preserve_cancellation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         launch = source[source.index('    @MainActor private func openPhase3('):source.index('        guard let frameworks =', source.index('    @MainActor private func openPhase3('))]
         settings = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumDolphinSettings.swift').read_text()
@@ -127,7 +179,7 @@ MainActor.assumeIsolated {
     defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
     let restored = IridiumDolphinSettings.load(id)
     precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
-    for runtimeID in ["dolphin", "azahar"] {
+    for runtimeID in ["dolphin", "azahar", "play", "flycast"] {
     let failed = Host(); failed.start(runtimeID: runtimeID)
     precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
@@ -566,7 +618,11 @@ extern "C" const char* ir_play_save_root() { return "isolated-root"; }
 ''')
             memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'
             memory.parent.mkdir(parents=True)
-            memory.write_text('vm_allocate(mach_task_self(), reinterpret_cast<vm_address_t*>(&m_code), allocSize, TRUE);\n' + 'assert(result == 0);\n' * 3)
+            memory.write_text('\tvm_size_t page_size = 0;\nold allocation\n#elif defined(MEMFUNC_USE_MMAP)\n'
+                'vm_deallocate(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size);\n' + ''.join(
+                '\tkern_return_t result = vm_protect(mach_task_self(), reinterpret_cast<vm_address_t>(m_code), m_size, 0, ' + protection + ');\n\tassert(result == 0);\n'
+                for protection in ('VM_PROT_READ | VM_PROT_WRITE', 'VM_PROT_READ | VM_PROT_EXECUTE')))
+            (source.parent.parent / 'BasicBlock.cpp').write_text('auto code = reinterpret_cast<uint8*>(m_function.GetCode());\n' * 2)
             (root / 'ci').mkdir()
             shutil.copy2(ROOT / 'ci/phase3_play.py', root / 'ci/phase3_play.py')
             with patch.object(builder, 'ROOT', root): generated = builder.generated('play', root / 'output')
@@ -660,6 +716,16 @@ int main() {
             source.write_text('#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;\n#endif\n')
             main = root / 'vendor/Flycast/shell/libretro/libretro.cpp'
             main.parent.mkdir(parents=True); main.write_text('static bool first_run = true;\n')
+            memory = root / 'vendor/Flycast/core/linux/posix_vmem.cpp'
+            memory.parent.mkdir(parents=True)
+            memory.write_text('// Prepares the code region for JIT operations\nold allocator\n} // namespace virtmem\n')
+            for name, function in [('rec-ARM64/rec_arm64.cpp', 'jitWriteProtect'),
+                                   ('hw/arm7/arm7_rec_arm64.cpp', 'JITWriteProtect'),
+                                   ('hw/aica/dsp_arm64.cpp', 'JITWriteProtect')]:
+                path = root / 'vendor/Flycast/core' / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('static void ' + function + '(bool enable)\n{\nold protection\n}\n' +
+                    ('DynCode = pCodeBuffer;\n' if name.endswith('dsp_arm64.cpp') else ''))
             (root / 'ci').mkdir()
             shutil.copy2(ROOT / 'ci/phase3_flycast.py', root / 'ci/phase3_flycast.py')
             with patch.object(builder, 'ROOT', root):
