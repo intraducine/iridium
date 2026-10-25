@@ -260,6 +260,19 @@ actor CompletionGate {
                "Windows executable basename was not normalized")
         expect(IridiumArtworkMatcher.query("Sample (Europe) (v1.2).CSO", platform: .psp) == "Sample",
                "PSP extension or recognized revision was not removed")
+        expect(IridiumArtworkMatcher.query("2403 - God of War - Ghost of Sparta (USA) (En,Fr,Es) (v2.00).iso", platform: .psp)
+               == "God of War - Ghost of Sparta", "PSP release number prevented identification")
+        expect(IridiumArtworkMatcher.query("New Super Mario Bros. Wii (USA) (En,Fr,Es) (Rev 2).nkit.iso", platform: .wii)
+               == "New Super Mario Bros. Wii", "compound Wii extension prevented identification")
+        expect(IridiumArtworkMatcher.query("Sonic Adventure (Europe) (EnJaFrDeEs).chd", platform: .dreamcast)
+               == "Sonic Adventure", "joined language codes prevented identification")
+        let gta = game("gta-v3", "Grand Theft Auto - San Andreas (USA) (v3.00)", .playStation2)
+        expect(IridiumArtworkMatcher.exactMatch("Grand Theft Auto - San Andreas (USA) (v3.00) (Rev 1)", platform: .playStation2,
+            candidates: [game("gta-v1", "Grand Theft Auto - San Andreas (USA) (v1.03)", .playStation2),
+                         game("gta-eu", "Grand Theft Auto - San Andreas (Europe) (v3.00)", .playStation2), gta]) == gta,
+            "extra dump revision hid an unambiguous regional/version match")
+        expect(IridiumArtworkMatcher.query("1942 - The Pacific Air War.exe", platform: .windows) == "1942 - The Pacific Air War",
+               "numeric game title was mistaken for a console release number")
         expect(IridiumArtworkMatcher.query(" Sample (Europe).gb ", platform: .gameBoy) == "Sample",
                "surrounding whitespace blocked extension handling")
         expect(IridiumArtworkMatcher.exactMatch(String(repeating: "x", count: 2049), platform: .gameBoy,
