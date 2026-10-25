@@ -307,6 +307,9 @@ def check_payload(app):
         raise ValueError("The built-in JIT helper extension is missing")
     for helper in helpers:
         helper_info = plistlib.loads((helper / "Info.plist").read_bytes())
+        for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+            if not info.get(key) or helper_info.get(key) != info[key]:
+                raise ValueError("Helper version differs from the app: " + key)
         binary = executable_path(helper, helper_info)
         if not binary.is_file() or binary.read_bytes()[:4] not in MACHO:
             raise ValueError("Helper extension executable is missing")

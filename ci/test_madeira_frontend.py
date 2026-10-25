@@ -264,6 +264,10 @@ class FrontendImportTests(unittest.TestCase):
                 'HEADER_SEARCH_PATHS': ['$(inherited)', 'existing-include'],
                 'OTHER_LDFLAGS': ['$(inherited)', '-lexisting']}},
             'release': {'isa': 'XCBuildConfiguration', 'buildSettings': {}},
+            'helper-debug': {'isa': 'XCBuildConfiguration', 'buildSettings': {
+                'MARKETING_VERSION': '0.1.3', 'CURRENT_PROJECT_VERSION': '99'}},
+            'helper-release': {'isa': 'XCBuildConfiguration', 'buildSettings': {
+                'MARKETING_VERSION': '0.1.3', 'CURRENT_PROJECT_VERSION': '99'}},
         }
         with patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
             result = BUILD.project(pathlib.Path('/fixture/project.pbxproj'),
@@ -271,6 +275,9 @@ class FrontendImportTests(unittest.TestCase):
         target = result['target']
         self.assertEqual(target['name'], 'Iridium')
         self.assertEqual(result['product']['path'], 'Iridium.app')
+        for configuration in ('debug', 'release', 'helper-debug', 'helper-release'):
+            self.assertEqual(result[configuration]['buildSettings']['MARKETING_VERSION'], '0.2.1')
+            self.assertEqual(result[configuration]['buildSettings']['CURRENT_PROJECT_VERSION'], '1')
         embeds = [result[key] for key in target['buildPhases']
                   if result[key]['isa'] == 'PBXCopyFilesBuildPhase']
         self.assertEqual(len(embeds), 1)

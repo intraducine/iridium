@@ -127,8 +127,6 @@ def project(source, names):
         settings = objects[config]['buildSettings']
         settings['PRODUCT_NAME'] = 'Iridium'
         settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
-        settings['MARKETING_VERSION'] = '0.2.1'
-        settings['CURRENT_PROJECT_VERSION'] = '1'
         def append(key, additions, unique=True):
             existing = settings.get(key, ['$(inherited)'])
             if isinstance(existing, str): existing = shlex.split(existing)
@@ -142,6 +140,8 @@ def project(source, names):
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
+            value['buildSettings']['MARKETING_VERSION'] = '0.2.1'
+            value['buildSettings']['CURRENT_PROJECT_VERSION'] = '1'
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
             value['buildSettings']['MADEIRA_BUNDLE_IDENTIFIER'] = 'software.iridium'
     return data
