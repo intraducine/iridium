@@ -71,7 +71,8 @@ extern "C" void *ir_shared_jit_allocate(size_t size, void **write_pointer) {
     if (!write_pointer) return nullptr;
     *write_pointer = nullptr;
     const size_t page = getpagesize();
-    if ((!memory_api.allocate && !prepare_region.load()) || !size || size > 128 * 1024 * 1024) return nullptr;
+    if ((!memory_api.allocate && !prepare_region.load()) || !size || size > SIZE_MAX - page ||
+        (!memory_api.allocate && size > 128 * 1024 * 1024)) return nullptr;
     std::lock_guard<std::mutex> guard(mapping_lock);
     // CodeGen's small blocks share a prepared region instead of stopping the
     // whole app in the debugger for every block. Keep one idle pool for reuse.

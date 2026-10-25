@@ -215,10 +215,14 @@ int ir_native_psp_exec_prepare_shared(uint64_t owner, const IRJITMemoryAPI *api,
             if (!api->allocate(a.bytes, &rx, &rw)) { phase = Phase::failed; return IR_PSP_EXEC_PREPARATION; }
             a.rx = static_cast<uint8_t *>(rx); a.rw = static_cast<uint8_t *>(rw);
         }
-        if (!wireRange((uintptr_t)a.rx, a.bytes) || !a.rw || a.rx == a.rw) {
+        if (a.rx == a.rw) {
             phase = Phase::failed; return IR_PSP_EXEC_MAPPING;
         }
         for (auto *view : {a.rx, a.rw}) {
+            uintptr_t address = (uintptr_t)view;
+            if (!address || (address & (page - 1)) || a.bytes > UINTPTR_MAX - address) {
+                phase = Phase::failed; return IR_PSP_EXEC_RANGE;
+            }
             auto other = view == a.rx ? a.rw : a.rx;
             if (range((uintptr_t)view, a.bytes, (uintptr_t)other, 1)) { phase = Phase::failed; return IR_PSP_EXEC_RANGE; }
             for (size_t j = 0; j < i; ++j) for (auto *previous : {arenas[j].rx, arenas[j].rw}) {

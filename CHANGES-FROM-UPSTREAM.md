@@ -129,6 +129,8 @@ Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
 ## Shared JIT and controls
 
 The app owns a prepared executable-memory pool through `IRJITMemoryAPI` version 1.
+Shared allocations use the process address limits, not the older PSP helper
+protocol's 64 GiB wire limit. Legacy helper validation remains unchanged.
 Console adapters borrow read/execute and read/write views, return their leases
 only after shutdown, and keep the prepared mappings until the app exits. The
 shared coordinator uses its owned built-in helper, closes it and restores the
@@ -137,6 +139,8 @@ keeps its own compiler, execution probe, library and version pin.
 
 Dolphin's extension interface is version 2. Its TXM allocator delegates code
 blocks to the shared service instead of retaining a private 512 MiB region.
+Its blocks retain full-page alignment for the upstream protection calls. The
+shared pool admits its 256 MiB ARM64 cache without changing legacy helper limits.
 Azahar, Play and Flycast negotiate the memory service separately from the player
 interface. PSP's additive shared-memory entry point retains its four bounded
 arenas between clean sessions, validates their permissions, and repeats its

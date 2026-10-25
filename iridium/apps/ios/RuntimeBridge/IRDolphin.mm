@@ -73,6 +73,9 @@ static IRDolphinPlayer *active;
 static std::atomic<bool> maintenanceUncertain{false};
 static std::atomic<ptrdiff_t> sharedDifference{0};
 extern "C" void *ir_dolphin_jit_allocate(size_t bytes) {
+    const size_t page = getpagesize();
+    if (!bytes || bytes > SIZE_MAX - (page - 1)) return nullptr;
+    bytes = (bytes + page - 1) & ~(page - 1);
     void *write = nullptr;
     void *rx = ir_shared_jit_allocate(bytes, &write);
     if (!rx) return nullptr;

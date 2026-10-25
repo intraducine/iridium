@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <map>
 #include <string>
 #include <vector>
@@ -487,6 +488,11 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
                     self->diagnosticTime=now;self->diagnosticFrames=frames;
                 }
             }
+        }
+        catch (const std::exception &failure) {
+            std::fprintf(stderr,"[Console core] frame exception: %.240s\n",failure.what());
+            report(3,"This game stopped unexpectedly. Your saves have been kept.");
+            [self finish];
         }
         catch (...) {
             report(3,"This game stopped unexpectedly. Your saves have been kept.");

@@ -18,14 +18,21 @@ class AppJITMemoryTests(unittest.TestCase):
 #include "IRPSPExecutableMemory.h"
 #include "IRSharedJITMemory.h"
 #include <cassert>
+#include <atomic>
 #include <cstring>
+#include <initializer_list>
+#include <mach/mach.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <libkern/OSCacheControl.h>
 extern "C" bool ir_phase3_core_prepare_memory(const IRJITMemoryAPI *);
+DOLPHIN_ADAPTER
 static unsigned preparations;
 static void *prepare(void *p, size_t bytes) {
     assert(!p); ++preparations;
-    return mmap(nullptr, bytes, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
+    void *rx = mmap((void *)0x7000000000ULL, bytes, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
+    assert((uintptr_t)rx >= (1ULL << 36)); // Same high placement observed on the phone.
+    return rx;
 }
 static void emit(void *rx, void *rw, unsigned value) {
     const unsigned words[] = {0xd2800000u | (value << 5), 0xd65f03c0u};
@@ -41,14 +48,40 @@ int main() {
     assert(ir_jit_memory_prepare(prepare) && preparations == 1);
     assert(!api->allocate(0, &rx, &rw) && !api->allocate(SIZE_MAX, &rx, &rw));
     assert(!api->allocate(1, nullptr, &rw));
-    assert(api->allocate(512u * 1024 * 1024, &rx, &rw)); // Dolphin's retained arena.
-    auto dolphin = rx;
+    assert(ir_phase3_core_prepare_memory(api));
+    void *smallA = ir_dolphin_jit_allocate(4096), *smallB = ir_dolphin_jit_allocate(4096);
+    for (auto small : {smallA, smallB}) {
+        assert(small && !((uintptr_t)small & (getpagesize() - 1)));
+        assert(mprotect(small, 4096, PROT_READ | PROT_EXEC) == 0);
+        emit(small, ir_shared_jit_write(small), 42);
+        ir_dolphin_jit_release(small);
+    }
+    void *cacheWrite;
+    void *cache = ir_shared_jit_allocate(256u * 1024 * 1024, &cacheWrite); // Dolphin's actual ARM64 cache.
+    assert(cache && cacheWrite);
+    emit(cache, cacheWrite, 42); emit(cache, cacheWrite, 7);
+    ir_shared_jit_release(cache);
+    assert(!ir_shared_jit_allocate(SIZE_MAX, &cacheWrite));
+    assert(!ir_shared_jit_allocate(1153u * 1024 * 1024, &cacheWrite));
+    void *contexts[8];
+    for (auto &context : contexts) {
+        assert(api->allocate(128u * 1024 * 1024, &context, &rw));
+        emit(context, rw, 42);
+    }
+    void *shader;
+    assert(api->allocate(32u * 1024 * 1024, &shader, &rw));
+    emit(shader, rw, 7);
+    assert(api->release(shader, 32u * 1024 * 1024));
+    for (auto context : contexts) assert(api->release(context, 128u * 1024 * 1024));
+    assert(api->allocate(512u * 1024 * 1024, &rx, &rw)); // Keep a large lease beside the other cores.
+    assert((uintptr_t)rx >= (1ULL << 36));
+    auto large = rx;
     assert(rx != rw && *(unsigned *)rw == 0);
     emit(rx, rw, 42); emit(rx, rw, 7);
     assert(!api->release(rw, 512u * 1024 * 1024));
     assert(!api->release((char *)rx + 16384, 16384));
     assert(!api->release(rx, 16384));
-    assert(!api->allocate(257u * 1024 * 1024, &rx, &rw));
+    assert(!api->allocate(641u * 1024 * 1024, &rx, &rw));
     assert(api->allocate(128u * 1024 * 1024, &rx, &rw)); // Azahar cache.
     emit(rx, rw, 42); assert(api->release(rx, 128u * 1024 * 1024));
     assert(api->allocate(128u * 1024 * 1024, &rx, &rw) && *(unsigned *)rw == 0);
@@ -77,10 +110,13 @@ int main() {
         assert(code && write); emit(code, write, 42); ir_shared_jit_release(code);
     }
     assert(ir_native_psp_exec_end(1100) == 0);
-    assert(api->release(dolphin, 512u * 1024 * 1024));
+    assert(api->release(large, 512u * 1024 * 1024));
     assert(ir_jit_memory_ready() && preparations == 1);
 }
 '''
+        dolphin = (BRIDGE / 'IRDolphin.mm').read_text()
+        adapter = dolphin[dolphin.index('static std::atomic<ptrdiff_t> sharedDifference'):dolphin.index('static bool dolphinAlert')]
+        source = source.replace('DOLPHIN_ADAPTER', adapter)
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             (folder / 'main.cpp').write_text(source)

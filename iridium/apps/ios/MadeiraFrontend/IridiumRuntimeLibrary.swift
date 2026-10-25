@@ -195,15 +195,6 @@ struct IridiumConsoleOptions: View {
     private var resolvedRuntime: IridiumRuntimeDescriptor? {
         try? IridiumRuntimeRegistry.resolve(platform: currentGame.platform, preferred: currentGame.runtimeID)
     }
-    private var runtimeDescription: String {
-        guard let runtime = resolvedRuntime else { return "This game’s emulator is unavailable." }
-        switch runtime.id {
-        case "dolphin": return "Dolphin requires the shared JIT system. Each launch checks that JIT works before the game starts."
-        case "azahar": return "3DS requires the shared JIT system. Each launch checks that JIT works before the game starts."
-        case "play": return "Fully close and reopen Iridium after finishing a PlayStation 2 game."
-        default: return ""
-        }
-    }
     private var saveDescription: String {
         "Use the game's Save command before closing. Removing a game from the library keeps its files and saves."
     }
@@ -241,7 +232,6 @@ struct IridiumConsoleOptions: View {
                             }
                         }.disabled(library.working)
                     }
-                    if !runtimeDescription.isEmpty { Text(runtimeDescription).font(.footnote).foregroundStyle(.secondary) }
                     if game.platform == .psp {
                         Toggle("Faster CPU (JIT)", isOn: Binding(get: { currentGame.pspJITEnabled }, set: { value in
                             var changed = currentGame; changed.pspJIT = value; library.update(changed)

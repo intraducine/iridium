@@ -398,13 +398,14 @@ Host().check()
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-static char bytes[8192];
+static int getpagesize() { return 16384; }
+alignas(16384) static char bytes[32768];
 static unsigned allocations, releases;
 static bool fail, wrong;
 void *ir_shared_jit_allocate(size_t size, void **write) {
-    assert(size == 4096); ++allocations;
+    assert(size == 16384); ++allocations;
     if (fail) return nullptr;
-    *write = bytes + (wrong ? 2048 : 4096); return bytes;
+    *write = bytes + (wrong ? 8192 : 16384); return bytes;
 }
 void ir_shared_jit_release(void *p) { assert(p == bytes); ++releases; }
 ''' + bridge + memory + r'''
@@ -412,7 +413,7 @@ int main() {
     Common::AllocateExecutableMemoryRegion_LuckTXM(); assert(allocations == 0);
     fail = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096));
     fail = false; assert(Common::AllocateExecutableMemory_LuckTXM(4096) == bytes);
-    assert(Common::AllocateWritableRegionAndGetDiff_LuckTXM() == 4096);
+    assert(Common::AllocateWritableRegionAndGetDiff_LuckTXM() == 16384);
     Common::FreeExecutableMemory_LuckTXM(bytes); assert(releases == 1);
     wrong = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096) && releases == 2);
 }
