@@ -34,7 +34,7 @@ final class LibraryModel: ObservableObject {
     @Published var displayMode = DisplayMode.fit {
         didSet { if displayMode != oldValue { MetalBackedView.refreshDisplayMode(reason: "mode-toggle") } }
     }
-    @Published var error: String?
+    @Published var error: String? { didSet { if error != nil { preparing = nil } } }
     @Published var sessionMessage = ""
     @Published var launching = false
     @Published var overlayFields = ["FPS", "Frame time", "RAM", "Battery"]
@@ -49,7 +49,7 @@ final class LibraryModel: ObservableObject {
     var menuButtonRect = CGRect.zero
     var performanceRect = CGRect.zero
     /// The in-game menu and the starting screen take every touch.
-    var blocksGameplayTouch: Bool { current != nil && (menu || launching) }
+    var blocksGameplayTouch: Bool { preparing != nil || (current != nil && (menu || launching)) }
     private var timer: Timer?
     private var sawProcess = false
     // Why a session ended by itself (not Quit): the program the app launched
@@ -70,6 +70,7 @@ final class LibraryModel: ObservableObject {
     private var iridiumWindowsControlsBaseline: IridiumControlLayoutState?
     private var savedControls: [TouchControl] = []
     private var savedLayout: String?
+    private var savedZones: [GestureZone] = []
     private var savedVisible = true
     private var savedSize = 1.0
     /// The session's first frame makes the drawable's shape known (Aspect).
@@ -384,13 +385,34 @@ final class LibraryModel: ObservableObject {
     /// a restart instead. MADEIRA_ONE_SESSION_PER_RUN=0 lets the launch go ahead.
     static var sessionsThisRun = 0
     static let restartMessage = "Restart Madeira to start another game: swipe Madeira away in the app switcher, then open it again."
-    @Published var restartNotice: String?
+    @Published var restartNotice: String? { didSet { if restartNotice != nil { preparing = nil } } }
     /// CS_DEBUGGED is set but no debugger is attached (JIT was enabled outside
     /// Madeira): the text of the alert that offers Madeira's own Enable JIT.
-    @Published var jitNotice: String?
+    @Published var jitNotice: String? { didSet { if jitNotice != nil { preparing = nil } } }
     /// Play is enabling JIT before starting this entry (ContentView.jitReadyForLaunch):
     /// its Play button reads Starting JIT, with a spinner, until JIT is on or fails.
     @Published var startingJIT: UUID?
+    /// A Play still enabling JIT or getting its start ready: the starting screen is up
+    /// for it before the session begins (LibraryHUD), so the press goes straight to it.
+    @Published var preparing: LibraryEntry?
+    private var preparingSince = Date()
+    /// The starting screen is up: a session starting, or a Play getting ready.
+    var startingScreen: Bool { launching || preparing != nil }
+    var startingEntry: LibraryEntry? { launching ? activeEntry : preparing }
+    /// When the starting screen went up, for its elapsed-time line.
+    var startingSince: Date { launching ? launchStarted : preparingSince }
+    func prepare(_ entry: LibraryEntry) {
+        guard MadeiraConfig.flag("MADEIRA_LAUNCH_EARLY"), current == nil else { return }   // 0: Play keeps the Game details page up until the session begins
+        preparingSince = Date(); preparing = entry
+        // The starting screen draws in the controls window (LibraryHUD), which otherwise
+        // only comes up with the session's game view.
+        TouchControlsHost.attach()
+        let id = entry.id
+        // A start that neither begins nor reports an error lets the screen go.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
+            if let self, self.preparing?.id == id, self.current == nil { self.preparing = nil }
+        }
+    }
     /// A Steam game's saves may not be the latest (SteamOwnedLibrary.cloudHold):
     /// the alert Play shows before starting it.
     struct CloudNotice: Equatable {
@@ -400,7 +422,7 @@ final class LibraryModel: ObservableObject {
         var title: String
         var message: String
     }
-    @Published var cloudNotice: CloudNotice?
+    @Published var cloudNotice: CloudNotice? { didSet { if cloudNotice != nil { preparing = nil } } }
     /// Starts the game the notice is about again.
     var cloudRetry: (() -> Void)?
     /// The game (App ID) allowed to start once without the check ("Launch anyway").
@@ -412,6 +434,7 @@ final class LibraryModel: ObservableObject {
     /// Dock start): it is neither added to the library nor stamped as played.
     /// `dock`: the game a Madeira Dock start launches (DockStartScreen).
     func begin(_ entry: LibraryEntry, remember: Bool = true, dock: DockGame? = nil) {
+        GestureZonesModel.shared.flush()
         wine_exit_status_reset()
         quitRequested = false
         LibraryController.shared.configure(enabled: enabled, ownsInput: false)
@@ -419,7 +442,7 @@ final class LibraryModel: ObservableObject {
         launchPresent = madeira_get_present_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
         launchSurface = winios_surface_present_count()
         MetalBackedView.presentCountAtLaunch = launchPresent; laidOutAfterFirstPresent = false
-        launching = true; overlayFields = entry.overlayFields ?? ["FPS", "Frame time", "RAM", "Battery"]
+        preparing = nil; launching = true; overlayFields = entry.overlayFields ?? ["FPS", "Frame time", "RAM", "Battery"]
         displayMode = entry.displayMode
         MainActor.assumeIsolated { IridiumGameAudio.shared.begin(entry.id) }
         activeEntry = entry; current = entry.id; menu = false; performance = entry.performance; liveLogs = entry.liveLogs
@@ -429,8 +452,15 @@ final class LibraryModel: ObservableObject {
         let controls = TouchControlsModel.shared
         savedControls = controls.controls; savedVisible = controls.visible; savedSize = controls.sizeScale
         savedLayout = controls.layoutID
+        let zones = GestureZonesModel.shared
+        savedZones = zones.zones
         if let profile = entry.controls {
             controls.controls = profile
+            // A game saved before zones existed takes its layout's zones, if any.
+            zones.selected = nil
+            zones.zones = entry.zones
+                ?? ControlPresetsModel.shared.store.preset(entry.controlLayout ?? "").map(ControlPresetStore.zones(of:))
+                ?? []
             // The game's controls come with the layout they were loaded from (if that
             // layout still exists), so a later edit is not written to another game's.
             if ControlPresetsModel.enabled {
@@ -445,13 +475,14 @@ final class LibraryModel: ObservableObject {
             (entry.controls == nil && entry.controlLayout == nil && profileStore.hasSelection(platform: .windows, gameID: nil))
         if selected {
             let fallback = IridiumControlLayoutState(controls: savedControls, visible: savedVisible, size: savedSize,
-                opacity: entry.controlOpacity ?? 0.7)
+                opacity: entry.controlOpacity ?? 0.7, zones: savedZones)
             do {
                 let value = try profileStore.resolve(platform: .windows, gameID: entry.id, builtIn: fallback)
                 controls.controls = value.controls; controls.visible = value.visible; controls.sizeScale = value.size
+                zones.zones = value.zones ?? []
                 controls.layoutID = nil; opacity = value.opacity ?? 0.7
                 iridiumWindowsControlsBaseline = IridiumControlLayoutState(controls: controls.controls, visible: controls.visible,
-                    size: controls.sizeScale, opacity: opacity)
+                    size: controls.sizeScale, opacity: opacity, zones: zones.zones)
             } catch { self.error = error.localizedDescription }
         }
         controllerBinds = GamepadInput.keyboardMouseAvailable ? (entry.controllerBinds ?? [:]) : [:]
@@ -460,6 +491,7 @@ final class LibraryModel: ObservableObject {
         applyControllerMode()
         MetalHostView.shared.isHidden = false
         ProMotionIntent.apply(mode: entry.effectiveFPSMode)
+        ThermalPacing.shared.begin()
         if remember { var played = entry; played.lastPlayed = Date(); save(played) }
         launchDismissLogged = false
         DockStartScreen.shared.begin(dock, at: launchStarted)
@@ -542,6 +574,7 @@ final class LibraryModel: ObservableObject {
 
     func setFPS(_ mode: Int) {
         fpsMode = mode
+        ThermalPacing.shared.userChose()
         let applied = ProMotionIntent.supportedMode(mode)
         madeira_set_vsync_locked(applied)
         ProMotionIntent.apply(mode: applied)
@@ -568,9 +601,10 @@ final class LibraryModel: ObservableObject {
     func saveCurrentProfile() {
         let controls = TouchControlsModel.shared
         if let id = current, var entry = entries.first(where: { $0.id == id }) {
+            entry.zones = GestureZonesModel.shared.zones
             if let baseline = iridiumWindowsControlsBaseline {
                 let value = IridiumControlLayoutState(controls: controls.controls, visible: controls.visible,
-                    size: controls.sizeScale, opacity: opacity)
+                    size: controls.sizeScale, opacity: opacity, zones: GestureZonesModel.shared.zones)
                 if value != baseline {
                     do { try IridiumControlProfileStore.shared.set(.init(layout: value), platform: .windows, gameID: id) }
                     catch { self.error = error.localizedDescription; return }
@@ -602,6 +636,7 @@ final class LibraryModel: ObservableObject {
         let controls = TouchControlsModel.shared
         controls.editing = false; controls.selected = nil
         controls.controls = savedControls; controls.visible = savedVisible; controls.sizeScale = savedSize
+        GestureZonesModel.shared.selected = nil; GestureZonesModel.shared.zones = savedZones
         if ControlPresetsModel.enabled { controls.layoutID = savedLayout }
         iridiumWindowsControlsBaseline = nil
         current = nil; activeEntry = nil; menu = false; sessionMessage = ""
@@ -612,6 +647,7 @@ final class LibraryModel: ObservableObject {
         LibraryController.shared.configure(enabled: enabled, ownsInput: enabled)
         MetalHostView.shared.isHidden = true
         ProMotionIntent.shared.setActive(false)
+        ThermalPacing.shared.end()
         fputs("[frontend] returned to library\n", stderr)
     }
 }

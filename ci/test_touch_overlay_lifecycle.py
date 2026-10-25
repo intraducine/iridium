@@ -22,6 +22,8 @@ class TouchOverlayLifecycleTests(unittest.TestCase):
         physical = (ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumPlayerControls.swift').read_text()
         self.assertIn('UIApplication.didBecomeActiveNotification', physical)
         model = text[text.index('enum ControlAction:'):text.index('final class TouchControlsModel:')]
+        presets = (ROOT / 'iridium/apps/ios/App/Controls/TouchControlPresets.swift').read_text()
+        zones = presets[presets.index('enum GestureZoneKind:'):presets.index('/// The screen a built-in layout')]
         start = text.index('    private func configureGamepad(landscape: Bool) {')
         method = text[start:text.index('\n    /// ml1970:', start)].replace('private func', 'func')
         touch = (ROOT / 'iridium/apps/ios/App/Controls/TouchGamepad.swift').read_text()
@@ -44,8 +46,10 @@ final class Model {
 final class Console { var isActive = false }
 final class Library { var blocksGameplayTouch = true }
 final class Controller { var hidesTouchControls = false }
+final class GestureZonesModel { static let enabled = true; var zones: [GestureZone] = [] }
 final class Overlay {
     let m = Model(), console = Console(), library = Library(), iridiumController = Controller()
+    let zones = GestureZonesModel()
     var iridiumEmbedded = false
 '''
         cases = r'''
@@ -83,11 +87,17 @@ overlay.m.visible = false; refresh(); press(false)
 overlay.m.visible = true; refresh(); press(true)
 overlay.configureGamepad(landscape: false); press(false)
 refresh(); press(true)
+var zone = GestureZone(); zone.stick = .pad("RS")
+overlay.zones.zones = [zone]; refresh()
+pad.state.update(owner: UUID(), control: zone.id, value: TouchPadAction.sample("RS", x: -1))
+precondition(pad.state.sample.rx == -32768)
+overlay.m.editing = true; refresh(); precondition(pad.state.sample.rx == 0)
+overlay.m.editing = false; overlay.zones.zones = []; refresh(); press(true)
 print("PASS shipping registration/state: A+LS, launch, running, menu/resume, physical auto-hide/Use touch, editor, console/retained scope to Windows with identical IDs, opacity and rotation")
 '''
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); main = root/'main.swift'; binary = root/'check'
-            main.write_text('import Foundation\n' + model + touch + fixture + method + cases)
+            main.write_text('import Foundation\n' + model + zones + touch + fixture + method + cases)
             result = subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'),
                                      str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumPlayerLayout.swift'),
                                      str(main), '-o', str(binary)], text=True, capture_output=True, timeout=60)

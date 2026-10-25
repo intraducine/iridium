@@ -4,6 +4,7 @@ import UIKit
 import Darwin
 import ImageIO
 import Combine
+import Metal
 
 // ============================================================================
 // Library front end.

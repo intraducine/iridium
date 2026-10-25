@@ -28,6 +28,22 @@ The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
 operation. Existing sources/notices are retained with these build recipes.
 
+The Madeira update through `e3a88fddb8daed1f5ac28a45dcb4663d65192629`
+retains the native memory, process, synchronization, audio, archive and input
+fixes. Its Swift changes are applied to the maintained app sources. The shared
+JIT coordinator still owns debugger access and cleanup; Madeira retains its
+executable-window sizing and code-pool allocation. The updated native contract
+includes the window-caption field used by the startup window census.
+
+Steam Cloud cache records, download languages, clipboard input, mouse-wheel
+mapping, touch-control locking and gesture zones retain their upstream behavior.
+Windows gesture zones also participate in Iridium's saved control profiles and
+editor restoration, with platform and geometry validation. Per-game zones do
+not replace the global working layout. Iridium keeps its own library and
+navigation; the upstream zoomable grid is not included. Windows launch content
+stays visible when an animation is interrupted or disabled. Gesture-zone options
+fit their content and scroll when the available height is too small.
+
 ### Selected compatibility ports
 
 The `ported_changes` records identify the exact source and follow-up commits.
