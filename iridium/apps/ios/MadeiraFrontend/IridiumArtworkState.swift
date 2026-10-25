@@ -304,15 +304,22 @@ enum IridiumArtworkMatcher {
     static func exactMatch(_ title: String, platform: IridiumPlatform,
                            candidates: [IridiumArtworkCandidate]) -> IridiumArtworkCandidate? {
         let eligible = candidates.filter { $0.platform == platform && !$0.id.isEmpty && !$0.source.isEmpty }
-        let fullTitle = fullNormalized(title, platform: platform)
+        let fullTitle = catalogKey(title, platform: platform)
         guard !fullTitle.isEmpty else { return nil }
         let key = normalized(title, platform: platform)
         guard !key.isEmpty else { return nil }
         if fullTitle != key {
-            let full = eligible.filter { fullNormalized($0.title, platform: platform) == fullTitle }
+            let full = eligible.filter { catalogKey($0.title, platform: platform) == fullTitle }
             if !full.isEmpty { return full.count == 1 ? full[0] : nil }
         }
         let exact = eligible.filter { normalized($0.title, platform: platform) == key }
+        let requested = metadata(title, platform: platform)
+        if !requested.isEmpty {
+            let compatible = exact.filter { metadata($0.title, platform: platform).isSubset(of: requested) }
+            let mostTags = compatible.map { metadata($0.title, platform: platform).count }.max()
+            let best = compatible.filter { metadata($0.title, platform: platform).count == mostTags }
+            if !best.isEmpty { return best.count == 1 ? best[0] : nil }
+        }
         return exact.count == 1 ? exact[0] : nil
     }
 
@@ -332,10 +339,20 @@ enum IridiumArtworkMatcher {
         return components.joined(separator: " ")
     }
 
-    private static func fullNormalized(_ raw: String, platform: IridiumPlatform) -> String {
+    static func catalogKey(_ raw: String, platform: IridiumPlatform) -> String {
         // Retain suffix tags here so explicit regional filenames take priority
         // over the region-stripped comparison used only as a fallback.
-        words(filename(raw, platform: platform))
+        let tags = metadata(raw, platform: platform).sorted()
+        return normalized(raw, platform: platform) + (tags.isEmpty ? "" : "|" + tags.joined(separator: "|"))
+    }
+
+    private static func metadata(_ raw: String, platform: IridiumPlatform) -> Set<String> {
+        var leaf = filename(raw, platform: platform), result = Set<String>()
+        while let tag = trailingTag(leaf), recognizedTag(tag.contents) {
+            result.formUnion(tagWords(tag.contents).map { words($0) })
+            leaf = String(leaf[..<tag.start]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return result
     }
 
     private static func filename(_ raw: String, platform: IridiumPlatform) -> String {
@@ -356,6 +373,10 @@ enum IridiumArtworkMatcher {
         case .arcade: extensions = ["zip"]
         }
         if extensions.contains(suffix) { leaf = String(leaf.dropLast(suffix.count + 1)) }
+        if [.wii, .gameCube].contains(platform), leaf.lowercased().hasSuffix(".nkit") { leaf = String(leaf.dropLast(5)) }
+        if [.psp, .nintendo3DS].contains(platform) {
+            leaf = leaf.replacingOccurrences(of: #"^\d{4,5}\s+-\s+"#, with: "", options: .regularExpression)
+        }
         return leaf.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -372,8 +393,18 @@ enum IridiumArtworkMatcher {
         let lowered = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if lowered.range(of: #"^(?:rev(?:ision)?\s+(?:[a-z]|\d+(?:\.\d+){0,3}[a-z]?)|(?:v|version\s+)\d+(?:\.\d+){0,3})$"#,
                          options: .regularExpression) != nil { return true }
-        let components = lowered.split(separator: ",", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let components = tagWords(lowered)
         return !components.isEmpty && components.allSatisfy { knownTags.contains($0) }
+    }
+
+    private static func tagWords(_ value: String) -> [String] {
+        let lowered = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if lowered.range(of: #"^(?:en|ja|fr|de|es|it|nl|pt|sv|da|no|fi|ko|zh|ru|pl|cs|hu|el|tr|ar){2,}$"#,
+                         options: .regularExpression) != nil {
+            let letters = Array(lowered)
+            return stride(from: 0, to: letters.count, by: 2).map { String(letters[$0...($0 + 1)]) }
+        }
+        return lowered.split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 }

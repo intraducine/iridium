@@ -258,6 +258,7 @@ import ImageIO
 /// Libretro's documented per-system Named_Boxarts/Named_Snaps repositories via
 /// GitHub's public tree API, never a first-result fuzzy match or HTML scraping.
 @MainActor enum IridiumArtworkCatalog {
+    nonisolated static let maximumIndexBytes = 16 * 1024 * 1024
     private static var indexes: [IridiumPlatform: [IridiumArtworkCandidate]] = [:]
     private static var retryAfter: [IridiumPlatform: Date] = [:]
     private static var pendingIndexes: [IridiumPlatform: Task<[IridiumArtworkCandidate], Error>] = [:]
@@ -308,31 +309,12 @@ import ImageIO
             case .arcade: return []
             case .windows: return []
             }
-            let url = URL(string: "https://api.github.com/repos/libretro-thumbnails/\(repository)/git/trees/master?recursive=1")!
-            let payloadData = try await data(url, limit: 8 * 1024 * 1024)
+            let root = URL(string: "https://api.github.com/repos/libretro-thumbnails/\(repository)/git/trees/")!
+            let directory = try await data(root.appendingPathComponent("master"), limit: maximumIndexBytes)
+            let revision = try boxartRevision(directory)
+            let payloadData = try await data(root.appendingPathComponent(revision), limit: maximumIndexBytes)
             return try await Task.detached(priority: .utility) {
-                struct Tree: Decodable {
-                    struct Item: Decodable { let path: String; let type: String }
-                    let tree: [Item]
-                    let truncated: Bool
-                }
-                let payload = try JSONDecoder().decode(Tree.self, from: payloadData)
-                guard !payload.truncated, payload.tree.count <= 30_000 else {
-                    throw LibraryError.message("The artwork catalog is incomplete. Choose your own image or retry later.")
-                }
-                let paths = Set(payload.tree.filter { $0.type == "blob" }.map(\.path))
-                let root = URL(string: "https://raw.githubusercontent.com/libretro-thumbnails/\(repository)/master/")!
-                let all: [IridiumArtworkCandidate] = paths.sorted().compactMap { path in
-                    let parts = path.split(separator: "/")
-                    guard parts.count == 2, parts[0] == "Named_Boxarts", path.hasSuffix(".png"),
-                          parts[1].utf8.count <= 512, !parts[1].contains("\\"), !parts[1].contains("..") else { return nil }
-                    let filename = String(parts[1]), title = String(filename.dropLast(4))
-                    let snap = "Named_Snaps/" + filename
-                    return IridiumArtworkCandidate(id: filename, title: title, platform: platform, source: "libretro",
-                        coverURL: root.appendingPathComponent(path),
-                        backgroundURL: paths.contains(snap) ? root.appendingPathComponent(snap) : nil)
-                }
-                return all
+                try decodeIndex(payloadData, platform: platform, repository: repository)
             }.value
         }
         pendingIndexes[platform] = operation
@@ -348,27 +330,86 @@ import ImageIO
             throw error
         }
     }
+    nonisolated static func boxartRevision(_ data: Data) throws -> String {
+        struct Tree: Decodable {
+            struct Item: Decodable { let path: String; let type: String; let sha: String }
+            let tree: [Item]
+            let truncated: Bool
+        }
+        guard data.count <= maximumIndexBytes else { throw LibraryError.message("The artwork catalog is too large.") }
+        let tree = try JSONDecoder().decode(Tree.self, from: data)
+        guard !tree.truncated,
+              let revision = tree.tree.first(where: { $0.path == "Named_Boxarts" && $0.type == "tree" })?.sha,
+              revision.range(of: #"^[0-9a-f]{40}$"#, options: .regularExpression) != nil else {
+            throw LibraryError.message("The artwork catalog has no box-art directory.")
+        }
+        return revision
+    }
+    nonisolated static func decodeIndex(_ data: Data, platform: IridiumPlatform, repository: String) throws -> [IridiumArtworkCandidate] {
+        struct Tree: Decodable {
+            struct Item: Decodable { let path: String; let type: String }
+            let tree: [Item]
+            let truncated: Bool
+        }
+        guard data.count <= maximumIndexBytes else { throw LibraryError.message("The artwork catalog is too large.") }
+        let payload = try JSONDecoder().decode(Tree.self, from: data)
+        guard !payload.truncated, payload.tree.count <= 100_000 else {
+            throw LibraryError.message("The artwork catalog is incomplete. Choose a local image.")
+        }
+        let paths = Set(payload.tree.filter { $0.type == "blob" }.map(\.path))
+        let root = URL(string: "https://raw.githubusercontent.com/libretro-thumbnails/\(repository)/master/")!
+        var seen = Set<String>()
+        return paths.sorted().compactMap { path in
+            guard !path.contains("/"), path.hasSuffix(".png"),
+                  path.utf8.count <= 512, !path.contains("\\"), !path.contains("..") else { return nil }
+            let filename = path, title = String(filename.dropLast(4))
+            // Libretro has duplicate filenames that differ only in tag spacing.
+            guard seen.insert(IridiumArtworkMatcher.catalogKey(title, platform: platform)).inserted else { return nil }
+            return IridiumArtworkCandidate(id: filename, title: title, platform: platform, source: "libretro",
+                coverURL: root.appendingPathComponent("Named_Boxarts/" + filename),
+                backgroundURL: root.appendingPathComponent("Named_Snaps/" + filename))
+        }
+    }
+    nonisolated static func linkedImage(_ data: Data, source: URL) -> URL? {
+        guard source.host == "raw.githubusercontent.com", source.path.hasPrefix("/libretro-thumbnails/"),
+              source.pathExtension.lowercased() == "png", data.count <= 512,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.lowercased().hasSuffix(".png"), !name.contains("/"), !name.contains("\\"), !name.contains(".."),
+              !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+        return source.deletingLastPathComponent().appendingPathComponent(name)
+    }
     nonisolated static func data(_ url: URL, limit: Int) async throws -> Data {
-        let host = url.host?.lowercased() ?? ""
-        guard url.scheme == "https", url.user == nil, url.password == nil,
-              ["api.github.com", "raw.githubusercontent.com"].contains(host) || host.hasSuffix(".steamstatic.com") else {
-            throw LibraryError.message("This artwork source is unsupported.")
+        var source = url, visited = Set<URL>()
+        for _ in 0..<5 {
+            try Task.checkCancellation()
+            let host = source.host?.lowercased() ?? ""
+            guard source.scheme == "https", source.user == nil, source.password == nil,
+                  ["api.github.com", "raw.githubusercontent.com"].contains(host) || host.hasSuffix(".steamstatic.com") else {
+                throw LibraryError.message("This artwork source is unsupported.")
+            }
+            guard visited.insert(source).inserted else { break }
+            var request = URLRequest(url: source, cachePolicy: host == "api.github.com" ? .useProtocolCachePolicy : .returnCacheDataElseLoad,
+                                     timeoutInterval: 20)
+            request.setValue("Iridium-Game-Artwork", forHTTPHeaderField: "User-Agent")
+            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+                  response.expectedContentLength <= Int64(limit), response.url?.host == source.host else {
+                URLCache.shared.removeCachedResponse(for: request)
+                throw LibraryError.message("Artwork is unavailable right now. You can still play or choose a local image.")
+            }
+            var result = Data()
+            for try await byte in bytes {
+                if result.count % 16_384 == 0 { try Task.checkCancellation() }
+                guard result.count < limit else { throw LibraryError.message("The artwork download is too large.") }
+                result.append(byte)
+            }
+            try Task.checkCancellation()
+            // Raw GitHub returns a repository image symlink as its target name.
+            if let target = linkedImage(result, source: source) { source = target; continue }
+            return result
         }
-        var request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 20)
-        request.setValue("Iridium-Game-Artwork", forHTTPHeaderField: "User-Agent")
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              response.expectedContentLength <= Int64(limit), response.url?.host == url.host else {
-            throw LibraryError.message("Artwork is unavailable right now. You can still play or choose a local image.")
-        }
-        var result = Data()
-        for try await byte in bytes {
-            if result.count % 16_384 == 0 { try Task.checkCancellation() }
-            guard result.count < limit else { throw LibraryError.message("The artwork download is too large.") }
-            result.append(byte)
-        }
-        try Task.checkCancellation()
-        return result
+        throw LibraryError.message("This artwork link could not be resolved. Choose another image.")
     }
 }
 
