@@ -149,9 +149,11 @@ class DarwinCarrierTests(unittest.TestCase):
         self.app = self.root / "Iridium.app"
         self.app.mkdir()
         self.write("Info.plist", plistlib.dumps({"CFBundleIdentifier": "software.iridium",
-            "CFBundleExecutable": "Iridium", "CFBundlePackageType": "APPL"}))
+            "CFBundleExecutable": "Iridium", "CFBundlePackageType": "APPL",
+            "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
         self.write("fonts/tahoma.ttf", b"font fixture")
-        self.write("PlugIns/Helper.appex/Info.plist", plistlib.dumps({"CFBundleExecutable": "Helper"}))
+        self.write("PlugIns/Helper.appex/Info.plist", plistlib.dumps({"CFBundleExecutable": "Helper",
+            "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
         source = self.root / "main.c"
         source.write_text("int main(void) { return 0; }\n")
         subprocess.run(["/usr/bin/xcrun", "clang", str(source), "-o", str(self.app / "Iridium")], check=True, capture_output=True)

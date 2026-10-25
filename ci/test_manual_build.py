@@ -312,11 +312,13 @@ class ManualBuildTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             app = Path(tmp) / "Iridium.app"
             app.mkdir()
-            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "software.iridium", "CFBundleExecutable": "Iridium"}))
+            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "software.iridium",
+                "CFBundleExecutable": "Iridium", "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
             (app / "Iridium").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
             helper = app / "PlugIns/Helper.appex"
             helper.mkdir(parents=True)
-            (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper"}))
+            (helper / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Helper",
+                "CFBundleShortVersionString": "0.2.1", "CFBundleVersion": "163.1"}))
             (helper / "Helper").write_bytes(bytes.fromhex("cffaedfe") + b"fixture")
             with self.assertRaisesRegex(ValueError, "Windows fonts"):
                 packager.check_payload(app)
