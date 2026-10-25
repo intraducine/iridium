@@ -45,6 +45,7 @@ enum StikJITHelper {
 @MainActor final class JITCoordinator {
     var enableRequest: UUID?
     var busy = false
+    var consoleMemoryBusy = false
     var builtInHelper: UUID?
     var builtInHelperReleased: Bool?
     var builtInHelperReturned: (() -> Void)?
@@ -223,6 +224,7 @@ NETWORK_METHODS
 @MainActor final class JITCoordinator {
     private var enableRequest: UUID?
     var busy = false
+    var consoleMemoryBusy = false
     var error: String?
     var status: String?
     var connectionProblem: String?

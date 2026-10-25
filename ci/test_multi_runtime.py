@@ -204,6 +204,10 @@ import Foundation
 var wineRunning: Int32 = 0, serverRunning: Int32 = 0
 func wine_process_is_running() -> Int32 { wineRunning }
 func wineserver_is_running() -> Int32 { serverRunning }
+final class JITCoordinator {
+    static let shared = JITCoordinator()
+    var busy = false, consoleMemoryRequiresRestart = false
+}
 final class LibraryModel {
     static let shared = LibraryModel()
     static var sessionsThisRun = 0
@@ -240,6 +244,9 @@ let first = try preflight.acquire(game)
 rejects(.busy)
 preflight.ownership.release(first)
 preflight.dolphinMaintenance = true; rejects(.busy); preflight.dolphinMaintenance = false
+JITCoordinator.shared.busy = true; rejects(.busy); JITCoordinator.shared.busy = false
+JITCoordinator.shared.consoleMemoryRequiresRestart = true; rejects(.restartRequired)
+JITCoordinator.shared.consoleMemoryRequiresRestart = false
 LibraryModel.shared.current = UUID(); rejects(.busy); LibraryModel.shared.current = nil
 LibraryModel.shared.launching = true; rejects(.busy); LibraryModel.shared.launching = false
 TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)

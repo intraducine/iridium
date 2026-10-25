@@ -47,7 +47,7 @@ struct LibraryTitleText: View {
 /// are disabled once it is.
 final class LibraryJITState: ObservableObject {
     static let shared = LibraryJITState()
-    @Published private(set) var enabled = StikJITHelper.ready
+    @Published private(set) var enabled = ir_jit_memory_ready() || StikJITHelper.ready
     private var timer: Timer?
     private init() {
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
@@ -55,7 +55,7 @@ final class LibraryJITState: ObservableObject {
         self.timer = timer
     }
     func refresh() {
-        let now = StikJITHelper.ready
+        let now = ir_jit_memory_ready() || StikJITHelper.ready
         guard now != enabled else { return }
         withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .default) { enabled = now }
     }
@@ -1028,7 +1028,7 @@ struct LibraryGroupedGames<LocalCell: View>: View {
         VStack(alignment: .leading, spacing: 24) {
             if groups.isEmpty {
                 if search.isEmpty {
-                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
                 } else {
                     Text("No games match your search.").foregroundStyle(.secondary)
                 }
@@ -1192,7 +1192,7 @@ struct LibraryView: View {
             .toolbar { settingsToolbar }
             .navigationDestination(for: String.self) { page in
                 switch page {
-case "Performance & Compatibility": IridiumCapabilitiesView().iridiumPageSurface().navigationTitle("Performance & Compatibility")
+case "JIT & Memory": IridiumCapabilitiesView().iridiumPageSurface().navigationTitle("JIT & Memory")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
@@ -1237,7 +1237,7 @@ case "Controls": IridiumControlsSettingsView(back: { iridiumNavigate("back") }).
                             .keyboardShortcut(.cancelAction)
                     } }
 case "Madeira · Windows": Form { Group { Section { ForEach(model.entries.filter { $0.desktop != true }) { entry in Button { selected = entry } label: { HStack { Text(IridiumArtworkModel.shared.title(IridiumGame(windows: entry))); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) } } }
-if model.entries.filter({ $0.desktop != true }).isEmpty { Text("Add a Windows game to change its options.").foregroundStyle(.secondary) } } header: { Text("Games") } footer: { Text("Open a game to change its display, controls and compatibility options.") }
+if model.entries.filter({ $0.desktop != true }).isEmpty { Text("Add a Windows game to change its options.").foregroundStyle(.secondary) } } header: { Text("Games") } footer: { Text("Select a game to change its options.") }
 Section("Preferences") { NavigationLink("Display", value: "Display").id("Display")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Display" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("Saves & Backups", value: "Saves & Backups").id("Saves & Backups")
@@ -1391,7 +1391,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Getting Started", "Controls", "Performance & Compatibility", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Steam", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1452,8 +1452,8 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             Section { if onboarding.available { Button("Getting Started", systemImage: "wand.and.stars") { onboarding.rerun() }.id("Getting Started") }
 NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
-NavigationLink("Performance & Compatibility", value: "Performance & Compatibility").id("Performance & Compatibility")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "Performance & Compatibility" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
+NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 ForEach(IridiumConsoleSystem.all) { system in
@@ -1528,7 +1528,7 @@ ForEach(IridiumConsoleSystem.all) { system in
                                           part: steamFirst ? .notInstalled : .all, open: { selected = $0 })
                     }
                 } else if model.entries.filter({ $0.desktop != true && $0.steamAppID == nil }).isEmpty {
-                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
                 } else {
                     cells(entries, width: viewport.size.width)
                 }
@@ -2751,9 +2751,9 @@ struct RuntimeMemorySyncSettings: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Code translation memory is reserved when a game starts. Low values can prevent large games from running.")
                 Text("Video memory is reported to the game. Automatic is recommended; high values can cause memory-related exits.")
-                Text("Memory fallback uses device storage when memory runs short. It can help a game finish loading, but uses storage and may reduce performance. Turn it on before changing coverage.")
-                Text("Keep the default synchronization method unless a game needs another method. Per-game synchronization options are in Game Options.")
-                Text("Lower power priority can reduce power use and game performance. It can also be changed while playing.")
+                Text("Memory fallback uses storage when RAM runs short. It can slow games down.")
+                Text("Change synchronization only if a game needs it.")
+                Text("Lower power priority reduces speed and power use.")
                 if changed { Text("Close and reopen Iridium to apply these changes.").foregroundStyle(.orange) }
             }
         }

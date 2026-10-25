@@ -44,7 +44,7 @@ INPUTS = {
             'iridium/apps/ios/MadeiraSupport/Notices/MoltenVK') + tuple(BRIDGE + name for name in
                 ('IRPPSSPPNative.mm', 'IRPPSSPPNative.h', 'IRPPSSPPCodecCheck.c', 'IRAudioVolume.c', 'IRAudioVolume.h', 'IRJITDiagnostic.h',
                  'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRPSPExecutableMemory.h',
-                 'IRPSPExecutableMemory.cpp', 'IRPSPTeardownObservation.h')),
+                 'IRPSPExecutableMemory.cpp', 'IRPSPTeardownObservation.h', 'IRJITMemory.h')),
     'sameboy': ('vendor/SameBoy', 'ci/build-sameboy.py', 'ci/sameboy_bootroms.py', 'ci/sameboy-bootroms.json'),
 }
 for engine in ('host', *phase3.PINS):

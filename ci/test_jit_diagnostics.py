@@ -73,7 +73,7 @@ import Foundation
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_production_watchdog_retains_owner_and_ignores_returned_or_stale_worker(self):
         launch = (ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumPSPExecutableLaunch.swift').read_text()
-        start = launch.index('DispatchQueue.main.asyncAfter(deadline: .now() + 5)')
+        start = launch.index('DispatchQueue.main.asyncAfter(deadline: .now() + 5)', launch.index('private func restore('))
         timer = launch[start:launch.index('\n        }\n    }', start)].replace('DispatchQueue.main.asyncAfter', 'clock.asyncAfter')
         fixture = r'''
 import Foundation

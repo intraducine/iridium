@@ -4,6 +4,21 @@
 def generated(ROOT, directory):
     source = ROOT / 'vendor/Play'
     main = (source / 'Source/ui_libretro/main_libretro.cpp').read_text()
+    header = (source / 'Source/app_shared/AppConfig.h').read_text()
+    hook = '\tCAppConfig();'
+    if header.count(hook) != 1: raise ValueError('Play app configuration interface changed')
+    header = header.replace(hook, hook + '\n\tstatic CAppConfig& GetInstance();\n\tstatic void ResetInstance();')
+    (directory / 'include').mkdir(exist_ok=True)
+    (directory / 'include/AppConfig.h').write_text(header)
+    for name in ('AppConfig.cpp', 'Log.cpp'):
+        (directory / name).write_text((source / 'Source/app_shared' / name).read_text())
+    hook = '\tstatic bool updates = true;'
+    if main.count(hook) != 1: raise ValueError('Play variable update lifecycle changed')
+    main = main.replace(hook, '')
+    main = 'static bool updates = true;\n' + main
+    hook = 'void retro_init()\n{'
+    if main.count(hook) != 1: raise ValueError('Play initialization hook changed')
+    main = main.replace(hook, hook + '\n\tupdates = true;')
     hook = '#include "DefaultAppConfig.h"'
     if main.count(hook) != 1:
         raise ValueError('Play configuration hook changed')

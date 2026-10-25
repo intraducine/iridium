@@ -28,6 +28,8 @@ class SharedJITMemoryTests(unittest.TestCase):
 #include <libkern/OSCacheControl.h>
 #ifdef TEST_PLAY_MEMORY
 #include "MemoryFunction.h"
+#include "AppConfig.h"
+extern "C" bool ir_phase3_core_prepare(const char *);
 #endif
 extern "C" bool ir_phase3_core_check_jit();
 static std::atomic<unsigned> preparations{0};
@@ -54,6 +56,12 @@ int main() {
     assert(!ir_shared_jit_allocate(8, nullptr));
     for (int attempt = 0; attempt < 3; ++attempt) assert(ir_phase3_core_check_jit());
 #ifdef TEST_PLAY_MEMORY
+    assert(!ir_phase3_core_prepare(nullptr) && !ir_phase3_core_prepare(""));
+    assert(ir_phase3_core_prepare("first-game"));
+    assert(CAppConfig::GetInstance().root == "first-game" && CAppConfig::constructed == 1);
+    assert(ir_phase3_core_prepare("second-game"));
+    assert(CAppConfig::GetInstance().root == "second-game" && CAppConfig::constructed == 2);
+    assert(!ir_phase3_core_prepare("") && CAppConfig::GetInstance().root == "second-game");
     assert(preparations == 1);
 #else
     assert(preparations == 3);
@@ -135,6 +143,20 @@ int main() {
                 if engine == 'flycast':
                     command += ['-I', str(source / 'core'), '-I', str(source / 'core/deps/nowide/include')]
                 else:
+                    (folder / 'AppConfig.h').write_text('''#pragma once
+#include <filesystem>
+namespace fs = std::filesystem;
+#include <string>
+extern "C" const char *ir_play_save_root();
+struct CAppConfig {
+    inline static unsigned constructed = 0;
+    std::string root;
+    CAppConfig() : root(ir_play_save_root()) { ++constructed; }
+    static CAppConfig& GetInstance();
+    static void ResetInstance();
+};
+''')
+                    command += ['-I', str(folder)]
                     command += ['-DTEST_PLAY_MEMORY', '-DMEMFUNC_USE_MACHVM', '-DMEMFUNC_MACHVM_STRICT_PROTECTION',
                                 '-I', str(source / 'include'), '-I', str(ROOT / 'vendor/Play/deps/Framework/include'),
                                 str(folder / 'MemoryFunction.cpp')]

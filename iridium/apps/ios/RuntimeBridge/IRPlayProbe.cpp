@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include <cstddef>
 #include "MemoryFunction.h"
+#include "AppConfig.h"
+#include <memory>
 #include "IRJITExecutionProbe.h"
 #include "IRSharedJITMemory.h"
 #include <cstring>
 #include <string>
 static std::string save_root;
+static std::unique_ptr<CAppConfig> configuration;
+CAppConfig& CAppConfig::GetInstance() {
+    if (!configuration) configuration = std::make_unique<CAppConfig>();
+    return *configuration;
+}
+void CAppConfig::ResetInstance() { configuration.reset(); }
 extern "C" const char *ir_play_save_root() { return save_root.c_str(); }
 extern "C" bool ir_phase3_core_prepare(const char *save) {
-    if (!save || !*save || !save_root.empty()) return false;
+    if (!save || !*save) return false;
+    CAppConfig::ResetInstance();
     save_root = save; return true;
 }
 extern "C" bool ir_phase3_core_check_jit() {

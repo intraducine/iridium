@@ -128,6 +128,24 @@ Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
 
 ## Shared JIT and controls
 
+The app owns a prepared executable-memory pool through `IRJITMemoryAPI` version 1.
+Console adapters borrow read/execute and read/write views, return their leases
+only after shutdown, and keep the prepared mappings until the app exits. The
+shared coordinator uses its owned built-in helper, closes it and restores the
+network before starting a core. Foreign debugger connections are not adopted. Failed helper cleanup retains restart-required admission. Each core
+keeps its own compiler, execution probe, library and version pin.
+
+Dolphin's extension interface is version 2. Its TXM allocator delegates code
+blocks to the shared service instead of retaining a private 512 MiB region.
+Azahar, Play and Flycast negotiate the memory service separately from the player
+interface. PSP's additive shared-memory entry point retains its four bounded
+arenas between clean sessions, validates their permissions, and repeats its
+execution/rewrite probe. Older PSP adapters keep the owned-helper path.
+Play resets its configuration and option-update state before a new VM starts.
+Wine still requires a process restart between sessions because its loader and
+server keep process-global state; the console memory service does not reset it.
+
+
 Per-game volume uses a shared saved gain and menu slider. SameBoy, native PSP,
 Dolphin, the Libretro host, and Wine apply it to their final PCM output. Native
 engine exports pass the saved gain into each retained image. Wine mixes its

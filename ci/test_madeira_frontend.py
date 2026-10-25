@@ -20,9 +20,31 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_preparation_refreshes_only_generated_source_links(self):
+        import textwrap
+        source = pathlib.Path(BUILD.__file__).read_text()
+        start = source.index("    for name in ('FEX', 'wine', 'dxmt', 'madeira-dock', 'madeira-d3d12', 'build', 'LICENSES', 'toolchains'):")
+        body = textwrap.dedent(source[start:source.index("    for name in ('COPYING'", start)])
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            output, upstream, old = folder / 'generated', folder / 'new', folder / 'old'
+            for path in (output, upstream, old): path.mkdir()
+            link = output / 'FEX'; link.symlink_to(old, target_is_directory=True)
+            exec(body, {'OUTPUT': output, 'UPSTREAM': upstream})
+            self.assertEqual(link.resolve(), (upstream / 'FEX').resolve())
+            self.assertTrue(old.is_dir())
+            inode = link.lstat().st_ino
+            exec(body, {'OUTPUT': output, 'UPSTREAM': upstream})
+            self.assertEqual(inode, link.lstat().st_ino)
+            link.unlink(); link.mkdir()
+            with self.assertRaisesRegex(ValueError, 'Refusing to replace'):
+                exec(body, {'OUTPUT': output, 'UPSTREAM': upstream})
+            self.assertTrue(link.is_dir())
+
     def test_psp_jit_interface_rejects_stale_component_before_preparation(self):
         record = {
-            'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+            'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare_shared', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+            'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
             'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
             'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
             'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
@@ -32,9 +54,9 @@ class FrontendImportTests(unittest.TestCase):
         BUILD.check_psp_jit_interface(record)
         for change in ({'exports': []}, {'exports': ['_ir_native_psp_check_jit']},
                        *({'exports': [name for name in record['exports'] if name != missing]}
-                         for missing in ('_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_set_volume')),
+                         for missing in ('_ir_native_psp_exec_prepare_shared', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_set_volume')),
                        {'audioVolumeHeaderSHA256': '0' * 64},
-                       {'diagnosticHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
+                       {'diagnosticHeaderSHA256': '0' * 64}, {'sharedMemoryHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
             with self.assertRaisesRegex(ValueError, 'matching JIT validation'):
                 BUILD.check_psp_jit_interface(dict(record, **change))
 
@@ -176,7 +198,8 @@ class FrontendImportTests(unittest.TestCase):
             psp_output = root / 'psp-output'; psp_output.mkdir()
             (psp_output / 'component.json').write_text(json.dumps({
                 'revision': BUILD.PSP_REVISION, 'componentType': 'native-ios-player',
-                'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+                'exports': ['_ir_native_psp_check_jit', '_ir_native_psp_set_volume', '_ir_native_psp_check_jit_diagnostic'] + ['_ir_native_psp_exec_' + n for n in ('version', 'prepare_shared', 'prepare', 'prepare_diagnostic', 'detach', 'accept_shutdown', 'restored', 'restored_diagnostic', 'advance', 'cancel', 'end')],
+                'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
                 'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
                 'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
                 'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),

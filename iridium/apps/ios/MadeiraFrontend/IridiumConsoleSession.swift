@@ -96,6 +96,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !dolphinMaintenance else { throw IridiumRuntimeError.busy }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
+        let jit = MainActor.assumeIsolated {
+            (restart: JITCoordinator.shared.consoleMemoryRequiresRestart, busy: JITCoordinator.shared.busy)
+        }
+        guard !jit.restart else { throw IridiumRuntimeError.restartRequired }
+        guard !jit.busy else { throw IridiumRuntimeError.busy }
         guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
         guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
               wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
@@ -185,15 +190,18 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if phase3JITReady == nil {
             if game.runtimeID == "dolphin" { dolphinSettings = .load(game.id) }
             phase3PreparingJIT = true; phase3JITRequested = true; phase3Status = "Preparing shared JIT"
-            JITCoordinator.shared.enable(requiresAttachedDebugger: true) { result in
+            JITCoordinator.shared.prepareConsoleMemory { result in
                 self.phase3PreparingJIT = false
                 guard self.lease == owner else { return }
+                if JITCoordinator.shared.consoleMemoryRequiresRestart {
+                    self.queue.async { self.requireRestart(owner) }; return
+                }
                 if self.requested == .stop { self.queue.async { self.complete(owner) }; return }
                 switch result {
                 case .success:
                     self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, phase3JITReady: true)
                 case .failure(let failure):
-                    let message = "This emulator needs the shared JIT system. Check JIT Settings and try again. " + failure.localizedDescription
+                    let message = "JIT could not start. " + failure.localizedDescription
                     self.queue.async { self.fail(message, owner: owner) }
                 }
             }
@@ -212,7 +220,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 url.path.withCString { content in
                     folder.path.withCString { saves in
                         system.path.withCString { assets in
-                            ir_phase3_open(runtime, binaries, content, saves, assets, StikJITHelper.ready,
+                            ir_phase3_open(runtime, binaries, content, saves, assets, ir_jit_memory_ready(),
                                 phase3Generation, { generation, kind, message in
                                     let text = message.map { String(cString: $0) } ?? ""
                                     DispatchQueue.main.async {
@@ -237,7 +245,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
         let nativeController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
-        if game.runtimeID != "dolphin", !ir_phase3_configure_jit(jit26_prepare_region) {
+        if !ir_phase3_configure_memory(ir_jit_memory_api()) {
             queue.async { self.terminalFailure = true }
             ir_phase3_stop(); error = "The core could not configure shared JIT."; return
         }
@@ -248,7 +256,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             guard ir_phase3_dolphin_configure(options, { player, output in
                 guard let output else { return }
                 IridiumConsoleSession.shared.fillDolphinInput(player, output)
-            }, jit26_prepare_region) else {
+            }) else {
                 queue.async { self.terminalFailure = true }
                 ir_phase3_stop(); error = "This Dolphin component does not support the app interface."; return
             }
@@ -341,7 +349,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 return // Retain admission/context/journal around any uncertain worker.
             case .ready:
                 self.pspJITVerifiedForLaunch = true
-                self.pspJITStatus = "PPSSPP JIT executed 42 and 7 after owned teardown and network restoration."
+                self.pspJITStatus = "JIT is ready."
             case .fallback(let reason):
                 self.pspJITFallbackReason = reason
                 self.pspJITStatus = "Using IR interpreter. " + reason
@@ -638,12 +646,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func resume() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .paused, !dolphinStatePending else { return }
-        if phase3Controller != nil, phase3JITRequested, !isDebuggerAttached() {
+        if phase3Controller != nil, phase3JITRequested, !ir_jit_memory_ready() {
             guard !phase3PreparingJIT else { return }
             phase3PreparingJIT = true
             lock.lock(); let generation = intentGeneration; lock.unlock()
             MainActor.assumeIsolated {
-                JITCoordinator.shared.enable(requiresAttachedDebugger: true) { [weak self] result in
+                JITCoordinator.shared.prepareConsoleMemory { [weak self] result in
                     guard let self, self.lease == owner else { return }
                     self.phase3PreparingJIT = false
                     if self.requested == .stop { ir_phase3_stop(); return }
@@ -753,23 +761,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             guard self.lease == owner, !self.finalizing else { return }
             self.finalizing = true
-            if self.phase3JITRequested {
-                self.phase = .stopping
-                self.stopWatch = UUID() // The engine stopped; the shared helper has its own bounded wait.
-                self.phase3Status = "Closing the shared JIT session"
-                JITCoordinator.shared.releaseAttachedDebugger { clean in
-                    guard self.lease == owner else { return }
-                    if clean { self.finishComplete(owner, failed: failed) }
-                    else { self.requireRestart(owner) }
-                }
-            } else { self.finishComplete(owner, failed: failed) }
+            self.finishComplete(owner, failed: failed)
         }
     }
 
     @MainActor private func finishComplete(_ owner: IridiumRuntimeLease, failed: Bool) {
         guard lease == owner else { return }
-        let restart = self.game?.runtimeID == "play"
-        self.ownership.release(owner, restart: restart)
+        self.ownership.release(owner)
         self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
         self.jitDiagnostic = nil
         self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
@@ -779,7 +777,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if failed, let error = self.error { LibraryModel.shared.error = error }
         self.error = nil
         self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
-        self.phase = restart ? .restartRequired : .idle; self.presented = false
+        self.phase = .idle; self.presented = false
         LibraryModel.shared.refreshFlag()
     }
 

@@ -42,7 +42,8 @@ final class Queue { func async(execute: () -> Void) { execute() } }
 @MainActor var configurationAccepted = false
 @MainActor var stops = 0
 let jit26_prepare_region = 1
-@MainActor func ir_phase3_configure_jit(_ prepare: Int) -> Bool { configurationAccepted }
+@MainActor func ir_phase3_configure_memory(_ prepare: Int) -> Bool { configurationAccepted }
+func ir_jit_memory_api() -> Int { 1 }
 @MainActor func ir_phase3_stop() { stops += 1 }
 @MainActor final class Host {
     let queue = Queue(), owner = 1
@@ -78,20 +79,20 @@ MainActor.assumeIsolated {
             subprocess.run([str(root / 'check')], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for resume checks')
-    def test_shared_jit_resume_waits_for_live_debugger_and_preserves_stop(self):
+    def test_shared_jit_resume_uses_prepared_memory_and_preserves_stop(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         resume = source[source.index('    func resume() {'):source.index('        lock.lock(); intent.resume();', source.index('    func resume() {'))]
         fixture = '''import Foundation
 @MainActor var attached = false
 @MainActor var stopped = 0
-@MainActor func isDebuggerAttached() -> Bool { attached }
+@MainActor func ir_jit_memory_ready() -> Bool { attached }
 @MainActor func ir_phase3_stop() { stopped += 1 }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
     var calls = 0
     var callback: ((Result<Void, Error>) -> Void)?
-    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
-        precondition(requiresAttachedDebugger); calls += 1; callback = completion
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        calls += 1; callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let cb = callback; callback = nil; cb?(result) }
 }
@@ -148,9 +149,10 @@ struct IridiumConsoleGame { var runtimeID = "dolphin"; var id = UUID() }
 enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: String { "JIT required" } }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
+    var consoleMemoryRequiresRestart = false
     var callback: ((Result<Void, Error>) -> Void)?
-    func enable(requiresAttachedDebugger: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
-        precondition(requiresAttachedDebugger); callback = completion
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let saved = callback; callback = nil; saved?(result) }
 }
@@ -163,6 +165,7 @@ final class Queue { func async(execute: () -> Void) { execute() } }
     let queue = Queue()
     func complete(_ owner: Int) { precondition(owner == lease); completions += 1 }
     func fail(_ message: String, owner: Int) { error = message; complete(owner) }
+    func requireRestart(_ owner: Int) { error = "restart" }
 LAUNCH
         nativeStarts += 1
     }
@@ -183,11 +186,16 @@ MainActor.assumeIsolated {
     let failed = Host(); failed.start(runtimeID: runtimeID)
     precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
-    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("shared JIT"))
+    precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT could not start"))
     precondition(!failed.phase3PreparingJIT)
     let cancelled = Host(); cancelled.start(runtimeID: runtimeID); cancelled.requested = .stop
     JITCoordinator.shared.finish(.success(()))
     precondition(cancelled.nativeStarts == 0 && cancelled.completions == 1)
+    let unclean = Host(); unclean.start(runtimeID: runtimeID); unclean.requested = .stop
+    JITCoordinator.shared.consoleMemoryRequiresRestart = true
+    JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
+    precondition(unclean.nativeStarts == 0 && unclean.completions == 0 && unclean.error == "restart")
+    JITCoordinator.shared.consoleMemoryRequiresRestart = false
     let stale = Host(); stale.start(runtimeID: runtimeID); stale.lease = 2
     JITCoordinator.shared.finish(.success(()))
     precondition(stale.nativeStarts == 0 && stale.completions == 0)
@@ -380,53 +388,38 @@ Host().check()
     @unittest.skipUnless(shutil.which('c++') and (ROOT / 'vendor/Dolphin/Source/Core/Common/MemoryUtil_iOS_LuckTXM.cpp').is_file(), 'Dolphin source and C++ compiler required')
     def test_dolphin_allocator_calls_shared_memory_service(self):
         native = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRDolphin.mm').read_text()
-        bridge = native[native.index('extern "C" void *ir_dolphin_jit_prepare('):native.index('static bool dolphinAlert(')]
+        bridge = native[native.index('static std::atomic<ptrdiff_t> sharedDifference'):native.index('static bool dolphinAlert(')]
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             generated = builder.generated('dolphin', folder)
-            memory = (generated / 'MemoryUtil_iOS_LuckTXM.cpp').read_text()
-            allocation = memory[memory.index('constexpr size_t EXECUTABLE_REGION_SIZE'):memory.index('ptrdiff_t AllocateWritableRegionAndGetDiff_LuckTXM()')] + '}\n'
+            memory = (generated / 'MemoryUtil_iOS_LuckTXM.cpp').read_text().replace('#include "Common/MemoryUtil.h"', '')
             main = folder / 'allocator.cpp'
-            main.write_text(r'''#include <cassert>
+            main.write_text(r'''#include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include "IRDolphinAPI.h"
-using u8=unsigned char;using vm_address_t=uintptr_t;using vm_prot_t=int;using kern_return_t=int;
-constexpr int PROT_READ=1,PROT_WRITE=2,PROT_EXEC=4,MAP_ANON=1,MAP_PRIVATE=2,KERN_SUCCESS=0,VM_INHERIT_DEFAULT=0;
-static void* const MAP_FAILED=reinterpret_cast<void*>(-1);
-static u8 pages[8192];static int requests=0;static bool mapFails=false,prepareFails=false;
-struct Player { IRDolphinJITPrepare prepareJIT=nullptr; };static Player* active=nullptr;
-''' + bridge + r'''
-static void* sharedPrepare(void* address,size_t bytes) {
-  ++requests;assert(address==nullptr && bytes==536870912);
-  return mapFails?MAP_FAILED:prepareFails?nullptr:pages;
+static char bytes[8192];
+static unsigned allocations, releases;
+static bool fail, wrong;
+void *ir_shared_jit_allocate(size_t size, void **write) {
+    assert(size == 4096); ++allocations;
+    if (fail) return nullptr;
+    *write = bytes + (wrong ? 2048 : 4096); return bytes;
 }
-static int mprotect(void*,size_t,int) {return 0;}
-static int mach_task_self() {return 0;}
-static int vm_remap(int,vm_address_t* address,size_t,int,bool,int,vm_address_t,bool,vm_prot_t*,vm_prot_t*,int) {
-  *address=reinterpret_cast<vm_address_t>(pages+4096);return 0;
-}
-struct lwmem_region_t {void* address;size_t size;};
-static size_t lwmem_assignmem(lwmem_region_t*) {return 1;}
-static const char* LastStrerrorString() {return "fixture";}
-template<class... T> static void PanicAlertFmt(const char*,T...) {}
-''' + allocation + r'''
+void ir_shared_jit_release(void *p) { assert(p == bytes); ++releases; }
+''' + bridge + memory + r'''
 int main() {
-  Player owner;active=&owner;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==0);
-  owner.prepareJIT=sharedPrepare;mapFails=true;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==1 && !g_rx_region);
-  mapFails=false;
-  owner.prepareJIT=sharedPrepare;prepareFails=true;
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==2 && !g_rx_region);
-  prepareFails=false;Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
-  Common::AllocateExecutableMemoryRegion_LuckTXM();assert(requests==3);
-  assert(g_rx_region==pages && g_rw_region_diff==4096);
+    Common::AllocateExecutableMemoryRegion_LuckTXM(); assert(allocations == 0);
+    fail = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096));
+    fail = false; assert(Common::AllocateExecutableMemory_LuckTXM(4096) == bytes);
+    assert(Common::AllocateWritableRegionAndGetDiff_LuckTXM() == 4096);
+    Common::FreeExecutableMemory_LuckTXM(bytes); assert(releases == 1);
+    wrong = true; assert(!Common::AllocateExecutableMemory_LuckTXM(4096) && releases == 2);
 }
 ''')
-            executable=folder/'allocator'
-            subprocess.run(['c++','-std=c++17','-I',str(ROOT/'iridium/apps/ios/RuntimeBridge'),str(main),'-o',str(executable)],check=True,timeout=30)
-            subprocess.run([str(executable)],check=True,timeout=5)
+            executable = folder / 'allocator'
+            subprocess.run(['c++', '-std=c++17', str(main), '-o', str(executable)], check=True, timeout=30)
+            subprocess.run([str(executable)], check=True, timeout=5)
 
     @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for Dolphin installer tests')
     def test_dolphin_installer_reports_cleanup_and_blocks_uncertain_reuse(self):
@@ -592,6 +585,10 @@ int main() {
             root = Path(folder)
             source = root / 'vendor/Play/Source/ui_libretro/main_libretro.cpp'
             source.parent.mkdir(parents=True)
+            shared = source.parent.parent / 'app_shared'
+            shared.mkdir()
+            (shared / 'AppConfig.h').write_text('class CAppConfig {\n\tCAppConfig();\n};\n')
+            for name in ('AppConfig.cpp', 'Log.cpp'): (shared / name).write_text('')
             source.write_text('''#include <filesystem>
 #include <thread>
 #include <cassert>
@@ -614,6 +611,7 @@ struct CPS2VM {
 static CPS2VM vm;
 static CPS2VM* m_virtualMachine = &vm;
 static bool first_run = false;
+void retro_init()\n{\n}\nvoid checkVarsUpdates() {\n\tstatic bool updates = true;\n}
 extern "C" const char* ir_play_save_root() { return "isolated-root"; }
 ''')
             memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'

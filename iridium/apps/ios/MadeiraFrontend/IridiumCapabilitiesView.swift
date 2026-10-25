@@ -12,8 +12,8 @@ struct IridiumCapabilitiesView: View {
                 Group {
 
             Section {
-                LabeledContent("JIT", value: state.enabled ? "Active for this session" : "Not active")
-                Text("JIT helps games run faster. Windows, GameCube, Wii, Nintendo 3DS, PlayStation 2, Dreamcast and arcade games require it.")
+                LabeledContent("JIT", value: state.enabled ? "Active" : "Not active")
+                Text("Required for Windows, GameCube, Wii, Nintendo 3DS, PlayStation 2, Dreamcast and arcade games.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("JIT Settings", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)
@@ -27,13 +27,12 @@ struct IridiumCapabilitiesView: View {
                         jitConnectionActions(problem, openSetup: { showingJITSetup = true })
                     }
                 }
-            } header: { Text("JIT · Faster Execution") } footer: {
-                Text("Games that need JIT enable it when you press Play.")
+            } header: { Text("JIT") } footer: {
+                Text("Console games use Built-in JIT. Enable it once per app run.")
             }
             #if !targetEnvironment(simulator)
             Section {
                 LabeledContent("Extended memory", value: extendedMemory ? "Available" : "Requires setup")
-                Text("Gives demanding games more memory to run.").font(.footnote).foregroundStyle(.secondary)
                 if !extendedMemory {
                     Link("Set Up Extended Memory", destination: URL(string: "https://github.com/intraducine/iridium/blob/main/docs/actions-ipa.md")!)
                 }
@@ -43,7 +42,7 @@ struct IridiumCapabilitiesView: View {
             #endif
 
                 }.iridiumRowSurface()
-}.iridiumPageSurface().navigationTitle("Performance & Compatibility")
+}.iridiumPageSurface().navigationTitle("JIT & Memory")
             // Keep the presenter on the Form so row updates preserve the sheet.
             .sheet(isPresented: $showingJITSetup) { JITSetupView() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { extendedMemory = EntitlementStatus.check().increasedMemory } }
@@ -61,6 +60,6 @@ struct IridiumCapabilitiesView: View {
                 return
             }
         }
-        coordinator.enable { _ in }
+        coordinator.prepareConsoleMemory { _ in }
     }
 }

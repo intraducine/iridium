@@ -1,4 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+foreach(target play_libretro PlayCore app_shared)
+  target_include_directories(${target} BEFORE PRIVATE "${IRIDIUM_PHASE3_GENERATED}/include")
+endforeach()
+get_target_property(sources app_shared SOURCES)
+list(REMOVE_ITEM sources AppConfig.cpp Log.cpp)
+set_property(TARGET app_shared PROPERTY SOURCES "${sources}")
+target_sources(app_shared PRIVATE "${IRIDIUM_PHASE3_GENERATED}/AppConfig.cpp" "${IRIDIUM_PHASE3_GENERATED}/Log.cpp")
 get_target_property(sources play_libretro SOURCES)
 list(REMOVE_ITEM sources main_libretro.cpp)
 set_property(TARGET play_libretro PROPERTY SOURCES "${sources}")

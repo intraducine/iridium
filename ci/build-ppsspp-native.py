@@ -21,7 +21,7 @@ EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames', 'set_volume',
-    'exec_version', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')}
+    'exec_version', 'exec_prepare_shared', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')}
 
 
 def run(*args, **kwargs):
@@ -301,6 +301,7 @@ def build(source, destination, sdk, jobs):
         audioVolumeHeaderSHA256=digest(NATIVE / 'IRAudioVolume.h'),
         diagnosticHeaderSHA256=digest(NATIVE / 'IRJITDiagnostic.h'),
         executableMemoryHeaderSHA256=digest(NATIVE / 'IRPSPExecutableMemory.h'),
+        sharedMemoryHeaderSHA256=digest(NATIVE / 'IRJITMemory.h'),
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
         mode='native iOS engine; upstream media/graphics; shared Iridium frontend')

@@ -214,8 +214,53 @@ final class JITCoordinator: ObservableObject {
         pairingSource = JITPairingFileStore.source
     }
 
+    private var consoleMemoryFailed = false
+    private var consoleMemoryBusy = false
+    var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard !consoleMemoryFailed, !consoleMemoryBusy, enableRequest == nil, !busy else {
+            completion(.failure(CoordinatorError.setupRequired("JIT memory is busy or needs an app restart."))); return
+        }
+        if ir_jit_memory_ready() { completion(.success(())); return }
+        enable(requiresAttachedDebugger: true) { result in
+            guard case .success = result else {
+                self.consoleMemoryBusy = false; completion(result); return
+            }
+            guard self.builtInHelper != nil, self.builtInHelperReleased == nil, isDebuggerAttached() else {
+                self.consoleMemoryFailed = self.builtInHelperReleased == false
+                let message = self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
+                    : self.builtInHelper != nil ? "The JIT helper stopped. Try again."
+                    : "Shared console JIT needs the built-in helper. Disconnect any external debugger and choose Built-in in JIT Settings."
+                self.error = message
+                completion(.failure(CoordinatorError.setupRequired(message))); return
+            }
+            self.consoleMemoryBusy = true; self.busy = true
+            self.status = "Preparing JIT memory…"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let prepared = ir_jit_memory_prepare(jit26_prepare_region)
+                DispatchQueue.main.async {
+                    self.busy = false
+                    self.releaseAttachedDebugger { clean in
+                        self.consoleMemoryBusy = false
+                        self.consoleMemoryFailed = !clean
+                        if prepared && clean {
+                            self.status = "JIT is ready."; self.error = nil
+                            completion(.success(()))
+                        }
+                        else {
+                            let message = clean ? "JIT memory could not be prepared. Try again."
+                                : "The JIT helper did not close. Close and reopen Iridium."
+                            self.error = message; self.status = nil
+                            completion(.failure(CoordinatorError.setupRequired(message)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard enableRequest == nil, !busy,
+        guard enableRequest == nil, !busy, !consoleMemoryBusy,
               !requiresAttachedDebugger || builtInHelper == nil || builtInHelperReleased == true || isDebuggerAttached() else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")
             completion(.failure(NSError(domain: "MadeiraJIT", code: 15,

@@ -14,6 +14,8 @@ bool ir_psp_jit_diagnostic_healthy(IRPSPJITDiagnostic *);
 void ir_psp_jit_diagnostic_close(IRPSPJITDiagnostic *);
 int ir_psp_native_check_jit_diagnostic(const char *component, IRPSPJITDiagnostic *);
 int ir_psp_native_exec_prepare(const char *component, const IRPSPExecHost *, IRPSPJITDiagnostic *);
+bool ir_psp_native_exec_supports_shared(const char *component);
+int ir_psp_native_exec_prepare_shared(const char *component, uint64_t admission, const IRJITMemoryAPI *, IRPSPJITDiagnostic *);
 int ir_psp_native_exec_detach(uint64_t admission);
 int ir_psp_native_exec_shutdown(const IRPSPExecShutdown *);
 int ir_psp_native_exec_restored(uint64_t admission, bool success);

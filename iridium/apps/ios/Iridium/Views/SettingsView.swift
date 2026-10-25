@@ -75,9 +75,6 @@ struct SettingsView: View {
 
             Section("About") {
                 MenuValue("Version", value: version)
-                Text("Manage launch support, runtime, input, artwork, and storage.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }.listRowBackground(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.06)).padding(.vertical, 2)).listRowSeparator(.hidden)
         }
         .iridiumListChrome(onBack: onBack)

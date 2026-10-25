@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+static IRJITMemoryAPI memory_api{};
 static std::atomic<IRPhase3JITPrepare> prepare_region{nullptr};
 static constexpr size_t block_size = 4096, pool_size = 4 * 1024 * 1024, pool_slots = pool_size / block_size;
 struct Pool { void *write; size_t live; std::array<bool, pool_slots> used{}; };
@@ -22,6 +23,7 @@ static std::mutex mapping_lock;
 extern "C" bool ir_phase3_core_prepare_jit(IRPhase3JITPrepare prepare) {
     if (!prepare) return false;
     std::lock_guard<std::mutex> guard(mapping_lock);
+    if (memory_api.allocate) return false;
     if (spare_pool) {
         munmap(pools.at(spare_pool).write, pool_size);
         munmap(spare_pool, pool_size);
@@ -31,7 +33,22 @@ extern "C" bool ir_phase3_core_prepare_jit(IRPhase3JITPrepare prepare) {
     return true;
 }
 
+extern "C" bool ir_phase3_core_prepare_memory(const IRJITMemoryAPI *api) {
+    if (!api || api->size != sizeof(*api) || api->version != 1 || !api->allocate || !api->release) return false;
+    std::lock_guard<std::mutex> guard(mapping_lock);
+    if (!mappings.empty() || !pools.empty()) return memory_api.allocate == api->allocate && memory_api.release == api->release;
+    memory_api = *api;
+    return true;
+}
+static void release_region(void *rx, void *rw, size_t bytes) {
+    if (memory_api.release) memory_api.release(rx, bytes);
+    else { munmap(rw, bytes); munmap(rx, bytes); }
+}
 static void *map_region(size_t size, void **write_pointer) {
+    if (memory_api.allocate) {
+        void *rx = nullptr;
+        return memory_api.allocate(size, &rx, write_pointer) ? rx : nullptr;
+    }
     auto prepare = prepare_region.load();
     const size_t page = getpagesize();
     void *rx = prepare(nullptr, size);
@@ -54,7 +71,7 @@ extern "C" void *ir_shared_jit_allocate(size_t size, void **write_pointer) {
     if (!write_pointer) return nullptr;
     *write_pointer = nullptr;
     const size_t page = getpagesize();
-    if (!prepare_region.load() || !size || size > 128 * 1024 * 1024) return nullptr;
+    if ((!memory_api.allocate && !prepare_region.load()) || !size || size > 128 * 1024 * 1024) return nullptr;
     std::lock_guard<std::mutex> guard(mapping_lock);
     // CodeGen's small blocks share a prepared region instead of stopping the
     // whole app in the debugger for every block. Keep one idle pool for reuse.
@@ -65,7 +82,7 @@ extern "C" void *ir_shared_jit_allocate(size_t size, void **write_pointer) {
             void *rx = map_region(pool_size, &write);
             if (!rx) return nullptr;
             try { pool = pools.emplace(rx, Pool{write, 0, {}}).first; }
-            catch (...) { munmap(write, pool_size); munmap(rx, pool_size); return nullptr; }
+            catch (...) { release_region(rx, write, pool_size); return nullptr; }
         }
         size_t slot = std::find(pool->second.used.begin(), pool->second.used.end(), false) - pool->second.used.begin();
         void *rx = (char *)pool->first + slot * block_size;
@@ -73,7 +90,7 @@ extern "C" void *ir_shared_jit_allocate(size_t size, void **write_pointer) {
         try { mappings.emplace(rx, Mapping{write, size, pool->first}); }
         catch (...) {
             if (!pool->second.live) {
-                munmap(pool->second.write, pool_size); munmap(pool->first, pool_size);
+                release_region(pool->first, pool->second.write, pool_size);
                 if (spare_pool == pool->first) spare_pool = nullptr;
                 pools.erase(pool);
             }
@@ -90,7 +107,7 @@ extern "C" void *ir_shared_jit_allocate(size_t size, void **write_pointer) {
     void *rx = map_region(size, &write);
     if (!rx) return nullptr;
     try { mappings.emplace(rx, Mapping{write, size, nullptr}); }
-    catch (...) { munmap(write, size); munmap(rx, size); return nullptr; }
+    catch (...) { release_region(rx, write, size); return nullptr; }
     *write_pointer = write;
     return rx;
 }
@@ -114,14 +131,12 @@ extern "C" void ir_shared_jit_release(void *code) {
         if (!--pool->second.live) {
             if (!spare_pool) spare_pool = pool->first;
             else {
-                munmap(pool->second.write, pool_size);
-                munmap(pool->first, pool_size);
+                release_region(pool->first, pool->second.write, pool_size);
                 pools.erase(pool);
             }
         }
     } else {
-        munmap(found->second.write, found->second.size);
-        munmap(found->first, found->second.size);
+        release_region(found->first, found->second.write, found->second.size);
     }
     mappings.erase(found);
 }
