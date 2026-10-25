@@ -68,6 +68,7 @@ print("PASS: thermal caps restore, yield to a manual choice and stop at session 
         hex_method = next(line for line in source.splitlines() if 'static func hex(' in line)
         fixture = r'''
 import Foundation
+enum SteamFileError: Error { case invalid(String) }
 ENTRY
 struct SteamCloudAudit { var changeNumber: UInt64; var entries: [SteamCloudEntry] }
 struct SteamCloudPaths {
@@ -102,6 +103,17 @@ let unchanged = try SteamRemoteCache.write(appID: 42, audit: audit, paths: paths
 precondition(unchanged == nil)
 let escaped = SteamRemoteCache.List(appID: "42", files: [("a\"b\\c.save", localFields)])
 precondition(SteamRemoteCache.parse(SteamRemoteCache.format(escaped)) == escaped)
+for invalid in ["\"42\" { \"file\" { \"sha\" \"truncated", "\"42\" {} \"extra\" {}", "\"42\" { garbage }", "\"99\" {}"] {
+    let bytes = Data(invalid.utf8)
+    try bytes.write(to: url)
+    do {
+        _ = try SteamRemoteCache.write(appID: 42, audit: audit, paths: paths)
+        preconditionFailure("A damaged or foreign index must be kept")
+    } catch {}
+    let preserved = try Data(contentsOf: url)
+    precondition(preserved == bytes)
+}
+
 try FileManager.default.removeItem(at: url)
 try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
 do {

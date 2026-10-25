@@ -522,7 +522,7 @@ enum SteamRemoteCache {
 
     private enum Token: Equatable { case text(String), open, close }
 
-    private static func tokens(_ text: String) -> [Token] {
+    private static func tokens(_ text: String) -> [Token]? {
         var out: [Token] = []
         var chars = Array(text)[...]
         while let char = chars.popFirst() {
@@ -530,12 +530,22 @@ enum SteamRemoteCache {
             case "{": out.append(.open)
             case "}": out.append(.close)
             case "\"":
-                var value = ""
-                while let c = chars.popFirst(), c != "\"" {
-                    if c == "\\", let next = chars.popFirst() { value.append(next) } else { value.append(c) }
+                var value = "", closed = false
+                while let c = chars.popFirst() {
+                    if c == "\"" { closed = true; break }
+                    if c == "\\" {
+                        guard let next = chars.popFirst() else { return nil }
+                        if next != "\\" && next != "\"" { value.append(c) }
+                        value.append(next)
+                    } else { value.append(c) }
                 }
+                guard closed else { return nil }
                 out.append(.text(value))
-            default: continue
+            default:
+                if char.isWhitespace { continue }
+                if char == "/", chars.first == "/" {
+                    while let c = chars.popFirst(), c != "\n" {}
+                } else { return nil }
             }
         }
         return out
@@ -543,19 +553,23 @@ enum SteamRemoteCache {
 
     /// The flat two-level layout the client writes: "app" { "Key" "value" ... "file" { "key" "value" ... } }.
     static func parse(_ text: String) -> List? {
-        var t = tokens(text)[...]
+        guard let tokens = tokens(text) else { return nil }
+        var t = tokens[...]
         guard case .text(let app)? = t.popFirst(), t.popFirst() == .open else { return nil }
         var list = List(appID: app)
         while let token = t.popFirst() {
-            guard case .text(let key) = token else { return token == .close ? list : nil }
+            guard case .text(let key) = token else { return token == .close && t.isEmpty ? list : nil }
             switch t.popFirst() {
             case .text(let value)?: list.header.append((key, value))
             case .open?:
                 var fields: Fields = []
-                while let inner = t.popFirst(), inner != .close {
+                var closed = false
+                while let inner = t.popFirst() {
+                    if inner == .close { closed = true; break }
                     guard case .text(let k) = inner, case .text(let v)? = t.popFirst() else { return nil }
                     fields.append((k, v))
                 }
+                guard closed else { return nil }
                 list.files.append((key, fields))
             default: return nil
             }
@@ -580,7 +594,13 @@ enum SteamRemoteCache {
     static func write(appID: Int, audit: SteamCloudAudit, paths: SteamCloudPaths) throws -> (synced: Int, local: Int, dropped: Int)? {
         let url = paths.remoteFolder.deletingLastPathComponent().appendingPathComponent("remotecache.vdf")
         let remote = audit.entries.filter { SteamCloudPaths.split($0.path).root == nil }
-        let existing = (try? String(contentsOf: url, encoding: .utf8)).flatMap(parse)
+        let existing: List?
+        if FileManager.default.fileExists(atPath: url.path) {
+            guard let parsed = parse(try String(contentsOf: url, encoding: .utf8)), parsed.appID == String(appID) else {
+                throw SteamFileError.invalid("Steam’s save index could not be read. The file was kept.")
+            }
+            existing = parsed
+        } else { existing = nil }
         guard !remote.isEmpty || existing != nil else { return nil }
         var list = existing ?? List()
         list.appID = String(appID)
