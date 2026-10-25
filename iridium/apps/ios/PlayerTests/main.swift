@@ -157,6 +157,17 @@ precondition(hapticEdges.update(true))
 precondition(IridiumConsoleControlMapping.symbol("A", profile: .psp) == "xmark")
 precondition(IridiumConsoleControlMapping.symbol("B", profile: .psp) == "circle")
 precondition(IridiumConsoleControlMapping.symbol("A", profile: .gameBoy) == nil)
+for (action, label, symbol) in [("A", "Circle", "circle"), ("B", "Cross", "xmark"), ("X", "Triangle", "triangle"), ("Y", "Square", "square")] {
+    precondition(IridiumConsoleControlMapping.label(action, profile: .console, platform: "playStation2") == label)
+    precondition(IridiumConsoleControlMapping.symbol(action, profile: .console, platform: "playStation2") == symbol)
+}
+for (action, label) in [("A", "B"), ("B", "A"), ("X", "Y"), ("Y", "X"), ("LT", "L"), ("RT", "R")] {
+    precondition(IridiumConsoleControlMapping.label(action, profile: .console, platform: "dreamcast") == label)
+    precondition(IridiumConsoleControlMapping.symbol(action, profile: .console, platform: "dreamcast") == nil)
+}
+precondition(IridiumConsoleControlMapping.button("B", profile: .console) == 1)
+precondition(IridiumConsoleControlMapping.button("A", profile: .console) == 1 << 8)
+precondition(IridiumConsoleControlMapping.label("LT", profile: .console, platform: "playStation2") == "L2")
 precondition(IridiumConsoleControlMapping.button("A", profile: .psp) == 1)
 precondition(IridiumConsoleControlMapping.button("A", profile: .gameBoy) == 1 << 8)
 

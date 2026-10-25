@@ -4563,7 +4563,7 @@ struct TouchControlButton: View {
             if m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows && action.padName == "DPad" {
                 IridiumDPadFace(vector: padVector, pressed: isDown)
             } else {
-                IridiumControlFace(label: label, symbol: m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows ? IridiumConsoleControlMapping.symbol(action.padName ?? "", profile: .consoleProfile(m.iridiumEditingPlatform?.rawValue)) : action.padGlyph,
+                IridiumControlFace(label: label, symbol: m.iridiumEditingPlatform != nil && m.iridiumEditingPlatform != .windows ? IridiumConsoleControlMapping.symbol(action.padName ?? "", profile: .consoleProfile(m.iridiumEditingPlatform?.rawValue), platform: m.iridiumEditingPlatform?.rawValue) : action.padGlyph,
                                   shape: shape, pressed: isDown, compresses: false)
             }
         }.frame(width: size.width, height: size.height)
