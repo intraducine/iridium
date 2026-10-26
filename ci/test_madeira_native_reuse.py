@@ -92,8 +92,17 @@ class NativeReuseTests(unittest.TestCase):
             manifest.write_text(json.dumps(data))
             self.assertNotEqual(before, build.native_inputs())
             manifest.write_text(original)
-            helper = root / 'ci/engine_pins.py'; helper.write_text(helper.read_text() + '\n# Changed reader\n')
+            helper = root / 'ci/engine_pins.py'; original_helper = helper.read_bytes()
+            helper.write_bytes(original_helper + b'\n# Changed reader\n')
             self.assertNotEqual(before, build.native_inputs())
+            helper.write_bytes(original_helper)
+            self.assertEqual(before, build.native_inputs())
+            for name in ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                         'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h'):
+                path = root / name; saved = path.read_bytes()
+                path.write_bytes(saved + b'\n/* Changed thread adapter */\n')
+                self.assertNotEqual(before, build.native_inputs(), name)
+                path.write_bytes(saved)
 
     def check_rejected(self, root, message, inputs=None):
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}

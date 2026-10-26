@@ -48,6 +48,7 @@ class CompiledComponentsTests(unittest.TestCase):
         for old, new in (("CRYPTO_LIBRARIES = ('gnutls',", "CRYPTO_LIBRARIES = ('different',"),
                          (revision, "REVISION = '0000000000000000000000000000000000000000'"),
                          ('import subprocess', 'import subprocess as another_process'),
+                         ('import madeira_threads', 'import madeira_threads as another_module'),
                          ("'native': lambda: native(reuse_only=args.reuse_only)", "'native': windows"),
                          ('def prepare():', 'def prepare(*args):')):
             with self.subTest(input=old):
@@ -117,7 +118,7 @@ class CompiledComponentsTests(unittest.TestCase):
             script = root / 'ci/madeira-frontend.py'
             script.parent.mkdir()
             source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
-            script.write_text(source.replace('Wii and PSP controls use device motion while you play.',
+            script.write_text(source.replace('Wii, 3DS, and PSP controls use device motion while you play.',
                                              'PSP tilt controls use device motion while you play.'))
             workflow = root / reuse.WORKFLOW
             workflow.parent.mkdir(parents=True)
@@ -126,6 +127,11 @@ class CompiledComponentsTests(unittest.TestCase):
             contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
             for name in ('ci/engine_pins.py', 'UPSTREAM-SOURCES.json'):
                 (root / name).write_bytes((components.ROOT / name).read_bytes())
+            tracker_inputs = ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                              'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h')
+            for name in tracker_inputs:
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((components.ROOT / name).read_bytes())
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit(); revision = git('rev-parse', 'HEAD')
@@ -134,6 +140,13 @@ class CompiledComponentsTests(unittest.TestCase):
             for stage in ('madeira-native', 'madeira-windows'):
                 reuse.compatible(root, revision, stage)
             app_only = script.read_text()
+            for name in tracker_inputs:
+                path = root / name; saved = path.read_bytes()
+                path.write_bytes(saved + b'\n/* Changed thread adapter */\n'); commit()
+                with self.assertRaisesRegex(ValueError, 'Changed producer input: ' + name):
+                    reuse.compatible(root, revision, 'madeira-native')
+                reuse.compatible(root, revision, 'madeira-windows')
+                path.write_bytes(saved); commit()
             for name in ('build_native', 'windows', 'verify_pin', 'run_checked_recipe', 'stage_crypto_libraries'):
                 header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
                 script.write_text(app_only.replace(header + '\n', header + '\n    print("changed recipe")\n'))
