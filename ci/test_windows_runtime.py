@@ -18,6 +18,31 @@ SESSION = ROOT / madeira_session.SOURCE
 
 class WindowsRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_status_callback_has_explicit_main_actor_isolation(self):
+        fixture = '''import Foundation
+func wine_process_is_running()->Int32{1}
+func wineserver_is_running()->Int32{1}
+func ir_windows_threads_begin()->Bool{true}
+func ir_windows_threads_drained()->Bool{true}
+final class Library {
+ var current:UUID?;var count=0
+ @MainActor func poll(_ owner:UUID) {
+  IridiumMadeiraRuntime.shared.poll(owner) { event in
+   guard self.current == owner else { return };self.count += 1
+  }
+ }
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'fixture.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-swift-version', '5', '-strict-concurrency=complete',
+                            '-warnings-as-errors', '-module-cache-path', module_cache('macosx'),
+                            '-parse-as-library', '-emit-module', str(SESSION / 'IridiumMadeiraRuntime.swift'),
+                            str(path / 'fixture.swift'), '-o', str(path / 'Fixture.swiftmodule')],
+                           check=True, timeout=45)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_two_games_stale_status_failed_launch_and_retained_threads(self):
         fixture = r'''
 import Foundation
@@ -45,8 +70,11 @@ let observation=Observation()
 let runtime=IridiumMadeiraRuntime(root:folder,nativeRunning:{true},beginFence:{true},drained:{observation.drained()},clock:{observation.now()})
 func poll(_ token:UUID,from engine:IridiumMadeiraRuntime?=nil)->IridiumMadeiraRuntime.Event{
  let sem=DispatchSemaphore(value:0)
- (engine ?? runtime).poll(token){event in observation.lock.lock();observation.event=event;observation.lock.unlock();sem.signal()}
- precondition(sem.wait(timeout:.now()+3) == .success)
+ (engine ?? runtime).poll(token){event in precondition(Thread.isMainThread);observation.lock.lock();observation.event=event;observation.lock.unlock();sem.signal()}
+ let deadline=Date(timeIntervalSinceNow:3)
+ while sem.wait(timeout:.now()) != .success {
+  precondition(Date()<deadline);_=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.005))
+ }
  observation.lock.lock();defer{observation.lock.unlock()};return observation.event!
 }
 setenv("MADEIRA_EXE","C:\\Games\\Game A.exe",1);setenv("MADEIRA_ARGS","--level \"one two\"",1)

@@ -5,7 +5,7 @@ import Darwin
 /// Madeira owns one Windows host. Games use separate, generation-checked jobs.
 final class IridiumMadeiraRuntime: @unchecked Sendable {
     static let shared = IridiumMadeiraRuntime()
-    enum Event { case starting, running, ended(UInt32), blocked(String) }
+    enum Event: Sendable { case starting, running, ended(UInt32), blocked(String) }
     enum Failure: Error { case busy, invalidRequest, invalidStatus, unsafeDirectory }
     private let root: URL
     private let queue = DispatchQueue(label: "iridium.madeira.session", qos: .userInitiated)
@@ -170,7 +170,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
         setenv("MADEIRA_WORKDIR", "C:\\", 1)
         setenv("MADEIRA_USE_ARM64EC", "1", 1)
     }
-    func poll(_ token: UUID, completion: @escaping @Sendable (Event) -> Void) {
+    func poll(_ token: UUID, completion: @escaping @MainActor @Sendable (Event) -> Void) {
         lock.lock()
         guard owner == token, !polling else { lock.unlock(); return }
         polling = true; lock.unlock()
@@ -187,7 +187,9 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                 if now > self.deadline { throw Failure.invalidStatus }
                 if self.booted && !self.nativeRunning() { throw Failure.invalidStatus }
                 let file = self.root.appendingPathComponent("status.bin")
-                guard FileManager.default.fileExists(atPath: file.path) else { completion(.starting); return }
+                guard FileManager.default.fileExists(atPath: file.path) else {
+                    DispatchQueue.main.async { completion(.starting) }; return
+                }
                 let modification = try file.resourceValues(forKeys: [.contentModificationDateKey, .isSymbolicLinkKey])
                 guard modification.isSymbolicLink != true else { throw Failure.invalidStatus }
                 if modification.contentModificationDate != self.lastModification {
@@ -203,7 +205,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                         self.owner = nil; self.pending = nil; self.nativePending = [:]
                         event = .ended(0)
                     } else {
-                        guard status?.phase == 0 else { completion(.starting); return }
+                        guard status?.phase == 0 else { DispatchQueue.main.async { completion(.starting) }; return }
                         try self.publishRequest()
                         event = .starting
                     }
@@ -224,7 +226,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                 self.poisoned = true
                 event = .blocked("Windows could not finish the session safely. Close and reopen Iridium.")
             }
-            completion(event)
+            DispatchQueue.main.async { completion(event) }
         }
     }
 }

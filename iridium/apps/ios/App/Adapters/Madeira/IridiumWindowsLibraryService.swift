@@ -514,24 +514,24 @@ final class LibraryModel: ObservableObject {
         DockStartScreen.shared.begin(dock, at: launchStarted)
         sawProcess = false
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.poll() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
     }
-    private func poll() {
+    @MainActor private func poll() {
         if IridiumMadeiraRuntime.shared.isResident {
             let owner = nativeLaunchID
             IridiumMadeiraRuntime.shared.poll(owner) { event in
-                DispatchQueue.main.async {
-                    guard self.nativeLaunchID == owner, self.current != nil else { return }
-                    switch event {
-                    case .starting: break
-                    case .running: self.sawProcess = true
-                    case .ended(let status):
-                        self.finish()
-                        if status != 0 && !self.quitRequested { self.error = "The Windows game ended with code \(status)." }
-                    case .blocked(let message):
-                        self.timer?.invalidate(); self.timer = nil
-                        self.launching = false; self.error = message
-                    }
+                guard self.nativeLaunchID == owner, self.current != nil else { return }
+                switch event {
+                case .starting: break
+                case .running: self.sawProcess = true
+                case .ended(let status):
+                    self.finish()
+                    if status != 0 && !self.quitRequested { self.error = "The Windows game ended with code \(status)." }
+                case .blocked(let message):
+                    self.timer?.invalidate(); self.timer = nil
+                    self.launching = false; self.error = message
                 }
             }
         }
