@@ -10,6 +10,7 @@ import uuid
 import unittest
 from host_tests import module_cache
 import madeira_session
+import madeira_threads
 
 ROOT = Path(__file__).resolve().parents[1]
 SESSION = ROOT / madeira_session.SOURCE
@@ -139,21 +140,45 @@ int main(int argc,char**argv){
             subprocess.run([str(path / 'wire'), str(path / 'request.bin')], check=True, timeout=5)
 
     @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
-    def test_real_native_thread_must_exit_before_drain(self):
+    def test_guest_thread_exit_destructors_and_retained_host_services(self):
         fixture = r'''
 #include "IRWindowsThreads.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <unistd.h>
-static atomic_bool entered,stop;
-static void*worker(void*unused){(void)unused;atomic_store(&entered,true);while(!atomic_load(&stop))usleep(1000);return 0;}
+static atomic_bool entered,stop,host_stop,destructing,release_destructor;
+static pthread_key_t key;
+static void*host(void*unused){(void)unused;while(!atomic_load(&host_stop))usleep(1000);return 0;}
+static void destructor(void*value){(void)value;atomic_store(&destructing,true);while(!atomic_load(&release_destructor))usleep(1000);}
+static void*worker(void*value){
+ assert(!pthread_setspecific(key,(void*)1));atomic_store(&entered,true);
+ while(!atomic_load(&stop))usleep(1000);
+ if(value)pthread_exit(0);
+ return 0;
+}
+static void wait_for(atomic_bool*value){for(int i=0;i<5000&&!atomic_load(value);++i)usleep(1000);assert(atomic_load(value));}
+static void wait_drain(void){for(int i=0;i<5000&&!ir_windows_threads_drained();++i)usleep(1000);assert(ir_windows_threads_drained());}
 int main(void){
- assert(!ir_windows_threads_drained());assert(ir_windows_threads_begin());assert(ir_windows_threads_drained());
- pthread_t thread;assert(!pthread_create(&thread,0,worker,0));while(!atomic_load(&entered))usleep(1000);
- assert(!ir_windows_threads_drained());atomic_store(&stop,true);assert(!pthread_join(thread,0));
- for(int i=0;i<1000 && !ir_windows_threads_drained();++i)usleep(1000);
- assert(ir_windows_threads_drained());return 0;
+ assert(!pthread_key_create(&key,destructor));
+ pthread_t baseline,system_thread,thread;
+ assert(!ir_windows_pthread_create(&baseline,0,host,0));
+ assert(!ir_windows_threads_drained());assert(ir_windows_threads_begin());wait_drain();
+ assert(!pthread_create(&system_thread,0,host,0));wait_drain();
+ for(int mode=0;mode<100;++mode){
+  atomic_store(&entered,false);atomic_store(&stop,false);atomic_store(&destructing,false);atomic_store(&release_destructor,false);
+  assert(ir_windows_threads_begin());
+  pthread_attr_t attr;assert(!pthread_attr_init(&attr));
+  bool detached=mode%2; if(detached)assert(!pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED));
+  assert(!ir_windows_pthread_create(&thread,&attr,worker,(void*)(long)(mode%3)));assert(!pthread_attr_destroy(&attr));
+  assert(!ir_windows_threads_drained());assert(!ir_windows_threads_begin());wait_for(&entered);
+  atomic_store(&stop,true);wait_for(&destructing);
+  assert(!ir_windows_threads_drained());atomic_store(&release_destructor,true);
+  if(!detached)assert(!pthread_join(thread,0));
+  wait_drain();
+ }
+ atomic_store(&host_stop,true);assert(!pthread_join(baseline,0));assert(!pthread_join(system_thread,0));
+ wait_drain();assert(!pthread_key_delete(key));return 0;
 }
 '''
         with tempfile.TemporaryDirectory() as folder:
@@ -164,6 +189,36 @@ int main(void){
                             str(path / 'main.c'), str(bridge / 'IRWindowsThreads.c'),
                             '-o', str(path / 'check')], check=True, timeout=30)
             subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
+    def test_failed_thread_creation_does_not_leave_a_pending_guest(self):
+        fixture = r'''
+#include "IRWindowsThreads.h"
+#include <assert.h>
+#include <errno.h>
+int fail_create(pthread_t*t,const pthread_attr_t*a,void*(*s)(void*),void*v){(void)t;(void)a;(void)s;(void)v;return EAGAIN;}
+static void*worker(void*v){return v;}
+int main(void){pthread_t thread;assert(ir_windows_threads_begin());assert(ir_windows_pthread_create(&thread,0,worker,0)==EAGAIN);assert(ir_windows_threads_drained());return 0;}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            bridge = ROOT / 'iridium/apps/ios/RuntimeBridge'
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Dpthread_create=fail_create',
+                            '-I', str(bridge), str(path / 'main.c'), str(bridge / 'IRWindowsThreads.c'),
+                            '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    def test_guest_creation_hooks_reject_upstream_drift(self):
+        for name in ('process_ios.c', 'thread_ios.c'):
+            source = (ROOT / 'vendor/Madeira/build/ntdll-unix' / name).read_text()
+            result = madeira_threads.apply(source, name, 'IRWindowsThreads.h')
+            self.assertEqual(result.count('ir_windows_pthread_create('), 1)
+            self.assertEqual(result.count('pthread_join('), source.count('pthread_join('))
+            self.assertEqual(result.count('pthread_detach('), source.count('pthread_detach('))
+            for changed in (source.replace('pthread_create(', 'changed_create('), source + source):
+                with self.assertRaisesRegex(ValueError, 'guest thread creation changed'):
+                    madeira_threads.apply(changed, name, 'IRWindowsThreads.h')
 
     @unittest.skipUnless((ROOT / 'vendor/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/x86_64-w64-mingw32-clang').is_file(), 'Prepared Windows cross compiler required')
     def test_launcher_pe_and_source_receipt(self):

@@ -46,7 +46,7 @@ enum IridiumRuntimeRegistry {
     // Only linked and implemented runtimes belong here. Research candidates
     // are deliberately absent from the import UI and compatibility claims.
     static let madeira = IridiumRuntimeDescriptor(id: "madeira", name: "Madeira", platforms: [.windows],
-        jit: .required, supportsPause: false, restartAfterStop: true)
+        jit: .required, supportsPause: false, restartAfterStop: false)
     static let sameBoy = IridiumRuntimeDescriptor(id: "sameboy", name: "SameBoy", platforms: [.gameBoy, .gameBoyColor],
         jit: .none, supportsPause: true, restartAfterStop: false)
     static let ppsspp = IridiumRuntimeDescriptor(id: "ppsspp", name: "PPSSPP", platforms: [.psp],

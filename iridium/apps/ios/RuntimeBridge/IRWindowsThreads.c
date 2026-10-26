@@ -1,44 +1,87 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRWindowsThreads.h"
+#include <errno.h>
 #include <mach/mach.h>
-#include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-static uint64_t baseline[1024];
-static size_t baseline_count;
+struct guest_thread {
+    struct guest_thread *next;
+    uint64_t generation;
+    mach_port_t port;
+    void *(*start)(void *);
+    void *argument;
+};
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static struct guest_thread *threads;
+static uint64_t generation, baseline;
 static bool captured;
-static bool snapshot(uint64_t *ids, size_t *count) {
-    thread_act_array_t threads = NULL;
-    mach_msg_type_number_t number = 0;
-    if (task_threads(mach_task_self(), &threads, &number) != KERN_SUCCESS) return false;
-    bool valid = number <= 1024;
-    *count = 0;
-    for (mach_msg_type_number_t i = 0; i < number; ++i) {
-        thread_identifier_info_data_t info;
-        mach_msg_type_number_t size = THREAD_IDENTIFIER_INFO_COUNT;
-        kern_return_t result = thread_info(threads[i], THREAD_IDENTIFIER_INFO, (thread_info_t)&info, &size);
-        if (result == KERN_TERMINATED || result == KERN_INVALID_ARGUMENT) { mach_port_deallocate(mach_task_self(), threads[i]); continue; }
-        if (result != KERN_SUCCESS) valid = false;
-        else if (valid) ids[(*count)++] = info.thread_id;
-        mach_port_deallocate(mach_task_self(), threads[i]);
+
+static void *guest_start(void *argument) {
+    struct guest_thread *thread = argument;
+    void *(*start)(void *) = thread->start;
+    void *value = thread->argument;
+    mach_port_t port = mach_thread_self();
+    pthread_mutex_lock(&lock);
+    thread->port = port;
+    pthread_mutex_unlock(&lock);
+    return start(value);
+}
+
+int ir_windows_pthread_create(pthread_t *thread, const pthread_attr_t *attributes,
+                             void *(*start)(void *), void *argument) {
+    struct guest_thread *entry = calloc(1, sizeof(*entry));
+    if (!entry) return ENOMEM;
+    entry->start = start; entry->argument = argument;
+    pthread_mutex_lock(&lock);
+    if (generation == UINT64_MAX) { pthread_mutex_unlock(&lock); free(entry); return EAGAIN; }
+    entry->generation = ++generation;
+    entry->next = threads; threads = entry;
+    pthread_mutex_unlock(&lock);
+    int result = pthread_create(thread, attributes, guest_start, entry);
+    if (result) {
+        pthread_mutex_lock(&lock);
+        struct guest_thread **cursor = &threads;
+        while (*cursor != entry) cursor = &(*cursor)->next;
+        *cursor = entry->next;
+        pthread_mutex_unlock(&lock);
+        free(entry);
     }
-    vm_deallocate(mach_task_self(), (vm_address_t)threads, number * sizeof(*threads));
-    return valid;
+    return result;
 }
-bool ir_windows_threads_begin(void) {
-    captured = snapshot(baseline, &baseline_count);
-    return captured;
-}
-bool ir_windows_threads_drained(void) {
-    uint64_t current[1024]; size_t count = 0;
-    if (!captured || !snapshot(current, &count)) return false;
-    uint64_t sampler = 0;
-    if (pthread_threadid_np(pthread_self(), &sampler)) return false;
-    for (size_t i = 0; i < count; ++i) {
-        if (current[i] == sampler) continue;
-        bool found = false;
-        for (size_t j = 0; j < baseline_count; ++j) if (current[i] == baseline[j]) { found = true; break; }
-        if (!found) return false;
+
+static bool prune(void) {
+    struct guest_thread **cursor = &threads;
+    while (*cursor) {
+        struct guest_thread *entry = *cursor;
+        if (entry->port != MACH_PORT_NULL) {
+            mach_port_type_t type = 0;
+            if (mach_port_type(mach_task_self(), entry->port, &type) != KERN_SUCCESS) return false;
+            // A dead send right proves the kernel thread ended, including TLS destructors.
+            if (type & MACH_PORT_TYPE_DEAD_NAME) {
+                mach_port_deallocate(mach_task_self(), entry->port);
+                *cursor = entry->next; free(entry); continue;
+            }
+        }
+        cursor = &entry->next;
     }
     return true;
+}
+static bool drained(void) {
+    for (struct guest_thread *entry = threads; entry; entry = entry->next)
+        if (entry->generation > baseline) return false;
+    return true;
+}
+bool ir_windows_threads_begin(void) {
+    pthread_mutex_lock(&lock);
+    bool valid = prune() && (!captured || drained());
+    if (valid) { baseline = generation; captured = true; }
+    pthread_mutex_unlock(&lock);
+    return valid;
+}
+bool ir_windows_threads_drained(void) {
+    pthread_mutex_lock(&lock);
+    bool valid = captured && prune() && drained();
+    pthread_mutex_unlock(&lock);
+    return valid;
 }

@@ -25,8 +25,9 @@ upstream UI changes do not rewrite the app.
 
 The unified library retains Windows records and separate console records.
 `IridiumRuntimeDriver` declares engine capabilities and lifecycle requirements.
-Only one native runtime may own the process. Windows requires an app restart
-before switching engines; uncertain teardown also retains ownership until restart.
+Only one game may own the process. A retained Windows host accepts separate game
+jobs, then returns admission after confirmed guest-thread cleanup. Uncertain
+teardown retains ownership until restart.
 
 Console engines use isolated binaries and checked C interfaces. Components have
 separate pins, build outputs, resources, and receipts. Shared JIT handles provider

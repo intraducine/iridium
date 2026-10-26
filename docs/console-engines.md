@@ -154,10 +154,13 @@ released only after confirmed teardown. Play!/Flycast also pause their upstream
 VM threads. Libraries remain loaded after stop.
 
 Play! drains remaining graphics commands after VM pause, before state capture or
-the single GS release during teardown. A
+the single GS release during teardown. The
 Windows host initializes once per app process. The Madeira adapter starts each game
 as a separate Windows job through an owned, versioned session launcher. A completed
-job must have no remaining native threads before admission returns to the library.
+job must have no remaining new Wine guest threads before admission returns to the
+library. The adapter tracks guest creation with checked hooks and retained Mach
+thread ports, without changing Wine's thread join or detach rules. Idle host
+services, such as Core Audio, can remain alive.
 Stale status and close requests carry a different launch token and cannot finish or
 stop the current game. A failed or uncertain drain retains ownership and requires
 an app restart. Closing a game never initializes Wine or wineserver again.

@@ -3292,7 +3292,7 @@ struct ContentView: View {
     /// start the normal session with explorer's virtual desktop running dockhost.exe.
     /// Nothing is handed over unless JIT is ready and no session runs.
     /// From the library (Settings › Steam › Madeira Dock) the start is a library
-    /// session: the library's one-session-per-run rule applies first, failures
+    /// session: the library's game admission applies first, failures
     /// show in the library, and the session gets the full-screen game view.
     /// `profile` is a Steam game's library entry (its Game details page): the
     /// session then takes that entry's display, performance and on-screen settings.
@@ -3307,7 +3307,7 @@ struct ContentView: View {
                                 then: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }
         guard cloudClear(game.id, name: game.name, retry: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }
         guard !IridiumMadeiraRuntime.shared.isBusy, !inLibrary || library.current == nil else {
-            logStore.log("[madeira-dock] a session already ran in this app run; restart Madeira first", level: .error)
+            logStore.log("[madeira-dock] a Windows session is still active or its cleanup is incomplete", level: .error)
             if inLibrary { library.error = "A session is already running." }
             return
         }

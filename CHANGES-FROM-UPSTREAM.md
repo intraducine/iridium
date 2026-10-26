@@ -204,8 +204,10 @@ graphics resources. A failed pause retains the runtime for an app restart.
 The Madeira session adapter initializes the Windows host once and launches games
 through an owned Windows job supervisor. Its versioned request/status contract is
 compiled with the pinned Madeira cross compiler and audited against its source and
-engine pin. The app returns admission only after job completion and native-thread
-drain. JIT setup prepares both retained Windows and reusable console arenas once;
+engine pin. Checked creation hooks track Wine guest threads with retained Mach
+thread ports while preserving Wine's join/detach ownership. The app returns
+admission only after job completion and guest-thread drain; retained framework
+services do not block reuse. JIT setup prepares both retained Windows and reusable console arenas once;
 closing a game preserves those mappings. No Wine registry reset or emulation patch
 is used for repeated launches. Runtime startup-only configuration retains its
 upstream host-lifetime scope.

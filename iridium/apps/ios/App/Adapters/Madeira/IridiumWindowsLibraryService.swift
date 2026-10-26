@@ -384,7 +384,7 @@ final class LibraryModel: ObservableObject {
     static var sessionsThisRun = 0
     private static var nativeInitializationStarted = false
     private(set) var nativeLaunchID = UUID()
-    static let restartMessage = "Fully close and reopen Iridium before starting another Windows game. The Windows runtime cannot reset safely yet."
+    static let restartMessage = "Windows could not finish the session safely. Close and reopen Iridium."
     @MainActor static func reserveNativeSession() -> Bool {
         guard !nativeInitializationStarted else { return false }
         nativeInitializationStarted = true
