@@ -26,7 +26,8 @@ class CurrentExecutionStatusTests(unittest.TestCase):
         fallback = source.split('            case .fallback(let reason):', 1)[1].split('\n            }', 1)[0]
         harness = r'''import Foundation
 import Dispatch
-struct Game { var platform: IridiumPlatform = .psp; var runtimeID = "ppsspp"; var pspJITEnabled = false }
+struct Game { var platform: IridiumPlatform = .psp; var runtimeID = "ppsspp"; var pspJITEnabled = false; var id = UUID() }
+enum IridiumCoreContent { static func saveFolders(_ folders: [String: String], game: UUID) {} }
 struct Progress { var phase = "" }
 struct FixtureQueue { func async(_ work: @escaping () -> Void) {} }
 enum RuntimeDiagnosticLogFiles { static func writeConsoleLine(_ text: String) {} }
@@ -36,6 +37,12 @@ final class IridiumConsoleSession {
     var game: Game? = Game(), lease: Int? = 1
     var phase = Phase.starting
     var pspReady = false, pspJITVerifiedForLaunch = false
+    var coreControls = IridiumCoreControls(), coreStateStatus: String?
+    var coreOperationPending=false, fastForward=false, rewindEnabled=false
+    var cheats: [IridiumCheat]=[], pendingCheats: [IridiumCheat]?, restoredCheats=false
+    let savedCheats: [IridiumCheat]=[]
+    func restoreCheatsIfNeeded() {}
+    func finishCheats(success: Bool) {}
     var phase3JITVerified = false, phase3Status = "Waiting for video"
     var pspResolution = 2, pspCPUMode = "Not reported", pspJITStatus = ""
     var pspJITFallbackReason: String?, pspStateStatus: String?, error: String?
@@ -124,6 +131,7 @@ print("PASS current-session execution status: " + CommandLine.arguments[1])
         result = subprocess.run(['swiftc', '-swift-version', '5', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
                                  '-module-cache-path', module_cache('macosx'),
                                  str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                                  str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumCoreControls.swift'),
                                  str(FRONTEND / 'IridiumExecutionStatus.swift'), str(main),
                                  '-o', str(cls.binary)], capture_output=True, text=True)
         if result.returncode:

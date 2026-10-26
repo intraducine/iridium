@@ -6,6 +6,15 @@ def generated(ROOT, directory):
     main = (ROOT / 'vendor/Flycast/shell/libretro/libretro.cpp').read_text()
     if main.count('static bool first_run = true;') != 1:
         raise ValueError('Flycast session hook changed')
+    begin = main.index('size_t retro_serialize_size()')
+    end = main.index('// Cheats', begin)
+    states = main[begin:end]
+    if states.count('std::lock_guard<std::mutex> lock(mtx_serialization);') != 3 or states.count('emu.start();') != 3:
+        raise ValueError('Flycast state lifecycle changed')
+    states = states.replace('std::lock_guard<std::mutex> lock(mtx_serialization);',
+        'std::lock_guard<std::mutex> lock(mtx_serialization);\n\tconst bool irWasRunning = emu.running();')
+    states = states.replace('emu.start();', 'if (irWasRunning) emu.start();')
+    main = main[:begin] + states + main[end:]
     (directory / 'libretro.cpp').write_text(main + '''
 extern "C" bool ir_phase3_core_pause(bool paused) {
     if (first_run) return true;
@@ -42,7 +51,7 @@ extern "C" bool ir_phase3_core_pause(bool paused) {
 
 def arguments():
     return ['-DLIBRETRO=ON', '-DUSE_VULKAN=OFF', '-DUSE_HOST_LIBZIP=OFF', '-DUSE_OPENMP=OFF',
-            '-DENABLE_CTEST=OFF', '-DUSE_BREAKPAD=OFF', '-DUSE_UPNP=OFF', '-DCMAKE_C_FLAGS=-DIOS', '-DCMAKE_CXX_FLAGS=-DIOS']
+            '-DENABLE_CTEST=OFF', '-DUSE_BREAKPAD=OFF', '-DUSE_UPNP=ON', '-DCMAKE_C_FLAGS=-DIOS', '-DCMAKE_CXX_FLAGS=-DIOS']
 
 
 TARGET, OUTPUT = 'flycast_libretro', 'flycast_libretro.dylib'

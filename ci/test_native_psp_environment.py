@@ -17,6 +17,7 @@ class EnvironmentOverlapTests(unittest.TestCase):
         methods='\n'.join(method(source,s) for s in ('- (void)observeEnvironment {','- (BOOL)canPlay {','- (void)setPlaying:(BOOL)playing {'))
         code=r'''#import <Foundation/Foundation.h>
 #include <atomic>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 static NSString *UIApplicationWillResignActiveNotification=@"resign",*UIApplicationDidBecomeActiveNotification=@"active";
@@ -34,6 +35,10 @@ static std::atomic<uint64_t> generation,frames;
 static std::atomic<bool> rendererFailed,acceptingCallbacks,stateBusy;
 static std::atomic<int> pendingResolution,pendingState;
 static bool reportedCoreError;
+static std::mutex optionsLock;
+static NSDictionary *pendingOptions;
+static bool optionsReported=true;
+static NSArray *irPSPOptions(NSString *,NSString *,bool *) { return @[]; }
 static struct{bool bEnableSound;}g_Config={true};
 static unsigned audioStarts;
 static NSMutableArray *pending;

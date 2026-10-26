@@ -34,6 +34,7 @@ def cartridge(fixed_palette=False):
     # Store actual input and make it visibly change the palette.
     program.extend([0xf0, 0, 0xea, 1, 0xa0])
     if not fixed_palette: program.extend([0xe0, 0x47])
+    program.extend([0xfa, 2, 0xa0, 0xea, 3, 0xa0])
     program.extend([0xc3, loop & 255, loop >> 8])
     data[0x150:0x150 + len(program)] = program
     data[0x14d] = (-sum(data[0x134:0x14d]) - 25) & 255
@@ -46,12 +47,25 @@ class Frame(c.Structure):
                 ('rate', c.c_double), ('input_polled', c.c_bool)]
 
 
+class Cheat(c.Structure):
+    _fields_ = [('name', c.c_char_p), ('format', c.c_char_p), ('code', c.c_char_p), ('enabled', c.c_bool)]
+
+
 def check(library):
     lib = c.CDLL(str(library))
     lib.ir_core_open.argtypes = [c.c_void_p, c.c_size_t, c.c_char_p]
     lib.ir_core_open.restype = c.c_bool
     lib.ir_core_step.argtypes = [c.c_uint16, c.POINTER(Frame)]
     lib.ir_core_step.restype = c.c_bool
+    lib.ir_core_state_size.restype = c.c_size_t
+    lib.ir_core_set_option.argtypes = [c.c_char_p, c.c_char_p]
+    lib.ir_core_set_option.restype = c.c_bool
+    lib.ir_core_set_cheats.argtypes = [c.POINTER(Cheat), c.c_size_t]
+    lib.ir_core_set_cheats.restype = c.c_bool
+    for name in ['read', 'write']:
+        fn = getattr(lib, 'ir_core_' + name + '_state')
+        fn.argtypes = [c.c_void_p, c.c_size_t]
+        fn.restype = c.c_bool
     lib.ir_core_save_size.argtypes = [c.c_bool]
     lib.ir_core_save_size.restype = c.c_size_t
     for name in ['read', 'write']:
@@ -90,7 +104,38 @@ def check(library):
             assert size == 8192
             data = (c.c_uint8 * size)()
             assert lib.ir_core_read_save(False, data, size)
+            cheats = (Cheat * 1)(Cheat(b'Test read', b'gameshark', b'019902A0', True))
+            assert lib.ir_core_set_cheats(cheats, 1)
+            assert lib.ir_core_step(0, c.byref(frame))
+            assert lib.ir_core_read_save(False, data, size) and data[3] == 0x99
+            invalid = (Cheat * 1)(Cheat(b'Invalid', b'gameshark', b'NOTACODE', True))
+            assert not lib.ir_core_set_cheats(invalid, 1)
+            assert lib.ir_core_step(0, c.byref(frame))
+            assert lib.ir_core_read_save(False, data, size) and data[3] == 0x99
+            cheats[0].enabled = False
+            assert lib.ir_core_set_cheats(cheats, 1)
+            assert lib.ir_core_step(0, c.byref(frame))
+            assert lib.ir_core_read_save(False, data, size) and data[3] == data[2]
+            for text in [b'00000F', b'000-00F', b'00000F000', b'000-00F-000']:
+                genie = (Cheat * 1)(Cheat(b'Test format', b'gamegenie', text, False))
+                assert lib.ir_core_set_cheats(genie, 1)
+            assert lib.ir_core_set_cheats(None, 0)
             assert data[0] == 0x42 and data[1] & 1
+            snapshot_size = lib.ir_core_state_size()
+            assert 0 < snapshot_size <= 8 * 1024 * 1024
+            snapshot = (c.c_uint8 * snapshot_size)()
+            assert lib.ir_core_read_state(snapshot, snapshot_size)
+            assert not lib.ir_core_read_state(snapshot, snapshot_size - 1)
+            before_state = bytes(data)
+            data[100] ^= 0xff
+            assert lib.ir_core_write_save(False, data, size)
+            assert lib.ir_core_write_state(snapshot, snapshot_size)
+            assert lib.ir_core_read_save(False, data, size) and bytes(data) == before_state
+            assert not lib.ir_core_write_state(snapshot, snapshot_size - 1)
+            assert lib.ir_core_set_option(b'sameboy_color_correction_mode', b'off')
+            assert not lib.ir_core_set_option(b'sameboy_color_correction_mode', b'not-a-mode')
+            assert not lib.ir_core_set_option(b'unknown-setting', b'off')
+            assert lib.ir_core_set_option(b'sameboy_color_correction_mode', b'emulate hardware')
             marker = b'IRIDIUM-SAVE-TEST'
             if saved is not None:
                 assert bytes(data)[512:512 + len(marker)] == marker
@@ -138,7 +183,7 @@ def check(library):
     assert frame.width == 160 and frame.height == 144 and frame.rate == 96000
     assert 59 < frame.fps < 62
     lib.ir_core_close()
-    print('Real SameBoy: five lifecycles, 1250 frames, DMG CGB-boot colorization, CGB/SGB2, 96 kHz audio, input, SRAM, RTC and no-RTC passed')
+    print('Real SameBoy: five lifecycles, 1250 frames, DMG CGB-boot colorization, CGB/SGB2, 96 kHz audio, input, SRAM, RTC, state restoration, validated options and cheat apply/reject/disable/remove passed')
 
 
 def main():

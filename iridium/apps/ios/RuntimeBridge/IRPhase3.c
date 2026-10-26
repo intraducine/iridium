@@ -13,6 +13,8 @@ static uint64_t (*frames)(void);
 static const IRDolphinAPI *dolphin;
 static bool (*prepare_jit)(IRPhase3JITPrepare);
 static bool (*prepare_memory)(const IRJITMemoryAPI *);
+static bool (*controls_command)(const char *);
+static void (*controls_input)(IRPhase3PollPlayer, IRPhase3Rumble);
 // Loaded images deliberately remain resident. Clean shutdown releases the
 // session, never executable code that an upstream worker might still reference.
 static const char *binary(const char *engine) {
@@ -53,6 +55,8 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
         event(generation, 3, "The bundled engine player has an incompatible interface."); return NULL;
     }
     create = next; pause_player = p; stop_player = s; frames = f;
+    controls_command = (bool (*)(const char *))dlsym(image, "ir_native_engine_command");
+    controls_input = (void (*)(IRPhase3PollPlayer, IRPhase3Rumble))dlsym(image, "ir_native_engine_input");
     dolphin = NULL;
     prepare_jit = NULL; prepare_memory = NULL;
     if (strcmp(engine, "dolphin")) {
@@ -103,4 +107,16 @@ bool ir_phase3_dolphin_install_wad(const char *root, const char *save, const cha
 
 bool ir_phase3_configure_memory(const IRJITMemoryAPI *api) {
     return prepare_memory && prepare_memory(api);
+}
+bool ir_phase3_command(const char *json) { return json && controls_command && controls_command(json); }
+bool ir_phase3_configure_input(IRPhase3PollPlayer poll, IRPhase3Rumble rumble) {
+    if (!poll || !controls_input) return false;
+    controls_input(poll, rumble); return true;
+}
+int ir_phase3_azahar_install_cia(const char *frameworks, const char *user, const char *file) {
+    char core[4096];
+    if(!frameworks||!user||!file||!path(core,sizeof core,frameworks,"azahar_libretro.dylib"))return 100;
+    void *image=dlopen(core,RTLD_NOW|RTLD_LOCAL);
+    int (*install)(const char *,const char *)=image?(int(*)(const char *,const char *))dlsym(image,"ir_phase3_core_install_cia"):NULL;
+    return install?install(user,file):100;
 }

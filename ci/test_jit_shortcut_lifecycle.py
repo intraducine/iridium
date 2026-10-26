@@ -234,6 +234,10 @@ NETWORK_METHODS
     var enables = 0
     var resolved: ((Result<Void, Error>) -> Void)?
     func enableResolved(_ callback: @escaping (Result<Void, Error>) -> Void) { enables += 1; resolved = callback }
+    // This fixture exercises activation/network ownership; arena reuse is tested separately.
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        enable(requiresAttachedDebugger: true, completion: completion)
+    }
 COORDINATOR_METHODS
 }
 func callback(_ original: URL, _ parameter: String, result: String = "") -> URL {

@@ -36,7 +36,21 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var dolphinStateStatus: String?
     @Published private(set) var dolphinStatePending = false
     @Published var dolphinStateSlot = 0
+    @Published private(set) var coreControls = IridiumCoreControls()
+    @Published private(set) var cheats: [IridiumCheat] = []
+    private var pendingCheats: [IridiumCheat]?
+    private var restoredCheats = false
+    @Published var coreStateSlot = 0
+    @Published private(set) var coreStateStatus: String?
+    @Published private(set) var coreOperationPending = false
+    @Published private(set) var fastForward = false
+    @Published private(set) var rewindEnabled = false
+    private var rewindHistory = IridiumRewindHistory() // runtime queue only
+    private var rewindFrames = 0
+    private var useRewind = false
+    private var speedMultiplier = 1
     private let dolphinMotion = IridiumDolphinMotion()
+    @MainActor private var controllerHaptics: IridiumControllerRumble?
     private var dolphinMonitor: Timer?
     private var dolphinControllers = [GCController?](repeating: nil, count: 4)
     @Published var error: String?
@@ -52,6 +66,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var keyboardAnalog: (Int16, Int16) = (0, 0)
     private var rightAnalog: (Int16, Int16) = (0, 0) // protected by lock
     private var consolePointer: (Int16, Int16, Bool) = (0, 0, false)
+    private var consoleAspect: CGFloat = 400.0 / 480.0 // protected by lock
     private var suppressController = false
     private var intent = IridiumConsoleIntent() // protected by lock
     private var intentGeneration: UInt64 = 0 // protected by lock
@@ -103,8 +118,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard !jit.busy else { throw IridiumRuntimeError.busy }
         guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
         guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
-              wine_process_is_running() == 0, wineserver_is_running() == 0 else { throw IridiumRuntimeError.busy }
-        guard LibraryModel.sessionsThisRun == 0 else { throw IridiumRuntimeError.restartRequired }
+              !IridiumMadeiraRuntime.shared.isBusy else { throw IridiumRuntimeError.busy }
         guard ownership.lease == nil else { throw IridiumRuntimeError.busy }
     }
 
@@ -113,6 +127,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         do {
             try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
+            let savedCheats = try IridiumCheat.load(game.id)
             if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
             lock.lock(); intent = IridiumConsoleIntent(); intentGeneration &+= 1; lock.unlock()
@@ -126,12 +141,17 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             dolphinCPUMode = "Waiting for JIT"
             dolphinPerformance = "Waiting for speed data"
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
+            coreControls = IridiumCoreControls(); coreStateStatus = nil; coreOperationPending = false
+            cheats = savedCheats; pendingCheats = nil; restoredCheats = false
+            fastForward = false; rewindEnabled = false
             pspJITStatus = "Off — using IR interpreter"
             pspJITFallbackReason = nil; pspJITVerifiedForLaunch = false
             jitDiagnostic = nil
             lock.lock(); displayedImageCount = 0; lock.unlock()
             LibraryController.shared.configure(enabled: true, ownsInput: false)
+            let savedOptions = IridiumCorePreferences.load(game.id)
             queue.async { [self] in
+                rewindHistory.clear(); rewindFrames = 0; useRewind = false; speedMultiplier = 1
                 queueOwner = owner; bootComplete = false; stopRequested = false; terminalFailure = false
                 backend = game.platform.isPhase3 ? .advanced : runtime.id == "ppsspp" ? .psp : .sameBoy
                 audioBuffering = IridiumAudioBuffering()
@@ -145,6 +165,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                     guard requested != .stop else { complete(owner); return }
                     switch backend {
                     case .sameBoy:
+                        ir_core_reset_options()
+                        for (key, value) in savedOptions { _ = ir_core_set_option(key, value) }
                         let handle = try FileHandle(forReadingFrom: url)
                         defer { try? handle.close() }
                         guard let rom = try handle.read(upToCount: 8 * 1024 * 1024 + 1),
@@ -158,6 +180,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                         try restoreSaves()
                         var first = IRCoreFrame()
                         guard ir_core_step(0, &first) else { throw IridiumRuntimeError.invalidGame }
+                        publishSameBoyOptions(owner)
                         fps = first.frames_per_second; rate = first.samples_per_second
                         bootComplete = true; lastSave = Date()
                         try activate(owner)
@@ -250,6 +273,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             ir_phase3_stop(); error = "The core could not configure shared JIT."; return
         }
         if game.runtimeID == "dolphin" {
+            _ = sendCoreCommand(["operation": "configure", "values": IridiumCorePreferences.load(game.id)])
             dolphinSettings = .load(game.id); dolphinStateStatus = nil; dolphinStatePending = false
             lock.lock(); dolphinControllers = [GCController?](repeating: nil, count: 4); lock.unlock()
             var options = dolphinSettings.native; options.use_jit = phase3JITReady == true
@@ -262,6 +286,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             }
             dolphinMotion.start(enabled: dolphinSettings.motion)
             monitorDolphin()
+        } else {
+            _ = sendCoreCommand(["operation": "configure", "values": IridiumCorePreferences.load(game.id)])
+            _ = ir_phase3_configure_input({ player, output in
+                guard let output else { return }
+                var sample = IRDolphinInput()
+                IridiumConsoleSession.shared.fillDolphinInput(player, &sample)
+                output.pointee = sample.controls
+            }, { player, motor, strength in
+                IridiumConsoleSession.shared.controllerRumble(player: player, motor: motor, strength: strength)
+            })
         }
         phase3Controller = nativeController
         diagnostics.phase = "upstream engine starting"
@@ -270,12 +304,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     private func phase3Event(_ generation: UInt64, kind: UInt32, message: String) {
         guard generation == phase3Generation, let owner = lease, game?.platform.isPhase3 == true else { return }
-        RuntimeDiagnosticLogFiles.writeConsoleLine("[Console engine] " + message)
-        phase3Status = message
+        if kind != 8 { RuntimeDiagnosticLogFiles.writeConsoleLine("[Console engine] " + message) }
+        if kind != 8 { phase3Status = message }
         switch kind {
         case 1:
             phase3Ready = true; diagnostics.phase = "engine produced video"
+            _ = sendCoreCommand(["operation": "snapshot"])
             if phase == .starting && requested == .play { phase = .running }
+            restoreCheatsIfNeeded()
         case 2:
             dolphinMonitor?.invalidate(); dolphinMonitor = nil; dolphinMotion.stop()
             phase3Controller = nil
@@ -287,9 +323,20 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         case 4: pause()
         case 5: phase3JITVerified = true
         case 6:
-            dolphinStatePending = false; dolphinStateStatus = message; resume()
+            if message == "Cheats applied." { finishCheats(success: true) }
+            dolphinStatePending = false; dolphinStateStatus = message
+            coreOperationPending = false; coreStateStatus = message; resume()
         case 7:
-            dolphinStatePending = false; dolphinStateStatus = message; error = message
+            finishCheats(success: false)
+            dolphinStatePending = false; dolphinStateStatus = message
+            coreOperationPending = false; coreStateStatus = message; error = message
+        case 8:
+            if let data = message.data(using: .utf8), let snapshot = try? JSONDecoder().decode(IridiumCoreControls.self, from: data) {
+                coreControls = snapshot
+                if let folders = snapshot.contentFolders, let game { IridiumCoreContent.saveFolders(folders, game: game.id) }
+                lock.lock(); consoleAspect = CGFloat(snapshot.aspect); lock.unlock()
+                restoreCheatsIfNeeded()
+            }
         default: break
         }
     }
@@ -401,6 +448,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
         nativePSPController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
+        let values = self.game.map { IridiumCorePreferences.pspStartup($0.id) } ?? [:]
+        if !values.isEmpty {
+            guard let data = try? JSONSerialization.data(withJSONObject: ["operation": "startupOptions", "values": values]),
+                  let text = String(data: data, encoding: .utf8), ir_psp_native_command(text) else {
+                error = "The PSP engine could not apply its launch settings."
+                stop(); return
+            }
+        }
         if requested == .pause { ir_psp_native_pause() }
         diagnostics.phase = "native graphics starting"
         RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] release=v1.20.4 jit_verified=\(jitVerified ? "true" : "false"); renderer pending; game_progress=unknown")
@@ -410,7 +465,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private func nativePSPEvent(_ kind: UInt32, text: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, game?.platform == .psp else { return }
-        RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)")
+        if kind != 10 { RuntimeDiagnosticLogFiles.writeConsoleLine("[PSP native] \(text)") }
         switch kind {
         case 1:
             nativePSPController = nil
@@ -425,12 +480,27 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             pspReady = true; pspResolution = Int(ir_psp_native_resolution())
             if phase == .starting { phase = .running }
             diagnostics.phase = "native game boot complete"
+            restoreCheatsIfNeeded()
         case 5, 6:
+            if text == "Cheats applied." { finishCheats(success: true) }
+            else if kind == 6 { finishCheats(success: false) }
             pspStateStatus = text
             if kind == 6 { error = text }
         case 7: pause()
         case 9:
             phase = .restartRequired; error = text; diagnostics.phase = "native JIT cleanup incomplete"
+        case 10:
+            if let data = text.data(using: .utf8), let snapshot = try? JSONDecoder().decode(IridiumCoreControls.self, from: data) {
+                coreControls = snapshot
+                if let game {
+                    let staged = IridiumCorePreferences.pspStartup(game.id)
+                    for index in coreControls.options.indices where coreControls.options[index].restartRequired == true {
+                        if let value = staged[coreControls.options[index].key] { coreControls.options[index].value = value }
+                    }
+                }
+                if let folders = snapshot.contentFolders, let game { IridiumCoreContent.saveFolders(folders, game: game.id) }
+                restoreCheatsIfNeeded()
+            }
         case 8:
             pspCPUMode = text
             if pspJITVerifiedForLaunch && text != "JIT" && text != "JIT using IR" {
@@ -500,6 +570,92 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
+    @MainActor func install3DSCIA(_ source: URL, game existing: IridiumConsoleGame? = nil) {
+        let game = existing ?? IridiumConsoleGame(id: UUID(), title: "3DS Storage", platform: .nintendo3DS,
+            runtimeID: "azahar", fileExtension: "3ds", importedAt: Date())
+        guard game.runtimeID == "azahar",
+              source.pathExtension.lowercased() == "cia", let frameworks = Bundle.main.privateFrameworksURL else { return }
+        guard beginContentMaintenance() else { return }
+        dolphinSystemStatus = "Installing 3DS content…"
+        queue.async {
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            var staging: URL?
+            defer { if let staging { try? FileManager.default.removeItem(at: staging) } }
+            do {
+                let store = IridiumConsoleLibrary.shared.store
+                let temporary = try store.checked(["Saves", "azahar", "Maintenance"], createDirectory: true).appendingPathComponent(UUID().uuidString)
+                staging = temporary
+                let save = try store.saveDirectory(game)
+                let target = try IridiumCoreContent.directory("Azahar", root: save)
+                try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false)
+                let incoming = temporary.appendingPathComponent("Incoming")
+                try IridiumFilesAccess.read(source) { coordinated in
+                    try IridiumFilesImport.importContent(from: coordinated, to: incoming, backup: temporary.appendingPathComponent("Unused"))
+                }
+                let user = temporary.appendingPathComponent("User")
+                if FileManager.default.fileExists(atPath: target.path) {
+                    try IridiumFilesImport.importContent(from: target, to: user, backup: temporary.appendingPathComponent("Unused2"))
+                } else { try FileManager.default.createDirectory(at: user, withIntermediateDirectories: false) }
+                let manifest = user.appendingPathComponent("iridium-installed.json")
+                if FileManager.default.fileExists(atPath: manifest.path) { try FileManager.default.removeItem(at: manifest) }
+                let status = ir_phase3_azahar_install_cia(frameworks.path, user.path, incoming.appendingPathComponent(source.lastPathComponent).path)
+                guard status == 0 else {
+                    throw NSError(domain: "IridiumCIA", code: Int(status), userInfo: [NSLocalizedDescriptionKey:
+                        status == 5 ? "This CIA is encrypted. Choose an unencrypted CIA. Existing files were kept." : "Azahar could not install this CIA. Existing files were kept."])
+                }
+                struct Installed: Decodable { let title: String; let path: String }
+                var installed: Installed?
+                if FileManager.default.fileExists(atPath: manifest.path) {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: manifest.path)
+                    guard attributes[.type] as? FileAttributeType == .typeRegular,
+                          let size = attributes[.size] as? NSNumber, size.intValue <= 8192 else { throw IridiumRuntimeError.invalidGame }
+                    let data = try Data(contentsOf: manifest)
+                    guard data.count <= 8192 else { throw IridiumRuntimeError.invalidGame }
+                    let result = try JSONDecoder().decode(Installed.self, from: data)
+                    let components = try IridiumCoreContent.components(result.path)
+                    var candidate = IridiumConsoleGame(id: UUID(), title: result.title, platform: .nintendo3DS,
+                        runtimeID: "azahar", fileExtension: "app", importedAt: Date())
+                    candidate.storageOwnerID = game.storageOwnerID ?? game.id; candidate.installedPath = result.path
+                    try candidate.validate()
+                    let executable = try IridiumCoreContent.directory(components.joined(separator: "/"), root: user)
+                    _ = try IridiumROMInspection.inspect(executable, fileExtension: "app", preferredPlatform: .nintendo3DS)
+                    installed = result
+                    try FileManager.default.removeItem(at: manifest)
+                }
+                guard existing != nil || installed != nil else {
+                    throw NSError(domain: "IridiumCIA", code: 103, userInfo: [NSLocalizedDescriptionKey:
+                        "Choose an existing 3DS game's storage to install an update or DLC."])
+                }
+                let backup = try store.checked(["Saves", "azahar", "Content Backups", (game.storageOwnerID ?? game.id).uuidString], createDirectory: true)
+                    .appendingPathComponent(UUID().uuidString)
+                try IridiumFilesImport.publishContent(staging: user, destination: target, backup: backup)
+                let result = installed
+                DispatchQueue.main.async {
+                    if let result {
+                        IridiumConsoleLibrary.shared.registerInstalled(title: result.title, path: result.path, owner: game.storageOwnerID ?? game.id) { failure in
+                            self.dolphinMaintenance = false
+                            self.dolphinSystemStatus = failure.map { "Content installed, but the library entry could not be saved. " + $0 } ?? "3DS content installed. Its game is in the library."
+                        }
+                    } else { self.dolphinMaintenance = false; self.dolphinSystemStatus = "3DS update or DLC installed." }
+                }
+            } catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async { self.dolphinMaintenance = false; self.dolphinSystemStatus = message }
+            }
+        }
+    }
+
+    @MainActor func beginContentMaintenance() -> Bool {
+        guard !isActive else { return false }
+        do { try validateLaunchAdmission() }
+        catch { dolphinSystemStatus = error.localizedDescription; return false }
+        dolphinMaintenance = true
+        return true
+    }
+
+    @MainActor func endContentMaintenance() { dolphinMaintenance = false }
+
     private func finishDolphinWAD(success: Bool, message: String, restart: Bool = false) {
         guard let files = dolphinSystemFiles else { return }
         dolphinSystemFiles = nil
@@ -525,14 +681,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
 
     func setDolphin(_ update: (inout IridiumDolphinSettings) -> Void) {
-        guard let game, game.runtimeID == "dolphin", phase == .paused, !dolphinStatePending else { return }
+        guard let game, game.runtimeID == "dolphin", phase == .paused, !dolphinStatePending, !coreOperationPending else { return }
         update(&dolphinSettings); dolphinSettings.save(game.id)
         ir_phase3_dolphin_settings(dolphinSettings.native)
         dolphinMotion.stop()
     }
 
     func requestDolphinState(load: Bool) {
-        guard game?.runtimeID == "dolphin", phase3Ready, phase == .paused, !dolphinStatePending else {
+        guard game?.runtimeID == "dolphin", phase3Ready, phase == .paused, !dolphinStatePending, !coreOperationPending else {
             error = "Wait for Dolphin to start and pause the game before using save states."; return
         }
         dolphinStatePending = true; dolphinStateStatus = load ? "Loading state…" : "Saving state…"
@@ -568,10 +724,246 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         for index in dolphinControllers.indices {
             if let old = dolphinControllers[index], !connected.contains(where: { $0 === old }) {
                 dolphinControllers[index] = nil
+                DispatchQueue.main.async { self.controllerHaptics?.stop(old) }
             }
         }
         for controller in connected where !dolphinControllers.contains(where: { $0 === controller }) {
             if let slot = dolphinControllers.firstIndex(where: { $0 == nil }) { dolphinControllers[slot] = controller }
+        }
+    }
+
+    private func controllerRumble(player: UInt32, motor: UInt32, strength: UInt16) -> Bool {
+        guard player < 4, motor < 2 else { return false }
+        lock.lock()
+        let controller = Int(player) < dolphinControllers.count ? dolphinControllers[Int(player)] : nil
+        let playing = intent.request == .play
+        let generation = intentGeneration
+        lock.unlock()
+        guard let controller, controller.haptics != nil else { return false }
+        DispatchQueue.main.async {
+            guard self.currentIntentGeneration == generation else { return }
+            if self.controllerHaptics == nil { self.controllerHaptics = IridiumControllerRumble() }
+            self.controllerHaptics?.set(controller, motor: Int(motor), strength: playing ? strength : 0)
+        }
+        return true
+    }
+
+    private func sendCoreCommand(_ command: [String: Any]) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: command),
+              let text = String(data: data, encoding: .utf8) else { return false }
+        return ir_phase3_command(text)
+    }
+
+    private func publishSameBoyOptions(_ owner: IridiumRuntimeLease) {
+        let collection = IridiumCoreOptionCollection()
+        ir_core_visit_options({ context, key, title, info, category, value, defaultValue, values, labels, count, visible in
+            guard let context, let key, let title, let info, let category, let value, let defaultValue, let values, let labels else { return }
+            let target = Unmanaged<IridiumCoreOptionCollection>.fromOpaque(context).takeUnretainedValue()
+            let choices = (0..<count).compactMap { index -> IridiumCoreOption.Choice? in
+                guard let value = values[index], let label = labels[index] else { return nil }
+                return .init(value: String(cString: value), title: String(cString: label))
+            }
+            target.options.append(.init(key: String(cString: key), title: String(cString: title), info: String(cString: info),
+                category: String(cString: category), value: String(cString: value), defaultValue: String(cString: defaultValue),
+                choices: choices, visible: visible))
+        }, Unmanaged.passUnretained(collection).toOpaque())
+        let snapshot = IridiumCoreControls(options: collection.options, states: ir_core_state_size() > 0, cheatFormats: ["gameshark", "gamegenie"])
+        DispatchQueue.main.async {
+            if self.lease == owner { self.coreControls = snapshot; self.restoreCheatsIfNeeded() }
+        }
+    }
+
+    private func restoreCheatsIfNeeded() {
+        guard !restoredCheats, let formats = coreControls.cheatFormats, !formats.isEmpty else { return }
+        if game?.platform.isPhase3 == true, !phase3Ready { return }
+        if game?.platform == .psp, !pspReady { return }
+        guard requested == .play else { return }
+        restoredCheats = true
+        guard !cheats.isEmpty else { return }
+        pause()
+        _ = applyCheats(cheats)
+    }
+
+    @discardableResult func applyCheats(_ items: [IridiumCheat]) -> Bool {
+        guard let game, let owner = lease, phase == .paused, !coreOperationPending, !dolphinStatePending else { return false }
+        do { try IridiumCheat.validate(items, formats: coreControls.cheatFormats ?? []) }
+        catch { self.error = error.localizedDescription; return false }
+        let command = IridiumCheat.command(items)
+        pendingCheats = items
+        if game.platform == .psp {
+            guard let data = try? JSONSerialization.data(withJSONObject: command),
+                  let text = String(data: data, encoding: .utf8), ir_psp_native_command(text) else {
+                pendingCheats = nil; error = "The cheat request could not start."; return false
+            }
+            resume(); coreOperationPending = true
+        } else if game.platform.isPhase3 {
+            coreOperationPending = sendCoreCommand(command)
+            if !coreOperationPending { pendingCheats = nil; error = "This engine does not support cheat controls."; return false }
+        } else {
+            coreOperationPending = true
+            queue.async {
+                guard self.queueOwner == owner, self.requested == .pause else { return }
+                let values = items.map { IRCheat(name: UnsafePointer(strdup($0.name)), format: UnsafePointer(strdup($0.format)),
+                                                code: UnsafePointer(strdup($0.code)), enabled: $0.enabled) }
+                let success = values.withUnsafeBufferPointer { ir_core_set_cheats($0.baseAddress, $0.count) }
+                for value in values { free(UnsafeMutablePointer(mutating: value.name)); free(UnsafeMutablePointer(mutating: value.format)); free(UnsafeMutablePointer(mutating: value.code)) }
+                DispatchQueue.main.async {
+                    guard self.lease == owner else { return }
+                    self.finishCheats(success: success)
+                    if success { self.resume() } else { self.error = "Check the cheat format and code. Existing codes have been kept." }
+                }
+            }
+        }
+        return true
+    }
+
+    private func finishCheats(success: Bool) {
+        guard let pendingCheats else { return }
+        self.pendingCheats = nil; coreOperationPending = false
+        if success, let game {
+            cheats = pendingCheats
+            do { try IridiumCheat.save(pendingCheats, game: game.id) }
+            catch { self.error = "The codes are active, but their settings could not be saved." }
+        }
+    }
+
+    func setCoreOption(_ option: IridiumCoreOption, value: String) {
+        guard let game, let owner = lease, phase == .paused, !coreOperationPending, !dolphinStatePending,
+              value.utf8.count <= 4096, option.choices.isEmpty || option.choices.contains(where: { $0.value == value }) else { return }
+        if game.platform == .psp {
+            if option.restartRequired == true {
+                IridiumCorePreferences.save(value, key: option.key, game: game.id)
+                if let index = coreControls.options.firstIndex(where: { $0.key == option.key }) { coreControls.options[index].value = value }
+                pspStateStatus = "Saved. Close and reopen this game to apply the setting."
+                return
+            }
+            guard let data = try? JSONSerialization.data(withJSONObject: ["operation": "option", "key": option.key, "value": value]),
+                  let text = String(data: data, encoding: .utf8), ir_psp_native_command(text) else {
+                error = "The PSP settings request could not start. Resume the game and try again."; return
+            }
+            resume(); return
+        }
+        IridiumCorePreferences.save(value, key: option.key, game: game.id)
+        if game.platform.isPhase3 {
+            if !sendCoreCommand(["operation": "option", "key": option.key, "value": value]) { error = "This core does not support settings controls." }
+        } else {
+            queue.async {
+                guard self.queueOwner == owner, self.requested == .pause else { return }
+                if ir_core_set_option(option.key, value) { self.rewindHistory.clear(); self.publishSameBoyOptions(owner) }
+            }
+        }
+    }
+
+    private func captureSameBoyState() -> Data? {
+        let count = ir_core_state_size()
+        guard count > 0, count <= 8 * 1024 * 1024 else { return nil }
+        var data = Data(count: count)
+        return data.withUnsafeMutableBytes({ ir_core_read_state($0.baseAddress, $0.count) }) ? data : nil
+    }
+
+    func requestCoreState(load: Bool) {
+        guard let game, let owner = lease, phase == .paused, coreControls.states, !coreOperationPending else { return }
+        let slot = coreStateSlot
+        guard (0..<5).contains(slot) else { return }
+        coreOperationPending = true; coreStateStatus = load ? "Loading state…" : "Saving state…"
+        if game.platform.isPhase3 {
+            var command: [String: Any] = ["operation": "state", "load": load, "slot": slot]
+            if game.storageOwnerID != nil { command["gameID"] = game.id.uuidString }
+            if !sendCoreCommand(command) {
+                coreOperationPending = false; error = "This core does not support save-state controls."
+            }
+            return
+        }
+        queue.async {
+            var message: String?
+            do {
+                guard self.queueOwner == owner, self.requested == .pause, let folder = self.saveFolder,
+                      let current = self.captureSameBoyState() else { throw IridiumRuntimeError.busy }
+                let url = try IridiumConsoleStore(root: folder).checked(["state-\(slot).json"])
+                if load {
+                    guard try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max <= 12 * 1024 * 1024 else { throw IridiumRuntimeError.invalidGame }
+                    let record = try JSONDecoder().decode(IridiumConsoleStateRecord.self, from: Data(contentsOf: url))
+                    guard record.runtime == game.runtimeID, record.version == String(cString: ir_core_version()), record.data.count == current.count else { throw IridiumRuntimeError.invalidGame }
+                    if !record.data.withUnsafeBytes({ ir_core_write_state($0.baseAddress, $0.count) }) {
+                        if !current.withUnsafeBytes({ ir_core_write_state($0.baseAddress, $0.count) }) {
+                            self.terminalFailure = true
+                            self.queue.async { self.requireRestart(owner) }
+                        }
+                        throw IridiumRuntimeError.invalidGame
+                    }
+                    self.rewindHistory.clear()
+                } else {
+                    let record = IridiumConsoleStateRecord(runtime: game.runtimeID, version: String(cString: ir_core_version()), data: current)
+                    try JSONEncoder().encode(record).write(to: url, options: .atomic)
+                }
+                self.silenceAudio()
+            } catch { message = "The state operation failed. Existing save files have been kept." }
+            let failure = message
+            DispatchQueue.main.async {
+                guard self.lease == owner else { return }
+                self.coreOperationPending = false; self.coreStateStatus = failure ?? (load ? "State loaded." : "State saved.")
+                if let failure { self.error = failure } else { self.resume() }
+            }
+        }
+    }
+
+    func changeDisc(_ index: Int) {
+        guard phase == .paused, !coreOperationPending, !dolphinStatePending, (0..<coreControls.discCount).contains(index) else { return }
+        coreOperationPending = sendCoreCommand(["operation": "disc", "index": index])
+        if !coreOperationPending { error = "This core could not start the disc change." }
+    }
+
+    func applyDolphinPatches(_ items: [IridiumCheat]) -> Bool {
+        guard game?.runtimeID == "dolphin", phase == .paused, !coreOperationPending, !dolphinStatePending else { return false }
+        do { try IridiumCheat.validate(items, formats: ["patch"]) }
+        catch { self.error = error.localizedDescription; return false }
+        var command = IridiumCheat.command(items); command["operation"] = "patches"
+        coreOperationPending = sendCoreCommand(command)
+        return coreOperationPending
+    }
+
+    func changeDisc(to disc: IridiumConsoleGame) {
+        guard let game, disc.platform == game.platform, phase == .paused, !coreOperationPending, !dolphinStatePending,
+              coreControls.canChangeDisc == true else { return }
+        do {
+            let path = try IridiumConsoleLibrary.shared.store.validateROM(disc)
+            coreOperationPending = sendCoreCommand(["operation": "discFile", "path": path.path])
+            if !coreOperationPending { error = "This core could not start the disc change." }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func toggleFastForward() {
+        guard game?.runtimeID == "sameboy", phase == .paused else { return }
+        fastForward.toggle(); let enabled = fastForward
+        queue.async { self.speedMultiplier = enabled ? 2 : 1; self.silenceAudio() }
+    }
+    func toggleRewind() {
+        guard game?.runtimeID == "sameboy", phase == .paused else { return }
+        rewindEnabled.toggle(); let enabled = rewindEnabled
+        queue.async { self.useRewind = enabled; self.rewindHistory.clear(); self.rewindFrames = 0 }
+    }
+    func rewind() {
+        guard let owner = lease, game?.runtimeID == "sameboy", phase == .paused, rewindEnabled, !coreOperationPending else { return }
+        coreOperationPending = true
+        queue.async {
+            guard self.queueOwner == owner, self.requested == .pause else { return }
+            var failure: String?
+            if let state = self.rewindHistory.pop(steps: 30), let current = self.captureSameBoyState() {
+                if !state.withUnsafeBytes({ ir_core_write_state($0.baseAddress, $0.count) }) {
+                    if !current.withUnsafeBytes({ ir_core_write_state($0.baseAddress, $0.count) }) {
+                        self.terminalFailure = true
+                        self.queue.async { self.requireRestart(owner) }
+                    }
+                    failure = "The game could not rewind."
+                }
+            } else { failure = "No rewind history is available yet. Resume the game to record it." }
+            self.silenceAudio()
+            let message = failure
+            DispatchQueue.main.async {
+                guard self.lease == owner else { return }
+                self.coreOperationPending = false
+                if let message { self.error = message } else { self.resume() }
+            }
         }
     }
 
@@ -623,6 +1015,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
 
     func pause() {
+        MainActor.assumeIsolated { controllerHaptics?.stopAll() }
         dispatchPrecondition(condition: .onQueue(.main))
         guard let owner = lease, phase == .running || phase == .starting else { return }
         lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
@@ -645,7 +1038,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func resume() {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let owner = lease, phase == .paused, !dolphinStatePending else { return }
+        guard let owner = lease, phase == .paused, !dolphinStatePending,
+              !coreOperationPending || (nativePSPController != nil && pendingCheats != nil) else { return }
         if phase3Controller != nil, phase3JITRequested, !ir_jit_memory_ready() {
             guard !phase3PreparingJIT else { return }
             phase3PreparingJIT = true
@@ -671,10 +1065,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         LibraryController.shared.configure(enabled: true, ownsInput: false)
         if phase3Controller != nil {
             if game?.runtimeID == "dolphin" { dolphinMotion.start(enabled: dolphinSettings.motion) }
-            ir_phase3_pause(false); phase = phase3Ready ? .running : .starting; return
+            ir_phase3_pause(false); phase = phase3Ready ? .running : .starting
+            restoreCheatsIfNeeded(); return
         }
         if nativePSPController != nil {
-            ir_psp_native_resume(); phase = pspReady ? .running : .starting; return
+            ir_psp_native_resume(); phase = pspReady ? .running : .starting
+            restoreCheatsIfNeeded(); return
         }
         queue.async { [self] in
             guard queueOwner == owner, requested == .play else { return }
@@ -689,6 +1085,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func stop() {
         dispatchPrecondition(condition: .onQueue(.main))
+        MainActor.assumeIsolated { controllerHaptics?.stopAll() }
         guard let owner = lease, phase != .stopping, phase != .restartRequired else { return }
         preparedJIT?.cancel()
         jitDiagnostic?.mark(IR_JIT_CANCEL)
@@ -882,7 +1279,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             return
         }
         guard intent.request == .play, let point,
-              let projected = Iridium3DSTouchProjection.project(point: point, size: size) else {
+              let projected = Iridium3DSTouchProjection.canvas(point: point, size: size, aspect: consoleAspect) else {
             consolePointer = (0, 0, false); return
         }
         consolePointer = (projected.0, projected.1, true)
@@ -978,7 +1375,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         source.setEventHandler { [weak self] in
             guard let self else { return }
             let steps = self.backend == .sameBoy ? self.framePacer.steps(at: ProcessInfo.processInfo.systemUptime, fps: self.fps) : 1
-            for _ in 0..<steps { self.tick(owner) }
+            for _ in 0..<(steps * self.speedMultiplier) { self.tick(owner) }
         }
         timer = source; source.resume()
     }
@@ -1010,6 +1407,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 return
             }
             recordSameBoyProgress(frame, owner: owner)
+            if useRewind {
+                rewindFrames += 1
+                if rewindFrames % 6 == 0, let state = captureSameBoyState() { rewindHistory.append(state) }
+            }
+            if speedMultiplier > 1 { frame.audio_frames = 0 }
             deliver(frame, owner: owner)
             if Date().timeIntervalSince(lastSave) >= 5 {
                 do { try persistSaves(); lastSave = Date() }

@@ -30,7 +30,7 @@ class CompiledComponentsTests(unittest.TestCase):
                                 'names = fixture_stage(app)')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
-        before = source.replace('Wii and PSP controls use device motion while you play.',
+        before = source.replace('Wii, 3DS, and PSP controls use device motion while you play.',
                                 'PSP tilt controls use device motion while you play.')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))

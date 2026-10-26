@@ -95,7 +95,8 @@ int main(){
             subprocess.run(['cmake', '-P', str(script)], check=True, timeout=10)
             names = ('address_space.cpp', 'spin_lock_arm64.cpp', 'arm_dynarmic.cpp', 'shader_jit.cpp', 'shader_jit_a64_compiler.cpp', 'vk_platform.cpp', 'libretro_window.cpp', 'mouse_tracker.cpp', 'citra_libretro.cpp')
             overlay = root / 'embedding'
-            valid = [{'file': str(overlay / name)} for name in names]
+            upstream = ROOT / '.build/phase3-downloads' / recipe.source_archive().removesuffix('.tar.xz') / 'src/core/hle/service/am/am.cpp'
+            valid = [{'file': str(overlay / name)} for name in names] + [{'file': str(upstream)}]
             import json
             def check(commands):
                 (root / 'compile_commands.json').write_text(json.dumps(commands))
@@ -103,10 +104,23 @@ int main(){
             check(valid)
             for commands in (valid + [{'file': str(root / 'arch_gen/common/spin_lock_arm64.cpp')}],
                              valid[1:],
+                             valid[:-1],
+                             valid[:-1] + [{'file': str(overlay / 'am.cpp')}],
+                             valid + [{'file': str(overlay / 'am.cpp')}],
                              valid + [{'file': str(root / 'libretro_vk.cpp')}],
                              valid + [{'file': '/source/src/video_core/renderer_vulkan/renderer_vulkan.cpp', 'command': 'c++ -DHAVE_LIBRETRO'}],
                              valid + [{'file': str(root / 'backend/exception_handler_macos.cpp')}]):
                 with self.assertRaises(ValueError): check(commands)
+
+    @unittest.skipUnless((ROOT / '.build/phase3-downloads/azahar-unified-source-2126.2').is_dir(), 'Azahar source required')
+    def test_generation_removes_the_old_cia_overlay(self):
+        spec = importlib.util.spec_from_file_location('azahar_installer_restore', ROOT / 'ci/phase3_azahar.py')
+        recipe = importlib.util.module_from_spec(spec); spec.loader.exec_module(recipe)
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = Path(directory)
+            (overlay / 'am.cpp').write_text('obsolete overlay')
+            recipe.generated(ROOT, overlay)
+            self.assertFalse((overlay / 'am.cpp').exists())
 
     @unittest.skipUnless(shutil.which('c++') and (ROOT / '.build/phase3-downloads/azahar-unified-source-2126.2').is_dir(), 'Azahar unified source and C++ compiler required')
     def test_dynarmic_lock_allocates_after_shared_jit_setup(self):

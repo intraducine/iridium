@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-#include "IridiumCoreBridge.h"
 #include "SameBoyNamespace.h"
+#define IR_CORE_OPTIONS_IMPLEMENTATION
+#include "IridiumCoreBridge.h"
 #include "libretro.h"
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,12 @@ static struct {
     double fps, rate;
     const char *model;
 } core;
+static IROptions options;
+extern bool ir_sameboy_cheats(const IRCheat *, size_t);
+
+bool ir_core_set_cheats(const IRCheat *items, size_t count) {
+    return core.opened && ir_sameboy_cheats(items, count);
+}
 
 static void core_log(enum retro_log_level level, const char *format, ...)
 {
@@ -44,47 +51,27 @@ static bool environment(unsigned command, void *data)
         case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
             if (!data) return false;
             *(const char **)data = core.directory; return true;
-        case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
-            if (!data) return false;
-            *(bool *)data = false; return true;
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
             if (!data) return false;
             *(bool *)data = true; return true;
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
             return true;
-        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
-            if (!data) return false;
-            *(unsigned *)data = 0; return true;
         case RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE:
             if (!data) return false;
             *(unsigned *)data = 96000; return true; // SameBoy iOS renderer rate
-        case RETRO_ENVIRONMENT_GET_VARIABLE: {
-            if (!data) return false;
-            struct retro_variable *variable = data;
-            variable->value = NULL;
-            // Match standalone iOS defaults, including CGB boot colorization
-            // for DMG cartridges. These are hardware/settings, not ROM flags.
-            const struct { const char *key, *value; } options[] = {
-                {"sameboy_model", core.model},
-                {"sameboy_color_correction_mode", "emulate hardware"},
-                {"sameboy_high_pass_filter_mode", "accurate"},
-                {"sameboy_light_temperature", "0.0"},
-                {"sameboy_rtc", "sync to system clock"},
-                {"sameboy_border", "never"},
-                {"sameboy_audio_interference", "0"},
-            };
-            if (variable->key) for (size_t i = 0; i < sizeof options / sizeof *options; ++i) {
-                if (!strcmp(variable->key, options[i].key)) {
-                    variable->value = options[i].value;
-                    return variable->value != NULL;
-                }
-            }
-            return false;
-        }
+        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+        case RETRO_ENVIRONMENT_GET_VARIABLE:
+        case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+        case RETRO_ENVIRONMENT_SET_VARIABLES:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+            return ir_options_environment(&options, command, data);
         case RETRO_ENVIRONMENT_SET_GEOMETRY:
         case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
         case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
-        case RETRO_ENVIRONMENT_SET_VARIABLES:
         case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO:
         case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
             return true;
@@ -141,6 +128,15 @@ bool ir_core_open(const void *rom, size_t length, const char *system_directory)
     memcpy(core.rom, rom, length);
     const uint8_t *header = core.rom;
     core.model = !(header[0x143] & 0x80) && header[0x146] == 3 ? "Super Game Boy 2" : "Game Boy Color";
+    if (!ir_option_find(&options, "sameboy_model", false))
+        ir_option_set(&options, "sameboy_model", core.model, true);
+    const char *defaults[][2] = {
+        {"sameboy_color_correction_mode", "emulate hardware"}, {"sameboy_high_pass_filter_mode", "accurate"},
+        {"sameboy_light_temperature", "0.0"}, {"sameboy_rtc", "sync to system clock"},
+        {"sameboy_border", "never"}, {"sameboy_audio_interference", "0"},
+    };
+    for (size_t i = 0; i < sizeof defaults / sizeof *defaults; ++i)
+        if (!ir_option_find(&options, defaults[i][0], false))ir_option_set(&options, defaults[i][0], defaults[i][1], true);
     strcpy(core.directory, system_directory);
     retro_set_environment(environment);
     retro_set_video_refresh(video);
@@ -187,7 +183,28 @@ size_t ir_core_save_size(bool clock)
 }
 
 uint64_t ir_core_audio_dropped_frames(void) { return core.dropped_audio_frames; }
-const char *ir_core_model(void) { return core.opened ? core.model : "unloaded"; }
+const char *ir_core_version(void) {
+    struct retro_system_info info = {0}; retro_get_system_info(&info);
+    return info.library_version ? info.library_version : "unknown";
+}
+const char *ir_core_model(void) {
+    IROption *model = ir_option_find(&options, "sameboy_model", false);
+    return core.opened && model && model->value ? model->value : "unloaded";
+}
+
+void ir_core_reset_options(void) { if (!core.opened) ir_options_clear(&options); }
+bool ir_core_set_option(const char *key, const char *value) { return ir_option_set(&options, key, value, !core.opened); }
+void ir_core_visit_options(IRCoreOptionVisitor visitor, void *context) { ir_options_visit(&options, visitor, context); }
+size_t ir_core_state_size(void) { return core.opened ? retro_serialize_size() : 0; }
+bool ir_core_read_state(void *bytes, size_t length) {
+    return core.opened && bytes && length == ir_core_state_size() && length <= 8 * 1024 * 1024 && retro_serialize(bytes, length);
+}
+bool ir_core_write_state(const void *bytes, size_t length) {
+    if (!core.opened || !bytes || length != ir_core_state_size() || length > 8 * 1024 * 1024) return false;
+    bool result = retro_unserialize(bytes, length);
+    core.sample_frames = 0;
+    return result;
+}
 
 bool ir_core_read_save(bool clock, void *bytes, size_t length)
 {
@@ -215,4 +232,5 @@ void ir_core_close(void)
     retro_unload_game(); retro_deinit();
     free(core.rom);
     memset(&core, 0, sizeof(core));
+    ir_options_clear(&options);
 }

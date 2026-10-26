@@ -30,12 +30,12 @@ PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
 RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
-    'NSCameraUsageDescription': 'A PSP game can use your camera to emulate the Go!Cam accessory.',
-    'NSMicrophoneUsageDescription': 'A PSP game can request microphone input for the Go!Cam or Talkman accessory.',
-    'NSMotionUsageDescription': 'Wii and PSP controls use device motion while you play.',
+    'NSCameraUsageDescription': 'PSP and 3DS games can request camera input while you play.',
+    'NSMicrophoneUsageDescription': 'PSP and 3DS games can request microphone input while you play.',
+    'NSMotionUsageDescription': 'Wii, 3DS, and PSP controls use device motion while you play.',
     'NSLocationWhenInUseUsageDescription': 'A PSP game can use your location to emulate the Go!Explore GPS accessory while playing.',
     'NSPhotoLibraryUsageDescription': 'Choose a photo for the PPSSPP background when you request it.',
-    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP multiplayer and on-device JIT pairing.',
+    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP and Dreamcast multiplayer and on-device JIT pairing.',
 }
 def overlay(name, text):
     """Legacy test entry point: read maintained shipping source, never rewrite upstream UI."""
@@ -193,10 +193,12 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
+    for name in ('IridiumCoreBridge.h', 'IRCoreOptions.h', 'IRCheats.h', 'IRWindowsThreads.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n')
+    import madeira_session
+    madeira_session.build(app / 'Madeira/arm64ec-windows')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('enginePin') != engine_pins.selected('psp') or psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -256,7 +258,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')
@@ -273,6 +275,8 @@ def check_psp_jit_interface(record):
         or record.get('executableMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest()
         or '_ir_native_psp_set_volume' not in record.get('exports', [])
         or record.get('audioVolumeHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest()
+        or record.get('optionsHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest()
+        or record.get('cheatsHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRAudioVolume.c') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest()
         or record.get('adapterSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRPSPExecutableMemory.cpp') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest()
@@ -315,6 +319,9 @@ def check_bundle(app):
                  'i386-windows/d3d9.dll', 'i386-windows/winemetal.dll'):
         if not (app / name).is_file() or not (app / name).stat().st_size:
             raise ValueError('The WoW64 runtime is missing: ' + name)
+
+    import madeira_session
+    madeira_session.verify(app / 'arm64ec-windows')
 
 
 def compiler_tools():

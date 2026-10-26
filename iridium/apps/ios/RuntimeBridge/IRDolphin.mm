@@ -8,6 +8,7 @@
 #include <algorithm>
 #include "IRDolphinAPI.h"
 #include "IRAudioVolume.h"
+#include "IRCheats.h"
 #include "IRJITExecutionProbe.h"
 #include <filesystem>
 #include <cstring>
@@ -21,6 +22,12 @@
 #include "Core/WiiUtils.h"
 #include "AudioCommon/AudioCommon.h"
 #include "Core/State.h"
+#include "Core/ConfigManager.h"
+#include "Core/GeckoCode.h"
+#include "Core/GeckoCodeConfig.h"
+#include "Core/ActionReplay.h"
+#include "Core/ARDecrypt.h"
+#include <sstream>
 #include "Core/Config/WiimoteSettings.h"
 #include "Core/HW/SI/SI_Device.h"
 #include "VideoCommon/PerformanceMetrics.h"
@@ -31,7 +38,12 @@
 #include "Core/BootManager.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Config/GraphicsSettings.h"
+#include "IRDolphinOptions.h"
 #include "Core/Core.h"
+#include "Core/PatchEngine.h"
+#include "Core/HW/DVD/DVDInterface.h"
+#include "DiscIO/Volume.h"
+#include "DiscIO/VolumeDisc.h"
 #include "Core/DolphinAnalytics.h"
 #include "Core/HW/GCPad.h"
 #include "Core/HW/Wiimote.h"
@@ -57,6 +69,8 @@ dispatch_queue_t DOLHostQueueGetUnderlyingQueue();
     IRPhase3Poll input;
     IRDolphinPoll dolphinInput;
     IRDolphinOptions options;
+    NSDictionary *extraOptions;
+    NSArray *managedCheats;
     std::atomic<uint64_t> inputSamples;
     std::atomic<bool> jitVerified;
     std::atomic<uint64_t> frames;
@@ -203,6 +217,94 @@ static void graphicsSettings(IRDolphinOptions options) {
     Config::SetCurrent(Config::GFX_ASPECT_RATIO,static_cast<AspectMode>(options.aspect));
     Config::SetCurrent(Config::MAIN_AUDIO_MUTED,options.muted);
 }
+static void dolphinControls(IRDolphinPlayer *p, NSDictionary *values) {
+    NSString *gameID=@(SConfig::GetInstance().GetGameID().c_str());
+    bool validID=p->frames.load()>0&&gameID.length>=4&&gameID.length<=16&&[gameID rangeOfCharacterFromSet:[[NSCharacterSet alphanumericCharacterSet]invertedSet]].location==NSNotFound;
+    NSDictionary *folders=validID?@{@"Texture Packs":[@"Load/Textures/" stringByAppendingString:gameID],@"Game Patches":@"GameSettings",@"Shaders":@"Shaders"}:@{};
+    NSMutableArray *patches=[NSMutableArray array];
+    if(validID) {
+        auto& config=SConfig::GetInstance();std::vector<PatchEngine::Patch> entries;
+        PatchEngine::LoadPatchSection("OnFrame",&entries,config.LoadDefaultGameIni(),config.LoadLocalGameIni());
+        for(const auto& patch:entries) {
+            std::string code;for(const auto& line:patch.entries)code+=PatchEngine::SerializeLine(line)+"\n";
+            [patches addObject:@{@"name":@(patch.name.c_str()),@"code":@(code.c_str()),@"enabled":@(patch.enabled),@"userDefined":@(patch.user_defined)}];
+        }
+    }
+    NSDictionary *snapshot=@{@"options":irDolphinOptions(values),@"states":@YES,@"discCount":@0,@"discIndex":@0,
+        @"players":@(p->options.players),@"aspect":@(4.0/3.0),@"cheatFormats":@[@"gecko",@"ar"],@"canChangeDisc":@YES,@"contentFolders":folders,@"patches":patches};
+    NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+    if(data)p->event(p->generation,8,[[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding] UTF8String]);
+}
+
+static bool dolphinCheats(id records) {
+    std::vector<IRCheat> items;
+    if(!ir_cheats_decode(records,items))return false;
+    auto& config=SConfig::GetInstance();
+    auto global=config.LoadDefaultGameIni(),local=config.LoadLocalGameIni();
+    auto gecko=Gecko::LoadCodes(global,local);
+    auto ar=ActionReplay::LoadCodes(global,local);
+    for(const auto& item:items) {
+        bool isGecko=!strcmp(item.format,"gecko");
+        if(!isGecko&&strcmp(item.format,"ar"))return false;
+        Gecko::GeckoCode gc;gc.name=item.name;gc.enabled=item.enabled;gc.user_defined=true;
+        ActionReplay::ARCode ac;ac.name=item.name;ac.enabled=item.enabled;ac.user_defined=true;
+        std::vector<std::string> encrypted;
+        std::istringstream stream(item.code);
+        for(std::string line;std::getline(stream,line);) {
+            auto first=line.find_first_not_of(" \t\r"),last=line.find_last_not_of(" \t\r");
+            if(first==std::string::npos)continue;
+            line=line.substr(first,last-first+1);
+            uint32_t address,value;
+            if(ir_cheat_pair(line.c_str(),&address,&value)) {
+                if(isGecko)gc.codes.push_back({address,value,line});
+                else ac.ops.emplace_back(address,value);
+            } else if(!isGecko&&std::holds_alternative<ActionReplay::EncryptedLine>(ActionReplay::DeserializeLine(line)))encrypted.push_back(line);
+            else return false;
+        }
+        if(!encrypted.empty()) {
+            if(!ac.ops.empty())return false;
+            ActionReplay::DecryptARCode(encrypted,&ac.ops);
+        }
+        if(isGecko) {if(gc.codes.empty())return false;gecko.push_back(std::move(gc));}
+        else {if(ac.ops.empty())return false;ar.push_back(std::move(ac));}
+    }
+    if(std::any_of(items.begin(),items.end(),[](const IRCheat& item){return item.enabled;}))
+        Config::SetCurrent(Config::MAIN_ENABLE_CHEATS,true);
+    Gecko::SetActiveCodes(gecko,config.GetGameID(),config.GetRevision());
+    ActionReplay::ApplyCodes(ar,config.GetGameID(),config.GetRevision());
+    return true;
+}
+
+static bool dolphinPatches(id records, NSArray *managedCheats) {
+    std::vector<IRCheat> items;if(!ir_cheats_decode(records,items))return false;
+    auto& config=SConfig::GetInstance();auto global=config.LoadDefaultGameIni(),local=config.LoadLocalGameIni();
+    std::vector<PatchEngine::Patch> existing,pending;
+    PatchEngine::LoadPatchSection("OnFrame",&existing,global,local);
+    for(auto patch:existing)if(!patch.user_defined){patch.enabled=false;pending.push_back(std::move(patch));}
+    std::vector<std::string> names;
+    for(const auto& item:items) {
+        if(strcmp(item.format,"patch")||std::find(names.begin(),names.end(),item.name)!=names.end())return false;
+        names.emplace_back(item.name);
+        PatchEngine::Patch patch;patch.name=item.name;patch.enabled=item.enabled;patch.user_defined=true;
+        std::istringstream stream(item.code);
+        for(std::string line;std::getline(stream,line);) {
+            if(line.find_first_not_of(" \t\r")==std::string::npos)continue;
+            auto entry=PatchEngine::DeserializeLine(line);if(!entry)return false;patch.entries.push_back(*entry);
+        }
+        if(patch.entries.empty())return false;
+        auto builtin=std::find_if(pending.begin(),pending.end(),[&](const auto& old){return old.name==patch.name;});
+        if(builtin!=pending.end()) {
+            if(builtin->entries.size()!=patch.entries.size())return false;
+            for(size_t i=0;i<patch.entries.size();++i)if(PatchEngine::SerializeLine(builtin->entries[i])!=PatchEngine::SerializeLine(patch.entries[i]))return false;
+            builtin->enabled=patch.enabled;
+        } else pending.push_back(std::move(patch));
+    }
+    PatchEngine::SavePatchSection(&local,pending);
+    std::string path=File::GetUserPath(D_GAMESETTINGS_IDX)+config.GetGameID()+".ini";
+    if(!local.Save(path))return false;
+    PatchEngine::Reload(Core::System::GetInstance());
+    return !managedCheats||dolphinCheats(managedCheats);
+}
 
 static void sampleController(IRDolphinPlayer *p) {
     using namespace ciface::iOS;
@@ -306,6 +408,7 @@ static void sampleController(IRDolphinPlayer *p) {
     }
     Config::SetCurrent(Config::MAIN_CPU_THREAD,options.dual_core);
     graphicsSettings(options);
+    dolphinControls(self,extraOptions);
     // Current-run settings outrank per-game INI layers loaded during BootCore.
     if(!options.use_jit||!prepareNativeJIT()) {
         event(generation,3,"Dolphin’s JIT check failed. Close the game and try again.");[self finish];return;
@@ -386,6 +489,47 @@ extern "C" void ir_native_engine_stop() {
 }
 extern "C" void ir_native_engine_set_volume(float level) { ir_audio_volume_set(level); }
 extern "C" uint64_t ir_native_engine_frames(){return active?active->frames.load():0;}
+extern "C" bool ir_native_engine_command(const char *json) {
+    IRDolphinPlayer *p=active;
+    if(!p||!json||strlen(json)>131072)return false;
+    id request=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)] options:0 error:nil];
+    if(![request isKindOfClass:NSDictionary.class]||![request[@"operation"] isKindOfClass:NSString.class])return false;
+    DOLHostQueueRunAsync(^{
+        if(p->ended.load()||p->cleanupUncertain)return;
+        if([request[@"operation"] isEqual:@"configure"]&&!p->started) {
+            if([request[@"values"] isKindOfClass:NSDictionary.class])p->extraOptions=request[@"values"];
+        } else if([request[@"operation"] isEqual:@"snapshot"])dolphinControls(p,nil);
+        else if([request[@"operation"] isEqual:@"cheats"]&&p->paused) {
+            bool success=dolphinCheats(request[@"items"]);
+            if(success)p->managedCheats=request[@"items"];
+            p->event(p->generation,success?6:7,success?"Cheats applied.":"Check the cheat format and code. Existing codes have been kept.");
+        }
+        else if([request[@"operation"] isEqual:@"patches"]&&p->paused) {
+            bool success=dolphinPatches(request[@"items"],p->managedCheats);
+            if(success)dolphinControls(p,nil);
+            p->event(p->generation,success?6:7,success?"Patches saved.":"Check patch names and code lines. Built-in patch code must stay unchanged; give an edited copy a new name.");
+        }
+        else if([request[@"operation"] isEqual:@"discFile"]&&p->paused) {
+            NSString *path=request[@"path"];
+            bool success=false;
+            if([path isKindOfClass:NSString.class]&&path.isAbsolutePath) {
+                try {
+                    auto volume=DiscIO::CreateDisc(path.UTF8String);
+                    if(volume) {
+                        auto& system=Core::System::GetInstance();
+                        const Core::CPUThreadGuard guard(system);
+                        system.GetDVDInterface().ChangeDisc(guard,path.UTF8String);success=true;
+                    }
+                } catch (...) {}
+            }
+            p->event(p->generation,success?6:7,success?"Disc changed.":"The selected disc could not be inserted.");
+        }
+        else if([request[@"operation"] isEqual:@"option"]&&p->paused&&
+            [request[@"key"] isKindOfClass:NSString.class]&&[request[@"value"] isKindOfClass:NSString.class]) {
+            dolphinControls(p,@{request[@"key"]:request[@"value"]});
+        }
+    });return true;
+}
 
 static void configureDolphin(IRDolphinOptions options,IRDolphinPoll poll) {
     if(active&&!active->started){active->options=validated(options);active->dolphinInput=poll;}

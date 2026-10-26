@@ -21,6 +21,7 @@
 #define RETRO_MEMORY_RTC 1
 #define RETRO_LANGUAGE_ENGLISH 0
 #define RETRO_HW_CONTEXT_NONE 0
+#define RETRO_NUM_CORE_OPTION_VALUES_MAX 128
 
 // Only distinct command identities matter to the controlled fake core.
 enum {
@@ -31,6 +32,8 @@ enum {
     RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE,
     RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
     RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL,
+    RETRO_ENVIRONMENT_SET_CORE_OPTIONS,
+    RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL,
     RETRO_ENVIRONMENT_GET_VARIABLE,
     RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
@@ -56,6 +59,7 @@ enum retro_log_level { RETRO_LOG_DEBUG, RETRO_LOG_INFO, RETRO_LOG_WARN, RETRO_LO
 struct retro_log_callback { void (*log)(enum retro_log_level, const char *, ...); };
 struct retro_variable { const char *key, *value; };
 struct retro_game_info { const char *path; const void *data; size_t size; const char *meta; };
+struct retro_system_info { const char *library_name, *library_version, *valid_extensions; bool need_fullpath, block_extract; };
 struct retro_game_geometry {
     unsigned base_width, base_height, max_width, max_height;
     float aspect_ratio;
@@ -66,6 +70,13 @@ struct retro_system_av_info {
     struct retro_system_timing timing;
 };
 struct retro_core_option_value { const char *value, *label; };
+struct retro_core_option_definition {
+    const char *key, *desc, *info;
+    struct retro_core_option_value values[128];
+    const char *default_value;
+};
+struct retro_core_options_intl { struct retro_core_option_definition *us, *local; };
+struct retro_core_option_display { const char *key; bool visible; };
 struct retro_core_option_v2_definition {
     const char *key, *desc, *desc_categorized, *info, *info_categorized, *category_key;
     struct retro_core_option_value values[128];
@@ -97,5 +108,9 @@ void retro_unload_game(void);
 void retro_deinit(void);
 size_t retro_get_memory_size(unsigned);
 void *retro_get_memory_data(unsigned);
+void retro_get_system_info(struct retro_system_info *);
+size_t retro_serialize_size(void);
+bool retro_serialize(void *, size_t);
+bool retro_unserialize(const void *, size_t);
 
 #endif
