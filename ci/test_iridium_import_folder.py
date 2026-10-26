@@ -103,6 +103,7 @@ class ImportFolderTests(unittest.TestCase):
     def test_pairing_choice_does_not_replace_twice(self): self.check('pairing')
     def test_failed_library_save_keeps_input_for_retry(self): self.check('registration')
     def test_gameplay_blocks_migration_and_import(self): self.check('idle')
+    def test_cloud_transfers_and_migration_share_file_ownership(self): self.check('cloud')
 
     def test_import_views_typecheck_for_ios(self):
         with tempfile.TemporaryDirectory() as directory:

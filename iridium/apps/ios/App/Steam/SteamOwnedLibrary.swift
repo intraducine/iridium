@@ -576,10 +576,23 @@ final class SteamOwnedLibrary: ObservableObject {
 
     private var cloudBusy: Set<Int> = []
 
+    private func beginCloudTransfer(_ appID: Int) async -> Bool {
+        do {
+            try await IridiumImportCoordinator.shared.beginCloudTransfer()
+            return true
+        } catch {
+            var state = cloud[appID] ?? SteamCloudState()
+            state.phase = .failed(error.localizedDescription); cloud[appID] = state
+            cloudAudited = false
+            return false
+        }
+    }
+
     /// Compares the game's cloud saves with the prefix and returns what to do
     /// about the differences. Reads only (it records files found identical).
+    /// Callers hold the import coordinator's file transfer gate.
     @discardableResult
-    func checkCloud(_ appID: Int) async -> SteamCloudPlan? {
+    private func checkCloud(_ appID: Int) async -> SteamCloudPlan? {
         guard Self.cloudEnabled, signedIn, !cloudBlocked else { return nil }
         var state = cloud[appID] ?? SteamCloudState()
         state.phase = .checking
@@ -631,9 +644,11 @@ final class SteamOwnedLibrary: ObservableObject {
     /// cloud saves come down, new and changed device saves go up. Saves that
     /// need a choice are left for the game's page.
     func syncCloud(_ appID: Int) async {
-        guard !cloudBusy.contains(appID) else { return }
+        guard Self.cloudEnabled, signedIn, !cloudBlocked, !cloudBusy.contains(appID) else { return }
         cloudBusy.insert(appID)
         defer { cloudBusy.remove(appID) }
+        guard await beginCloudTransfer(appID) else { return }
+        defer { IridiumImportCoordinator.shared.endCloudTransfer() }
         guard let plan = await checkCloud(appID), Self.cloudAutomatic else { return }
         var changed = false
         if !plan.download.isEmpty { changed = await download(appID, plan.download) || changed }
@@ -647,6 +662,8 @@ final class SteamOwnedLibrary: ObservableObject {
         guard Self.cloudEnabled, !cloudBusy.contains(appID), let state = cloud[appID], state.phase == .ready, !state.conflicts.isEmpty else { return }
         cloudBusy.insert(appID)
         defer { cloudBusy.remove(appID) }
+        guard await beginCloudTransfer(appID) else { return }
+        defer { IridiumImportCoordinator.shared.endCloudTransfer() }
         SteamLog.event("[steam-cloud] app=\(appID) choice=\(useCloud ? "cloud" : "device") files=\(state.conflicts.count)")
         if useCloud {
             _ = await download(appID, state.conflicts)
@@ -900,6 +917,11 @@ final class SteamOwnedLibrary: ObservableObject {
         cloudBusy.insert(appID)
         defer { cloudBusy.remove(appID) }
         cloudQuit = .working("Connecting to Steam…")
+        guard await beginCloudTransfer(appID) else {
+            cloudQuit = .failed(failure())
+            return
+        }
+        defer { IridiumImportCoordinator.shared.endCloudTransfer() }
         if !cloudTakeover {
             cloudTakeover = true
             await gate.takeOver()
@@ -1148,7 +1170,7 @@ final class SteamOwnedLibrary: ObservableObject {
     func resumeDownloadsAfterImport() { pump() }
 
     private func pump() {
-        guard !IridiumImportCoordinator.shared.blocksLaunch else { return }
+        guard !IridiumImportCoordinator.shared.blocksLaunch, !IridiumImportCoordinator.shared.syncingCloud else { return }
         guard active == nil, !inSession, !queue.isEmpty else { return }
         let appID = queue.removeFirst()
         downloads[appID]?.state = .active

@@ -146,6 +146,9 @@ installations offer repair before JIT or runtime launch.
 Shared-only Steam records stay out of the game carousel. Library removal persists
 without removing game files. Managed Steam uninstall waits for active writes,
 checks shared-folder ownership, and handles missing files or install records.
+Steam Cloud checks, restores, conflict choices, and quit uploads use the same
+file transfer gate as imports. Folder migration and Cloud save access cannot
+overlap; quit uploads can still run while a game is open.
 
 ## Shared JIT and controls
 

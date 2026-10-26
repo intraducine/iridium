@@ -13,8 +13,12 @@ STEAM = ROOT / 'iridium/apps/ios/App/Steam'
 
 
 def function(source, name):
-    start = source.index('    func ' + name + '(') if name != 'download' else source.index('    private func download(')
-    return source[start:source.index('\n    }\n', start) + len('\n    }\n')].replace('private func download', 'func download')
+    prefix = '    private func ' if '    private func ' + name + '(' in source else '    func '
+    start = source.index(prefix + name + '(')
+    attribute = '    @discardableResult\n'
+    if source[:start].endswith(attribute):
+        start -= len(attribute)
+    return source[start:source.index('\n    }\n', start) + len('\n    }\n')].replace('private func ', 'func ')
 
 
 @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
@@ -25,7 +29,8 @@ class SteamCloudQuitTests(unittest.TestCase):
         models = cloud[cloud.index('struct SteamCloudEntry:'):cloud.index('/// How one app\'s cloud')]
         models += cloud[cloud.index('struct SteamCloudPlan:'):cloud.index('// MARK: - Upload')]
         models += cloud[cloud.index('struct SteamCloudState:'):]
-        methods = '\n'.join(function(source, name) for name in ('checkCloud', 'download', 'uploadForQuit'))
+        methods = '\n'.join(function(source, name) for name in
+            ('beginCloudTransfer', 'checkCloud', 'syncCloud', 'resolveCloud', 'download', 'uploadForQuit'))
         fixture = r'''import Foundation
 MODELS
 struct SteamCloudPaths: Sendable {
@@ -59,8 +64,22 @@ enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic co
     static func place(_ file: Data, at url: URL, backupTo backup: URL, relative: [String], time: UInt64) throws { writes += 1 }
 }
 @MainActor final class Gate { var takeovers = 0; func takeOver() async { takeovers += 1 } }
+@MainActor final class IridiumImportCoordinator {
+    static let shared = IridiumImportCoordinator()
+    var held = false, fail = false
+    var begins = 0, ends = 0
+    var onAcquire: (() -> Void)?
+    func beginCloudTransfer() async throws {
+        try Task.checkCancellation()
+        if fail { throw FixtureError.network }
+        precondition(!held, "Cloud must acquire storage once per operation")
+        held = true; begins += 1
+        onAcquire?()
+    }
+    func endCloudTransfer() { precondition(held); held = false; ends += 1 }
+}
 @MainActor final class Fixture {
-    static var cloudEnabled = true, cloudQuitEnabled = true, cloudRemoteCache = true
+    static var cloudEnabled = true, cloudQuitEnabled = true, cloudRemoteCache = true, cloudAutomatic = true
     static let cloudNoFolders = "No save folders", drive = URL(fileURLWithPath: "/fixture")
     static func reason(_ error: Error) -> String { "fixture" }
     static func cloudBackup(_ appID: Int) -> URL { drive }
@@ -68,6 +87,7 @@ enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic co
     var signedIn = true, inSession = true, cloudTakeover = false, remoteCacheOffLogged = false
     var cloudBlocked: Bool { inSession && !cloudTakeover }
     var cloud: [Int: SteamCloudState] = [:], cloudBusy: Set<Int> = []
+    var cloudAudited = true
     var networkCalls = 0, uploads = 0, failNetwork = false, disableDuringListing = false
     var localSHA: UInt8 = 2, serverSHA: UInt8 = 1
     var changeDuringUpload = false, keepSaving = false, serverChangesAfterUpload = false
@@ -78,6 +98,7 @@ enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic co
     func baseline(_ appID: Int) -> [String: String] { known }
     func recordBaseline(_ appID: Int, settled: [String: String]) { known.merge(settled) { _, new in new } }
     func cloudContext(_ appID: Int) async throws -> (info: Info, paths: SteamCloudPaths)? {
+        if !cloudBusy.isEmpty { precondition(IridiumImportCoordinator.shared.held, "File access must wait for migration") }
         networkCalls += 1
         if failNetwork { throw FixtureError.network }
         return (Info(), SteamCloudPaths())
@@ -93,6 +114,7 @@ enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic co
     func cloudFile(_ appID: Int, _ entry: SteamCloudEntry) async throws -> Data { Data([1]) }
     func upload(_ appID: Int, _ wanted: [SteamCloudEntry]) async -> Bool {
         precondition(!cloudBlocked)
+        precondition(IridiumImportCoordinator.shared.held, "The check and upload share storage ownership")
         uploads += 1; serverSHA = localSHA; cloud[appID]?.lastUpload = wanted.count
         cloud[appID]?.lastUploadHashes = Dictionary(uniqueKeysWithValues: wanted.map { ($0.key, SteamCloudPlan.hex(Data([serverSHA]))) })
         if changeDuringUpload { localSHA += 1; changeDuringUpload = false }
@@ -159,6 +181,44 @@ METHODS
         let disabled = Fixture(); disabled.cloudTakeover = true; disabled.disableDuringListing = true
         let discarded = await disabled.checkCloud(app)
         precondition(discarded == nil && disabled.uploads == 0 && SteamRemoteCache.writes == before)
+        Fixture.cloudEnabled = true
+        let storage = IridiumImportCoordinator.shared
+        let sync = Fixture(); sync.inSession = false
+        let began = storage.begins
+        await sync.syncCloud(app)
+        precondition(sync.uploads == 1 && storage.begins == began + 1 && !storage.held)
+        let choose = Fixture(); choose.inSession = false; choose.known = [:]
+        await choose.syncCloud(app)
+        precondition(choose.cloud[app]?.conflicts.count == 1)
+        let choicesBegan = storage.begins
+        await choose.resolveCloud(app, useCloud: false)
+        precondition(choose.uploads == 1 && storage.begins == choicesBegan + 1 && !storage.held)
+        let restore = Fixture(); restore.inSession = false; restore.known = [:]
+        await restore.syncCloud(app)
+        let restored = SteamCloudTransfer.writes
+        await restore.resolveCloud(app, useCloud: true)
+        precondition(SteamCloudTransfer.writes == restored + 1 && !storage.held)
+        storage.fail = true
+        let admission = Fixture(); admission.inSession = false
+        await admission.syncCloud(app)
+        precondition(admission.networkCalls == 0 && !admission.cloudAudited && admission.cloudBusy.isEmpty)
+        await admission.uploadForQuit(app)
+        guard case .failed = admission.cloudQuit else { preconditionFailure("Storage failure must keep the game open") }
+        precondition(admission.gate.takeovers == 0 && !storage.held)
+        storage.fail = false
+        await admission.syncCloud(app)
+        precondition(admission.uploads == 1 && !storage.held)
+        let cancelled = Fixture(); cancelled.inSession = false
+        let pending = Task { await cancelled.syncCloud(app) }
+        pending.cancel(); await pending.value
+        precondition(cancelled.networkCalls == 0 && cancelled.cloudBusy.isEmpty && !cancelled.cloudAudited && !storage.held)
+        let started = Fixture(); started.inSession = false
+        storage.onAcquire = { started.inSession = true }
+        await started.syncCloud(app)
+        storage.onAcquire = nil
+        precondition(started.networkCalls == 0 && started.cloud[app] == nil && !storage.held,
+            "A game starting during the wait must not leave a permanent checking state")
+        precondition(storage.begins == storage.ends, "All success, failure and conflict paths must release storage")
         print("PASS: production quit upload, account takeover, active-game download/cache guards, real errors, retry and conflict hold")
     }
 }

@@ -16,6 +16,7 @@ import SwiftUI
     @Published private(set) var imported = 0
     @Published private(set) var lastImportedGameID: UUID?
     @Published private(set) var transferringLibrary = false
+    private(set) var syncingCloud = false
     private var active = true
     private var incoming: [URL] = []
     private var incomingScopes: [URL] = []
@@ -29,7 +30,7 @@ import SwiftUI
     private var attempted = Set<String>()
     private var automaticPairingNeedsChoice = false
     private var mayWork: Bool {
-        active && !transferringLibrary && LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
+        active && !transferringLibrary && !syncingCloud && LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
             !IridiumConsoleSession.shared.isActive && !IridiumConsoleSession.shared.dolphinMaintenance &&
             !IridiumConsoleLibrary.shared.working && !JITCoordinator.shared.busy && !OnDevicePairing.shared.active &&
             !SteamOwnedLibrary.shared.downloads.values.contains { $0.state == .active }
@@ -93,6 +94,25 @@ import SwiftUI
         transferringLibrary = true
     }
     func endLibraryTransfer() { transferringLibrary = false; storageDidChange() }
+
+    // Cloud owns the same paths as migration, including saves under %GameInstall%.
+    func beginCloudTransfer() async throws {
+        for _ in 0..<600 {
+            try Task.checkCancellation()
+            if let migrationError { throw LibraryError.message(migrationError) }
+            if !blocksLaunch, !syncingCloud, task == nil,
+               !SteamOwnedLibrary.shared.downloads.values.contains(where: { $0.state == .active }) {
+                syncingCloud = true
+                return
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw LibraryError.message("Files are still in use. Try syncing saves again after the file transfer finishes.")
+    }
+    func endCloudTransfer() {
+        syncingCloud = false
+        SteamOwnedLibrary.shared.resumeDownloadsAfterImport()
+    }
     func storageDidChange() { preparedKey = nil; scan() }
 
     func resume() { active = true; preparedKey = nil; scan() }

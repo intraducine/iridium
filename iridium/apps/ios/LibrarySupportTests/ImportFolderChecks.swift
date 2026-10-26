@@ -360,6 +360,67 @@ enum JITPairingSource { case imported }
             coordinator.scan(); try await settle(coordinator)
             require(try IridiumConsoleLibrary.shared.store.load().count == 1, "A rejected symbolic link does not block valid games")
             require(fm.fileExists(atPath: outside.path), "Cleanup does not follow a link to user files")
+        case "cloud":
+            let c = IridiumImportCoordinator.shared, id = UUID()
+            c.scan(); try await settle(c)
+            try await c.beginCloudTransfer()
+            let original = "Program Files (x86)/Steam/steamapps/common/Cloud Game"
+            try put("wine/drive_c/" + original + "/game.exe", pe())
+            let save = try put("wine/drive_c/" + original + "/save.dat")
+            LibraryModel.shared.entries = [LibraryEntry(id: id, title: "Cloud Game", relativePath: original, bits: 64, steamAppID: 42)]
+            c.storageDidChange()
+            require(!c.isWorking && c.syncingCloud, "Migration waits for Cloud ownership")
+            rejects { try c.beginLibraryTransfer() }
+            require((try? fm.destinationOfSymbolicLink(atPath: save.deletingLastPathComponent().path)) == nil, "Migration cannot move the folder during Cloud restore")
+            try Data("cloud save".utf8).write(to: save, options: .atomic)
+            c.endCloudTransfer()
+            require(!c.blocksLaunch, "Cloud release does not start a scan ahead of the waiting game launch")
+            try c.beginLibraryTransfer()
+            var waiting = false, acquired = false
+            let cloud = Task {
+                waiting = true
+                try await c.beginCloudTransfer()
+                acquired = true
+                require(!c.isWorking, "Cloud waits until migration releases files")
+                require(try Data(contentsOf: save) == Data("cloud save".utf8), "Cloud sees the same save through the repaired alias")
+            }
+            while !waiting { await Task.yield() }
+            require(!acquired, "Cloud cannot pass an existing file transfer")
+            c.endLibraryTransfer()
+            require(c.isWorking, "Migration reserves files before yielding")
+            try await settle(c)
+            try await cloud.value
+            require(c.syncingCloud, "Cloud owns files after migration")
+            require(try Data(contentsOf: storage.gameFolder(id).appendingPathComponent("save.dat")) == Data("cloud save".utf8), "The moved save has the Cloud contents")
+            require(try fm.contentsOfDirectory(atPath: storage.games.path).count == 1, "Restore and migration leave one game folder")
+            waiting = false
+            let cancelled = Task { waiting = true; try await c.beginCloudTransfer() }
+            while !waiting { await Task.yield() }
+            cancelled.cancel()
+            do { try await cancelled.value; preconditionFailure("Cancelled Cloud wait acquired storage") } catch is CancellationError { }
+            require(c.syncingCloud, "A cancelled waiter cannot release the active owner's files")
+            c.endCloudTransfer()
+            try await c.beginCloudTransfer(); c.endCloudTransfer()
+            SteamOwnedLibrary.shared.downloads[42] = .init(state: .active)
+            waiting = false
+            let downloading = Task { waiting = true; try await c.beginCloudTransfer() }
+            while !waiting { await Task.yield() }
+            require(!c.syncingCloud, "Cloud waits for an active installer")
+            downloading.cancel()
+            do { try await downloading.value; preconditionFailure("Cancelled installer wait acquired storage") } catch is CancellationError { }
+            SteamOwnedLibrary.shared.downloads.removeAll()
+            IridiumConsoleSession.shared.isActive = true
+            try await c.beginCloudTransfer()
+            require(c.syncingCloud, "Quit upload can own storage while the game is active")
+            c.scan(); require(!c.isWorking, "Quit upload never permits migration")
+            c.endCloudTransfer()
+            IridiumConsoleSession.shared.isActive = false
+            try fm.removeItem(at: save.deletingLastPathComponent())
+            try put("wine/drive_c/" + original + "/keep.dat")
+            c.storageDidChange(); try await settle(c)
+            require(c.migrationError != nil, "A conflicting source blocks migration")
+            do { try await c.beginCloudTransfer(); preconditionFailure("Cloud ignored a failed migration") } catch { }
+            require(!c.syncingCloud, "A failed migration cannot grant Cloud file access")
         case "bulk", "archive", "pairing", "registration", "idle", "arcade", "picker":
             let model = LibraryModel.shared, c = IridiumImportCoordinator.shared
             if CommandLine.arguments[1] == "picker" {
