@@ -525,7 +525,9 @@ final class LibraryModel: ObservableObject {
                 guard self.nativeLaunchID == owner, self.current != nil else { return }
                 switch event {
                 case .starting: break
-                case .running: self.sawProcess = true
+                case .running:
+                    self.sawProcess = true
+                    if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
                 case .ended(let status):
                     self.finish()
                     if status != 0 && !self.quitRequested { self.error = "The Windows game ended with code \(status)." }

@@ -18,6 +18,39 @@ SESSION = ROOT / madeira_session.SOURCE
 
 class WindowsRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_running_game_clears_starting_message_without_clearing_stop_progress(self):
+        source = (ROOT / 'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
+        handler = source.split('IridiumMadeiraRuntime.shared.poll(owner) { event in\n', 1)[1]
+        handler = handler.split('\n            }\n        }\n        let dockStart', 1)[0]
+        fixture = '''import Foundation
+enum Event { case starting, running, ended(UInt32), blocked(String) }
+final class Library {
+ var nativeLaunchID=UUID(), current:UUID?=UUID(), sawProcess=false, quitRequested=false, launching=true
+ var sessionMessage="Starting…", error:String?, timer:Timer?
+ func finish(){current=nil}
+ func accept(_ event:Event, owner:UUID) {
+''' + handler + '''
+ }
+}
+let library=Library(), owner=library.nativeLaunchID
+library.accept(.starting,owner:owner)
+precondition(!library.sawProcess && library.sessionMessage == "Starting…")
+library.accept(.running,owner:UUID())
+precondition(!library.sawProcess && library.sessionMessage == "Starting…")
+library.accept(.running,owner:owner)
+precondition(library.sawProcess && library.sessionMessage.isEmpty)
+library.sessionMessage="Ending the remaining game processes…"
+library.accept(.running,owner:owner)
+precondition(library.sessionMessage == "Ending the remaining game processes…")
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.swift').write_text(fixture)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'),
+                            str(path / 'main.swift'), '-o', str(path / 'check')], check=True, timeout=45)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_status_callback_has_explicit_main_actor_isolation(self):
         fixture = '''import Foundation
 func wine_process_is_running()->Int32{1}
