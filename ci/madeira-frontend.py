@@ -27,7 +27,7 @@ REVISION = engine_pins.get('madeira')['revision']
 PSP_REVISION = engine_pins.get('ppsspp')['revision']
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
-RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
+RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n#import "IRArchive.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
     'NSCameraUsageDescription': 'A PSP game can use your camera to emulate the Go!Cam accessory.',
@@ -135,7 +135,7 @@ def project(source, names):
                                       '$(SRCROOT)/../../../vendor/SameBoy/libretro',
                                       '$(SRCROOT)/../../ppsspp/$(PLATFORM_NAME)/include'])
         append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
-        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
+        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-larchive', '-framework', 'CoreFoundation'], unique=False)
         append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PPSSPP'])
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
@@ -193,7 +193,7 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
+    for name in ('IridiumCoreBridge.h', 'IRArchive.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
     header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')

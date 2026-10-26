@@ -31,11 +31,53 @@ so all referenced tracks are available. Ambiguous formats ask for a system.
 | Dreamcast | `.elf`, `.cdi`, `.chd`, `.gdi`, `.cue` | Include all referenced tracks |
 | Arcade | `.zip` | Standalone flat sets; no encrypted entries, links, or archive comments |
 
-Game copies use `Documents/IridiumRuntimes/Games/<UUID>`, saves use
-`Saves/<runtime>/<UUID>`, and system data uses `System/<runtime>`. Azahar adds
+Game copies use `Documents/Games/<game title> - <UUID>`. Names exclude unsafe path
+characters. The UUID keeps same-title games separate. Existing game folders move there on
+first use without changing library IDs or saves. Saves use
+`Documents/IridiumRuntimes/Saves/<runtime>/<UUID>`, and system data uses
+`Documents/IridiumRuntimes/System/<runtime>`. Azahar adds
 `Azahar` below its save root; Flycast uses `dc` below its system root. Dolphin
 bundles upstream `Sys` and stores NAND/cards/configuration with the game saves.
 The build supplies no commercial games, console keys, or proprietary BIOS files.
+
+`Documents/Import` accepts game files, complete game folders, pairing files, and
+bulk ZIP/7z archives. It runs while the app is active and no game or Steam download
+is running. Add Game > Import Folder shows choices, errors, remaining files, and
+Retry Import. Choose Files adds every selected input to the same queue; copies
+outside Iridium remain untouched. This layout uses the host's Documents folder
+in both standalone installs and LiveContainer.
+
+A source leaves Import only after its game record or validated Keychain pairing
+is stored. Interrupted imports reuse their recorded IDs. Ambiguous systems,
+multiple executables, and multiple pairing files need a choice. Unsupported,
+incomplete, encrypted, or failed inputs stay available for repair or retry.
+Completed imports remove empty staging folders. Other files, including hidden
+files, remain in Import. Stable relative aliases keep Windows and Steam paths
+working when a managed game folder is renamed. A Steam manifest alone does not
+make a missing or empty game folder ready to play; the library offers Repair.
+Steam records used only for shared content do not create extra game cards.
+Remove from Library keeps files and saves. Steam removals keep settings and stay
+hidden across scans and restarts. Add to Library in the game's Steam options
+restores the card. Uninstall removes a managed Steam game's files and install
+record, even if either is already missing. Its confirmation warns that saves
+inside the game folder are removed too; saves elsewhere stay on the device.
+Archive extraction rejects links and paths that escape its new staging folder,
+limits entries and expanded bytes, and publishes only complete extractions.
+Unrecognized files from an archive stay in its extracted folder.
+
+Windows installations also move to Games. A recorded relative link retains each
+old C: path, including Steam's installation paths. Entries that share one physical
+installation keep that one folder. Wine, the Steam client, saves, and runtime
+system files retain their own storage. A loose executable in the C: root moves by itself and retains its old path;
+unrelated files on the Windows drive stay in place.
+
+Older builds do not understand the new game root. Before downgrading, back up
+Documents. Move console folders from Games back to IridiumRuntimes/Games using
+the same UUIDs. For Windows, `.iridium-game-moves.json` records each original
+path relative to wine/drive_c and its Games UUID. Replace only that recorded
+installation link with its matching game folder. Keep library files, saves,
+system data, and unrelated links intact. Do not combine or overwrite conflicting
+folders.
 
 Shared controls include touch, keyboard, and up to four controllers. GameCube Z
 maps to RB. Wii minus/plus map to Select/Start, 1/2 to Y/X, Nunchuk C/Z to L/R,

@@ -29,6 +29,7 @@ struct IridiumGame: Identifiable {
         return LibraryModel.sessionsThisRun > 0 ? .restartRequired : .idle
     }
     func launch(gameID: UUID) throws {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { throw LibraryError.message(IridiumImportCoordinator.shared.launchMessage) }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
         guard !IridiumConsoleSession.shared.isActive, !IridiumConsoleSession.shared.dolphinMaintenance else { throw IridiumRuntimeError.busy }
         guard IridiumConsoleSession.shared.phase != .restartRequired else { throw IridiumRuntimeError.restartRequired }
@@ -83,7 +84,8 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
     @Published private(set) var working = false
     @Published var error: String?
     let store = IridiumConsoleStore(root: LibraryModel.documents.resolvingSymlinksInPath()
-        .appendingPathComponent("IridiumRuntimes", isDirectory: true))
+        .appendingPathComponent("IridiumRuntimes", isDirectory: true),
+        gamesRoot: LibraryModel.documents.resolvingSymlinksInPath().appendingPathComponent("Games", isDirectory: true))
     private let queue = DispatchQueue(label: "software.iridium.runtime-library", qos: .userInitiated)
 
     private init() { reload() }
@@ -96,46 +98,17 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func importROM(_ url: URL, preferredPlatform: IridiumPlatform? = nil, selectedFiles: [URL] = [],
-                   failed: ((String) -> Void)? = nil, imported: @escaping (IridiumConsoleGame) -> Void = { _ in }) {
-        guard !working else { return }
-        guard Self.importExtensions.contains(url.pathExtension.lowercased()) else {
-            let message = IridiumRuntimeError.invalidGame.localizedDescription
-            if let failed { failed(message) } else { error = message }
-            return
-        }
-        working = true
-        let inputs = selectedFiles.isEmpty ? [url] : selectedFiles
-        let scopes = inputs.filter { $0.startAccessingSecurityScopedResource() }
-        queue.async {
-            defer { scopes.forEach { $0.stopAccessingSecurityScopedResource() } }
-            do {
-                // Coordinate Files/iCloud provider reads; do not keep an
-                // external security-scoped path as the game's persistent ID.
-                let game = try IridiumFilesAccess.readGame(url, selectedFiles: inputs) { source, selected in
-                    try self.store.importROM(source, into: self.store.load(), preferredPlatform: preferredPlatform, selectedFiles: selected)
-                }
-                let games = try self.store.load()
-                DispatchQueue.main.async { self.games = games; self.working = false; imported(game) }
-            } catch {
-                DispatchQueue.main.async {
-                    self.working = false
-                    if let failed { failed(error.localizedDescription) } else { self.error = error.localizedDescription }
-                }
-            }
-        }
-    }
-
-    func update(_ game: IridiumConsoleGame) {
+    @MainActor func update(_ game: IridiumConsoleGame) {
         mutate { values in
             guard let index = values.firstIndex(where: { $0.id == game.id }) else { return }
             values[index] = game
         }
     }
-    func remove(_ game: IridiumConsoleGame) {
+    @MainActor func remove(_ game: IridiumConsoleGame) {
         mutate { $0.removeAll { $0.id == game.id } }
     }
-    private func mutate(_ edit: @escaping @Sendable (inout [IridiumConsoleGame]) -> Void) {
+    @MainActor private func mutate(_ edit: @escaping @Sendable (inout [IridiumConsoleGame]) -> Void) {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !working, !IridiumConsoleSession.shared.isActive else { return }
         working = true
         queue.async {

@@ -2522,6 +2522,7 @@ struct ContentView: View {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         // madeira-bcd: a game seen for the first time starts with Madeira's recommended
         // settings (GameRecommendationsApply.swift).
@@ -2571,6 +2572,7 @@ struct ContentView: View {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         do { if entry.desktop != true { _ = try LibraryModel.executable(entry.launchRelativePath) }; try entry.validate() }
         catch {
@@ -2635,6 +2637,7 @@ struct ContentView: View {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         guard jit_check_debugged() else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
@@ -3384,10 +3387,13 @@ struct ContentView: View {
     /// `profile` is a Steam game's library entry (its Game details page): the
     /// session then takes that entry's display, performance and on-screen settings.
     private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {
+        do { try MadeiraDock.validate(game, drive: MadeiraDock.drive) }
+        catch { library.error = error.localizedDescription; return }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         let inLibrary = library.enabled
         guard jitReadyForLaunch(inLibrary: inLibrary, entry: profile?.id,
@@ -4187,6 +4193,7 @@ final class TouchControlsModel: ObservableObject {
 /// the game underneath — mouse-look must keep working between the buttons.
 final class ControlsWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { return nil }
         guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }
         let m = TouchControlsModel.shared
         // Edit mode owns the whole screen: drags and the scale pinch must not

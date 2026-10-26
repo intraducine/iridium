@@ -600,7 +600,7 @@ final class SteamOwnedLibrary: ObservableObject {
                 }
                 return (audit, elsewhere)
             }.value
-            guard Self.cloudEnabled, !inSession else { cloud[appID] = nil; return nil }
+            guard Self.cloudEnabled, !cloudBlocked else { cloud[appID] = nil; return nil }
             let audit = result.0
             // Valve's client in a session shows the game only the files its list
             // names (SteamRemoteCache); not while that client runs.
@@ -609,7 +609,7 @@ final class SteamOwnedLibrary: ObservableObject {
                     remoteCacheOffLogged = true
                     SteamLog.event("[steam-cloud] remotecache off (MADEIRA_STEAM_CLOUD_REMOTECACHE=0)")
                 }
-            } else if let written = try SteamRemoteCache.write(appID: appID, audit: audit, paths: paths) {
+            } else if !inSession, let written = try SteamRemoteCache.write(appID: appID, audit: audit, paths: paths) {
                 SteamLog.event("[steam-cloud] app=\(appID) remotecache synced=\(written.synced) device-only=\(written.local) dropped=\(written.dropped) change=\(audit.changeNumber)")
             }
             let plan = SteamCloudPlan.make(audit: audit, baseline: baseline(appID))
@@ -722,6 +722,7 @@ final class SteamOwnedLibrary: ObservableObject {
         guard Self.cloudEnabled, signedIn, !cloudBlocked, var state = cloud[appID], !wanted.isEmpty else { return false }
         state.phase = .uploading(done: 0, of: wanted.count); state.problem = nil; cloud[appID] = state
         var done = 0
+        var sentHashes: [String: String] = [:]
         var batchID: UInt64 = 0
         func complete(_ ok: Bool) async {
             guard batchID != 0 else { return }
@@ -800,6 +801,7 @@ final class SteamOwnedLibrary: ObservableObject {
                 }
                 SteamLog.event("[steam-cloud] app=\(appID) upload file=\(done + 1)/\(wanted.count) bytes=\(file.count) parts=\(answer.blocks.count) http=\(statuses.map(String.init).joined(separator: ",")) committed=\(committed ? 1 : 0)")
                 guard sent, committed else { throw SteamFileError.invalid("Steam did not accept a save file.") }
+                sentHashes[entry.key] = SteamCloudPlan.hex(sha)
                 done += 1
                 state.phase = .uploading(done: done, of: wanted.count); cloud[appID] = state
             }
@@ -810,7 +812,7 @@ final class SteamOwnedLibrary: ObservableObject {
             SteamLog.event("[steam-cloud] app=\(appID) upload failed after=\(done) reason=\(Self.reason(error))")
             state.problem = "Steam Cloud upload stopped: \(SteamSignIn.message(error)) This device's saves were not changed."
         }
-        state.lastUpload = done; state.phase = .ready; cloud[appID] = state
+        state.lastUpload = done; state.lastUploadHashes = sentHashes; state.phase = .ready; cloud[appID] = state
         return done > 0
     }
 
@@ -911,6 +913,7 @@ final class SteamOwnedLibrary: ObservableObject {
         // 2 s apart, find the same device files.
         var plan: SteamCloudPlan?
         var seen: [String: Data] = [:]
+        var stable = false
         for round in 0..<5 {
             cloudQuit = .working(round == 0 ? "Checking saves…" : "Waiting for the game to finish saving…")
             guard let look = await checkCloud(appID) else {
@@ -919,11 +922,12 @@ final class SteamOwnedLibrary: ObservableObject {
             }
             let now = (look.upload + look.conflicts).reduce(into: [String: Data]()) { $0[$1.key] = $1.localSHA }
             plan = look
-            if round > 0, now == seen { break }
+            if round > 0, now == seen { stable = true; break }
             seen = now
             try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
         guard let plan else { cloudQuit = .failed(failure()); return }
+        guard stable else { cloudQuit = .failed("The game is still saving. Save in the game, then try again."); return }
         // A save missing on this device has nothing to upload; it waits for its choice.
         let differing = plan.conflicts.filter { $0.kind != .cloudOnly }
         if !differing.isEmpty, !replaceCloud {
@@ -936,16 +940,28 @@ final class SteamOwnedLibrary: ObservableObject {
             cloudQuit = .done(0); return
         }
         cloudQuit = .working("Uploading \(wanted.count) save\(wanted.count == 1 ? "" : "s")…")
-        _ = await upload(appID, wanted)
-        guard cloud[appID]?.problem == nil, cloud[appID]?.lastUpload == wanted.count else {
+        let uploaded = await upload(appID, wanted)
+        guard uploaded, cloud[appID]?.problem == nil, cloud[appID]?.lastUpload == wanted.count else {
             cloudQuit = .failed(failure()); return
         }
+        let hashes = cloud[appID]?.lastUploadHashes ?? [:]
         // The comparison records the uploaded files as in sync for the next start.
         cloudQuit = .working("Confirming…")
         guard let after = await checkCloud(appID) else { cloudQuit = .failed(failure()); return }
         let sent = Set(wanted.map(\.key))
-        let left = (after.upload + after.conflicts).filter { sent.contains($0.key) }.count
+        var confirmed: [String: String] = [:]
+        for entry in cloud[appID]?.audit.entries ?? [] {
+            if let sha = hashes[entry.key], sha == SteamCloudPlan.hex(entry.cloudSHA) { confirmed[entry.key] = sha }
+        }
+        recordBaseline(appID, settled: confirmed)
+        let left = after.upload.count + after.conflicts.filter { $0.kind != .cloudOnly }.count
         SteamLog.event("[steam-cloud] app=\(appID) quit-upload: uploaded=\(wanted.count) replaced-cloud=\(replaceCloud ? 1 : 0) changed-since=\(left)")
+        guard confirmed.count == sent.count else {
+            cloudQuit = .failed("Steam Cloud has not confirmed every upload. Iridium stays open. Try again."); return
+        }
+        guard left == 0 else {
+            cloudQuit = .failed("A save changed during upload. Save in the game, then try again. Iridium stays open."); return
+        }
         cloudQuit = .done(wanted.count)
     }
 
@@ -1058,6 +1074,7 @@ final class SteamOwnedLibrary: ObservableObject {
 
     /// Installs or updates a game: queues it and starts when nothing else downloads.
     func install(_ appID: Int) {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { error = IridiumImportCoordinator.shared.launchMessage; return }
         guard Self.enabled else { return }
         guard signedIn else { error = "Sign in to Steam to download games."; return }
         if active?.id == appID || queue.contains(appID) { return }
@@ -1092,7 +1109,8 @@ final class SteamOwnedLibrary: ObservableObject {
         let apps = Self.steamApps
         Task { @MainActor in
             await running?.value
-            SteamInstallFiles.delete(appID: appID, folderName: game.folderName, steamApps: apps)
+            let removed = await Task.detached(priority: .utility) { SteamInstallFiles.delete(appID: appID, folderName: game.folderName, steamApps: apps) }.value
+            guard removed else { self.error = "The partial download could not be removed."; return }
             SteamLog.event("[steam-depot] cancelled app=\(appID) partial-files-removed=1")
         }
     }
@@ -1106,22 +1124,31 @@ final class SteamOwnedLibrary: ObservableObject {
     }
 
     /// Removes an install that Madeira's downloads own (its library folder is
-    /// Madeira Dock's own), with its library entry (its per-game settings).
-    func uninstall(_ game: DockGame) {
-        guard SteamInstallPaths.isManaged(library: game.library), !inSession else { return }
+    /// Madeira Dock's own). Settings and identity stay available for a reinstall.
+    func uninstall(_ game: DockGame) async -> Bool {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { error = IridiumImportCoordinator.shared.launchMessage; return false }
+        guard SteamInstallPaths.isManaged(library: game.library), !inSession else { error = "Stop the game before uninstalling."; return false }
+        let running = active?.id == game.id ? active?.task : nil
         pause(game.id); downloads[game.id] = nil
-        LibraryModel.shared.removeSteam(appID: game.id)
+        await running?.value
+        do { try IridiumImportCoordinator.shared.beginLibraryTransfer() }
+        catch { self.error = error.localizedDescription; return false }
+        defer { IridiumImportCoordinator.shared.endLibraryTransfer() }
         // A reinstall evaluates the game's one-time installs again.
         DockInstallers.setRunsNext(game.id, true, prefix: MadeiraDock.prefix)
         let apps = Self.steamApps, id = game.id, folder = game.installDir
-        Task.detached(priority: .utility) {
-            SteamInstallFiles.delete(appID: id, folderName: folder, steamApps: apps)
-            await MainActor.run { SteamGamesModel.shared.refresh() }
-        }
+        let removed = await Task.detached(priority: .utility) { SteamInstallFiles.delete(appID: id, folderName: folder, steamApps: apps) }.value
+        guard removed else { error = "Uninstall did not finish. Check the game files before trying again."; return false }
+        guard LibraryModel.shared.removeSteam(appID: game.id) else { error = "The game files were removed, but the library could not be saved."; return false }
+        SteamGamesModel.shared.refresh()
         SteamLog.event("[steam-depot] uninstalled app=\(id)")
+        return true
     }
 
+    func resumeDownloadsAfterImport() { pump() }
+
     private func pump() {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { return }
         guard active == nil, !inSession, !queue.isEmpty else { return }
         let appID = queue.removeFirst()
         downloads[appID]?.state = .active
@@ -1152,6 +1179,7 @@ final class SteamOwnedLibrary: ObservableObject {
                                                      library: SteamInstallPaths.libraryRelative, installed: true,
                                                      customExecutables: false), title: info.name)
             SteamLog.event("[steam-depot] library entry app=\(appID)")
+            IridiumImportCoordinator.shared.storageDidChange()
             SteamGamesModel.shared.refresh()
             outcome = .completed
         } catch {

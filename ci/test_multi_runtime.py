@@ -93,11 +93,12 @@ class MultiRuntimeTests(unittest.TestCase):
     def test_play_routes_advanced_engines_to_owned_jit_without_extra_confirmation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
         launch = source[source.index('    private func launch(_ game:'):source.index('    private func options(_ game:')]
+        repair = source[source.index('    private func steamRepairID('):source.index('    private func actions(')]
         marker = '.onChange(of: jitState.enabled) { _, enabled in'
         start = source.index(marker) + len(marker)
         continuation = source[start:source.index('\n            }', start)]
         fixture = r'''import Foundation
-struct LibraryEntry { let id = UUID() }
+struct LibraryEntry { let id = UUID(); var steamAppID: Int? = nil }
 struct IridiumGame {
     var windows: LibraryEntry?
     var console: IridiumConsoleGame?
@@ -111,6 +112,17 @@ struct IridiumGame {
 }
 @MainActor final class Library { var error: String? }
 @MainActor final class JITState { var enabled = false; var showSetup = false }
+@MainActor final class Steam {
+    struct Download { enum State { case paused, failed(String), queued, active }; var state: State }
+    var downloads: [Int: Download] = [:], installed: [Int] = [], repaired: [Int] = []
+    var error: String?
+    func install(_ id: Int) { installed.append(id) }
+    func repair(_ id: Int) { repaired.append(id) }
+}
+@MainActor final class SteamGames {
+    struct Game { let id: Int; let installed: Bool }
+    var games: [Game] = []
+}
 @MainActor var nativeStarts: [UUID] = []
 @MainActor struct IridiumConsoleDriver {
     init(game: IridiumConsoleGame) throws {}
@@ -122,12 +134,15 @@ struct IridiumGame {
 }
 @MainActor final class Host {
     let consoleSession = Session(), library = Library(), jitState = JITState(), jit = JITState()
+    let steam = Steam(), steamGames = SteamGames()
     var lastLaunchNeedsSupport = false, pendingSupportGame: IridiumConsoleGame?
     var enables = 0, windows = 0
     func enableJIT() { enables += 1 }
     func play(_ game: LibraryEntry) { windows += 1 }
 LAUNCH
+STEAM_REPAIR
     func start(_ game: IridiumConsoleGame) { launch(IridiumGame(console: game)) }
+    func start(_ entry: LibraryEntry) { launch(IridiumGame(windows: entry)) }
     func enabledChanged(_ enabled: Bool) {
 CONTINUATION
     }
@@ -152,10 +167,18 @@ CONTINUATION
             runtimeID: "dolphin", fileExtension: "iso", importedAt: Date())
         let count = nativeStarts.count; blocked.start(game)
         precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
+        let missing = Host()
+        missing.lastLaunchNeedsSupport = true
+        missing.start(LibraryEntry(steamAppID: 220))
+        precondition(missing.steam.repaired == [220] && missing.windows == 0 && missing.enables == 0 && !missing.lastLaunchNeedsSupport)
+        let paused = Host()
+        paused.steam.downloads[220] = Steam.Download(state: .paused)
+        paused.start(LibraryEntry(steamAppID: 220))
+        precondition(paused.steam.installed == [220] && paused.windows == 0 && paused.enables == 0)
         print("PASS shipping Play: all advanced engines own JIT without duplicate launches; busy admission retained")
     }
 }
-'''.replace('LAUNCH', launch).replace('CONTINUATION', continuation)
+'''.replace('LAUNCH', launch).replace('CONTINUATION', continuation).replace('STEAM_REPAIR', repair)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); unit = folder / 'check.swift'; unit.write_text(fixture)
             binary = folder / 'check'
@@ -202,6 +225,12 @@ CONTINUATION
         fixture = r'''
 import Foundation
 var wineRunning: Int32 = 0, serverRunning: Int32 = 0
+enum LibraryError: Error { case message(String) }
+final class IridiumImportCoordinator {
+    static let shared = IridiumImportCoordinator()
+    var blocksLaunch = false
+    var launchMessage = "Import in progress"
+}
 func wine_process_is_running() -> Int32 { wineRunning }
 func wineserver_is_running() -> Int32 { serverRunning }
 final class JITCoordinator {
@@ -235,6 +264,11 @@ let preflight = Preflight()
 // Prompt-time admission never claims a lease; confirmation must recheck it.
 try preflight.validateLaunchAdmission()
 precondition(preflight.ownership.lease == nil)
+IridiumImportCoordinator.shared.blocksLaunch = true
+do { try preflight.validateLaunchAdmission(); fatalError("Storage reservation must block launch") }
+catch LibraryError.message { }
+IridiumImportCoordinator.shared.blocksLaunch = false
+
 func rejects(_ expected: IridiumRuntimeError) {
     do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
     catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }

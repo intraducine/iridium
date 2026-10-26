@@ -393,7 +393,7 @@ class IridiumFilesImportTests(unittest.TestCase):
         build = subprocess.run([
             "swiftc", "-swift-version", "6", "-warnings-as-errors",
             "-module-cache-path", module_cache('macosx'),
-            str(SOURCE), str(harness), "-o", str(cls.executable),
+            str(ROOT / "iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift"), str(SOURCE), str(harness), "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=120)
         if build.returncode:
             raise AssertionError(build.stdout + build.stderr)

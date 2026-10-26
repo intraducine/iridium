@@ -92,7 +92,7 @@ enum IridiumFilesImport {
     /// A folder grant is required to copy dependencies. A file grant alone only
     /// copies that EXE; never infer authority over its parent from its name.
     static func importExecutable(at source: URL, drive: URL, sourceRoot: URL? = nil,
-                                 limits: Limits = .init(),
+                                 limits: Limits = .init(), managedGamesRoot: URL? = nil, importID: UUID = UUID(),
                                  publication: Publication = .init(),
                                  isCancelled: () -> Bool = { false }) throws -> Imported {
         try checkCancellation(isCancelled)
@@ -132,7 +132,8 @@ enum IridiumFilesImport {
 
         let fm = FileManager.default
         try fm.createDirectory(at: drive, withIntermediateDirectories: true)
-        let imports = drive.appendingPathComponent("Imported", isDirectory: true)
+        let imports = try checkedPath(managedGamesRoot ?? drive.appendingPathComponent("Imported", isDirectory: true))
+        guard !isInside(imports, root: root), imports != root else { throw Failure.outsideFolder }
         _ = try checkedPath(imports)
         do {
             guard try attributes(imports)[.type] as? FileAttributeType == .typeDirectory else {
@@ -141,9 +142,29 @@ enum IridiumFilesImport {
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             try fm.createDirectory(at: imports, withIntermediateDirectories: false)
         }
-        let id = UUID()
-        let destination = imports.appendingPathComponent(id.uuidString, isDirectory: true)
-        let staging = drive.appendingPathComponent(".iridium-files-import-" + id.uuidString, isDirectory: true)
+        let id = importID
+        let destination = try managedGamesRoot.map { try IridiumGameFolder.folder(id, title: sourceRoot?.lastPathComponent ?? title, in: $0) }
+            ?? imports.appendingPathComponent(id.uuidString, isDirectory: true)
+        let relativeDestination = (managedGamesRoot == nil ? "Imported/" : "iridium-games/") + id.uuidString + "/" + executable
+        if managedGamesRoot != nil, fm.fileExists(atPath: destination.path) {
+            let copied = try contents(in: destination, limits: limits, isCancelled: isCancelled)
+            guard Set(copied.map(\.relativePath)) == Set(items.map(\.relativePath)) else { throw Failure.conflictingPath }
+            for entry in items where !entry.isDirectory {
+                try checkCancellation(isCancelled)
+                let from = root.appendingPathComponent(entry.relativePath)
+                let to = destination.appendingPathComponent(entry.relativePath)
+                guard fm.contentsEqual(atPath: from.path, andPath: to.path) else { throw Failure.conflictingPath }
+            }
+            guard try executableBits(destination.appendingPathComponent(executable)) == bits else { throw Failure.sourceChanged }
+            try publication.accept(isCancelled: isCancelled())
+            return Imported(relativePath: relativeDestination, title: title, bits: bits, importID: id,
+                            copiedContainingFolder: sourceRoot != nil)
+        }
+        let staging = (managedGamesRoot == nil ? drive : imports).appendingPathComponent(".iridium-files-import-" + id.uuidString, isDirectory: true)
+        if managedGamesRoot != nil, fm.fileExists(atPath: staging.path) {
+            _ = try checkedPath(staging)
+            try fm.removeItem(at: staging)
+        }
         // Only remove a staging directory successfully created by this call.
         guard !fm.fileExists(atPath: staging.path), !fm.fileExists(atPath: destination.path) else {
             throw Failure.conflictingPath
@@ -184,7 +205,7 @@ enum IridiumFilesImport {
         // same-volume move, and library-entry persistence belongs to the caller.
         try fm.moveItem(at: staging, to: destination)
         ownsStaging = false
-        return Imported(relativePath: "Imported/" + id.uuidString + "/" + executable,
+        return Imported(relativePath: relativeDestination,
                         title: title, bits: bits, importID: id,
                         copiedContainingFolder: sourceRoot != nil)
     }

@@ -1660,14 +1660,19 @@ struct ExecutableBrowser: View {
                     }
                 }
             }
-            if files.isEmpty && error == nil { Text("No executables here. Copy files into Madeira/wine/drive_c using Files.").foregroundStyle(.secondary) }
+            if files.isEmpty && error == nil { Text("No executables here. Use Add Game to import a game, or choose another folder.").foregroundStyle(.secondary) }
         }.iridiumPageSurface().navigationTitle(folder.lastPathComponent)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         .task {
             do {
                 // ml1163: .bat and .cmd files are listed too (they run through cmd.exe).
                 files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
-                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && $0.resolvingSymlinksInPath().path.hasPrefix(LibraryModel.drive.path + "/") }
+                    .map { url in
+                        var directory: ObjCBool = false
+                        _ = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+                        return URL(fileURLWithPath: url.path, isDirectory: directory.boolValue)
+                    }
+                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && IridiumGameStorage.windowsRelative($0, drive: LibraryModel.drive) != nil }
                     .sorted { if $0.hasDirectoryPath != $1.hasDirectoryPath { return $0.hasDirectoryPath }; return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             } catch { self.error = error.localizedDescription }
         }
@@ -1706,13 +1711,24 @@ struct LibraryDetail: View {
             return
         }
         guard iridiumPages.isEmpty else { return }
-        let order = ["Rename & Artwork", "Controls", "Display", "Files & Saves", "Advanced", "Favorites"].filter { entry.desktop != true || !["Rename & Artwork", "Favorites"].contains($0) }
+        let order = ["Rename & Artwork", "Library Entry", "Controls", "Display", "Files & Saves", "Advanced", "Favorites"].filter { entry.desktop != true || !["Rename & Artwork", "Library Entry", "Favorites"].contains($0) }
         let index = order.firstIndex(of: iridiumFocus) ?? 0
         if ["left", "right", "up", "down"].contains(command) {
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
             iridiumFocus = order[min(max(index + step, 0), order.count - 1)]
-        } else if command == "accept" { if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) } else { iridiumPages.append(iridiumFocus) } }
+        } else if command == "accept" {
+            if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) }
+            else if iridiumFocus == "Library Entry" { iridiumLibraryAction() }
+            else { iridiumPages.append(iridiumFocus) }
+        }
+    }
+
+    private func iridiumLibraryAction() {
+        guard !IridiumImportCoordinator.shared.blocksLaunch, model.current == nil, !model.launching else { return }
+        if let appID = entry.steamAppID, model.hiddenSteamApps.contains(appID) {
+            if let game = model.steamInstall(entry) { model.upsertSteam(game, title: entry.title) }
+        } else { remove = true }
     }
 
     var play: (LibraryEntry) -> Void
@@ -1836,7 +1852,17 @@ struct LibraryDetail: View {
 
                 Section("Library") {
                     if entry.desktop != true { NavigationLink("Rename & Artwork", value: "Rename & Artwork").id("Rename & Artwork")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "Rename & Artwork" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Rename & Artwork" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        if let appID = entry.steamAppID, model.hiddenSteamApps.contains(appID) {
+                            Button("Add to Library", action: iridiumLibraryAction)
+                                .disabled(IridiumImportCoordinator.shared.blocksLaunch || model.steamInstall(entry) == nil)
+                                .id("Library Entry").listRowBackground(iridiumGuided && iridiumFocus == "Library Entry" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        } else {
+                            Button("Remove from Library", role: .destructive, action: iridiumLibraryAction)
+                                .disabled(IridiumImportCoordinator.shared.blocksLaunch || model.current != nil || model.launching)
+                                .id("Library Entry").listRowBackground(iridiumGuided && iridiumFocus == "Library Entry" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        }
+                    }
                 }.iridiumRowSurface()
                 Section("Controls") { NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
@@ -1990,7 +2016,6 @@ case "Files & Saves": Form { Group { if let appID = entry.steamAppID { SteamClou
                     }
                 } else if entry.desktop != true {
                     Section("Executable") { Text(entry.windowsPath).font(.caption.monospaced()).textSelection(.enabled) }
-                    Section { Button("Remove from library", role: .destructive) { remove = true } }
                 }
  }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Files & Saves")
                     .navigationBarBackButtonHidden()
@@ -2144,6 +2169,9 @@ if entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; 
                 if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }
             }
             .onDisappear { if !leaving { model.save(entry) } }
+            .confirmationDialog("Remove this game from the library? Its files and saves will stay.", isPresented: $remove, titleVisibility: .visible) {
+                Button("Remove from Library", role: .destructive) { leaving = true; model.remove(entry.id); dismiss() }
+            }
             .onReceive(LibraryController.shared.commands) { command in
                 guard iridiumPages.last != "Rename & Artwork" else { return }
                 guard !leaving, !findCover, !importCover, !remove, !confirmReset else { return }

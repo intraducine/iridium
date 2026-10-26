@@ -61,34 +61,59 @@ enum SteamInstallFiles {
 
     /// Removes an app's install: its folder under `common`, its record, its
     /// resume journal and the records of the apps that own its shared depots
-    /// (those describe the same folder). Only paths strictly inside
-    /// `steamApps/common` are removed.
-    nonisolated static func delete(appID: Int, folderName: String, steamApps: URL) {
+    /// (those describe the same folder). Removal accepts direct common children
+    /// and journaled aliases to managed game folders.
+    @discardableResult
+    nonisolated static func delete(appID: Int, folderName: String, steamApps: URL) -> Bool {
+        guard appID > 0, UInt64(appID) < UInt64(UInt32.max), folderName == safeFolderName(folderName) else { return false }
         let fm = FileManager.default
-        let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-        let folder = common.appendingPathComponent(safeFolderName(folderName)).resolvingSymlinksInPath().standardizedFileURL
-        if folder.path.hasPrefix(common.path + "/"), folder.deletingLastPathComponent().path == common.path {
-            try? fm.removeItem(at: folder)
+        func remove(_ url: URL) throws {
+            if fm.fileExists(atPath: url.path) || (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil { try fm.removeItem(at: url) }
         }
-        let recordURL = steamApps.appendingPathComponent("appmanifest_\(appID).acf")
-        if let state = record(appID: appID, steamApps: steamApps) {
-            let shared = (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64)
-            for (_, owner) in shared {
-                guard let ownerID = owner.string.flatMap({ Int($0) }), ownerID > 0, ownerID != appID,
-                      let ownerState = record(appID: ownerID, steamApps: steamApps),
-                      let dir = ownerState["installdir"]?.string
-                else { continue }
-                // An owner in another folder (its own installdir) goes too when
-                // it holds nothing but depots shared into this app.
-                let mine = Set(shared.filter { $0.value.string == owner.string }.map { $0.key })
-                let held = Set((ownerState["InstalledDepots"]?.fields ?? [:]).keys)
-                guard safeFolderName(dir).caseInsensitiveCompare(safeFolderName(folderName)) == .orderedSame ||
-                      held.isSubset(of: mine) else { continue }
-                try? fm.removeItem(at: steamApps.appendingPathComponent("appmanifest_\(ownerID).acf"))
+        do {
+            let state = record(appID: appID, steamApps: steamApps)
+            if let recordedFolder = state?["installdir"]?.string, recordedFolder.caseInsensitiveCompare(folderName) != .orderedSame { return false }
+            let held = Set((state?["InstalledDepots"]?.fields ?? [:]).keys)
+            let owners = Set((state?["SharedDepots"]?.fields ?? [:]).values.compactMap { $0.string })
+            let names = (try? fm.contentsOfDirectory(atPath: steamApps.path)) ?? []
+            guard names.count <= 100_000 else { return false }
+            for name in names where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
+                guard let id = Int(name.dropFirst(12).dropLast(4)), id != appID,
+                      let other = record(appID: id, steamApps: steamApps) else { continue }
+                let lent = Set((other["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(appID) }.keys)
+                // A shared-only record belongs to the consuming game, not a separate install.
+                if !lent.isEmpty && held.isSubset(of: lent) { return false }
+                if other["installdir"]?.string?.caseInsensitiveCompare(folderName) == .orderedSame {
+                    let shared = Set((state?["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(id) }.keys)
+                    let owned = Set((other["InstalledDepots"]?.fields ?? [:]).keys)
+                    guard owners.contains(String(id)), owned.isSubset(of: shared) else { return false }
+                }
             }
-        }
-        try? fm.removeItem(at: recordURL)
-        try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/\(appID)", isDirectory: true))
+            let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+            let link = common.appendingPathComponent(folderName)
+            let folder = link.resolvingSymlinksInPath().standardizedFileURL
+            let drive = steamApps.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            if let managed = IridiumGameStorage.movedWindowsFolder(link, drive: drive) {
+                try remove(managed); try remove(link)
+            } else {
+                guard folder.deletingLastPathComponent().path == common.path else { return false }
+                try remove(link)
+            }
+            if let state {
+                let shared = (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64)
+                for (_, owner) in shared {
+                    guard let ownerID = owner.string.flatMap({ Int($0) }), ownerID > 0, ownerID != appID,
+                          let ownerState = record(appID: ownerID, steamApps: steamApps) else { continue }
+                    let mine = Set(shared.filter { $0.value.string == owner.string }.map { $0.key })
+                    let owned = Set((ownerState["InstalledDepots"]?.fields ?? [:]).keys)
+                    guard owned.isSubset(of: mine) else { continue }
+                    try remove(steamApps.appendingPathComponent("appmanifest_\(ownerID).acf"))
+                }
+            }
+            try remove(steamApps.appendingPathComponent("appmanifest_\(appID).acf"))
+            try remove(steamApps.appendingPathComponent("downloading/\(appID)", isDirectory: true))
+            return true
+        } catch { return false }
     }
 
     /// Validates a manifest path and folds directory spelling to the first

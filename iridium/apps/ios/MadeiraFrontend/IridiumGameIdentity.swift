@@ -32,13 +32,13 @@ struct IridiumGameIdentity: Sendable {
     static func inspect(title: String, relativePath: String, drive: URL) -> Self {
         var result = Self(hints: IridiumArtworkMatcher.identificationQueries(title: title, executableRelativePath: relativePath))
         let root = drive.resolvingSymlinksInPath().standardizedFileURL
-        let executable = root.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
-        guard executable.path.hasPrefix(root.path + "/") else { return result }
+        let executable = root.appendingPathComponent(relativePath).standardizedFileURL
+        guard IridiumGameStorage.windowsRelative(executable, drive: root) != nil else { return result }
         if executable.pathExtension.lowercased() == "exe" { result.productName = PEVersionName.read(executable) }
         var folder = executable.deletingLastPathComponent()
         var manifests: [Int: String] = [:]
         for _ in 0..<4 {
-            guard folder.path.hasPrefix(root.path + "/") else { break }
+            guard IridiumGameStorage.windowsRelative(folder, drive: root) != nil else { break }
             if let data = localData(folder.appendingPathComponent("steam_appid.txt"), root: folder, limit: 128),
                let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                let id = Int(text), id > 0, id <= Int(UInt32.max) { result.steamHints.insert(id) }

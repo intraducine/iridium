@@ -32,8 +32,10 @@ struct DockGame: Identifiable, Equatable, Sendable, Codable {
     let name: String
     let installDir: String      // one folder name under <library>/common
     let library: String         // drive-relative steamapps folder
-    let installed: Bool         // StateFlags has "fully installed"
+    var installed: Bool         // StateFlags and the install folder agree
     let customExecutables: Bool // the install record lists per-user executables (CheckGuid)
+    var filesMissing: Bool? = nil
+    var sharedOnly: Bool? = nil
 
     /// Windows path of the game's folder, which Dock requires Valve's client to resolve to.
     var windowsInstallPath: String {
@@ -107,7 +109,7 @@ enum MadeiraDock {
 
     /// Installed games in the client's own library (`<client>/steamapps`) and the other
     /// libraries on C: that its `libraryfolders.vdf` lists. Read-only.
-    static func games(drive: URL) -> [DockGame] {
+    static func games(drive: URL, includeSharedOnly: Bool = false) -> [DockGame] {
         let fm = FileManager.default
         let clientLibrary = SteamRuntimeFiles.relativeRoot + "/steamapps"
         var libraries = [clientLibrary]
@@ -133,13 +135,22 @@ enum MadeiraDock {
                 guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)) else { continue }
                 let held = depots(manifest: data)
                 lent.merge(held.lent) { $0.union($1) }
-                guard let game = game(manifest: data, library: library),
+                guard var game = game(manifest: data, library: library),
                       !result.contains(where: { $0.id == game.id }) else { continue }
+                let install = folder.appendingPathComponent("common/" + game.installDir, isDirectory: true)
+                var directory: ObjCBool = false
+                let present = fm.fileExists(atPath: install.path, isDirectory: &directory) && directory.boolValue &&
+                    ((try? fm.contentsOfDirectory(atPath: install.path).isEmpty) == false)
+                game.filesMissing = !present
+                game.installed = game.installed && present && !fm.fileExists(atPath: folder.appendingPathComponent("downloading/\(game.id)").path)
                 installed[game.id] = held.installed
                 result.append(game)
             }
         }
-        result.removeAll { game in lent[game.id].map { installed[game.id, default: []].isSubset(of: $0) } ?? false }
+        for index in result.indices {
+            result[index].sharedOnly = lent[result[index].id].map { installed[result[index].id, default: []].isSubset(of: $0) } ?? false
+        }
+        if !includeSharedOnly { result.removeAll { $0.sharedOnly == true } }
         return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
@@ -162,9 +173,12 @@ enum MadeiraDock {
             throw DockError.message("Steam's client files are missing. Download Valve's client components first.")
         }
         var isFolder: ObjCBool = false
-        guard game.installed,
-              FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/common/" + game.installDir).path, isDirectory: &isFolder),
-              isFolder.boolValue else {
+        let install = drive.appendingPathComponent(game.library + "/common/" + game.installDir)
+        guard FileManager.default.fileExists(atPath: install.path, isDirectory: &isFolder), isFolder.boolValue,
+              (try? FileManager.default.contentsOfDirectory(atPath: install.path).isEmpty) == false else {
+            throw DockError.message("The game's files are missing. Repair the installation before playing.")
+        }
+        guard game.installed, !FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/downloading/\(game.id)").path) else {
             throw DockError.message("Steam does not list this game as fully installed.")
         }
     }

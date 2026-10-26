@@ -7,6 +7,7 @@ struct IridiumLibraryView: View {
     private var play: (LibraryEntry) -> Void { services.windows.launch }
     private var enableJIT: () -> Void { services.jit.enableForPlaying }
     private var startDock: (DockGame, Bool) -> Void { { services.windows.launchSteam($0, compactPool: $1) } }
+    @ObservedObject private var imports = IridiumImportCoordinator.shared
     @ObservedObject private var library = LibraryModel.shared
     @ObservedObject private var consoles = IridiumConsoleLibrary.shared
     @ObservedObject private var consoleSession = IridiumConsoleSession.shared
@@ -35,7 +36,7 @@ struct IridiumLibraryView: View {
     @State private var consoleDetail: IridiumConsoleGame?
     @State private var importingFiles = false
     @State private var features: Int?
-    @State private var fileSource: IridiumImportSource?
+    @State private var showingImportFolder = false
     @State private var pendingDetail: LibraryEntry?
     @State private var choosingAdd = false
     @State private var pendingAdd: IridiumAddGameSource?
@@ -52,7 +53,9 @@ struct IridiumLibraryView: View {
     @FocusState private var keyboardFocus: Bool
 
     private var allGames: [IridiumGame] {
-        let all = library.entries.filter { $0.desktop != true }.map { IridiumGame(windows: $0) }
+        let all = library.entries.filter { entry in
+            entry.desktop != true && !(entry.steamAppID.map { steamGames.sharedOnlyApps.contains($0) || library.hiddenSteamApps.contains($0) } ?? false)
+        }.map { IridiumGame(windows: $0) }
             + consoles.games.map { IridiumGame(console: $0) }
         let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return IridiumLibraryOrder.ordered(all.map(\.id), saved: savedOrder).compactMap { byID[$0] }
@@ -72,6 +75,22 @@ struct IridiumLibraryView: View {
         return
         #endif
         lastLaunchNeedsSupport = false
+        if let appID = game.windows?.steamAppID {
+            steam.error = nil
+            if let download = steam.downloads[appID] {
+                switch download.state {
+                case .paused, .failed: steam.install(appID)
+                case .active, .queued: break
+                }
+                if let error = steam.error { library.error = error }
+                return
+            }
+            if steamRepairID(game) != nil {
+                steam.repair(appID)
+                if let error = steam.error { library.error = error }
+                return
+            }
+        }
         do {
             if game.windows != nil {
                 try IridiumWindowsDriver(start: play).launch(gameID: game.id)
@@ -175,7 +194,7 @@ struct IridiumLibraryView: View {
             .onKeyPress(.return) { key("accept") }
             .onKeyPress(.escape) { command("back"); return .handled }
             .onReceive(controller.commands) { value in
-                guard !consoleSession.isActive, consoleDetail == nil, !importingFiles, features == nil, detail == nil, fileSource == nil, !choosingAdd, artworkDetail == nil, !onboarding.presented else { return }
+                guard !consoleSession.isActive, consoleDetail == nil, !importingFiles, features == nil, detail == nil, !showingImportFolder, !choosingAdd, artworkDetail == nil, !onboarding.presented else { return }
                 showHints = true; showFocus = true; command(value)
             }
             .onAppear {
@@ -185,7 +204,16 @@ struct IridiumLibraryView: View {
                 onboarding.presentIfNeeded()
                 services.steam.connectAndReconcile()
             }
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                imports.resume()
+                repeat {
+                    imports.scan()
+                    do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                } while !Task.isCancelled
+            }
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active { imports.suspend() }
                 if phase == .active && !consoleSession.isActive {
                     library.refreshFlag(); services.steam.refreshInstalledGames()
                     services.steam.reconcileIfEnabled()
@@ -193,6 +221,11 @@ struct IridiumLibraryView: View {
             }
             .onChange(of: library.current) { _, value in if value != nil { closePages() } }
             .onChange(of: library.error) { _, value in if value != nil { pendingSupportGame = nil; closePages() } }
+            .onChange(of: steam.error) { _, error in
+                if detail == nil, features == nil, selected?.windows?.steamAppID != nil, let error {
+                    library.error = error; steam.error = nil
+                }
+            }
             .onChange(of: library.restartNotice) { _, value in if value != nil { closePages() } }
             .onChange(of: library.jitNotice) { _, value in if value != nil { closePages() } }
             .onChange(of: library.cloudNotice) { _, value in if value != nil { closePages() } }
@@ -211,7 +244,7 @@ struct IridiumLibraryView: View {
             }
             .onChange(of: library.showDetail) { _, id in
                 guard let id else { return }
-                library.showDetail = nil; features = nil; fileSource = nil
+                library.showDetail = nil; features = nil; showingImportFolder = false
                 detail = library.entries.first { $0.id == id }
             }
             .onChange(of: selection.highlightedID) { old, value in
@@ -263,7 +296,7 @@ struct IridiumLibraryView: View {
             .fileImporter(isPresented: $importingFiles, allowedContentTypes: IridiumImportSource.contentTypes, allowsMultipleSelection: true) { result in
                 switch result {
                 case .success(let urls):
-                    if !urls.isEmpty { fileSource = IridiumImportSource(urls: urls) }
+                    if !urls.isEmpty { imports.receive(urls); showingImportFolder = true }
                 case .failure(let error):
                     if (error as NSError).code != NSUserCancelledError { library.error = error.localizedDescription }
                 }
@@ -284,14 +317,8 @@ struct IridiumLibraryView: View {
                         LibraryView(play: play, enableJIT: enableJIT, startDock: startDock, tab: 1)
                 }
             }
-            .sheet(item: $fileSource, onDismiss: restoreKeyboardFocus) { source in
-                IridiumGameImportView(source: source, importedConsole: { game in
-                    guard IridiumFilesImport.shouldPresentCompletion(of: source.id, currentSourceID: fileSource?.id) else { return }
-                    select(game.id); fileSource = nil
-                }) { entry in
-                    guard IridiumFilesImport.shouldPresentCompletion(of: source.id, currentSourceID: fileSource?.id) else { return }
-                    select(entry.id); fileSource = nil
-                }
+            .sheet(isPresented: $showingImportFolder, onDismiss: restoreKeyboardFocus) {
+                IridiumImportFolderView()
             }
             .sheet(isPresented: $choosingAdd, onDismiss: finishAdding) {
                 IridiumAddGameView(choose: { pendingAdd = $0; choosingAdd = false })
@@ -304,7 +331,7 @@ struct IridiumLibraryView: View {
                 if features != nil { pendingDetail = nil; features = nil }
                 else { completeOnboardingAction() }
             }
-            .alert("Could not start", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
+            .alert("Library", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 if let problem = JITCoordinator.shared.connectionProblem, library.error == problem.message {
                     jitConnectionActions(problem, retry: enableJIT) { library.error = nil }
                 }
@@ -452,7 +479,7 @@ struct IridiumLibraryView: View {
             }.buttonStyle(.plain).id(entry.id)
                 .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
                 .accessibilityLabel(artwork.title(entry))
-                .accessibilityHint("Select game. Use Play to launch.")
+                .accessibilityHint("Select game.")
                 .contextMenu {
                     Button("Game Options", systemImage: "slider.horizontal.3") { options(entry) }
                     Button("Edit Artwork", systemImage: "photo") { artworkDetail = entry }
@@ -505,9 +532,21 @@ struct IridiumLibraryView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func readiness(_ game: IridiumGame) -> String {
+        if let appID = game.windows?.steamAppID, let download = steam.downloads[appID] {
+            switch download.state {
+            case .paused: return "Download paused"
+            case .failed: return "Download failed"
+            case .active, .queued: return "Downloading"
+            }
+        }
+        if steamRepairID(game) != nil { return "Files missing" }
         guard (try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.console?.runtimeID)) != nil else { return "Unavailable" }
         if LibraryModel.sessionsThisRun > 0 || consoleSession.phase == .restartRequired { return "Reopen Iridium" }
         return ""
+    }
+    private func steamRepairID(_ game: IridiumGame) -> Int? {
+        guard let appID = game.windows?.steamAppID else { return nil }
+        return steamGames.games.first { $0.id == appID }?.installed == true ? nil : appID
     }
     private func actions(_ entry: IridiumGame) -> some View {
         ViewThatFits(in: .horizontal) {
@@ -516,10 +555,14 @@ struct IridiumLibraryView: View {
         }.fixedSize(horizontal: false, vertical: true)
     }
     @ViewBuilder private func gameActions(_ entry: IridiumGame) -> some View {
-        Button { launch(entry) } label: { Label("Play", systemImage: "play.fill").font(.headline).padding(.horizontal, 22).padding(.vertical, 12) }
+        let download = entry.windows?.steamAppID.flatMap { steam.downloads[$0] }
+        let busy = download?.state == .active || download?.state == .queued
+        let repair = steamRepairID(entry) != nil
+        let title = busy ? "Downloading" : download != nil ? "Resume" : repair ? "Repair" : "Play"
+        Button { launch(entry) } label: { Label(title, systemImage: repair || download != nil ? "arrow.down.circle" : "play.fill").font(.headline).padding(.horizontal, 22).padding(.vertical, 12) }
             .buttonStyle(.plain).foregroundStyle(.black).background(.white, in: Capsule())
             .overlay { Capsule().strokeBorder(showFocus && focus == "play" ? .white : .clear, lineWidth: 3).padding(-5) }
-            .disabled(library.launching || consoleSession.isActive || consoles.working).keyboardShortcut("p", modifiers: [])
+            .disabled(imports.blocksLaunch || library.launching || consoleSession.isActive || consoles.working || busy || (repair && !steam.signedIn)).keyboardShortcut("p", modifiers: [])
         Button { options(entry) } label: { Label("Options", systemImage: "ellipsis").frame(minHeight: 44) }
             .buttonStyle(.plain).accessibilityLabel("Game Options").background(focusShape("options"))
     }
@@ -550,12 +593,13 @@ struct IridiumLibraryView: View {
         guard !searchFocus, !consoleSession.isActive else { return .ignored }
         showFocus = true; showHints = false; command(value); return .handled
     }
-    private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; fileSource = nil; pendingAdd = nil; choosingAdd = false }
+    private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; showingImportFolder = false; pendingAdd = nil; choosingAdd = false }
     private func finishAdding() {
         defer { pendingAdd = nil; restoreKeyboardFocus() }
         switch pendingAdd {
         case .steam: features = 0
         case .files: importingFiles = true
+        case .importFolder: showingImportFolder = true
         default: break
         }
     }
@@ -570,7 +614,7 @@ struct IridiumLibraryView: View {
         }
     }
     private func restoreKeyboardFocus() {
-        keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingFiles && features == nil && fileSource == nil && !choosingAdd && artworkDetail == nil && !onboarding.presented
+        keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingFiles && features == nil && !showingImportFolder && !choosingAdd && artworkDetail == nil && !onboarding.presented
     }
     private func command(_ value: String) {
         guard !searchFocus else { if value == "back" { endSearch() }; return }

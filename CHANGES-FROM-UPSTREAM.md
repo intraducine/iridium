@@ -37,6 +37,10 @@ includes the window-caption field used by the startup window census.
 
 Steam Cloud cache records, download languages, clipboard input, mouse-wheel
 mapping, touch-control locking and gesture zones retain their upstream behavior.
+Cloud upload before quit can finish its checks after taking over the Steam
+connection. Downloads and client-cache writes stay blocked while a game runs.
+Quit waits for stable saves and server confirmation; a save changed during
+upload keeps the app open and can be retried without a false conflict.
 Windows gesture zones also participate in Iridium's saved control profiles and
 editor restoration, with platform and geometry validation. Per-game zones do
 not replace the global working layout. Iridium keeps its own library and
@@ -125,6 +129,23 @@ Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
 - MoltenVK 1.2.9 and FFmpeg are rebuilt from locked source with link receipts.
   Four replacement atlases use licensed font inputs and preserve glyph/icon IDs.
   [Atlas adaptations](ci/psp-atlas-host/README.md) describe generation.
+
+## Shared import storage
+
+The app owns a Documents/Import queue for individual and bulk game imports,
+ZIP/7z extraction through system libarchive, and validated Keychain pairing
+imports. Existing console and Windows installations move to Documents/Games
+without changing game IDs or save roots. Recorded relative links retain Windows
+and Steam paths, including installations shared by several library entries.
+Imports keep their source until durable registration and use persistent receipts
+for retry. These storage and UI changes remain outside emulator source trees.
+Managed game folders include a readable title and stable ID. Empty completed
+import staging folders are removed without deleting retained user files. Steam
+discovery checks that its install folder is present and nonempty; missing
+installations offer repair before JIT or runtime launch.
+Shared-only Steam records stay out of the game carousel. Library removal persists
+without removing game files. Managed Steam uninstall waits for active writes,
+checks shared-folder ownership, and handles missing files or install records.
 
 ## Shared JIT and controls
 

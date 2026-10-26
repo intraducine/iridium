@@ -94,6 +94,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     func validateLaunchAdmission() throws {
         dispatchPrecondition(condition: .onQueue(.main))
+        try MainActor.assumeIsolated {
+            guard !IridiumImportCoordinator.shared.blocksLaunch else { throw LibraryError.message(IridiumImportCoordinator.shared.launchMessage) }
+        }
         guard !dolphinMaintenance else { throw IridiumRuntimeError.busy }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
         let jit = MainActor.assumeIsolated {

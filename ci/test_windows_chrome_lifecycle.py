@@ -38,7 +38,9 @@ class WindowsChromeSourceTests(unittest.TestCase):
         guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
         settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
         self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
-        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, ''),
+        storage_guard = '        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }\n'
+        self.assertIn(storage_guard, actual[actual.index(start):actual.index(end)])
+        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, '').replace(storage_guard, ''),
                          original[original.index(start):original.index(end)])
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
@@ -100,6 +102,9 @@ enum MadeiraConfig {
 }
 struct LibraryEntry {}
 final class SteamOwnedLibrary {static let shared=SteamOwnedLibrary();func sessionChanged(active:Bool) {}}
+@MainActor final class IridiumImportCoordinator {
+    static let shared=IridiumImportCoordinator();var blocksLaunch=false;var launchMessage="Import in progress"
+}
 @MainActor enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
 func jit_check_debugged()->Bool {true}
 var ws_log_quiet:Int32=0
