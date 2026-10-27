@@ -65,6 +65,10 @@ def verify_pin():
         repos.append(UPSTREAM / line.split()[1])
     for repo in repos:
         changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
+        managed = 'FEXCore/Source/Utils/AllocWatch.cpp'
+        if repo == UPSTREAM / 'FEX' and managed in changes:
+            original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed], text=True)
+            if (repo / managed).read_text() == madeira_threads.apply_fex(original): changes.remove(managed)
         if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.js', '.pbxproj', '.y', '.l',
                                      '.sh', '.rs', '.metal', '.S', '.inc', '.in', '.cmake'}
                or Path(name).name == 'CMakeLists.txt' for name in changes):
@@ -436,6 +440,33 @@ def run_checked_recipe(name, env=None):
             generated.write_text(madeira_threads.apply(original.read_text(), source, RUNTIME_BRIDGE / 'IRWindowsThreads.h'))
             patches.append(('compile_one "$BUILD_DIR/' + source + '" "' + object_name + '"',
                             'compile_one ' + shlex.quote(str(generated)) + ' "' + object_name + '" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/server_ios.c'
+        generated.write_text(madeira_threads.apply_process_server((UPSTREAM / 'build/ntdll-unix/server_ios.c').read_text()))
+        patches.append(('compile_one "$BUILD_DIR/server_ios.c" "server"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "server" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/loader_ios.c'
+        generated.write_text(madeira_threads.apply_loader((UPSTREAM / 'build/ntdll-unix/loader_ios.c').read_text()))
+        patches.append(('compile_one "$BUILD_DIR/loader_ios.c" "loader"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "loader" -I"$BUILD_DIR"'))
+    elif name == 'wineserver':
+        generated = OUTPUT / 'embedding/mach_ios.c'
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text(madeira_threads.apply_server((UPSTREAM / 'build/wineserver/mach_ios.c').read_text()))
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/wineserver'))),
+            ('"mach_ios:mach_ios.c:mach.o"', '"mach_ios:' + str(generated) + ':mach.o"')]
+    elif name == 'fex-arm64ec':
+        source = UPSTREAM / 'FEX/FEXCore/Source/Utils/AllocWatch.cpp'
+        original = source.read_text()
+        patched = madeira_threads.apply_fex(original)
+        if original != patched: source.write_text(patched)
+        patches = [('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"',
+                    'R=' + shlex.quote(str(UPSTREAM))),
+                   ('if [ ! -f "$B/CMakeCache.txt" ]; then', ''),
+                   ('\nfi\ncmake --build', '\ncmake --build'),
+                   ('-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF',
+                    '-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_fmt=TRUE')]
     elif name == 'wine-i386':
         patches = [
             ('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"', 'R=' + shlex.quote(str(UPSTREAM))),
@@ -483,6 +514,7 @@ def bootstrap():
 def build_native():
     """Build the upstream archives, including the absent cold-build server base."""
     verify_pin()
+    run_checked_recipe('fex-arm64ec')
     def run(*args): subprocess.run(args, cwd=UPSTREAM, check=True)
     for name in ('llvm-project/llvm', 'llvm-ios-build/lib', 'gnutls-ios/include'):
         if not (UPSTREAM / 'toolchains' / name).is_dir():
@@ -525,7 +557,7 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 '''
         subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
-        if component == 'ntdll-unix': run_checked_recipe(component)
+        if component in ('ntdll-unix', 'wineserver'): run_checked_recipe(component)
         else: run('bash', f'build/{component}/build.sh')
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
     headers.mkdir(parents=True, exist_ok=True)
@@ -621,7 +653,9 @@ def native_source_identity():
             if path.is_file(): value += ':' + file_digest(path)
             observed_mode = '120000'
         elif path.is_file():
-            value = file_digest(path)
+            if name == 'vendor/Madeira/FEX/FEXCore/Source/Utils/AllocWatch.cpp':
+                value = hashlib.sha256(madeira_threads.apply_fex(path.read_text()).encode()).hexdigest()
+            else: value = file_digest(path)
             observed_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
         else:
             raise ValueError('Missing native source file: ' + name)
@@ -665,6 +699,7 @@ def native_required_outputs():
         'FEXCore/Source/libFEXCore.a', 'FEXCore/Source/libFEXCore_Base.a', 'FEXCore/Source/libJemallocLibs.a')]
     return app + fex + ['toolchains/gnutls-ios/lib/lib' + name + '.a' for name in CRYPTO_LIBRARIES] + [
         'app/Madeira/arm64ec-windows/dockhost.exe', 'app/Madeira/arm64ec-windows/dock-notices.txt',
+        'app/Madeira/arm64ec-windows/xtajit64.dll',
         'app/Madeira/legal/LICENSES-rppairing-crates.txt']
 
 
@@ -735,7 +770,7 @@ def require_fresh_native_substages():
              'toolchains/ffmpeg-ios', 'build/ffmpeg/obj', 'build/gnutls-ios/obj', 'build/wineserver/obj',
              'build/ntdll-unix/obj', 'build/win32u-unix/obj', 'build/dxmt-ios/obj',
              'build/dxmt-ios/shader-headers', 'build/dxmt-ios/libdxmt_combined.a',
-             'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'build/freetype-ios/build',
+             'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'FEX/build-arm64ec', 'build/freetype-ios/build',
              'wine/build-macos', 'build/rppairing-ios/target')
     existing = [name for name in paths if (UPSTREAM / name).exists() or (UPSTREAM / name).is_symlink()]
     if existing:
@@ -759,6 +794,7 @@ def native(reuse_only=False):
     outputs += crypto
     outputs += [UPSTREAM / 'app/Madeira' / name for name in (
         'arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
+        'arm64ec-windows/xtajit64.dll',
         'legal/LICENSES-rppairing-crates.txt')]
     if native_inputs() != inputs:
         raise ValueError('Native inputs changed during compilation; completion record not written')

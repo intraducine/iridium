@@ -230,7 +230,7 @@ class CompiledComponentsTests(unittest.TestCase):
                 root = Path(temp)
                 for name in components.PATHS[component]:
                     base = root / name
-                    if base.suffix in {'.json', '.exe', '.txt'}:
+                    if base.suffix in {'.json', '.exe', '.dll', '.txt'}:
                         base.parent.mkdir(parents=True, exist_ok=True)
                         base.write_bytes(b'completion record')
                     else:

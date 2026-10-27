@@ -6,7 +6,7 @@ import Darwin
 final class IridiumMadeiraRuntime: @unchecked Sendable {
     static let shared = IridiumMadeiraRuntime()
     enum Event: Sendable { case starting, running, ended(UInt32), blocked(String) }
-    enum Failure: Error { case busy, invalidRequest, invalidStatus, unsafeDirectory }
+    enum Failure: Error { case busy, invalidRequest, invalidStatus, unsafeDirectory, guestThreadsStillRunning }
     private let root: URL
     private let queue = DispatchQueue(label: "iridium.madeira.session", qos: .userInitiated)
     private let lock = NSLock()
@@ -182,6 +182,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
             do {
                 if self.poisoned { throw Failure.busy }
                 let now = self.clock()
+                if self.lastPoll == nil { fputs("[windows-session] observing game status\n", stderr) }
                 if let last = self.lastPoll, now - last > 3 { self.lastProgress = now }
                 self.lastPoll = now
                 if now > self.deadline { throw Failure.invalidStatus }
@@ -212,18 +213,23 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                 } else if let status = try Self.status(bytes, token: token) {
                     self.deadline = .greatestFiniteMagnitude
                     if status.phase == 3 || status.phase == 4 {
-                        if self.drained() {
+                        let drained = self.drained()
+                        if self.drainingSince == nil {
+                            fputs("[windows-session] job ended phase=\(status.phase) result=\(status.result) native-threads-drained=\(drained)\n", stderr)
+                        }
+                        if drained {
                             self.owner = nil; self.drainingSince = nil
                             event = .ended(status.result)
                         } else {
                             if self.drainingSince == nil { self.drainingSince = now }
-                            if now - self.drainingSince! > 10 { throw Failure.busy }
+                            if now - self.drainingSince! > 10 { throw Failure.guestThreadsStillRunning }
                             event = .running
                         }
                     } else { event = .running }
                 } else { event = .starting }
             } catch {
                 self.poisoned = true
+                fputs("[windows-session] blocked: \(error)\n", stderr)
                 event = .blocked("Windows could not finish the session safely. Close and reopen Iridium.")
             }
             DispatchQueue.main.async { completion(event) }

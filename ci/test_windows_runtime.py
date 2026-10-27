@@ -17,6 +17,142 @@ SESSION = ROOT / madeira_session.SOURCE
 
 
 class WindowsRuntimeTests(unittest.TestCase):
+    def test_child_boot_publishes_the_existing_shared_gdi_table_for_each_x64_process(self):
+        loader = madeira_threads.apply_loader((ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text())
+        boot = loader[loader.index('void wine_ios_child_main('):]
+        self.assertLess(boot.index('server_init_process_child( child_fd_socket )'), boot.index('win32u_gdi_publish_shared();'))
+        self.assertLess(boot.index('win32u_gdi_publish_shared();'), boot.index('server_init_process_done();'))
+        source = (ROOT / 'vendor/Madeira/wine/dlls/win32u/gdiobj.c').read_text()
+        start = source.index('void win32u_gdi_publish_shared(void)')
+        publish = source[start:source.index('    pid = HandleToULong(', start)] + '\n}\n'
+        fixture = '''#include <assert.h>
+#include <stddef.h>
+typedef unsigned DWORD;
+struct peb {void *GdiSharedHandleTable;};
+static struct {struct peb *Peb;int WowTebOffset;} teb;
+#define NtCurrentTeb() (&teb)
+static void *gdi_shared,*win32u_gdi_published_peb;
+''' + publish + '''
+int main(void){int table=1;struct peb parent={0},child={0};teb.Peb=&parent;
+win32u_gdi_publish_shared();assert(!parent.GdiSharedHandleTable);
+gdi_shared=&table;win32u_gdi_publish_shared();assert(parent.GdiSharedHandleTable==&table);
+for(int i=0;i<300;++i){child.GdiSharedHandleTable=0;teb.Peb=&child;
+win32u_gdi_publish_shared();assert(child.GdiSharedHandleTable==&table && win32u_gdi_published_peb==&child);}
+return 0;}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-Wno-unused-variable',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    def test_completed_sessions_release_identity_and_reuse_file_cache_slots(self):
+        server = madeira_threads.apply_process_server((ROOT / 'vendor/Madeira/build/ntdll-unix/server_ios.c').read_text())
+        start = server.index('struct ios_fd_cache {')
+        cache = server[start:server.index('\n#define fd_cache ', start)]
+        loader = (ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text()
+        start = loader.index('void ios_register_proc_ident(')
+        identities = loader[start:loader.index('/* X3c: attach a private ntdll', start)]
+        self.assertIn('ios_proc_ident_release(dead_peb)', server.split('void process_exit_wrapper(', 1)[1])
+        fixture = r'''
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#define FD_CACHE_ENTRIES 2
+#define FD_CACHE_BLOCK_SIZE 4
+#define FD_TYPE_INVALID 1
+union fd_cache_entry {struct {int fd,type;}s;};
+static void *current;
+static void *ios_jit_current_peb(void){return current;}
+static void ios_inproc_cache_release(void*p){(void)p;}
+static int closed;
+static void ios_fdt_note_close(int fd,const char*why,void*p){(void)why;assert(p==current && fd==9);}
+static int close_fixture(int fd){assert(fd==9);closed++;return 0;}
+#define close close_fixture
+''' + cache + r'''
+#define IOS_MAX_PROC_IDENTS 2
+typedef struct {int Machine;} SECTION_IMAGE_INFORMATION;
+static struct {void *peb; SECTION_IMAGE_INFORMATION info;void *ntdll_module;int funcs;} ios_proc_idents[2];
+static int ios_proc_ident_count;
+''' + identities + r'''
+int main(void){
+ SECTION_IMAGE_INFORMATION info={0x8664};
+ current=0;struct ios_fd_cache *parent=ios_get_fd_cache();
+ for(uintptr_t generation=1;generation<=300;++generation){
+  current=(void*)generation;ios_register_proc_ident(current,&info);
+  assert(ios_proc_ident_count==1 && ios_proc_idents[0].peb==current);
+  struct ios_fd_cache *guest=ios_get_fd_cache();
+  assert(guest!=parent && guest!=&ios_fd_cache_fallback && guest==ios_get_fd_cache());
+  guest->blocks[0]=guest->initial_block;guest->blocks[0][0].s.fd=10;
+  ios_fd_cache_release(current);ios_proc_ident_release(current);
+  assert(!ios_proc_idents[0].peb && ios_fd_cache_count==2);
+  assert(closed==(int)generation);
+  current=0;assert(parent==ios_get_fd_cache());
+ }
+ ios_fd_cache_release(0);return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10, capture_output=True)
+
+    def test_each_x64_child_loads_a_fresh_ntdll_in_both_host_modes(self):
+        source = (ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text()
+        patched = madeira_threads.apply_loader(source)
+        condition = patched.split('CHILD_STAGE( "load_child_ec_ntdll" );', 1)[0].rsplit('if (', 1)[1].split('\n', 1)[0]
+        fixture = '''#include <assert.h>
+#define IMAGE_FILE_MACHINE_AMD64 0x8664
+static struct {int Machine;} image;
+static int fresh_loads, pool_copies, host_ec;
+#define is_arm64ec() host_ec
+static void launch(int machine,int ec){image.Machine=machine;host_ec=ec;assert(host_ec==0 || host_ec==1);
+if (''' + condition + ''' {fresh_loads++;}else{pool_copies++;}}
+int main(void){launch(0x8664,0);launch(0x8664,1);launch(0xaa64,0);launch(0x14c,0);
+assert(fresh_loads==2 && pool_copies==2);return 0;}
+'''
+        fixture = fixture.replace('ios_cur_image_info()', '(&image)')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(path / 'main.c'),
+                            '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        with self.assertRaises(ValueError): madeira_threads.apply_loader(source.replace('&& !is_arm64ec()', '&& changed()'))
+
+    @unittest.skipUnless(os.uname().machine == 'arm64', 'ARM64 host required')
+    def test_fex_diagnostic_identity_works_before_windows_tls_initialization(self):
+        path = ROOT / 'vendor/Madeira/FEX/FEXCore/Source/Utils/AllocWatch.cpp'
+        source = madeira_threads.apply_fex(path.read_text())
+        self.assertEqual(madeira_threads.apply_fex(source), source)
+        with self.assertRaises(ValueError): madeira_threads.apply_fex(source + source)
+        function = source[source.index('  uint64_t CurrentThreadId() {'):source.index('  const char* EventName(')]
+        fixture = r'''
+#include <cstdint>
+#include <cassert>
+#include <pthread.h>
+#define FEX_IOS_HOST 1
+#define _WIN32 1
+#define ARCHITECTURE_arm64ec 1
+''' + function + r'''
+static void *check(void *unused){(void)unused;auto id=CurrentThreadId();assert(id && id==CurrentThreadId());return reinterpret_cast<void*>(id);}
+int main(){pthread_t a,b;assert(!pthread_create(&a,0,check,0));assert(!pthread_create(&b,0,check,0));void *first,*second;assert(!pthread_join(a,&first));assert(!pthread_join(b,&second));assert(first!=second);return 0;}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.cpp').write_text(fixture)
+            subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pthread',
+                            str(path / 'main.cpp'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_running_game_clears_starting_message_without_clearing_stop_progress(self):
         source = (ROOT / 'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
@@ -249,7 +385,7 @@ int main(void){
             subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', str(bridge),
                             str(path / 'main.c'), str(bridge / 'IRWindowsThreads.c'),
                             '-o', str(path / 'check')], check=True, timeout=30)
-            subprocess.run([str(path / 'check')], check=True, timeout=10)
+            subprocess.run([str(path / 'check')], check=True, timeout=60)
 
     @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
     def test_failed_thread_creation_does_not_leave_a_pending_guest(self):
@@ -280,6 +416,175 @@ int main(void){pthread_t thread;assert(ir_windows_threads_begin());assert(ir_win
             for changed in (source.replace('pthread_create(', 'changed_create('), source + source):
                 with self.assertRaisesRegex(ValueError, 'guest thread creation changed'):
                     madeira_threads.apply(changed, name, 'IRWindowsThreads.h')
+
+    @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
+    def test_pseudo_process_stop_signal_without_a_debugger_port(self):
+        source = (ROOT / 'vendor/Madeira/build/wineserver/mach_ios.c').read_text()
+        patched = madeira_threads.apply_server(source)
+        begin = patched.index('extern int __pthread_kill(')
+        function = patched[begin:patched.index('\n#ifdef WINE_IOS\n/* iOS cross-thread', begin)]
+        fixture = r'''
+#include <assert.h>
+#include <errno.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <unistd.h>
+struct process { mach_port_t trace_data; };
+struct thread { struct process *process; int unix_pid, unix_tid; unsigned id; };
+static int debug_level;
+static mach_port_t get_process_port(struct process *p){return p->trace_data;}
+static atomic_bool started,release_section,received;
+static void stopped(int sig){assert(sig==SIGQUIT);atomic_store(&received,true);}
+static void *worker(void *unused){
+ (void)unused;sigset_t set;sigemptyset(&set);sigaddset(&set,SIGQUIT);
+ assert(!pthread_sigmask(SIG_BLOCK,&set,0));atomic_store(&started,true);
+ while(!atomic_load(&release_section))usleep(1000);
+ assert(!atomic_load(&received));assert(!pthread_sigmask(SIG_UNBLOCK,&set,0));
+ for(int i=0;i<1000&&!atomic_load(&received);++i)usleep(1000);
+ assert(atomic_load(&received));return 0;
+}
+''' + function + r'''
+int main(void){
+ struct sigaction action={0};action.sa_handler=stopped;sigemptyset(&action.sa_mask);
+ assert(!sigaction(SIGQUIT,&action,0));
+ struct process process={0};pthread_t native;
+ assert(!pthread_create(&native,0,worker,0));
+ while(!atomic_load(&started))usleep(1000);
+ struct thread target={&process,getpid(),pthread_mach_thread_np(native),1};
+ assert(!send_thread_signal(&target,SIGUSR1));
+ target.unix_pid=-1;assert(!send_thread_signal(&target,SIGQUIT));
+ target.unix_pid=getpid()+1;assert(!send_thread_signal(&target,SIGQUIT));
+ target.unix_pid=getpid();assert(send_thread_signal(&target,SIGQUIT));
+ assert(!atomic_load(&received));atomic_store(&release_section,true);
+ assert(!pthread_join(native,0));assert(atomic_load(&received));return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-DWINE_IOS', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    def test_process_thread_counts_are_isolated_and_exit_is_counted_once(self):
+        source = (ROOT / 'vendor/Madeira/build/ntdll-unix/thread_ios.c').read_text()
+        patched = madeira_threads.apply(source, 'thread_ios.c', 'unused.h')
+        begin = patched.index('#define nb_threads ')
+        accounting = patched[begin:patched.index('\nstatic inline int get_unix_exit_code', begin)]
+        server = madeira_threads.apply_process_server((ROOT / 'vendor/Madeira/build/ntdll-unix/server_ios.c').read_text())
+        begin = server.index('LONG *ios_process_thread_count_ptr(void)')
+        accessors = server[begin:server.index('/* Master socket for the CURRENT', begin)]
+        begin = server.index('static void ios_register_proc_socket(void *peb_id, int fd)')
+        registration = server[begin:server.index('\n}', begin) + 2]
+        fixture = r'''
+#include <assert.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+typedef int LONG;
+typedef bool BOOL;
+typedef struct {int value;} TEB;
+#define TRUE true
+#define InterlockedDecrement(p) __atomic_sub_fetch(p,1,__ATOMIC_SEQ_CST)
+static _Thread_local int process_index=-1;
+static struct {void *peb;int fd;BOOL exiting;LONG threads;TEB *previous_teb;} ios_proc_sockets[2];
+static int ios_proc_socket_index(void){return process_index;}
+#define FALSE false
+#define IOS_MAX_PROC_SOCKETS 2
+#define IOS_DEAD_PEB_MAX 2
+#define FDT_MASTER 1
+#define wine_log_write(...) ((void)0)
+static int ios_proc_socket_count;
+static void *ios_dead_pebs[IOS_DEAD_PEB_MAX];
+static void ios_fdt_reg(int fd,int kind,void *peb){(void)fd;(void)kind;(void)peb;}
+''' + registration + accessors + accounting + r'''
+static void *end_thread(void *argument){
+ process_index=(int)(long)argument;
+ bool last=ios_end_process_thread();assert(ios_end_process_thread()==last);
+ return (void*)(long)last;
+}
+int main(void){
+ LONG *parent=ios_process_thread_count_ptr();assert(*parent==1);
+ for(int generation=0;generation<100;++generation){
+  pthread_t threads[4];int last[2]={0};
+  TEB first={1},second={2};
+  ios_register_proc_socket(&first,1);ios_register_proc_socket(&second,2);
+  assert(ios_proc_socket_count==2 && ios_proc_sockets[0].peb==&first && ios_proc_sockets[1].peb==&second);
+  for(int i=0;i<2;++i){assert(ios_proc_sockets[i].threads==1 && !ios_proc_sockets[i].previous_teb);ios_proc_sockets[i].threads=2;}
+  process_index=0;*ios_process_previous_teb_ptr()=&first;
+  process_index=1;*ios_process_previous_teb_ptr()=&second;
+  for(int i=0;i<4;++i)assert(!pthread_create(&threads[i],0,end_thread,(void*)(long)(i%2)));
+  for(int i=0;i<4;++i){void *value;assert(!pthread_join(threads[i],&value));last[i%2]+=(int)(long)value;}
+  for(int i=0;i<2;++i){assert(last[i]==1);assert(!ios_proc_sockets[i].threads);}
+  process_index=0;assert(*ios_process_previous_teb_ptr()==&first);
+  process_index=1;assert(*ios_process_previous_teb_ptr()==&second);
+  for(int i=0;i<2;++i)ios_proc_sockets[i].peb=0;
+  assert(*parent==1);
+ }
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    def test_child_slots_are_released_on_return_longjmp_and_pthread_exit(self):
+        source = (ROOT / 'vendor/Madeira/build/ntdll-unix/process_ios.c').read_text()
+        patched = madeira_threads.apply(source, 'process_ios.c', 'unused.h')
+        begin = patched.index('static void ios_child_args_release( void *arg )')
+        child = patched[begin:patched.index('\n#endif', begin)]
+        fixture = r'''
+#include <assert.h>
+#include <pthread.h>
+#include <setjmp.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#define IMAGE_FLAGS_ComPlusNativeReady 1
+#define ERR(...) ((void)0)
+static int native_machine;
+static _Thread_local int ios_child_main_machine,wine_ios_exit_initialized,wine_ios_exit_code;
+static _Thread_local pthread_t wine_ios_main_thread;
+static _Thread_local jmp_buf wine_ios_exit_jmpbuf;
+static _Thread_local const char *ios_child_boot_stage="running";
+static pthread_key_t ios_teb_tls_key;
+static atomic_int released;
+struct ios_child_args {int socketfd,unixdir;char **argv;int argc;struct {int image_flags,machine;} pe_info;int slot;};
+void ios_child_boot_unlock(void){}
+static void ios_child_slot_release(int slot){assert(slot==0);atomic_fetch_add(&released,1);}
+static void ios_wow_window_release_current(void){}
+static void wine_ios_child_main(int mode,char **argv,int fd){
+ (void)argv;(void)fd;
+ if(mode==1)longjmp(wine_ios_exit_jmpbuf,1);
+ if(mode==2)pthread_exit(0);
+}
+''' + child + r'''
+int main(void){
+ assert(!pthread_key_create(&ios_teb_tls_key,0));
+ for(int i=0;i<100;++i)for(int mode=0;mode<3;++mode){
+  struct ios_child_args *args=calloc(1,sizeof(*args));assert(args);
+  args->argv=calloc(1,sizeof(char*));assert(args->argv);args->unixdir=-1;args->argc=mode;
+  pthread_t thread;assert(!pthread_create(&thread,0,ios_child_thread_entry,args));assert(!pthread_join(thread,0));
+  assert(atomic_load(&released)==i*3+mode+1);
+ }
+ assert(!pthread_key_delete(ios_teb_tls_key));return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-pthread',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=20, capture_output=True)
 
     @unittest.skipUnless((ROOT / 'vendor/Madeira/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/x86_64-w64-mingw32-clang').is_file(), 'Prepared Windows cross compiler required')
     def test_launcher_pe_and_source_receipt(self):

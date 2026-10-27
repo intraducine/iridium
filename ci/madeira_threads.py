@@ -3,6 +3,28 @@
 from pathlib import Path
 
 
+def apply_fex(text):
+    old = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)'
+    new = '#if defined(FEX_IOS_HOST) && defined(_WIN32)'
+    if text.count(old) == 1:
+        return text.replace(old, new)
+    if old not in text and text.count(new) == 1:
+        return text
+    raise ValueError('Madeira FEX allocation-watch thread identity changed')
+
+
+def apply_loader(text):
+    old = 'if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_AMD64 && !is_arm64ec())'
+    done = '    CHILD_STAGE( "server_init_process_done" );'
+    if text.count(old) != 1 or text.count(done) != 1:
+        raise ValueError('Madeira child ntdll selection changed')
+    # A pool copy alone still inherits game hooks from the shared PE image.
+    text = text.replace(old, 'if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_AMD64)')
+    return text.replace(done, '''    /* The shared win32u host must publish its table into every new process. */
+    { extern void win32u_gdi_publish_shared(void); win32u_gdi_publish_shared(); }
+''' + done)
+
+
 def apply(text, source, header):
     calls = {
         'process_ios.c': 'pthread_create( &child_thread, NULL, ios_child_thread_entry, args )',
@@ -11,4 +33,133 @@ def apply(text, source, header):
     call = calls[source]
     if text.count(call) != 1:
         raise ValueError('Madeira guest thread creation changed: ' + source)
-    return '#include "' + Path(header).as_posix() + '"\n' + text.replace(call, 'ir_windows_' + call)
+    text = text.replace(call, 'ir_windows_' + call)
+    if source == 'process_ios.c':
+        begin = text.index('static void *ios_child_thread_entry( void *arg )')
+        end = text.index('\n#endif', begin)
+        entry = text[begin:end]
+        old = '''    ios_child_slot_release( args->slot );
+    free( args->argv );
+    free( args );'''
+        if entry.count(old) != 1 or entry.count('    return NULL;') != 1:
+            raise ValueError('Madeira child cleanup changed')
+        entry = entry.replace(old, '')
+        entry = entry.replace('    struct ios_child_args *args = arg;',
+            '    struct ios_child_args *args = arg;\n    pthread_cleanup_push( ios_child_args_release, args );')
+        entry = entry.replace('    return NULL;', '    pthread_cleanup_pop( 1 );\n    return NULL;')
+        cleanup = '''static void ios_child_args_release( void *arg )
+{
+    struct ios_child_args *args = arg;
+    extern void ios_child_boot_unlock( void );
+    ios_child_boot_unlock();
+    ios_child_slot_release( args->slot );
+    free( args->argv );
+    free( args );
+}
+
+'''
+        text = text[:begin] + cleanup + entry + text[end:]
+    if source == 'thread_ios.c':
+        changes = {
+            '''void abort_thread( int status )
+{''': '''void abort_thread( int status )
+{
+    if (!NtCurrentTeb()) pthread_exit_wrapper( status );''',
+            'static LONG nb_threads = 1;': '''extern LONG *ios_process_thread_count_ptr(void);
+extern TEB **ios_process_previous_teb_ptr(void);
+#define nb_threads (*ios_process_thread_count_ptr())
+
+BOOL ios_end_process_thread(void)
+{
+    static _Thread_local BOOL ended, last;
+    if (!ended)
+    {
+        ended = TRUE;
+        last = InterlockedDecrement( &nb_threads ) <= 0;
+    }
+    return last;
+}''',
+            'if (InterlockedDecrement( &nb_threads ) <= 0) abort_process( status );':
+                'if (ios_end_process_thread()) abort_process( status );',
+            'if (InterlockedDecrement( &nb_threads ) <= 0) exit_process( status );':
+                'if (ios_end_process_thread()) exit_process( status );',
+            '    static void *prev_teb;\n': '',
+            'InterlockedExchangePointer( &prev_teb, NtCurrentTeb() )':
+                'InterlockedExchangePointer( ios_process_previous_teb_ptr(), NtCurrentTeb() )',
+        }
+        for old, new in changes.items():
+            if text.count(old) != 1: raise ValueError('Madeira process thread accounting changed')
+            text = text.replace(old, new)
+    return '#include "' + Path(header).as_posix() + '"\n' + text
+
+
+def apply_process_server(text):
+    changes = {
+        '    BOOL exiting;   /* per-process process_exiting flag */': '''    BOOL exiting;   /* per-process process_exiting flag */
+    LONG threads;
+    TEB *previous_teb;''',
+        '/* Master socket for the CURRENT thread\'s pseudo-process (parent = global). */': '''/* Thread counts and deferred TEB disposal belong to one pseudo-process. */
+LONG *ios_process_thread_count_ptr(void)
+{
+    static LONG parent_threads = 1;
+    int i = ios_proc_socket_index();
+    return i >= 0 ? &ios_proc_sockets[i].threads : &parent_threads;
+}
+TEB **ios_process_previous_teb_ptr(void)
+{
+    static TEB *parent_previous_teb;
+    int i = ios_proc_socket_index();
+    return i >= 0 ? &ios_proc_sockets[i].previous_teb : &parent_previous_teb;
+}
+
+/* Master socket for the CURRENT thread's pseudo-process (parent = global). */''',
+        '    int idx = __sync_fetch_and_add(&ios_proc_socket_count, 1);': '''    int idx;
+    /* Child startup is serialized by ios_child_boot_lock. Reuse completed slots. */
+    for (idx = 0; idx < ios_proc_socket_count; idx++)
+        if (!ios_proc_sockets[idx].peb) break;''',
+        '    ios_fdt_reg( fd, FDT_MASTER, peb_id );': '''    if (idx == ios_proc_socket_count) ios_proc_socket_count++;
+    ios_proc_sockets[idx].threads = 1;
+    ios_proc_sockets[idx].previous_teb = NULL;
+    ios_fdt_reg( fd, FDT_MASTER, peb_id );''',
+        '        ios_wow_window_release( dead_peb );': '''        ios_wow_window_release( dead_peb );
+        { extern void ios_proc_ident_release(void *); ios_proc_ident_release(dead_peb); }''',
+        '    if (n < IOS_MAX_FD_CACHES)\n': '''    for (i = 0; i < n && i < IOS_MAX_FD_CACHES; i++)
+        if (!ios_fd_caches[i].in_use) break;
+    if (i < IOS_MAX_FD_CACHES)
+''',
+        '            ios_fd_caches[n].cache = c;': '            ios_fd_caches[i].cache = c;',
+        '            ios_fd_caches[n].peb   = cur;': '            ios_fd_caches[i].peb   = cur;',
+        '            ios_fd_caches[n].in_use = 1;': '            ios_fd_caches[i].in_use = 1;',
+        '            __sync_fetch_and_add( &ios_fd_cache_count, 1 );':
+            '            if (i == n) __sync_fetch_and_add( &ios_fd_cache_count, 1 );',
+        'slot=%d peb=%p\\n", n, cur );': 'slot=%d peb=%p\\n", i, cur );',
+        '''void process_exit_wrapper( int status )
+{
+#ifdef WINE_IOS''': '''void process_exit_wrapper( int status )
+{
+#ifdef WINE_IOS
+    extern BOOL ios_end_process_thread(void);
+    /* Keep process mappings and its master socket until the last guest thread exits. */
+    if (!ios_end_process_thread()) abort_thread( status );
+    if (ios_peb_is_dead( ios_jit_current_peb() )) exit( status );''',
+    }
+    for old, new in changes.items():
+        if text.count(old) != 1: raise ValueError('Madeira process teardown changed')
+        text = text.replace(old, new)
+    return text
+
+
+def apply_server(text):
+    begin = text.index('int send_thread_signal( struct thread *thread, int sig )')
+    end = text.index('\n#ifdef WINE_IOS', begin)
+    old = '    mach_port_t process_port = get_process_port( thread->process );\n'
+    function = text[begin:end]
+    if function.count(old) != 1:
+        raise ValueError('Madeira thread signal delivery changed')
+    new = old + '''#ifdef WINE_IOS
+    /* Pseudo-process threads share this task; stop must not require a debugger port. */
+    if (!process_port && sig == SIGQUIT && thread->unix_pid == getpid())
+        process_port = mach_task_self();
+#endif
+'''
+    return text[:begin] + function.replace(old, new) + text[end:]

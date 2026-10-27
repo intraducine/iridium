@@ -208,8 +208,21 @@ engine pin. Checked creation hooks track Wine guest threads with retained Mach
 thread ports while preserving Wine's join/detach ownership. The app returns
 admission only after job completion and guest-thread drain; retained framework
 services do not block reuse. JIT setup prepares both retained Windows and reusable console arenas once;
-closing a game preserves those mappings. No Wine registry reset or emulation patch
-is used for repeated launches. Runtime startup-only configuration retains its
+closing a game preserves those mappings. A checked Madeira server adaptation sends
+SIGQUIT through the shared task only for threads in this host process. Other
+signals and debugger memory access keep their upstream behavior. Process thread
+counts and deferred TEB disposal are keyed to each pseudo-process. Cleanup waits
+for that process's last guest thread. Completed socket, identity and file-cache
+slots are released or reused rather than imposing a lifetime session limit.
+Each x64 child uses Madeira's existing fresh ARM64EC ntdll loader. A private
+pool copy alone can inherit hooks written into the shared PE image by a prior
+game. Other child architectures keep their upstream loader path.
+Child startup calls win32u's existing GDI table publication helper. The shared
+host initializes once, but each new process needs its own published PEB field.
+FEX's allocation-watch diagnostic uses the host thread pointer on ARM64EC as it
+already does on WoW64. It can run before Wine allocates the Windows TLS array.
+The translator is rebuilt and included in the native component receipt.
+No Wine registry reset is used for repeated launches. Runtime startup-only configuration retains its
 upstream host-lifetime scope.
 Windows preparation holds launch admission until error cleanup completes.
 A missing-debugger failure releases its launch reservation only after

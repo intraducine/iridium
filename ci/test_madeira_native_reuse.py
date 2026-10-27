@@ -233,6 +233,31 @@ class NativeReuseTests(unittest.TestCase):
 
 
 class NativeSourceIdentityTests(unittest.TestCase):
+    def test_only_the_exact_managed_fex_patch_is_accepted_and_hashed_consistently(self):
+        with source_fixture() as (root, upstream):
+            fex = upstream / 'FEX'; fex.mkdir()
+            relative = 'FEXCore/Source/Utils/AllocWatch.cpp'
+            source = fex / relative; source.parent.mkdir(parents=True)
+            original = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)\n#endif\n'
+            source.write_text(original)
+            def git(repo, *args):
+                return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+            git(fex, 'init', '-q'); git(fex, 'add', '.')
+            git(fex, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture')
+            revision = git(fex, 'rev-parse', 'HEAD')
+            (upstream / '.gitmodules').write_text('[submodule "FEX"]\npath = FEX\nurl = https://example.invalid/FEX\n')
+            git(upstream, 'add', '.gitmodules')
+            git(upstream, 'update-index', '--add', '--cacheinfo', '160000,' + revision + ',FEX')
+            git(upstream, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture FEX')
+            git(upstream, 'config', 'submodule.FEX.url', str(fex))
+            with patch.object(build, 'REVISION', git(upstream, 'rev-parse', 'HEAD')):
+                build.verify_pin(); before = build.native_source_identity()
+                source.write_text(build.madeira_threads.apply_fex(original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                source.write_text(source.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+
     def test_tracked_grammars_and_build_configuration_are_bound_to_actual_bytes(self):
         with source_fixture() as (root, upstream):
             inventory = build.native_source_inventory()

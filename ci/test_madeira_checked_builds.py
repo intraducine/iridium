@@ -31,7 +31,7 @@ class CheckedBuildTests(unittest.TestCase):
             (recipe.parent / 'audio_null_ios.c').write_text(
                 'static OSStatus ios_audio_render_cb(void) {\n'
                 '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}')
-            for name in ('process_ios.c', 'thread_ios.c'):
+            for name in ('process_ios.c', 'thread_ios.c', 'server_ios.c', 'loader_ios.c'):
                 (recipe.parent / name).write_text((ROOT / 'vendor/Madeira/build/ntdll-unix' / name).read_text())
             obj = recipe.parent / 'obj'; obj.mkdir()
             for name in re.findall(r'\$OBJ_DIR/([^"/]+\.o)', text[text.index('ar rcs '):]):
@@ -111,6 +111,7 @@ class CheckedBuildTests(unittest.TestCase):
                 build.native(); build.native()
                 self.assertEqual(compile.call_count, 1)
                 record = json.loads((root / '.build/iridium-native.json').read_text())
+                self.assertIn('app/Madeira/arm64ec-windows/xtajit64.dll', record['outputs'])
                 for name in build.CRYPTO_LIBRARIES:
                     self.assertEqual((app / f'lib{name}.a').read_bytes(), (prefix / f'lib{name}.a').read_bytes())
                     self.assertIn(f'toolchains/gnutls-ios/lib/lib{name}.a', record['outputs'])
