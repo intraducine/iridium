@@ -21,6 +21,26 @@ def executable(path, body):
 
 
 class CheckedBuildTests(unittest.TestCase):
+    def test_repeated_win32u_builds_merge_only_one_copy_of_freetype(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.object(build, 'OUTPUT', root / 'generated'), patch.object(build.subprocess, 'run') as run:
+                build.run_checked_recipe('win32u-unix')
+            recipe = run.call_args.kwargs['input']
+            archive = recipe[recipe.index('echo "=== Building libwin32u_unix.a ==="'):]
+            obj = root / 'obj'; obj.mkdir()
+            fonts = root / 'fonts/build'; fonts.mkdir(parents=True)
+            for name, output in [('unit', obj), ('fixture_font', root)]:
+                source = root / (name + '.c'); source.write_text('int ' + name + '(void){return 1;}\n')
+                subprocess.run(['cc', '-c', str(source), '-o', str(output / (name + '.o'))], check=True)
+            subprocess.run(['ar', 'rcs', str(fonts / 'libfreetype.a'), str(root / 'fixture_font.o')], check=True)
+            env = dict(os.environ, OBJ_DIR=str(obj), FREETYPE_DIR=str(fonts.parent), APP_LIB=str(root / 'app.a'))
+            for _ in range(2):
+                subprocess.run(['bash', '-e'], input=archive, text=True, env=env, check=True, capture_output=True)
+                members = subprocess.check_output(['ar', 't', str(root / 'app.a')], text=True).splitlines()
+                self.assertEqual(members.count('fixture_font.o'), 1)
+                self.assertEqual(members.count('unit.o'), 1)
+
     def test_ntdll_failed_compilation_cannot_archive_stale_objects(self):
         text = (ROOT / 'vendor/Madeira/build/ntdll-unix/build.sh').read_text()
         with tempfile.TemporaryDirectory() as folder:

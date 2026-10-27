@@ -456,6 +456,21 @@ def run_checked_recipe(name, env=None):
             ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
              'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/wineserver'))),
             ('"mach_ios:mach_ios.c:mach.o"', '"mach_ios:' + str(generated) + ':mach.o"')]
+    elif name == 'win32u-unix':
+        generated = OUTPUT / 'embedding/window_ios.c'
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text(madeira_threads.apply_window((UPSTREAM / 'wine/dlls/win32u/window.c').read_text()))
+        classes = OUTPUT / 'embedding/class_ios.c'
+        classes.write_text(madeira_threads.apply_class((UPSTREAM / 'build/win32u-unix/class_ios.c').read_text()))
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/win32u-unix'))),
+            ('    case "$name" in', '    case "$name" in\n        window)\n            compile_one '
+             + shlex.quote(str(generated)) + ' "window"\n            continue\n            ;;')]
+        patches.append(('compile_one "$BUILD_DIR/class_ios.c" "class"',
+                        'compile_one ' + shlex.quote(str(classes)) + ' "class"'))
+        patches.append(('ar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o',
+                        'rm -f "$OBJ_DIR/libwin32u_unix.a"\nar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o'))
     elif name == 'fex-arm64ec':
         source = UPSTREAM / 'FEX/FEXCore/Source/Utils/AllocWatch.cpp'
         original = source.read_text()
@@ -557,8 +572,7 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 '''
         subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
-        if component in ('ntdll-unix', 'wineserver'): run_checked_recipe(component)
-        else: run('bash', f'build/{component}/build.sh')
+        run_checked_recipe(component)
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
     headers.mkdir(parents=True, exist_ok=True)
     for name in ('air_msad', 'air_samplepos', 'air_tessellation'):

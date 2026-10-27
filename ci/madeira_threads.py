@@ -25,6 +25,101 @@ def apply_loader(text):
 ''' + done)
 
 
+def apply_window(text):
+    changes = {
+        'static void *client_objects[MAX_USER_HANDLES];': '''static void *client_objects[MAX_USER_HANDLES];
+static struct { HANDLE handle; DWORD pid; } client_object_owners[MAX_USER_HANDLES];
+
+static void cache_user_object(HANDLE handle, void *ptr)
+{
+    UINT index = USER_HANDLE_TO_INDEX(handle);
+    assert(index < MAX_USER_HANDLES);
+    user_lock();
+    client_object_owners[index].handle = handle;
+    client_object_owners[index].pid = GetCurrentProcessId();
+    InterlockedExchangePointer(&client_objects[index], ptr);
+    user_unlock();
+}''',
+        '        InterlockedExchangePointer( &client_objects[index], ptr );':
+            '        cache_user_object(handle, ptr);',
+        '    InterlockedExchangePointer( &client_objects[index], ptr );':
+            '    cache_user_object(handle, ptr);',
+        '    else ptr = client_objects[index];': '''    else if (client_object_owners[index].handle != handle || client_object_owners[index].pid != entry.pid)
+        ptr = OBJ_OTHER_PROCESS;
+    else ptr = client_objects[index];''',
+        '        return client_objects[i];': '''        if (client_object_owners[i].handle != *handle || client_object_owners[i].pid != entry.pid) continue;
+        return client_objects[i];''',
+    }
+    for old, new in changes.items():
+        if text.count(old) != 1: raise ValueError('Madeira USER object cache changed')
+        text = text.replace(old, new)
+    return text
+
+
+def apply_class(text):
+    changes = {
+        'static WINDOWPROC winproc_array[MAX_WINPROCS];': '''static WINDOWPROC winproc_array[MAX_WINPROCS];
+static void *winproc_owners[MAX_WINPROCS];''',
+        'static int ios_client_procs_count;': '''static int ios_client_procs_count;
+
+void ios_client_procs_release(void *peb)
+{
+    UINT i;
+    pthread_mutex_lock(&winproc_lock);
+    for (i = 0; i < (UINT)ios_client_procs_count; i++)
+        if (ios_client_procs_reg[i].peb == peb)
+        {
+            if (user32_module == ios_client_procs_reg[i].user32_module)
+            {
+                user32_module = 0;
+                memset(winproc_array, 0, NTUSER_NB_PROCS * sizeof(*winproc_array));
+            }
+            __atomic_store_n(&ios_client_procs_reg[i].peb, NULL, __ATOMIC_RELEASE);
+            memset(ios_client_procs_reg[i].procs, 0, sizeof(ios_client_procs_reg[i].procs));
+            ios_client_procs_reg[i].user32_module = 0;
+        }
+    for (i = NTUSER_NB_PROCS; i < winproc_used; i++)
+        if (winproc_owners[i] == peb)
+        {
+            memset(&winproc_array[i], 0, sizeof(winproc_array[i]));
+            __atomic_store_n(&winproc_owners[i], NULL, __ATOMIC_RELEASE);
+        }
+    pthread_mutex_unlock(&winproc_lock);
+}''',
+        '        if (ansi && winproc_array[i].procA != func) continue;': '''        if (__atomic_load_n(&winproc_owners[i], __ATOMIC_ACQUIRE) != NtCurrentTeb()->Peb) continue;
+        if (ansi && winproc_array[i].procA != func) continue;''',
+        '    if (index >= winproc_used) return NULL;': '''    if (index >= winproc_used) return NULL;
+    if (index >= NTUSER_NB_PROCS && __atomic_load_n(&winproc_owners[index], __ATOMIC_ACQUIRE) != NtCurrentTeb()->Peb) return NULL;''',
+        '    int i, n = ios_client_procs_count;':
+            '    int i, n = __atomic_load_n(&ios_client_procs_count, __ATOMIC_ACQUIRE);',
+        '        if (ios_client_procs_reg[i].peb == peb) return &ios_client_procs_reg[i];':
+            '        if (__atomic_load_n(&ios_client_procs_reg[i].peb, __ATOMIC_ACQUIRE) == peb) return &ios_client_procs_reg[i];',
+        '            entry->peb = peb;': '            __atomic_store_n(&entry->peb, peb, __ATOMIC_RELEASE);',
+        '''static inline WINDOWPROC *alloc_winproc_ptr( WNDPROC func, BOOL ansi )
+{
+    WINDOWPROC *proc;''': '''static inline WINDOWPROC *alloc_winproc_ptr( WNDPROC func, BOOL ansi )
+{
+    WINDOWPROC *proc;
+    UINT slot;''',
+        '        if (winproc_used < MAX_WINPROCS)': '''        for (slot = NTUSER_NB_PROCS; slot < winproc_used; slot++)
+            if (!winproc_owners[slot]) break;
+        if (slot < MAX_WINPROCS)''',
+        '            proc = &winproc_array[winproc_used++];': '''            proc = &winproc_array[slot];
+            __atomic_store_n(&winproc_owners[slot], NtCurrentTeb()->Peb, __ATOMIC_RELEASE);
+            if (slot == winproc_used) winproc_used++;''',
+        '    if (!entry && n < IOS_MAX_CLIENT_PROCS) entry = &ios_client_procs_reg[n];': '''    if (!entry)
+        for (slot = 0; slot < n; slot++)
+            if (!ios_client_procs_reg[slot].peb) { entry = &ios_client_procs_reg[slot]; break; }
+    if (!entry && n < IOS_MAX_CLIENT_PROCS) entry = &ios_client_procs_reg[n];''',
+        '            ios_client_procs_count = n + 1;':
+            '            if (entry == &ios_client_procs_reg[n]) __atomic_store_n(&ios_client_procs_count, n + 1, __ATOMIC_RELEASE);',
+    }
+    for old, new in changes.items():
+        if text.count(old) != 1: raise ValueError('Madeira window procedure lifecycle changed')
+        text = text.replace(old, new)
+    return text
+
+
 def apply(text, source, header):
     calls = {
         'process_ios.c': 'pthread_create( &child_thread, NULL, ios_child_thread_entry, args )',
@@ -95,6 +190,8 @@ BOOL ios_end_process_thread(void)
 
 def apply_process_server(text):
     changes = {
+        '        ios_jit_reclaim_process( dead_peb );': '''        { extern void ios_client_procs_release(void *); ios_client_procs_release(dead_peb); }
+        ios_jit_reclaim_process( dead_peb );''',
         '    BOOL exiting;   /* per-process process_exiting flag */': '''    BOOL exiting;   /* per-process process_exiting flag */
     LONG threads;
     TEB *previous_teb;''',

@@ -219,6 +219,10 @@ pool copy alone can inherit hooks written into the shared PE image by a prior
 game. Other child architectures keep their upstream loader path.
 Child startup calls win32u's existing GDI table publication helper. The shared
 host initializes once, but each new process needs its own published PEB field.
+The shared USER object cache records each pointer's process ID and full handle.
+Recycled handles cannot expose stale pointers from a previous game.
+Window procedure tables release each process's callbacks before its code is
+reclaimed. New processes reuse those entries instead of filling a lifetime table.
 FEX's allocation-watch diagnostic uses the host thread pointer on ARM64EC as it
 already does on WoW64. It can run before Wine allocates the Windows TLS array.
 The translator is rebuilt and included in the native component receipt.

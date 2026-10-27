@@ -17,6 +17,130 @@ SESSION = ROOT / madeira_session.SOURCE
 
 
 class WindowsRuntimeTests(unittest.TestCase):
+    def test_window_callbacks_reuse_completed_process_slots_without_touching_live_owners(self):
+        original = (ROOT / 'vendor/Madeira/build/win32u-unix/class_ios.c').read_text()
+        source = madeira_threads.apply_class(original)
+        arrays = source[source.index('static WINDOWPROC winproc_array['):source.index('static struct list class_list')]
+        registry = source[source.index('struct ios_client_procs\n'):source.index('/* Redirect a builtin winproc_array')]
+        start = source.index('static WINDOWPROC *find_winproc(')
+        lookup = source[start:source.index('/* A 32-bit program', start)]
+        start = source.index('static WINDOWPROC *get_winproc_ptr(')
+        allocate = source[start:source.index('/**********************************************************************', start)]
+        start = source.index('NTSTATUS WINAPI NtUserInitializeClientPfnArrays(')
+        initialize = source[start:source.index('\n}', start) + 2]
+        fixture = r'''
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <string.h>
+typedef uintptr_t WNDPROC, HINSTANCE, ULONG_PTR;
+typedef unsigned UINT;
+typedef int BOOL, NTSTATUS;
+typedef WNDPROC ntuser_client_func_ptr[2];
+typedef struct {WNDPROC procA,procW;} WINDOWPROC;
+#define NTUSER_NB_PROCS 2
+#define MAX_WINPROCS 5
+#define WINPROC_HANDLE 0xffffu
+#define WINPROC_PROC16 ((WINDOWPROC*)1)
+#define WINAPI
+#define LOWORD(x) ((x)&0xffff)
+#define STATUS_SUCCESS 0
+#define TRACE_(x) trace_noop
+#define WARN_(x) trace_noop
+#define trace_noop(...) ((void)0)
+#define dprintf(...) ((void)0)
+static struct {void *Peb;} teb;
+#define NtCurrentTeb() (&teb)
+static HINSTANCE user32_module;
+static WNDPROC ios_winproc_handle_arg(WNDPROC p){return p;}
+static void init_user(void){}
+''' + arrays + registry + lookup + allocate + initialize + r'''
+int main(void){
+ ntuser_client_func_ptr procs[2]={{0x100,0},{0x200,0}};
+ teb.Peb=(void*)1;NtUserInitializeClientPfnArrays(procs,procs,procs,0x1000);
+ WINDOWPROC *parent=alloc_winproc_ptr(0x123,1);WNDPROC parent_handle=proc_to_handle(parent);
+ assert(ios_client_procs_count==1 && user32_module==0x1000);
+ for(uintptr_t g=2;g<302;g++){
+  teb.Peb=(void*)g;NtUserInitializeClientPfnArrays(procs,procs,procs,g*0x1000);
+  assert(ios_client_procs_count==2 && !get_winproc_ptr(parent_handle));
+  WINDOWPROC *child=alloc_winproc_ptr(0x456,1);assert(child && child!=parent);
+  WNDPROC handle=proc_to_handle(child);assert(get_winproc_ptr(handle)==child);
+  assert(alloc_winproc_ptr(0x456,1)==child && winproc_used==4);
+  ios_client_procs_release(teb.Peb);
+  assert(!get_winproc_ptr(handle) && !ios_client_procs_reg[1].peb);
+  assert(user32_module==0x1000 && !child->procA && !child->procW);
+  teb.Peb=(void*)1;assert(get_winproc_ptr(parent_handle)==parent && parent->procA==0x123);
+ }
+ ios_client_procs_release((void*)1);assert(!user32_module && !winproc_array[0].procA);
+ teb.Peb=(void*)302;NtUserInitializeClientPfnArrays(procs,procs,procs,0x9999);
+ assert(user32_module==0x9999 && ios_client_procs_count==2);
+ assert(alloc_winproc_ptr(0x789,1)==parent);return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
+                            str(path / 'main.c'), '-pthread', '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        server = madeira_threads.apply_process_server((ROOT / 'vendor/Madeira/build/ntdll-unix/server_ios.c').read_text())
+        teardown = server.split('void process_exit_wrapper(', 1)[1]
+        self.assertLess(teardown.index('ios_client_procs_release(dead_peb)'), teardown.index('ios_jit_reclaim_process( dead_peb )'))
+        with self.assertRaises(ValueError): madeira_threads.apply_class(original + original)
+
+    def test_user_cache_rejects_objects_from_an_old_handle_generation_or_process(self):
+        original = (ROOT / 'vendor/Madeira/wine/dlls/win32u/window.c').read_text()
+        source = madeira_threads.apply_window(original)
+        cache = source[source.index('static void *client_objects['):source.index('\n#define SWP_AGG_NOGEOMETRYCHANGE')]
+        start = source.index('void *get_user_handle_ptr(')
+        lookup = source[start:source.index('\n/***********************************************************************', start)]
+        start = source.index('void *next_thread_user_object(')
+        iterator = source[start:source.index('\n/***********************************************************************', start)]
+        fixture = r'''
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
+typedef unsigned UINT, DWORD, ULONG;
+typedef unsigned short WORD;
+typedef void *HANDLE;
+#define MAX_USER_HANDLES 4
+#define OBJ_OTHER_PROCESS ((void*)1)
+#define USER_HANDLE_TO_INDEX(h) ((((uintptr_t)(h)&0xffff)-0x20)>>1)
+#define InterlockedExchangePointer(p,v) __atomic_exchange_n(p,v,__ATOMIC_SEQ_CST)
+static DWORD current=1;
+static int locked;
+static void user_lock(void){locked++;}
+static void user_unlock(void){assert(locked>0);locked--;}
+static DWORD GetCurrentProcessId(void){return current;}
+struct user_entry {ULONG pid,tid;};
+static HANDLE live=(void*)0x10022;
+static struct user_entry owner={1,10};
+static int get_user_entry(HANDLE h,unsigned short type,struct user_entry*entry,HANDLE*full){
+ (void)type;if(USER_HANDLE_TO_INDEX(h)!=1)return 0;*entry=owner;*full=live;return 1;}
+static int get_user_entry_at(WORD i,unsigned short type,struct user_entry*entry,HANDLE*full){
+ (void)type;if(i!=1)return 0;*entry=owner;*full=live;return 1;}
+''' + cache + lookup + iterator + r'''
+int main(void){
+ int *old=malloc(sizeof(*old)),fresh=2;assert(old);cache_user_object(live,old);assert(!locked);
+ assert(get_user_handle_ptr(live,1)==old && locked==1);user_unlock();
+ free(old);live=(void*)0x20022;owner.pid=2;current=2;
+ assert(get_user_handle_ptr(live,1)==OBJ_OTHER_PROCESS && !locked);
+ HANDLE next=0;user_lock();assert(!next_thread_user_object(-1,&next,1));user_unlock();
+ cache_user_object(live,&fresh);assert(get_user_handle_ptr(live,1)==&fresh);user_unlock();
+ next=0;user_lock();assert(next_thread_user_object(-1,&next,1)==&fresh);user_unlock();
+ owner.pid=3;current=3;assert(get_user_handle_ptr(live,1)==OBJ_OTHER_PROCESS && !locked);
+ cache_user_object(live,&fresh);assert(get_user_handle_ptr(live,1)==&fresh);user_unlock();
+ cache_user_object(live,0);assert(!get_user_handle_ptr(live,1) && !locked);return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-sign-compare',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        with self.assertRaises(ValueError): madeira_threads.apply_window(original + original)
+
     def test_child_boot_publishes_the_existing_shared_gdi_table_for_each_x64_process(self):
         loader = madeira_threads.apply_loader((ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text())
         boot = loader[loader.index('void wine_ios_child_main('):]
