@@ -448,6 +448,10 @@ def run_checked_recipe(name, env=None):
         generated.write_text(madeira_threads.apply_loader((UPSTREAM / 'build/ntdll-unix/loader_ios.c').read_text()))
         patches.append(('compile_one "$BUILD_DIR/loader_ios.c" "loader"',
                         'compile_one ' + shlex.quote(str(generated)) + ' "loader" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/virtual_ios.c'
+        generated.write_text(madeira_threads.apply_virtual((UPSTREAM / 'build/ntdll-unix/virtual_ios.c').read_text()))
+        patches.append(('compile_one "$BUILD_DIR/virtual_ios.c" "virtual"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "virtual" -I"$BUILD_DIR"'))
     elif name == 'wineserver':
         generated = OUTPUT / 'embedding/mach_ios.c'
         generated.parent.mkdir(parents=True, exist_ok=True)

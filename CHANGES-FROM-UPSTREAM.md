@@ -214,6 +214,9 @@ signals and debugger memory access keep their upstream behavior. Process thread
 counts and deferred TEB disposal are keyed to each pseudo-process. Cleanup waits
 for that process's last guest thread. Completed socket, identity and file-cache
 slots are released or reused rather than imposing a lifetime session limit.
+Steered memory reservations retire their tracking records when a view is deleted.
+Cleanup checks the current view under the memory lock and only releases untouched
+reservations. A later game can reuse an address without an old record freeing it.
 Each x64 child uses Madeira's existing fresh ARM64EC ntdll loader. A private
 pool copy alone can inherit hooks written into the shared PE image by a prior
 game. Other child architectures keep their upstream loader path.

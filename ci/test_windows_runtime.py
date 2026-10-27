@@ -17,6 +17,63 @@ SESSION = ROOT / madeira_session.SOURCE
 
 
 class WindowsRuntimeTests(unittest.TestCase):
+    def test_steered_reservation_reuse_never_reclaims_a_new_or_committed_view(self):
+        original = (ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
+        source = madeira_threads.apply_virtual(original)
+        table = source[source.index('#define IOS_STEER_MAX'):source.index('static uint64_t ios_steer_reclaim_dead( void );')]
+        ownership = source[source.index('static void ios_steer_forget('):source.index('/* ml255: STORM GATE.')]
+        start = source.index('static uint64_t ios_steer_reclaim_dead( void )\n{')
+        reclaim = source[start:source.index('\n\n/***********************************************************************\n *           register_view', start)]
+        fixture = r'''
+#include <assert.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stddef.h>
+#define dprintf(...) ((void)0)
+#define VPROT_COMMITTED 0x20
+static int virtual_mutex,locked;
+static const size_t page_size=4096;
+static unsigned deleted,committed;
+struct file_view {void *base;size_t size;unsigned protect,ios_flags;};
+static struct file_view current;
+static void server_enter_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && !locked);locked=1;}
+static void server_leave_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && locked);locked=0;}
+''' + table + ownership + r'''
+static struct file_view *find_view(void*p,size_t n){(void)n;assert(locked);return current.base==p?&current:0;}
+static unsigned get_page_vprot(char*p){assert(locked);return committed && p==(char*)current.base+4096?VPROT_COMMITTED:0;}
+static void ios_bigres_release(void*p){assert(locked && p==current.base);}
+static void delete_view(struct file_view*v){assert(locked);ios_steer_forget(v->base,v->size);v->base=0;deleted++;}
+''' + reclaim + r'''
+int main(void){
+ current=(struct file_view){(void*)0x10000,8192,0,0};ios_steer_record(current.base,current.size,1);ios_thread_died(1);
+ /* Explicit free, then a different allocation at the same address. */
+ ios_steer_forget(current.base,current.size);assert(ios_steer_reclaim_dead()==0 && !deleted);
+ ios_steer_record(current.base,current.size,2);assert(ios_steer_n==1 && !ios_tid_is_dead(2));
+ assert(ios_steer_reclaim_dead()==0 && !deleted);ios_thread_died(2);
+ committed=1;assert(ios_steer_reclaim_dead()==0 && !deleted);committed=0;
+ current.protect=0x10000;assert(ios_steer_reclaim_dead()==0);current.protect=0;
+ current.ios_flags=4;assert(ios_steer_reclaim_dead()==0);current.ios_flags=0;
+ ios_steer[0].inuse=1;assert(ios_steer_reclaim_dead()==0);ios_steer[0].inuse=0;
+ assert(ios_steer_reclaim_dead()==8192 && deleted==1 && ios_steer[0].freed);
+ for(unsigned i=0;i<300;i++){
+  current=(struct file_view){(void*)0x10000,8192,0,0};ios_steer_record(current.base,current.size,2);
+  assert(!ios_tid_is_dead(2) && ios_steer_n==1 && !ios_steer[0].inuse);
+  assert(!ios_steer_reclaim_dead());ios_thread_died(2);assert(ios_steer_reclaim_dead()==8192);
+ }
+ assert(deleted==301 && !locked);return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', str(path / 'main.c'),
+                            '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        deletion = source.split('static void delete_view(', 1)[1].split('static uint64_t ios_steer_reclaim_dead(', 1)[0]
+        self.assertLess(deletion.index('ios_steer_forget('), deletion.index('unmap_area('))
+        self.assertNotIn('NtFreeVirtualMemory(', reclaim)
+        with self.assertRaises(ValueError): madeira_threads.apply_virtual(original + original)
+
     def test_window_callbacks_reuse_completed_process_slots_without_touching_live_owners(self):
         original = (ROOT / 'vendor/Madeira/build/win32u-unix/class_ios.c').read_text()
         source = madeira_threads.apply_class(original)

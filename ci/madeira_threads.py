@@ -3,6 +3,97 @@
 from pathlib import Path
 
 
+def apply_virtual(text):
+    old = 'static struct { uint64_t base; uint64_t size; unsigned tid; unsigned freed; unsigned inuse; } ios_steer[IOS_STEER_MAX];'
+    if text.count(old) != 1: raise ValueError('Madeira reservation tracking changed')
+    text = text.replace(old, 'static struct { _Atomic uint64_t base, size; _Atomic unsigned tid, freed, inuse; } ios_steer[IOS_STEER_MAX];')
+    text = text.replace('static unsigned ios_steer_n;', 'static _Atomic unsigned ios_steer_n;')
+    start = text.index('static uint64_t ios_steer_reclaim_dead( void )\n{')
+    end = text.index('/* ml255: STORM GATE.', start)
+    text = text[:start] + '''static uint64_t ios_steer_reclaim_dead( void );
+
+static void ios_steer_forget( void *base, size_t size )
+{
+    uint64_t begin = (uintptr_t)base, end = begin + size;
+    unsigned i;
+    for (i = 0; i < ios_steer_n; i++)
+        if (ios_steer[i].base < end && begin < ios_steer[i].base + ios_steer[i].size)
+            ios_steer[i].freed = 1;
+}
+
+static void ios_steer_record( void *base, size_t size, unsigned tid )
+{
+    sigset_t sigset;
+    unsigned i;
+    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    for (i = 0; i < ios_steer_n; i++) if (ios_steer[i].freed) break;
+    if (i < IOS_STEER_MAX)
+    {
+        ios_steer[i].base = (uintptr_t)base;
+        ios_steer[i].size = size;
+        ios_steer[i].tid = tid;
+        ios_steer[i].freed = ios_steer[i].inuse = 0;
+        ios_thread_alive( tid );
+        if (i == ios_steer_n) ios_steer_n++;
+    }
+    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+}
+
+''' + text[end:]
+    marker = "    ios_vh_note( 'd', view );   /* madeira-bcd: view history */"
+    if text.count(marker) != 1: raise ValueError('Madeira virtual view deletion changed')
+    text = text.replace(marker, '    ios_steer_forget( view->base, view->size );\n' + marker)
+    marker = '\n\n/***********************************************************************\n *           register_view'
+    if text.count(marker) != 1: raise ValueError('Madeira virtual view registration changed')
+    text = text.replace(marker, '''
+
+/* Validate and release under one lock. A recycled address is not the old reservation. */
+static uint64_t ios_steer_reclaim_dead( void )
+{
+    uint64_t freed = 0;
+    unsigned i;
+    sigset_t sigset;
+    server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    for (i = 0; i < ios_steer_n; i++)
+    {
+        struct file_view *view;
+        size_t offset;
+        if (ios_steer[i].freed || !ios_steer[i].base || ios_steer[i].inuse ||
+            !ios_tid_is_dead( ios_steer[i].tid )) continue;
+        view = find_view( (void *)(uintptr_t)ios_steer[i].base, 0 );
+        if (!view || (uintptr_t)view->base != ios_steer[i].base || view->size != ios_steer[i].size ||
+            view->protect || view->ios_flags) continue;
+        for (offset = 0; offset < view->size; offset += page_size)
+            if (get_page_vprot( (char *)view->base + offset ) & VPROT_COMMITTED) break;
+        if (offset < view->size) continue;
+        freed += view->size;
+        ios_bigres_release( view->base );
+        delete_view( view );
+    }
+    server_leave_uninterrupted_section( &virtual_mutex, &sigset );
+    if (freed) dprintf( 2, "[steer-reclaim] released %lluMB of unused reservations\\n",
+                        (unsigned long long)(freed >> 20) );
+    return freed;
+}
+''' + marker)
+    start = text.index('                if (!sst && ios_steer_n < IOS_STEER_MAX)')
+    end = text.index('                /* ml210:', start)
+    text = text[:start] + '''                if (!sst) ios_steer_record( *ret, want, stid );
+''' + text[end:]
+    changes = {
+        'ios_tid_dead[tid >> 3] |= (1u << (tid & 7));':
+            '__atomic_fetch_or( &ios_tid_dead[tid >> 3], (1u << (tid & 7)), __ATOMIC_RELAXED );',
+        'ios_tid_dead[tid >> 3] &= ~(1u << (tid & 7));':
+            '__atomic_fetch_and( &ios_tid_dead[tid >> 3], ~(1u << (tid & 7)), __ATOMIC_RELAXED );',
+        '(ios_tid_dead[tid >> 3] >> (tid & 7)) & 1':
+            '(__atomic_load_n( &ios_tid_dead[tid >> 3], __ATOMIC_RELAXED ) >> (tid & 7)) & 1',
+    }
+    for old, new in changes.items():
+        if text.count(old) != 1: raise ValueError('Madeira reservation thread identity changed')
+        text = text.replace(old, new)
+    return text
+
+
 def apply_fex(text):
     old = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)'
     new = '#if defined(FEX_IOS_HOST) && defined(_WIN32)'

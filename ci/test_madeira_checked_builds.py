@@ -51,7 +51,7 @@ class CheckedBuildTests(unittest.TestCase):
             (recipe.parent / 'audio_null_ios.c').write_text(
                 'static OSStatus ios_audio_render_cb(void) {\n'
                 '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}')
-            for name in ('process_ios.c', 'thread_ios.c', 'server_ios.c', 'loader_ios.c'):
+            for name in ('process_ios.c', 'thread_ios.c', 'server_ios.c', 'loader_ios.c', 'virtual_ios.c'):
                 (recipe.parent / name).write_text((ROOT / 'vendor/Madeira/build/ntdll-unix' / name).read_text())
             obj = recipe.parent / 'obj'; obj.mkdir()
             for name in re.findall(r'\$OBJ_DIR/([^"/]+\.o)', text[text.index('ar rcs '):]):
