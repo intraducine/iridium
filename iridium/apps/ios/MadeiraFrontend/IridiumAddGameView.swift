@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
 
-enum IridiumAddGameSource: Int, CaseIterable { case files, steam }
+enum IridiumAddGameSource: Int, CaseIterable { case files, importFolder, steam, cia }
 
 struct IridiumAddGameView: View {
     @Environment(\.dismiss) private var dismiss
@@ -14,8 +14,10 @@ struct IridiumAddGameView: View {
         NavigationStack {
             List {
                 Section {
-                    source(.files, title: "Choose Files", subtitle: "Add a game file or a folder. Iridium finds the system.", symbol: "folder")
+                    source(.files, title: "Choose Files", subtitle: "Add games, folders, archives, or a pairing file.", symbol: "folder")
+                    source(.importFolder, title: "Import Folder", subtitle: "Check files in Import and finish pending imports.", symbol: "tray.and.arrow.down")
                     source(.steam, title: "Steam", subtitle: "Browse and download your Steam games.", symbol: "network")
+                    source(.cia, title: "Install 3DS CIA", subtitle: "Install a game, update, or DLC.", symbol: "square.and.arrow.down")
                 }
             }.iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
@@ -42,6 +44,6 @@ struct IridiumAddGameView: View {
         }.foregroundStyle(.primary)
             .listRowBackground(guided && selected == source.rawValue ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
     }
-    private func move(_ step: Int) { guided = true; selected = min(max(selected + step, 0), 1) }
+    private func move(_ step: Int) { guided = true; selected = min(max(selected + step, 0), IridiumAddGameSource.allCases.count - 1) }
     private func accept() { choose(IridiumAddGameSource(rawValue: selected) ?? .files) }
 }

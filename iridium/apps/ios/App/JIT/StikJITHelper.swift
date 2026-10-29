@@ -290,7 +290,19 @@ enum StikJITHelper {
 
     /// Allocate a JIT memory pool via BRK #0xf00d WITHOUT detaching the debugger.
     /// The debugger stays attached so Wine can use BRK to prepare PE code pages.
+    private static let poolLock = NSLock()
+    private static var cachedPool: (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)?
+    private static var poolPreparing = false
     static func allocatePool(poolSize requestedPoolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+        poolLock.lock()
+        if let cachedPool { poolLock.unlock(); return cachedPool }
+        guard !poolPreparing else { poolLock.unlock(); return nil }
+        poolPreparing = true; poolLock.unlock()
+        let result = createPool(poolSize: requestedPoolSize)
+        poolLock.lock(); cachedPool = result; poolPreparing = false; poolLock.unlock()
+        return result
+    }
+    private static func createPool(poolSize requestedPoolSize: Int) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
         var poolSize = requestedPoolSize      // ml1036: may shrink to fit, see the hole census below
         poolFailure = nil
         LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool via debugger...")
@@ -845,11 +857,7 @@ enum StikJITHelper {
             poolFailure = requestUnanswered
                 ? "The debugger could not allocate the JIT memory. Restart Madeira, enable JIT and try again."
                 : "The JIT memory landed at an address Madeira cannot use. Restart Madeira, enable JIT and try again."
-            LogStore.shared.log("BAD POOL: no valid placement after retries. Killing in 10s — please relaunch.", level: .error)
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 10) {
-                LogStore.shared.log("BAD POOL — exiting now. Relaunch the app.", level: .error)
-                exit(0)
-            }
+            LogStore.shared.log("JIT memory allocation failed. The game was not started.", level: .error)
             return nil
         }
         let rxAddr = Int(bitPattern: rxPtr)

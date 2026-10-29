@@ -62,9 +62,11 @@ struct IridiumLibraryImportView: View {
         transfer(games[selected])
     }
     private func transfer(_ game: IridiumLibraryImport.Game) {
+        do { try IridiumImportCoordinator.shared.beginLibraryTransfer() }
+        catch { self.error = error.localizedDescription; return }
         busy = true; error = nil
         Task {
-            defer { busy = false }
+            defer { busy = false; IridiumImportCoordinator.shared.endLibraryTransfer() }
             do {
                 let imported = try await Task.detached(priority: .utility) {
                     try IridiumLibraryImport.transfer(game, documents: LibraryModel.documents)

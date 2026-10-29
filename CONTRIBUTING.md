@@ -20,7 +20,9 @@ Preserve unrelated work and uninitialized submodules.
 Use Xcode 27 and initialize the test sources. Run from the repository root:
 
 ```sh
-git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP vendor/Dolphin
+git submodule update --init --depth 1 vendor/Madeira vendor/SameBoy vendor/PPSSPP vendor/Dolphin vendor/Play vendor/Flycast
+git -C vendor/Madeira submodule update --init --depth 1 wine FEX dxmt
+git -C vendor/Play submodule update --init --depth 1 deps/CodeGen deps/Framework
 python3 check-public-source.py
 python3 ci/check-standards.py
 python3 -B -m unittest discover -s ci -p 'test_*.py'

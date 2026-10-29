@@ -1101,6 +1101,7 @@ struct LibraryView: View {
     @Environment(\.dismiss) private var iridiumDismiss
 
     @State private var iridiumPages: [String] = []
+    @AppStorage(IridiumMenuSounds.settingsKey) private var menuSounds = true
     @State private var iridiumFocus = "Controls"
     @State private var iridiumGuided = false
     @FocusState private var iridiumKeyboard: Bool
@@ -1287,7 +1288,8 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
                     } else { EmptyView() }
                 }
             }
-            .onChange(of: iridiumPages) { _, _ in
+            .onChange(of: iridiumPages) { old, pages in
+                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .next : .back) }
                 if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
             }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
@@ -1385,13 +1387,17 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         if ["left", "right", "up", "down"].contains(command) {
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
-            iridiumFocus = order[min(max(index + step, 0), order.count - 1)]
-        } else if command == "accept" { iridiumPages.append(iridiumFocus) }
+            let next = order[min(max(index + step, 0), order.count - 1)]
+            if next != iridiumFocus { IridiumMenuSounds.play(.focus); iridiumFocus = next }
+        } else if command == "accept" {
+            if iridiumFocus == "Menu sounds" { menuSounds.toggle() }
+            else { iridiumPages.append(iridiumFocus) }
+        }
     }
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Steam", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1453,7 +1459,11 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
 NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
+                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+Toggle("Menu sounds", isOn: $menuSounds).id("Menu sounds")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Menu sounds" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                    .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.invoke) } else { IridiumMenuSounds.stop() } }
+            }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 ForEach(IridiumConsoleSystem.all) { system in
@@ -1660,14 +1670,19 @@ struct ExecutableBrowser: View {
                     }
                 }
             }
-            if files.isEmpty && error == nil { Text("No executables here. Copy files into Madeira/wine/drive_c using Files.").foregroundStyle(.secondary) }
+            if files.isEmpty && error == nil { Text("No executables here. Use Add Game to import a game, or choose another folder.").foregroundStyle(.secondary) }
         }.iridiumPageSurface().navigationTitle(folder.lastPathComponent)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
         .task {
             do {
                 // ml1163: .bat and .cmd files are listed too (they run through cmd.exe).
                 files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
-                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && $0.resolvingSymlinksInPath().path.hasPrefix(LibraryModel.drive.path + "/") }
+                    .map { url in
+                        var directory: ObjCBool = false
+                        _ = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+                        return URL(fileURLWithPath: url.path, isDirectory: directory.boolValue)
+                    }
+                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && IridiumGameStorage.windowsRelative($0, drive: LibraryModel.drive) != nil }
                     .sorted { if $0.hasDirectoryPath != $1.hasDirectoryPath { return $0.hasDirectoryPath }; return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             } catch { self.error = error.localizedDescription }
         }
@@ -1706,13 +1721,24 @@ struct LibraryDetail: View {
             return
         }
         guard iridiumPages.isEmpty else { return }
-        let order = ["Rename & Artwork", "Controls", "Display", "Files & Saves", "Advanced", "Favorites"].filter { entry.desktop != true || !["Rename & Artwork", "Favorites"].contains($0) }
+        let order = ["Rename & Artwork", "Library Entry", "Controls", "Display", "Files & Saves", "Advanced", "Favorites"].filter { entry.desktop != true || !["Rename & Artwork", "Library Entry", "Favorites"].contains($0) }
         let index = order.firstIndex(of: iridiumFocus) ?? 0
         if ["left", "right", "up", "down"].contains(command) {
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
             iridiumFocus = order[min(max(index + step, 0), order.count - 1)]
-        } else if command == "accept" { if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) } else { iridiumPages.append(iridiumFocus) } }
+        } else if command == "accept" {
+            if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) }
+            else if iridiumFocus == "Library Entry" { iridiumLibraryAction() }
+            else { iridiumPages.append(iridiumFocus) }
+        }
+    }
+
+    private func iridiumLibraryAction() {
+        guard !IridiumImportCoordinator.shared.blocksLaunch, model.current == nil, !model.launching else { return }
+        if let appID = entry.steamAppID, model.hiddenSteamApps.contains(appID) {
+            if let game = model.steamInstall(entry) { model.upsertSteam(game, title: entry.title) }
+        } else { remove = true }
     }
 
     var play: (LibraryEntry) -> Void
@@ -1799,7 +1825,6 @@ struct LibraryDetail: View {
         LaunchCurtain.shared.begin(from: playFrame, appID: steamCover, artwork: steamCover.flatMap { id in
             SteamGamesRules.artwork(appID: id) { SteamOwnedLibrary.shared.game($0) }.first
         })
-        model.prepare(entry)
         let profile = entry
         // Give the pressed state a display turn before saving and handing off.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -1836,7 +1861,17 @@ struct LibraryDetail: View {
 
                 Section("Library") {
                     if entry.desktop != true { NavigationLink("Rename & Artwork", value: "Rename & Artwork").id("Rename & Artwork")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "Rename & Artwork" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Rename & Artwork" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        if let appID = entry.steamAppID, model.hiddenSteamApps.contains(appID) {
+                            Button("Add to Library", action: iridiumLibraryAction)
+                                .disabled(IridiumImportCoordinator.shared.blocksLaunch || model.steamInstall(entry) == nil)
+                                .id("Library Entry").listRowBackground(iridiumGuided && iridiumFocus == "Library Entry" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        } else {
+                            Button("Remove from Library", role: .destructive, action: iridiumLibraryAction)
+                                .disabled(IridiumImportCoordinator.shared.blocksLaunch || model.current != nil || model.launching)
+                                .id("Library Entry").listRowBackground(iridiumGuided && iridiumFocus == "Library Entry" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                        }
+                    }
                 }.iridiumRowSurface()
                 Section("Controls") { NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
@@ -1990,7 +2025,6 @@ case "Files & Saves": Form { Group { if let appID = entry.steamAppID { SteamClou
                     }
                 } else if entry.desktop != true {
                     Section("Executable") { Text(entry.windowsPath).font(.caption.monospaced()).textSelection(.enabled) }
-                    Section { Button("Remove from library", role: .destructive) { remove = true } }
                 }
  }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Files & Saves")
                     .navigationBarBackButtonHidden()
@@ -2144,6 +2178,9 @@ if entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; 
                 if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }
             }
             .onDisappear { if !leaving { model.save(entry) } }
+            .confirmationDialog("Remove this game from the library? Its files and saves will stay.", isPresented: $remove, titleVisibility: .visible) {
+                Button("Remove from Library", role: .destructive) { leaving = true; model.remove(entry.id); dismiss() }
+            }
             .onReceive(LibraryController.shared.commands) { command in
                 guard iridiumPages.last != "Rename & Artwork" else { return }
                 guard !leaving, !findCover, !importCover, !remove, !confirmReset else { return }
@@ -2949,7 +2986,8 @@ struct LibraryHUD: View {
                 }
                 if confirmClose {
                     IridiumPlayerCloseConfirmation(selection: closeConfirmation.selection,
-                        message: "Requests a normal game exit. Confirm any in-game prompt. Unsaved progress may be lost.",
+                        message: model.quitRequested ? "Ends the remaining game processes. Unsaved progress may be lost."
+                            : "Requests a normal game exit. Confirm any in-game prompt. Unsaved progress may be lost.",
                         cancel: { iridiumCancelClose() },
                         close: { confirmClose = false; model.requestQuit() }, command: iridiumMenuNavigate)
                 }
@@ -3047,6 +3085,7 @@ struct LibraryHUD: View {
                         }
                     }.modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
                 }
+                IridiumLaunchMemoryView().frame(maxWidth: 360)
                 // The starting screen's controls are one row of glyph-only buttons, so a
                 // short screen does not push them below the fold. The words stay as
                 // VoiceOver labels. A stopped Dock start can be closed; while a Dock start
@@ -3096,11 +3135,13 @@ struct LibraryHUD: View {
                 .shadow(color: .black.opacity(0.55), radius: 30, y: 14)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
                 .modifier(LaunchEntrance(visible: launchVisible, step: 0, rise: CGSize(width: -36, height: 0), scale: 0.86, still: curtained))
+            ScrollView {
             VStack(alignment: .leading, spacing: short ? 10 : 14) {
                 Text(entry.title).font(.system(size: short ? 28 : 38, weight: .bold))
                     .lineLimit(2).minimumScaleFactor(0.6)
                     .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 22, height: 0), still: curtained))
                 launchWideStatus.modifier(LaunchEntrance(visible: launchVisible, step: 2, rise: CGSize(width: 22, height: 0), still: curtained))
+                IridiumLaunchMemoryView().frame(maxWidth: 440)
                 HStack(spacing: 12) {
                     if dockStart.failure != nil {
                         launchGlyph("Close session", "stop.circle") { model.requestQuit() }
@@ -3128,6 +3169,7 @@ struct LibraryHUD: View {
             }
             .frame(maxWidth: 520, alignment: .leading)
             .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: showLogs)
+            }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: 520)
             Spacer(minLength: 0)
         }
         .padding(.leading, leading).padding(.trailing, geo.safeAreaInsets.trailing + 24)

@@ -39,6 +39,7 @@ def moltenvk(ROOT, sdk, jobs=None):
 
 def generated(ROOT, directory):
     source = ROOT / '.build/phase3-downloads' / source_archive().removesuffix('.tar.xz')
+    (directory / 'am.cpp').unlink(missing_ok=True)
     def replace(text, old, new, count=1):
         if text.count(old) != count:
             raise ValueError('Azahar shared JIT source hook changed: ' + old)
@@ -77,10 +78,85 @@ def generated(ROOT, directory):
         (directory / original.name).write_text(code)
     original = source / 'src/citra_libretro/citra_libretro.cpp'
     code = replace(original.read_text(), '#include "citra_libretro/libretro_vk.h"', '')
+    code = replace(code, '    LibRetro::Input::Init();', '    LibRetro::Input::Init();\n    ir_azahar_register_camera();')
+    code = 'extern "C" void ir_azahar_register_camera();\n' + code
     code = replace(code, '        LibRetro::VulkanResetContext();', '        // The native renderer owns its Metal surface and Vulkan device.')
     start = code.index('    case Settings::GraphicsAPI::Vulkan: {', code.index('bool retro_load_game'))
     end = code.index('    case Settings::GraphicsAPI::Software: {', start)
     code = code[:start] + '    case Settings::GraphicsAPI::Vulkan:\n' + code[end:]
+    code += r'''
+#include "IRCheats.h"
+#include "core/cheats/cheats.h"
+#include "core/cheats/gateway_cheat.h"
+#include <sstream>
+#include "common/file_util.h"
+#include "core/hle/service/am/am.h"
+#include <fstream>
+#include "json.hpp"
+extern "C" int ir_phase3_core_install_cia(const char* root, const char* file) {
+    if (!root || !file || Core::System::GetInstance().IsPoweredOn()) return 100;
+    const std::string previous = FileUtil::GetUserPath(FileUtil::UserPath::UserDir);
+    struct Restore { std::string path; ~Restore() { FileUtil::SetUserPath(path); } } restore{previous};
+    try {
+        FileUtil::SetUserPath(std::string(root) + "/");
+        bool compressed = false;
+        auto status = Service::AM::CheckCIAToInstall(file, compressed, true);
+        if (status == Service::AM::InstallStatus::Success) status = Service::AM::InstallCIA(file);
+        if (status == Service::AM::InstallStatus::Success) {
+            auto info = Service::AM::GetCIAInfos(file);
+            if (info.Failed()) return 102;
+            if (info.Succeeded()) {
+                const u64 id = info.Unwrap().first.tid;
+                if ((id >> 32) == 0x00040000) {
+                    const auto path = Service::AM::GetTitleContentPath(Service::AM::GetTitleMediaType(id), id);
+                    auto loader = Loader::GetLoader(path);
+                    bool executable = false;
+                    if (!loader || loader->IsExecutable(executable) != Loader::ResultStatus::Success || !executable) return 102;
+                    std::string title;
+                    loader->ReadTitle(title);
+                    if (title.empty()) title = fmt::format("3DS Title {:016X}", id);
+                    const std::string prefix = std::string(root) + "/";
+                    if (path.rfind(prefix, 0) != 0) return 102;
+                    std::ofstream manifest(std::string(root) + "/iridium-installed.json");
+                    manifest << nlohmann::json{{"title", title}, {"path", path.substr(prefix.size())}};
+                    if (!manifest.good()) return 102;
+                }
+            }
+        }
+        return static_cast<int>(status);
+    } catch (...) { return 101; }
+}
+extern "C" bool ir_phase3_core_cheats(const IRCheat* items, size_t count) {
+    if (!ir_cheats_valid(items, count)) return false;
+    static std::vector<std::weak_ptr<Cheats::CheatBase>> managed;
+    std::vector<std::shared_ptr<Cheats::CheatBase>> pending;
+    for (size_t i = 0; i < count; ++i) {
+        if (strcmp(items[i].format, "gateway")) return false;
+        std::vector<Cheats::GatewayCheat::CheatLine> lines;
+        std::istringstream stream(items[i].code);
+        for (std::string line; std::getline(stream, line);) {
+            if (line.find_first_not_of(" \t\r") == std::string::npos) continue;
+            uint32_t first, second;
+            if (!ir_cheat_pair(line.c_str(), &first, &second)) return false;
+            char normalized[18]; snprintf(normalized, sizeof(normalized), "%08X %08X", first, second);
+            lines.emplace_back(normalized);
+            if (!lines.back().valid) return false;
+        }
+        if (lines.empty()) return false;
+        auto cheat = std::make_shared<Cheats::GatewayCheat>(items[i].name, std::move(lines), "");
+        cheat->SetEnabled(items[i].enabled); pending.push_back(std::move(cheat));
+    }
+    auto& engine = Core::System::GetInstance().CheatEngine();
+    auto existing = engine.GetCheats();
+    std::vector<size_t> removed;
+    for (size_t i = 0; i < existing.size(); ++i)
+        for (const auto& previous : managed) if (previous.lock() == existing[i]) { removed.push_back(i); break; }
+    for (auto i = removed.rbegin(); i != removed.rend(); ++i) engine.RemoveCheat(*i);
+    managed.clear();
+    for (auto& cheat : pending) { managed.push_back(cheat); engine.AddCheat(std::move(cheat)); }
+    return true;
+}
+'''
     (directory / original.name).write_text(code)
     original = source / 'src/citra_libretro/emu_window/libretro_window.cpp'
     code = replace(original.read_text(), 'EmuWindow_LibRetro::EmuWindow_LibRetro() {', 'extern "C" void* ir_azahar_metal_layer();\n\nEmuWindow_LibRetro::EmuWindow_LibRetro() {')
@@ -89,6 +165,15 @@ def generated(ROOT, directory):
     (directory / original.name).write_text(code)
     original = source / 'src/citra_libretro/input/mouse_tracker.cpp'
     code = replace(original.read_text(), '#include "video_core/renderer_vulkan/renderer_vulkan.h"', '')
+    # Zero is the canvas center, not a missing pointer. Reject non-touchscreen
+    # taps instead of pressing the previous valid point after a layout change.
+    code = replace(code, '(pointerX != 0 || pointerY != 0) && (newX != lastMouseX || newY != lastMouseY)',
+                   '(newX != lastMouseX || newY != lastMouseY)', 2)
+    touch = '        state |= LibRetro::CheckInput(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED);'
+    code = replace(code, touch, '        bool touching = LibRetro::CheckInput(0, RETRO_DEVICE_POINTER, 0, RETRO_DEVICE_ID_POINTER_PRESSED);')
+    marker = '        // Use mouse pointer movement'
+    first = code.index(marker, code.index('bool touching ='))
+    code = code[:first] + '        state |= touching && IsWithinTouchscreen(layout, newX, newY);\n\n' + code[first:]
     (directory / original.name).write_text(code)
     original = source / 'src/video_core/renderer_vulkan/vk_platform.cpp'
     code = replace(original.read_text(), 'namespace Vulkan {', 'extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char*);\n\nnamespace Vulkan {')
@@ -107,6 +192,10 @@ def check_compile_commands(build_dir, embedding):
         compiled = [Path(item['file']).resolve() for item in commands if Path(item['file']).name == name]
         if compiled != [(embedding / name).resolve()]:
             raise ValueError('Azahar must compile only its checked overlay: ' + name)
+    source = Path(__file__).resolve().parents[1] / '.build/phase3-downloads' / source_archive().removesuffix('.tar.xz')
+    compiled = [Path(item['file']).resolve() for item in commands if Path(item['file']).name == 'am.cpp']
+    if compiled != [(source / 'src/core/hle/service/am/am.cpp').resolve()]:
+        raise ValueError('Azahar must compile its pinned upstream CIA installer')
     if any(Path(item['file']).name in ('exception_handler_macos.cpp', 'exception_handler_macos_mig.c') for item in commands):
         raise ValueError('Azahar must not replace the shared debugger exception handlers')
     if any(Path(item['file']).name == 'libretro_vk.cpp' for item in commands):

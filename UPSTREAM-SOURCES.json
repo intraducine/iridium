@@ -254,5 +254,16 @@
       "build": "ci/build-phase3.py",
       "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/console-engines.md for platform adapters, complete source and unverified limits."
     }
+  ],
+  "assets": [
+    {
+      "id": "atkey-ui-sounds",
+      "path": "iridium/apps/ios/App/Resources/MenuAudio",
+      "upstream": "https://atkeysounds.itch.io/ui-sounds",
+      "version": "2026-10-21",
+      "license": "LicenseRef-Atkey-UI-Sounds-1",
+      "archiveSHA256": "1ef2057bf84b008dad70cfbf0a3ba1cf8d392e95fbb03a580a4acdfdee6123e6",
+      "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
+    }
   ]
 }

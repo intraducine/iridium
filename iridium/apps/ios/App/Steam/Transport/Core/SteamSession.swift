@@ -228,21 +228,6 @@ class SteamSession {
     /// NOTE: Despite the parameter name, CM logon requires the *refresh* token (audience: "renew"),
     /// not the access token (audience: "web"). The CMsgClientLogon.access_token field accepts both,
     /// but only the refresh token establishes a CM session.
-    /// Single-resume guard for the logon continuation. The logon response,
-    /// ClientLoggedOff, the send-error path, and the 20s timeout can each reach
-    /// the continuation; without this the timeout double-resumed and crashed
-    /// (CheckedContinuation traps on a second resume). Exactly one resume wins.
-    private final class LogonResumeGuard: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func claim() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            if done { return false }
-            done = true
-            return true
-        }
-    }
-
     func loginWithToken(accessToken: String, accountName: String) async throws {
         guard await connection.isConnected else {
             throw SteamError.disconnected
@@ -269,7 +254,7 @@ class SteamSession {
         // ClientLogonResponse (EMsg 5515) is NOT job-correlated — it's an unsolicited push.
         // Register a one-time handler that resolves the continuation when the response arrives.
         // Also handle legacy EMsg 751 (old CMsgClientLogOnResponse numbering).
-        let resumeOnce = LogonResumeGuard()
+        let resumeOnce = SteamResumeGuard()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             // All resume paths funnel through these so the continuation resumes
             // at most once, even if a handler and the timeout fire together.

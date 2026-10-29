@@ -38,7 +38,22 @@ class WindowsChromeSourceTests(unittest.TestCase):
         guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
         settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
         self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
-        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, ''),
+        storage_guard = '        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }\n'
+        self.assertIn(storage_guard, actual[actual.index(start):actual.index(end)])
+        admission = actual[actual.index(start):actual.index(end)]
+        self.assertIn('let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID', admission)
+        self.assertIn('LibraryModel.shared.launchFailedBeforeNative(nativeLaunch)', admission)
+        admission = admission.replace('        let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID\n', '')
+        admission = admission.replace('if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }',
+                                      'if profile != nil { LibraryModel.shared.launchFailed() }')
+        resident = admission[admission.index('        if IridiumMadeiraRuntime.shared.isResident'):admission.index('        logStore.log("Running full Wine sequence...")')]
+        self.assertIn('try IridiumMadeiraRuntime.shared.submit(nativeLaunch, configuration:', resident)
+        self.assertIn('guard library.nativeLaunchID == nativeLaunch else { return }', resident)
+        admission = admission.replace(resident, '')
+        ready_guard = 'guard jit_check_debugged(), ir_jit_memory_ready(), !jitCoordinator.consoleMemoryRequiresRestart else {'
+        self.assertIn(ready_guard, admission)
+        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
+        self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, ''),
                          original[original.index(start):original.index(end)])
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
@@ -100,16 +115,21 @@ enum MadeiraConfig {
 }
 struct LibraryEntry {}
 final class SteamOwnedLibrary {static let shared=SteamOwnedLibrary();func sessionChanged(active:Bool) {}}
+@MainActor final class IridiumImportCoordinator {
+    static let shared=IridiumImportCoordinator();var blocksLaunch=false;var launchMessage="Import in progress"
+}
 @MainActor enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
 func jit_check_debugged()->Bool {true}
 var ws_log_quiet:Int32=0
 @MainActor final class LibraryModel:ObservableObject {
     static let shared=LibraryModel();var current:UUID?=UUID()
+    let nativeLaunchID=UUID()
     @Published var menu=false
     @Published var launching=true
     var error:String?,failed=false
     var performance=false,menuButtonRect=CGRect.zero,performanceRect=CGRect.zero
     func launchFailed(_ reason:String?=nil) {failed=true;error=reason}
+    func launchFailedBeforeNative(_ owner:UUID) {launchFailed()}
 }
 final class GamepadInput:@unchecked Sendable {
     static let shared=GamepadInput();static let enabled=true,touchEnabled=true

@@ -19,7 +19,8 @@ PREFIX = 'iridium_sb_'
 def build_input_hashes():
     paths = [CORE / 'version.mk', CORE / 'LICENSE', CORE / 'Makefile', CORE / 'libretro/Makefile', CORE / 'libretro/Makefile.common',
              ROOT / 'ci/build-sameboy.py', ROOT / 'ci/sameboy_bootroms.py',
-             ROOT / 'ci/sameboy-bootroms.json', ROOT / 'ci/engine_pins.py']
+             ROOT / 'ci/sameboy-bootroms.json', ROOT / 'ci/engine_pins.py',
+             ROOT / 'iridium/apps/ios/RuntimeBridge/IRCheats.h']
     paths += [p for directory in ('Core', 'libretro', 'BootROMs')
               for p in sorted((CORE / directory).rglob('*')) if p.is_file()
               and (p.suffix in {'.c', '.h', '.inc', '.asm', '.png'} or p.name == 'Makefile')]
@@ -112,16 +113,57 @@ def build(output, sdk=None, target=None):
                             + 'const unsigned ' + model + '_length = ' + str(len(data)) + ';\n')
         if not path.is_file():
             raise ValueError('Missing core source: ' + str(path))
+        if relative == 'libretro/libretro.c':
+            original = path.read_text()
+            path = output / 'libretro.c'
+            path.write_text(original + r'''
+#include "IRCheats.h"
+bool ir_sameboy_cheats(const IRCheat *items, size_t count) {
+    if (!ir_cheats_valid(items, count)) return false;
+    GB_gameboy_t *trial = calloc(1, sizeof(*trial));
+    if (!trial) return false;
+    bool valid = true;
+    for (size_t i = 0; valid && i < count; ++i) {
+        if (strcmp(items[i].format, "gameshark") && strcmp(items[i].format, "gamegenie")) { valid = false; break; }
+        char *text = strdup(items[i].code), *cursor = NULL;
+        if (!text) { valid = false; break; }
+        unsigned lines = 0;
+        for (char *line = strtok_r(text, "\r\n", &cursor); valid && line; line = strtok_r(NULL, "\r\n", &cursor)) {
+            while (*line == ' ' || *line == '\t') ++line;
+            size_t size = strlen(line);
+            while (size && (line[size-1] == ' ' || line[size-1] == '\t')) line[--size] = 0;
+            if (!size) continue;
+            size_t expected = !strcmp(items[i].format, "gameshark") ? 8 : size;
+            if (size != expected || (!strcmp(items[i].format, "gamegenie") && size != 6 && size != 7 && size != 9 && size != 11)) { valid = false; break; }
+            valid = GB_import_cheat(trial, line, items[i].name, items[i].enabled) != NULL;
+            ++lines;
+        }
+        free(text);
+        if (!lines) valid = false;
+    }
+    if (valid) {
+        // Transfer only the fully parsed cheat set; an invalid edit keeps the old set.
+        GB_remove_all_cheats(&gameboy[0]);
+        gameboy[0].cheats = trial->cheats;
+        gameboy[0].cheat_count = trial->cheat_count;
+        memcpy(gameboy[0].cheat_hash, trial->cheat_hash, sizeof(trial->cheat_hash));
+        GB_set_cheats_enabled(&gameboy[0], true);
+    } else GB_remove_all_cheats(trial);
+    free(trial);
+    return valid;
+}
+''')
         sources.append(path)
     if len(sources) != 21:
         raise ValueError('Pinned core source list changed')
+    sources.append(CORE / 'Core/cheats.c')
     version = re.fullmatch(r'VERSION := ([0-9.]+)\s*', (CORE / 'version.mk').read_text()).group(1)
     copyright_year = re.search(r'20[2-9][0-9]', (CORE / 'LICENSE').read_text()).group(0)
     flags = platform + ['-std=gnu11', '-O2', '-fPIC', '-fvisibility=hidden', '-D_GNU_SOURCE',
         '-D_USE_MATH_DEFINES', '-D__LIBRETRO__', '-DGB_INTERNAL', '-DNDEBUG', '-DGB_VERSION="' + version + '"',
         '-DGB_COPYRIGHT_YEAR="' + copyright_year + '"',
-        '-DGB_DISABLE_TIMEKEEPING', '-DGB_DISABLE_REWIND', '-DGB_DISABLE_DEBUGGER', '-DGB_DISABLE_CHEATS',
-        '-I' + str(CORE), '-I' + str(CORE / 'libretro')]
+        '-DGB_DISABLE_TIMEKEEPING', '-DGB_DISABLE_REWIND', '-DGB_DISABLE_DEBUGGER',
+        '-I' + str(CORE), '-I' + str(CORE / 'libretro'), '-I' + str(ROOT / 'iridium/apps/ios/RuntimeBridge')]
 
     def compile_pass(folder, extra):
         folder.mkdir(exist_ok=True)

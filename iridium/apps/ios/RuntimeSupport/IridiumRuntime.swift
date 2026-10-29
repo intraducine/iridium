@@ -46,7 +46,7 @@ enum IridiumRuntimeRegistry {
     // Only linked and implemented runtimes belong here. Research candidates
     // are deliberately absent from the import UI and compatibility claims.
     static let madeira = IridiumRuntimeDescriptor(id: "madeira", name: "Madeira", platforms: [.windows],
-        jit: .required, supportsPause: false, restartAfterStop: true)
+        jit: .required, supportsPause: false, restartAfterStop: false)
     static let sameBoy = IridiumRuntimeDescriptor(id: "sameboy", name: "SameBoy", platforms: [.gameBoy, .gameBoyColor],
         jit: .none, supportsPause: true, restartAfterStop: false)
     static let ppsspp = IridiumRuntimeDescriptor(id: "ppsspp", name: "PPSSPP", platforms: [.psp],
@@ -55,10 +55,8 @@ enum IridiumRuntimeRegistry {
         jit: .required, supportsPause: true, restartAfterStop: false)
     static let azahar = IridiumRuntimeDescriptor(id: "azahar", name: "Azahar", platforms: [.nintendo3DS],
         jit: .required, supportsPause: true, restartAfterStop: false)
-    // Play's app configuration is a process-lifetime upstream singleton. Its
-    // per-game data root cannot safely change until a new process is started.
     static let play = IridiumRuntimeDescriptor(id: "play", name: "Play!", platforms: [.playStation2],
-        jit: .required, supportsPause: true, restartAfterStop: true)
+        jit: .required, supportsPause: true, restartAfterStop: false)
     static let flycast = IridiumRuntimeDescriptor(id: "flycast", name: "Flycast", platforms: [.dreamcast, .arcade],
         jit: .required, supportsPause: true, restartAfterStop: false)
     #if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
@@ -138,7 +136,7 @@ struct IridiumConsoleSystem: Identifiable {
             case "azahar": return Self(runtime: runtime, title: "Azahar · Nintendo 3DS", primaryPlatform: .nintendo3DS,
                 extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
             case "play": return Self(runtime: runtime, title: "Play! · PlayStation 2", primaryPlatform: .playStation2,
-                extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Reopen Iridium after finishing a game.")
+                extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Open the game menu for core settings, save states, and disc changes.")
             case "flycast": return Self(runtime: runtime, title: "Flycast · Dreamcast / Arcade", primaryPlatform: .dreamcast,
                 extensions: ["elf", "cdi", "chd", "gdi", "cue", "zip"], guidance: "Dreamcast and arcade games use Flycast.")
             default: return nil
@@ -207,9 +205,18 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
     // Missing in existing version-1 records; nil deliberately means off.
     var pspJIT: Bool? = nil
     var originalFilename: String? = nil // Arcade set names are part of Flycast's loader protocol.
+    var storageOwnerID: UUID? = nil
+    var installedPath: String? = nil
     var pspJITEnabled: Bool { platform == .psp && pspJIT == true }
 
     func validate() throws {
+        if let path = installedPath {
+            let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard runtimeID == "azahar", platform == .nintendo3DS, fileExtension == "app", storageOwnerID != nil,
+                  path.utf8.count <= 4096, parts.count <= 32,
+                  parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") })
+            else { throw IridiumRuntimeError.unsafePath }
+        } else if storageOwnerID != nil { throw IridiumRuntimeError.unsafePath }
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.utf8.count <= 512
         else { throw IridiumRuntimeError.invalidGame }
         // Durable record validity is independent of the runtimes linked into
@@ -243,9 +250,40 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
 
 /// This additive library never rewrites Madeira's library or Wine prefixes.
 /// Removing a record retains its ROM and saves. Unknown versions fail closed.
-struct IridiumConsoleStore {
+enum IridiumGameFolder {
+    static func identifier(_ name: String) -> UUID? {
+        if let id = UUID(uuidString: name) { return id }
+        guard name.count > 39, name.dropLast(36).hasSuffix(" - ") else { return nil }
+        return UUID(uuidString: String(name.suffix(36)))
+    }
+
+    static func name(_ title: String, id: UUID) -> String {
+        let invalid = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "/\\:\"<>|?*"))
+        var title = title.precomposedStringWithCanonicalMapping.components(separatedBy: invalid)
+            .joined(separator: " ").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        while title.utf8.count > 120 { title.removeLast() }
+        title = title.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return (title.isEmpty ? "Game" : title) + " - " + id.uuidString
+    }
+
+    static func folder(_ id: UUID, title: String? = nil, in root: URL) throws -> URL {
+        let fm = FileManager.default, root = root.standardizedFileURL
+        guard root.resolvingSymlinksInPath().path == root.path else { throw CocoaError(.fileReadInvalidFileName) }
+        let names = fm.fileExists(atPath: root.path) ? try fm.contentsOfDirectory(atPath: root.path) : []
+        guard names.count <= 100_000 else { throw CocoaError(.fileReadTooLarge) }
+        let matches = names.filter { identifier($0) == id }
+        guard matches.count <= 1 else { throw CocoaError(.fileWriteFileExists) }
+        let folder = root.appendingPathComponent(matches.first ?? title.map { name($0, id: id) } ?? id.uuidString, isDirectory: true)
+        guard folder.resolvingSymlinksInPath().path == folder.path else { throw CocoaError(.fileReadInvalidFileName) }
+        return folder
+    }
+}
+
+struct IridiumConsoleStore: Sendable {
     let root: URL
-    private let manager = FileManager.default
+    var gamesRoot: URL? = nil
+    private var manager: FileManager { .default }
     private struct Document: Codable { let version: Int; let games: [IridiumConsoleGame] }
 
     func checked(_ components: [String], createDirectory: Bool = false) throws -> URL {
@@ -289,7 +327,17 @@ struct IridiumConsoleStore {
 
     func rom(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
-        return try checked(["Games", game.id.uuidString, game.originalFilename ?? "game." + game.fileExtension])
+        if let relative = game.installedPath, let owner = game.storageOwnerID {
+            return try checked(["Saves", "azahar", owner.uuidString, "Azahar"] + relative.split(separator: "/").map(String.init))
+        }
+        return try gamePath(game, [game.originalFilename ?? "game." + game.fileExtension])
+    }
+
+    private func gamePath(_ game: IridiumConsoleGame, _ components: [String] = [], create: Bool = false) throws -> URL {
+        _ = try checked([])
+        let folder = gamesRoot ?? root.appendingPathComponent("Games", isDirectory: true)
+        let name = try gamesRoot.map { try IridiumGameFolder.folder(game.id, title: game.title, in: $0).lastPathComponent } ?? game.id.uuidString
+        return try IridiumConsoleStore(root: folder).checked([name] + components, createDirectory: create)
     }
 
     /// Recheck the private copy at each launch. This is bounded structural
@@ -303,7 +351,7 @@ struct IridiumConsoleStore {
 
     func saveDirectory(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
-        let directory = try checked(["Saves", game.runtimeID, game.id.uuidString], createDirectory: true)
+        let directory = try checked(["Saves", game.runtimeID, (game.storageOwnerID ?? game.id).uuidString], createDirectory: true)
         if game.platform == .psp || game.platform.isPhase3 {
             // PPSSPP owns a nested memory-stick tree. A safe root alone does
             // not prevent an existing PSP/SAVEDATA link from escaping it.
@@ -343,8 +391,23 @@ struct IridiumConsoleStore {
     }
 
     func importROM(_ source: URL, into games: [IridiumConsoleGame], preferredPlatform: IridiumPlatform? = nil,
-                   selectedFiles: [URL] = []) throws -> IridiumConsoleGame {
+                   selectedFiles: [URL] = [], gameID: UUID = UUID()) throws -> IridiumConsoleGame {
         _ = try load()
+        if let existing = games.first(where: { $0.id == gameID }) {
+            let saved = try validateROM(existing)
+            guard manager.contentsEqual(atPath: try IridiumROMInspection.checkedFile(source).path, andPath: saved.path) else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            if ["gdi", "cue"].contains(existing.fileExtension) {
+                let disc = try IridiumDiscSet(source, selectedFiles: selectedFiles)
+                for name in disc.filenames {
+                    let input = try IridiumROMInspection.checkedFile(source.deletingLastPathComponent().appendingPathComponent(name))
+                    let output = try gamePath(existing, name.split(separator: "/").map(String.init))
+                    guard manager.contentsEqual(atPath: input.path, andPath: output.path) else { throw IridiumRuntimeError.invalidGame }
+                }
+            }
+            return existing
+        }
         let ext = source.pathExtension.lowercased()
         let disc = ["gdi", "cue"].contains(ext) ? try IridiumDiscSet(source, selectedFiles: selectedFiles) : nil
         let inspected = try IridiumROMInspection.inspect(source, fileExtension: ext, preferredPlatform: preferredPlatform)
@@ -355,29 +418,49 @@ struct IridiumConsoleStore {
             else { throw IridiumRuntimeError.invalidGame }
         }
         let runtime = try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil)
-        var game = IridiumConsoleGame(id: UUID(), title: String(source.deletingPathExtension().lastPathComponent.prefix(128)),
+        var game = IridiumConsoleGame(id: gameID, title: String(source.deletingPathExtension().lastPathComponent.prefix(128)),
             platform: platform, runtimeID: runtime.id, fileExtension: ext, importedAt: Date())
-        if platform == .arcade || disc != nil { game.originalFilename = source.lastPathComponent }
-        let directory = try checked(["Games", game.id.uuidString], createDirectory: true)
-        let target = try rom(game)
+        game.originalFilename = source.lastPathComponent
+        let destination = try gamePath(game)
+        var output = self
+        var staging: URL?
+        if !manager.fileExists(atPath: destination.path) {
+            let folder = gamesRoot ?? root.appendingPathComponent("Games", isDirectory: true)
+            let temporary = folder.appendingPathComponent(".console-import-" + game.id.uuidString)
+            let checked = try IridiumConsoleStore(root: folder).checked([temporary.lastPathComponent])
+            if manager.fileExists(atPath: checked.path) { try manager.removeItem(at: checked) }
+            staging = checked
+            output.gamesRoot = checked
+        }
+        defer { if let staging { try? manager.removeItem(at: staging) } }
+        let directory = try output.gamePath(game, create: true)
+        let target = try output.rom(game)
         // Copy without overwrite; the source and its parent directories remain
         // untouched. The caller coordinates provider access. Revalidate both
         // path ancestry and every inspected header in the copied file.
         let checkedSource = try IridiumROMInspection.checkedFile(source)
-        try manager.copyItem(at: checkedSource, to: target)
+        if manager.fileExists(atPath: target.path) {
+            guard manager.contentsEqual(atPath: checkedSource.path, andPath: target.path) else { throw IridiumRuntimeError.invalidGame }
+        } else { try manager.copyItem(at: checkedSource, to: target) }
         if let disc {
             for name in disc.filenames {
                 let components = name.split(separator: "/").map(String.init)
-                _ = try checked(["Games", game.id.uuidString] + Array(components.dropLast()), createDirectory: true)
-                try manager.copyItem(at: IridiumROMInspection.checkedFile(source.deletingLastPathComponent().appendingPathComponent(name)),
-                                     to: checked(["Games", game.id.uuidString] + components))
+                _ = try output.gamePath(game, Array(components.dropLast()), create: true)
+                let input = try IridiumROMInspection.checkedFile(source.deletingLastPathComponent().appendingPathComponent(name))
+                let track = try output.gamePath(game, components)
+                if manager.fileExists(atPath: track.path) {
+                    guard manager.contentsEqual(atPath: input.path, andPath: track.path) else { throw IridiumRuntimeError.invalidGame }
+                } else { try manager.copyItem(at: input, to: track) }
             }
         }
-        let copied = try IridiumROMInspection.inspect(try rom(game), fileExtension: ext, preferredPlatform: platform)
+        let copied = try IridiumROMInspection.inspect(try output.rom(game), fileExtension: ext, preferredPlatform: platform)
         guard copied == inspected else {
             throw IridiumRuntimeError.invalidGame
         }
-        _ = directory // Retain an unlisted copy on persistence failure for recovery.
+        if staging != nil {
+            _ = try gamePath(game)
+            try manager.moveItem(at: directory, to: destination)
+        } // Retain a complete unlisted copy if library persistence fails.
         try save(games + [game])
         return game
     }

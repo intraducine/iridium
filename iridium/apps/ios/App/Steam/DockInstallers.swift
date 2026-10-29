@@ -660,7 +660,7 @@ enum DockInstallers {
     }
 
     nonisolated static func inside(_ url: URL, drive: URL) -> Bool {
-        url.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(drive.resolvingSymlinksInPath().standardizedFileURL.path + "/")
+        IridiumGameStorage.windowsRelative(url, drive: drive) != nil
     }
 
     /// A C:\ path resolved on disk the way Wine resolves it (case-insensitive), staying

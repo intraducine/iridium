@@ -7,6 +7,7 @@
 #import <AVFoundation/AVFoundation.h>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <signal.h>
 #include <cerrno>
 #include <cstring>
@@ -29,6 +30,11 @@
 #include "Core/HLE/sceCtrl.h"
 #include "Core/Reporting.h"
 #include "Core/Util/DarwinFileSystemServices.h"
+#include "IRPPSSPPOptions.h"
+#include "IRCheats.h"
+#include "Core/CwCheat.h"
+#include <sstream>
+void ir_psp_managed_cheats(std::vector<CheatCode>);
 #ifndef USE_FFMPEG
 #error The native PSP player requires its upstream media decoders
 #endif
@@ -90,6 +96,10 @@ static std::atomic<int> currentResolution{2};
 static std::atomic<int> pendingState;
 static std::atomic<bool> stateBusy;
 static bool reportedCoreError; // native render thread, reset before starting it
+static std::mutex optionsLock;
+static NSDictionary *pendingOptions;
+static NSDictionary *startupOptions;
+static bool optionsReported;
 
 
 static void event(unsigned kind, const char *message) {
@@ -169,6 +179,7 @@ static void forwardNativeLog(const LogMessage &message, void *) {
     self.previousIdleTimerDisabled = UIApplication.sharedApplication.idleTimerDisabled;
     frames = 0; rendererFailed = false;
     pendingResolution = 0; pendingState = 0; stateBusy = false; reportedCoreError = false;
+    {std::lock_guard<std::mutex> guard(optionsLock);pendingOptions=nil;optionsReported=false;}
     ir_native_psp_platform_init();
     struct sigaction ignored{};
     ignored.sa_handler = SIG_IGN;
@@ -481,11 +492,13 @@ void *ir_native_psp_create(const char *game, const char *memoryStick, const char
     owner.gamePath = @(game); owner.memoryStick = @(memoryStick); owner.assets = @(assets);
     AVAudioSession *audio = AVAudioSession.sharedInstance;
     owner.audioCategory = audio.category; owner.audioMode = audio.mode; owner.audioOptions = audio.categoryOptions;
+    owner.previousIdleTimerDisabled = UIApplication.sharedApplication.idleTimerDisabled;
     owner.wantsActive = YES;
     owner.appActive = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
     bool verified = jitProbeVerified.exchange(false);
     eventSink = callback; inputSource = input;
     jitVerified = jit && verified && debuggerEnabled();
+    { std::lock_guard<std::mutex> guard(optionsLock); startupOptions=nil; }
     generation.fetch_add(1); container = owner;
     return (__bridge_retained void *)owner;
 }
@@ -510,9 +523,30 @@ bool ir_native_psp_request(unsigned operation, int value) {
     }
     return false;
 }
+bool ir_native_psp_command(const char *json) {
+    if(!NSThread.isMainThread||!container||container.closing||!json||strlen(json)>131072)return false;
+    id request=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)] options:0 error:nil];
+    if(![request isKindOfClass:NSDictionary.class])return false;
+    if([request[@"operation"] isEqual:@"startupOptions"]) {
+        if(container.initialized||![request[@"values"] isKindOfClass:NSDictionary.class])return false;
+        NSDictionary *values=request[@"values"];
+        for(id key in values)if(![key isKindOfClass:NSString.class]||!irPSPStartupKey(key)||
+            ![values[key] isKindOfClass:NSString.class]||(![values[key] isEqual:@"0"]&&![values[key] isEqual:@"1"]))return false;
+        std::lock_guard<std::mutex> guard(optionsLock);startupOptions=[values copy];return true;
+    }
+    if(!container.initialized)return false;
+    if(![request[@"operation"] isEqual:@"cheats"]&&(![request[@"operation"] isEqual:@"option"]||
+       ![request[@"key"] isKindOfClass:NSString.class]||![request[@"value"] isKindOfClass:NSString.class]))return false;
+    std::lock_guard<std::mutex> guard(optionsLock);
+    if(pendingOptions)return false;
+    bool idle=false;
+    if(!stateBusy.compare_exchange_strong(idle,true))return false;
+    pendingOptions=request;return true;
+}
 int ir_native_psp_resolution(void) { return currentResolution.load(); }
 void ir_native_psp_frontend_event(unsigned kind, const char *message) {
     if (kind == 4) {
+        optionsReported=false;
         currentResolution = g_Config.iInternalResolution;
         const char *cpu = "Unknown";
         switch (PSP_CoreParameter().cpuCore) {
@@ -543,8 +577,54 @@ void ir_native_psp_poll_input(void) {
     __CtrlSetAnalogXY(0, x / 32768.0f, -y / 32768.0f);
 }
 
+void ir_native_psp_frontend_startup(void) {
+    NSDictionary *values;
+    { std::lock_guard<std::mutex> guard(optionsLock); values=startupOptions; }
+    if(values[@"iPSPModel"])g_Config.iPSPModel=[values[@"iPSPModel"] intValue];
+    if(values[@"bSoftwareRendering"])g_Config.bSoftwareRendering=[values[@"bSoftwareRendering"] boolValue];
+}
+
 void ir_native_psp_frontend_frame(void) {
     if (!acceptingCallbacks || !PSP_IsInited()) return;
+    NSDictionary *settings;
+    {std::lock_guard<std::mutex> guard(optionsLock);settings=pendingOptions;pendingOptions=nil;}
+    if([settings[@"operation"] isEqual:@"cheats"]) {
+        std::vector<IRCheat> items;std::vector<CheatCode> codes;
+        bool valid=ir_cheats_decode(settings[@"items"],items);
+        for(const auto& item:items) {
+            if(strcmp(item.format,"cwcheat")) {valid=false;break;}
+            CheatCode code;code.name=item.name;
+            std::istringstream stream(item.code);
+            for(std::string line;std::getline(stream,line);) {
+                if(line.find_first_not_of(" \t\r")==std::string::npos)continue;
+                CheatLine pair;
+                if(!ir_cheat_pair(line.c_str(),&pair.part1,&pair.part2)){valid=false;break;}
+                code.lines.push_back(pair);
+            }
+            if(code.lines.empty())valid=false;
+            if(item.enabled)codes.push_back(std::move(code));
+        }
+        if(valid) {ir_psp_managed_cheats(std::move(codes));event(5,"Cheats applied.");}
+        else event(6,"Check the cheat format and code. Existing codes have been kept.");
+        stateBusy=false;
+        settings=nil;
+    }
+    if(settings||!optionsReported) {
+        bool accepted=false;
+        NSArray *items=irPSPOptions(settings[@"key"],settings[@"value"],&accepted);
+        if(settings&&accepted) {
+            Reporting::UpdateConfig();System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
+            if(!g_Config.Save("Iridium core settings"))event(6,"The settings could not be saved. Check free storage.");
+        } else if(settings)event(6,"This PSP setting is unavailable.");
+        NSString *discID=@(g_paramSFO.GetDiscID().c_str());
+        bool validID=discID.length>0&&discID.length<=16&&[discID rangeOfCharacterFromSet:[[NSCharacterSet alphanumericCharacterSet]invertedSet]].location==NSNotFound;
+        NSDictionary *folders=validID?@{@"Texture Packs":[@"PSP/TEXTURES/" stringByAppendingString:discID],@"Shaders":@"PSP/shaders",@"Cheat Files":@"PSP/Cheats"}:@{};
+        NSDictionary *snapshot=@{@"options":items,@"states":@YES,@"discCount":@0,@"discIndex":@0,@"players":@1,@"aspect":@(480.0/272.0),@"cheatFormats":@[@"cwcheat"],@"contentFolders":folders};
+        NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+        if(data)event(10,[[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding] UTF8String]);
+        optionsReported=true;
+        if(settings)stateBusy=false;
+    }
     if (coreState == CORE_RUNTIME_ERROR && !reportedCoreError) {
         reportedCoreError = true;
         event(2, "The PSP engine reported a runtime error. Details are available in View Log.");

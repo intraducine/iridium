@@ -24,10 +24,43 @@ def body(text, signature, replacement):
 
 
 def apply(name, text):
+    if name == 'Core/CwCheat.cpp':
+        text = replace(text, 'static bool cheatsEnabled;', '''static bool cheatsEnabled;
+#include <mutex>
+#include <atomic>
+static std::mutex irManagedCheatLock;
+static std::vector<CheatCode> irManagedCheats;
+static std::atomic<bool> irManagedCheatsDirty{false};
+void ir_psp_managed_cheats(std::vector<CheatCode> codes) {
+    std::lock_guard<std::mutex> lock(irManagedCheatLock);
+    irManagedCheats = std::move(codes); irManagedCheatsDirty.store(true);
+}''')
+        text = replace(text, 'void hleCheat(u64 userdata, int cyclesLate) {', '''void hleCheat(u64 userdata, int cyclesLate) {
+    {
+        std::lock_guard<std::mutex> lock(irManagedCheatLock);
+        if (irManagedCheatsDirty.exchange(false)) {
+            if (!irManagedCheats.empty()) g_Config.bEnableCheats = true;
+            g_Config.bReloadCheats = true;
+        }
+    }''')
+        text = replace(text, '\tcheats_ = parser.GetCheats();', '''\tcheats_ = parser.GetCheats();
+    std::lock_guard<std::mutex> lock(irManagedCheatLock);
+    cheats_.insert(cheats_.end(), irManagedCheats.begin(), irManagedCheats.end());''')
+        text = replace(text, 'void __CheatShutdown() {', '''void __CheatShutdown() {
+    {
+        std::lock_guard<std::mutex> lock(irManagedCheatLock);
+        irManagedCheats.clear(); irManagedCheatsDirty.store(false);
+    }''')
     if name == 'UI/NativeApp.cpp':
         text = replace(text, 'bool skipLogo = false;', 'bool skipLogo = true;')
         text = replace(text, '\tg_screenManager->SetBackgroundOverlayScreens(new BackgroundScreen(), new OSDOverlayScreen());',
                        '\t// Iridium owns loading, notifications and menus; no upstream overlay screens.')
+    if name == 'Core/System.cpp':
+        text = '#include "IRPPSSPPNative.h"\n' + text
+        text = replace(text, '\tMemory::g_PSPModel = g_Config.iPSPModel;',
+                       '\tir_native_psp_frontend_startup();\n\tMemory::g_PSPModel = g_Config.iPSPModel;')
+        text = replace(text, '\t// Compat settings can override the software renderer, take care of that here.',
+                       '\tir_native_psp_frontend_startup();\n\t// Compat settings can override the software renderer, take care of that here.')
     if name == 'UI/EmuScreen.cpp':
         text = '#include "IRPPSSPPNative.h"\n' + text
         text = body(text, 'void EmuScreen::CreateViews()', '''    // A structural root is required by the native boot/render lifecycle.
@@ -79,4 +112,4 @@ def apply(name, text):
     return text
 
 
-PATCHED = ('UI/EmuScreen.cpp', 'Core/HLE/sceCtrl.cpp')
+PATCHED = ('UI/EmuScreen.cpp', 'Core/HLE/sceCtrl.cpp', 'Core/CwCheat.cpp')

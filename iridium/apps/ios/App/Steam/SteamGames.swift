@@ -28,7 +28,7 @@ enum SteamGamesRules {
 
     /// What a game's card says about it.
     enum Status: Equatable {
-        case notInstalled, partlyInstalled, installed, updateAvailable
+        case notInstalled, partlyInstalled, filesMissing, installed, updateAvailable
         case queued, downloading(Int), paused, failed
 
         /// The card's state pill, or nil for an installed game: its card shows only
@@ -38,6 +38,7 @@ enum SteamGamesRules {
             switch self {
             case .notInstalled: return "Not installed"
             case .partlyInstalled: return "Not fully installed"
+            case .filesMissing: return "Files missing"
             case .installed: return nil
             case .updateAvailable: return "Update"
             case .queued: return "Waiting"
@@ -64,6 +65,7 @@ enum SteamGamesRules {
             }
         }
         guard let installed else { return .notInstalled }
+        if installed.filesMissing == true { return .filesMissing }
         if !installed.installed { return .partlyInstalled }
         return updateAvailable ? .updateAvailable : .installed
     }
@@ -357,6 +359,7 @@ enum SteamDirectStart {
 @MainActor final class SteamGamesModel: ObservableObject {
     static let shared = SteamGamesModel()
     @Published private(set) var games: [DockGame] = []
+    @Published private(set) var sharedOnlyApps: Set<Int> = []
     /// `buildid` of each install in Madeira's own library folder, by App ID.
     @Published private(set) var builds: [Int: Int] = [:]
     /// The language each of those install records names (`UserConfig.language`).
@@ -377,7 +380,9 @@ enum SteamDirectStart {
         scanning = true
         let drive = MadeiraDock.drive
         Task.detached(priority: .utility) {
-            let found = MadeiraDock.games(drive: drive)
+            let discovered = MadeiraDock.games(drive: drive, includeSharedOnly: true)
+            let sharedOnly = Set(discovered.filter { $0.sharedOnly == true }.map(\.id))
+            let found = discovered.filter { $0.sharedOnly != true }
             var builds: [Int: Int] = [:], languages: [Int: String] = [:], depots: [Int: Set<Int>] = [:]
             for game in found where SteamInstallPaths.isManaged(library: game.library) && game.installed {
                 let steamApps = SteamInstallPaths.steamApps(drive: drive)
@@ -392,6 +397,8 @@ enum SteamDirectStart {
                 self.scanning = false
                 let again = self.rescan
                 self.rescan = false
+                LibraryModel.shared.hideSteam(sharedOnly)
+                if self.sharedOnlyApps != sharedOnly { self.sharedOnlyApps = sharedOnly }
                 if self.games != found { self.games = found }
                 if self.builds != recorded { self.builds = recorded }
                 if self.languages != recordedLanguages { self.languages = recordedLanguages }
@@ -1159,7 +1166,7 @@ struct SteamCloudSection: View {
         if !conflicts.isEmpty {
             let missing = conflicts.filter { $0.kind == .cloudOnly }.count
             Label(missing == conflicts.count ? "\(Self.saves(missing)) synced here before \(missing == 1 ? "is" : "are") missing on this device"
-                  : "\(Self.saves(conflicts.count)) differ between Steam Cloud and this device", systemImage: "exclamationmark.triangle.fill")
+                  : "\(Self.saves(conflicts.count)) \(conflicts.count == 1 ? "differs" : "differ") between Steam Cloud and this device", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             ForEach(conflicts) { entry in
                 VStack(alignment: .leading, spacing: 3) {
@@ -1224,6 +1231,7 @@ struct SteamEntrySection: View {
     @ObservedObject private var steam = SteamOwnedLibrary.shared
     @ObservedObject private var games = SteamGamesModel.shared
     @ObservedObject private var languageChoices = SteamGameLanguageChoices.shared
+    @ObservedObject private var library = LibraryModel.shared
     @State private var confirmUninstall = false
     @State private var freeSpace: Int64?
     /// "The game": the install folder's programs (the Program picker) and whether
@@ -1233,7 +1241,7 @@ struct SteamEntrySection: View {
 
     var body: some View {
         let appID = entry.steamAppID ?? 0
-        let installed = games.games.first { $0.id == appID }
+        let installed = library.steamInstall(entry)
         let download = steam.downloads[appID]
         // Madeira manages (updates, repairs, removes) only what it downloaded into Dock's own library folder.
         let managed = installed.map { SteamInstallPaths.isManaged(library: $0.library) } ?? false
@@ -1314,7 +1322,7 @@ struct SteamEntrySection: View {
                     Text(status).font(.footnote)
                 }
             }
-            if managed, download == nil {
+            if managed {
                 Button("Uninstall", role: .destructive) { confirmUninstall = true }
             }
         } header: {
@@ -1332,11 +1340,10 @@ struct SteamEntrySection: View {
             freeSpace = values?.volumeAvailableCapacityForImportantUsage
         }
         .task(id: "\(entry.steamStart ?? "dock") \(installed?.installed == true) \(download == nil)") { await resolveProgram() }
-        .confirmationDialog("Uninstall \(entry.title)? Its downloaded files are deleted from this device. Saves stored elsewhere are kept.",
+        .confirmationDialog("Uninstall \(entry.title)? Its downloaded files and any saves inside its game folder are removed. Other saves stay.",
                             isPresented: $confirmUninstall, titleVisibility: .visible) {
             Button("Uninstall", role: .destructive) {
-                if let installed { steam.uninstall(installed) }
-                uninstalled()
+                if let installed { Task { if await steam.uninstall(installed) { uninstalled() } } }
             }
         }
     }

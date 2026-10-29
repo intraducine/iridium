@@ -2387,11 +2387,11 @@ struct ContentView: View {
         jitStatus = .testing
         logStore.log("Requesting JIT with \(jitCoordinator.resolvedMethod.title)...")
 
-        jitCoordinator.enable { result in
+        jitCoordinator.prepareConsoleMemory { result in
             switch result {
             case .success:
                 jitStatus = .available
-                logStore.log("JIT enabled! Debugger attached.", level: .success)
+                logStore.log("Shared JIT memory is ready.", level: .success)
                 launchAfterJITEnded(started: true)
             case .failure(let failure):
                 launchAfterJITEnded(started: false)
@@ -2413,8 +2413,10 @@ struct ContentView: View {
     private func launchAfterJITEnded(started: Bool) {
         guard let launch = launchAfterJIT else { return }
         launchAfterJIT = nil
+        let requestedGame = library.startingJIT
         library.startingJIT = nil
-        guard started, StikJITHelper.ready, library.current == nil, wine_process_is_running() == 0 else {
+        guard started, StikJITHelper.ready, library.current == nil, !IridiumMadeiraRuntime.shared.isBusy else {
+            if library.preparing?.id == requestedGame { library.preparing = nil }
             logStore.log("[jit-on-play] JIT did not come on: the game was not started")
             // A failure has its own error; this one closes the details page as well.
             if started, library.current == nil { library.error = "JIT is on, but the game could not start. Tap Play again." }
@@ -2431,7 +2433,11 @@ struct ContentView: View {
     /// own list, which attaches and leaves). Without `then`, the library offers
     /// Madeira's Enable JIT instead of starting a launch that cannot get its pool.
     private func jitReadyForLaunch(inLibrary: Bool, entry: UUID? = nil, then launch: (() -> Void)? = nil) -> Bool {
-        if StikJITHelper.ready { return true }
+        if jitCoordinator.consoleMemoryRequiresRestart {
+            library.error = "JIT cleanup did not finish. Close and reopen Iridium."
+            return false
+        }
+        if StikJITHelper.ready && ir_jit_memory_ready() { return true }
         if inLibrary, let launch {
             logStore.log("[jit-on-play] JIT is not on: enabling it, then starting the game")
             launchAfterJIT = launch
@@ -2518,10 +2524,21 @@ struct ContentView: View {
     /// applies the entry's launch profile and runs the same full sequence as the
     /// developer interface's buttons.
     private func launchLibraryEntry(_ entry: LibraryEntry) {
+        guard library.current == nil, !library.launching, library.preparing == nil else { return }
+        library.prepare(entry)
+        // Draw the launch status before profile checks or native setup can block.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard self.library.preparing?.id == entry.id, self.library.current == nil else { return }
+            self.continueLibraryLaunch(entry)
+        }
+    }
+
+    private func continueLibraryLaunch(_ entry: LibraryEntry) {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         // madeira-bcd: a game seen for the first time starts with Madeira's recommended
         // settings (GameRecommendationsApply.swift).
@@ -2550,13 +2567,8 @@ struct ContentView: View {
             LogStore.shared.log("[steam-start] app=\(appID) direct source=\(entry.steamProgramSource ?? "-") " +
                                 "args=\(entry.launchArguments.isEmpty ? 0 : 1) folder=\(entry.steamWorkingWindowsPath == nil ? "program" : "steam")")
         }
-        guard wine_process_is_running() == 0, wineserver_is_running() == 0, library.current == nil else {
+        guard !IridiumMadeiraRuntime.shared.isBusy, library.current == nil else {
             library.error = "A session is already running."; return
-        }
-        // One Wine session per app run (see LibraryModel.sessionsThisRun).
-        if LibraryModel.sessionsThisRun > 0, MadeiraConfig.flag("MADEIRA_ONE_SESSION_PER_RUN") {
-            LogStore.shared.log("[session-once] launch held: \(LibraryModel.sessionsThisRun) session(s) already ran in this app run")
-            library.restartNotice = LibraryModel.restartMessage; return
         }
         // The same precondition runWineFullSequence checks: the JIT pool is
         // taken at launch, through the debugger. Without it, Play enables JIT and
@@ -2567,10 +2579,14 @@ struct ContentView: View {
 
     /// The rest of Play, with JIT on: checks the entry's launch profile and starts it.
     private func startLibraryEntry(_ entry: LibraryEntry) {
+        guard library.current == nil, !IridiumMadeiraRuntime.shared.isBusy else {
+            library.error = "A session is already running."; return
+        }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         do { if entry.desktop != true { _ = try LibraryModel.executable(entry.launchRelativePath) }; try entry.validate() }
         catch {
@@ -2635,10 +2651,12 @@ struct ContentView: View {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
-        guard jit_check_debugged() else {
+        let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID
+        guard jit_check_debugged(), ir_jit_memory_ready(), !jitCoordinator.consoleMemoryRequiresRestart else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
-            if profile != nil { LibraryModel.shared.launchFailed() }
+            if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }
             return
         }
         // Steam downloads wait for the session, and the app's own Steam connection closes
@@ -2656,6 +2674,22 @@ struct ContentView: View {
             logStore.log("madeira.cfg: " + (cfg.isEmpty ? "(empty)" : cfg.map { "\($0.key)=\($0.value)" }.joined(separator: " ")))
         } else {
             logStore.log("madeira.cfg absent: legacy madeira-*.txt files apply")
+        }
+
+        if IridiumMadeiraRuntime.shared.isResident, let nativeLaunch {
+            DispatchQueue.global(qos: .userInitiated).async {
+                IridiumMadeiraRuntime.shared.restoreEnvironment()
+                profile?.applyEnvironment()
+                if let profile { Self.reassertBCDSwitches(profile) }
+                do { try IridiumMadeiraRuntime.shared.submit(nativeLaunch, configuration: MadeiraConfig.sessionEnvironment()) }
+                catch {
+                    DispatchQueue.main.async {
+                        guard library.nativeLaunchID == nativeLaunch else { return }
+                        library.error = "Windows could not start this game safely. Close and reopen Iridium."
+                    }
+                }
+            }
+            return
         }
 
         logStore.log("Running full Wine sequence...")
@@ -3218,58 +3252,30 @@ struct ContentView: View {
                 logStore.uiPaused = false
                 // A library session that never started returns to the library.
                 let offerJIT = reason == StikJITHelper.noDebuggerMessage
-                DispatchQueue.main.async { LibraryModel.shared.launchFailed(reason, offerJIT: offerJIT) }
+                DispatchQueue.main.async {
+                    heartbeat.invalidate()
+                    if offerJIT, let nativeLaunch {
+                        LibraryModel.shared.launchFailedBeforeNative(nativeLaunch, reason: reason, offerJIT: true)
+                    } else { LibraryModel.shared.launchFailed(reason, offerJIT: offerJIT) }
+                }
                 return
             }
 
-            // Step 1b (ml524, #67): DETACH THE DEBUGGER NOW, while the VM map is small.
-            //
-            // Every ~54s whole-app stall coincides with StikDebug DEPARTING — clean
-            // exit(0) and jetsam-kill alike (12:07:43 exit(0) -> GAP 54.0s at 12:07:49;
-            // 12:13:58 cpulimit kill -> GAP 53.8s starting 64ms BEFORE the kill log).
-            // Departure is the trigger; the manner of death is irrelevant. StikDebug
-            // burns its 48s-CPU-per-60s budget in ~52s every single run, so an
-            // UNCONTROLLED departure mid-game is guaranteed. Detaching here pays the
-            // cost ONCE, at a moment we choose, before anything is on screen.
-            //
-            // Why it may also be CHEAPER here: on attach the kernel unnests the DYLD
-            // shared region in OUR map ("increases system memory footprint until the
-            // target exits"), so teardown plausibly scales with VM-map complexity —
-            // and right now the map is a fraction of what it becomes under Steam
-            // (91 threads / 2512MB). The [early-detach] timing below tests exactly that.
-            //
-            // Safe NOW and not before: ml522/ml523 made US the task-level Mach handler
-            // for bad-access + bad-instruction + breakpoint, so the fault backstop that
-            // used to require a live debugger (madeira-jit.js: "NEVER detach here ... every
-            // later escalated fault parks its thread forever", the ml345 wedge) is ours.
-            // And all executable memory already comes from the pool granted above —
-            // virtual_ios.c copies every PE .text into it rather than mprotecting,
-            // because iOS/TXM blocks mprotect(PROT_EXEC) outright.
-            //
-            // ORDERING MATTERS: our task-port claim installs at wine's first thread
-            // setup, which is AFTER this point, so this BRK still reaches StikDebug.
-            // Flip to false to A/B against the old attached-for-the-whole-run behaviour.
-            let earlyDetach = true
-            if earlyDetach, pool != nil {
-                let dt0 = CFAbsoluteTimeGetCurrent()
-                StikJITHelper.detachDebugger()
-                let dms = (CFAbsoluteTimeGetCurrent() - dt0) * 1000.0
-                logStore.log(String(format: "[early-detach] rev=ml524 took %.0f ms", dms),
-                             level: dms > 5000 ? .error : .success)
-            } else if !earlyDetach {
-                logStore.log("[early-detach] rev=ml524 DISABLED — debugger stays attached all run")
-            }
-
-            winios_phase("detach-done")
-
-            // The Madeira JIT shortcut turned Cellular Data off or connected LocalDevVPN
-            // for this JIT (JITNetwork.swift). The pool is mapped and the debugger is
-            // gone, so put them back now: running the shortcut leaves Madeira for a
-            // moment, which is safe only before Wine starts drawing.
-            JITNetworkShortcut.restoreBlocking()
+            // Shared JIT setup already restored its helper and network state.
+            winios_phase("jit-memory-ready")
 
             // Step 2: Start wineserver
-            self.startWineserver()
+            guard self.startWineserver(for: nativeLaunch) else {
+                DispatchQueue.main.async {
+                    heartbeat.invalidate()
+                    ws_log_quiet = 0
+                    logStore.uiPaused = false
+                    if let nativeLaunch, LibraryModel.shared.nativeLaunchID == nativeLaunch {
+                        LibraryModel.shared.launchFailedBeforeNative(nativeLaunch)
+                    }
+                }
+                return
+            }
             winios_phase("wineserver-up")
 
             // Step 3: Start Wine.
@@ -3287,90 +3293,12 @@ struct ContentView: View {
                 Thread.sleep(forTimeInterval: 2.0)
             }
             winios_phase("wine-start")
-            self.startWineProcess()
-
-            // Step 4: Wait for Wine to finish instead of fixed timer
-            // Poll wine_process_is_running() — it clears when __wine_main returns
-            // For real games this never returns (message loop runs forever), so
-            // the cap is what matters. After detach, the dual-mapped JIT pool
-            // keeps existing blocks executable; only NEW BRK-based compiles
-            // fail.
-            //
-            // 2026-05-13 first-frame: Thumper splash renders at ~50s but JIT is
-            // STILL compiling new FMOD blocks 3M log lines later — audio init
-            // is huge (~14k unique RIPs in fmod64.dll alone). Bumped to 300s
-            // to let FMOD finish init before debugger detach; otherwise main
-            // game loop never engages because Present is gated on audio ready.
-            logStore.log("Waiting for Wine to finish PE loading...")
-            // 2026-07-03 early detach: attached-mode runs the whole guest
-            // ~2x slower (measured 1.2s → 0.74s per present at detach) and
-            // on iOS 27 presented frames only reliably reach glass after
-            // detach. Post-detach is safe now: trap-mode JIT writes go via
-            // the Mach emulator (no debugger), pool pages are pre-executable
-            // (dual map), page0 runs once on the first thread, and a
-            // post-detach compile was observed working (real_compiles
-            // 7093→7094, no faults). So: detach once the game is actually
-            // presenting (present #2 = first post-splash frame) plus a
-            // settle window, instead of waiting out the full 1200s cap.
-            let maxWait = 1200.0  // hard safety cap (unchanged)
-            // 2026-07-03 second iteration: detach on present #1 (splash shown)
-            // instead of #2. The 3-minute splash-hold is the game loading —
-            // running it detached should roughly halve it. Riskier than #2
-            // (thousands of load-time compiles + worker-thread spawns happen
-            // post-detach) but all known dependencies are covered: trap-mode
-            // writes, pre-executable pool, page0 once-guard.
-            let settleAfterFirstPresent = 20.0
-            var presentingSince: CFAbsoluteTime? = nil
-            let pollStart = CFAbsoluteTimeGetCurrent()
-            var lastHeartbeat = CFAbsoluteTimeGetCurrent()
-            while wine_process_is_running() != 0 {
-                Thread.sleep(forTimeInterval: 0.25)
-                let now = CFAbsoluteTimeGetCurrent()
-                // Diagnostic heartbeat: 2026-07-03's detach-at-#1 run never
-                // triggered despite presents visibly counting — log what this
-                // loop actually observes so that can't happen silently again.
-                if now - lastHeartbeat > 30 {
-                    lastHeartbeat = now
-                    logStore.log("detach-wait: presents=\(madeira_get_present_count()) running=\(wine_process_is_running()) elapsed=\(Int(now - pollStart))s")
-                }
-                // Task #25: the present heuristic is meaningless in desktop
-                // mode — ANY child presenting (cube, a game window) trips it
-                // mid-session, and later program launches still need the
-                // attached-debugger facilities. Desktop sessions stay
-                // attached until the desktop exits (or the safety cap).
-                let isDesktopSession = getenv("MADEIRA_DESKTOP").map { $0.pointee == 49 } ?? false
-                if !isDesktopSession {
-                    if presentingSince == nil && madeira_get_present_count() >= 1 {
-                        presentingSince = now
-                        logStore.log("Game is presenting (#1, splash) — early detach in \(Int(settleAfterFirstPresent))s")
-                    }
-                    if let t = presentingSince, now - t > settleAfterFirstPresent {
-                        logStore.log("Early detach: game presenting and settled", level: .success)
-                        break
-                    }
-                }
-                if now - pollStart > maxWait {
-                    logStore.log("Wine still running after \(Int(maxWait))s, proceeding with detach", level: .error)
-                    break
-                }
-            }
-            let wineElapsed = CFAbsoluteTimeGetCurrent() - pollStart
-            logStore.log("Wine finished after \(String(format: "%.1f", wineElapsed))s")
-
-            // Step 5: Resume UI + os_log, give main thread time to recover before detach
-            DispatchQueue.main.async {
-                ws_log_quiet = 0
-                logStore.uiPaused = false
-            }
-            Thread.sleep(forTimeInterval: 2.0)
-
-            // Step 6: Detach debugger — main thread should have zero accumulated hang time
-            logStore.log("Detaching debugger...")
-            StikJITHelper.detachDebugger()
+            self.startWineProcess(nativeLaunch)
 
             DispatchQueue.main.async {
                 heartbeat.invalidate()
-                if wine_process_is_running() == 0 { LibraryModel.shared.launchFailed() }
+                ws_log_quiet = 0
+                logStore.uiPaused = false
             }
         }
     }
@@ -3379,30 +3307,29 @@ struct ContentView: View {
     /// start the normal session with explorer's virtual desktop running dockhost.exe.
     /// Nothing is handed over unless JIT is ready and no session runs.
     /// From the library (Settings › Steam › Madeira Dock) the start is a library
-    /// session: the library's one-session-per-run rule applies first, failures
+    /// session: the library's game admission applies first, failures
     /// show in the library, and the session gets the full-screen game view.
     /// `profile` is a Steam game's library entry (its Game details page): the
     /// session then takes that entry's display, performance and on-screen settings.
     private func startDock(_ game: DockGame, compactPool: Bool, profile: LibraryEntry? = nil) {
+        do { try MadeiraDock.validate(game, drive: MadeiraDock.drive) }
+        catch { library.error = error.localizedDescription; return }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         let inLibrary = library.enabled
         guard jitReadyForLaunch(inLibrary: inLibrary, entry: profile?.id,
                                 then: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }
         guard cloudClear(game.id, name: game.name, retry: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }
-        guard wine_process_is_running() == 0, wineserver_is_running() == 0, !inLibrary || library.current == nil else {
-            logStore.log("[madeira-dock] a session already ran in this app run; restart Madeira first", level: .error)
+        guard !IridiumMadeiraRuntime.shared.isBusy, !inLibrary || library.current == nil else {
+            logStore.log("[madeira-dock] a Windows session is still active or its cleanup is incomplete", level: .error)
             if inLibrary { library.error = "A session is already running." }
             return
         }
-        if inLibrary, LibraryModel.sessionsThisRun > 0, MadeiraConfig.flag("MADEIRA_ONE_SESSION_PER_RUN") {
-            LogStore.shared.log("[session-once] Dock launch held: \(LibraryModel.sessionsThisRun) session(s) already ran in this app run")
-            library.restartNotice = LibraryModel.restartMessage
-            return
-        }
+
         func fail(_ error: Error) {
             MadeiraDock.cleanup()
             SteamOwnedLibrary.shared.dockEnded()
@@ -3442,7 +3369,7 @@ struct ContentView: View {
             await SteamOwnedLibrary.shared.prepareDock()
             do {
                 // The launch state may have changed while the connection closed.
-                guard TouchControlsModel.shared.iridiumSettingsContext == nil, StikJITHelper.ready, wine_process_is_running() == 0, wineserver_is_running() == 0,
+                guard TouchControlsModel.shared.iridiumSettingsContext == nil, StikJITHelper.ready, !IridiumMadeiraRuntime.shared.isBusy,
                       !inLibrary || library.current == nil else {
                     throw DockError.message("The launch state changed. Enable JIT and try again.")
                 }
@@ -3615,7 +3542,16 @@ struct ContentView: View {
         return def
     }
 
-    private func startWineserver() {
+    private func startWineserver(for launch: UUID?) -> Bool {
+        // Record native initialization separately from the launch reservation.
+        // Even a failed server start can leave process-global state behind.
+        guard DispatchQueue.main.sync(execute: {
+            if let launch {
+                guard library.current != nil, library.nativeLaunchID == launch else { return false }
+            }
+            return LibraryModel.reserveNativeSession()
+        }) else { return false }
+        IridiumMadeiraRuntime.shared.noteNativeInitialization()
         logStore.log("Starting wineserver...")
 
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -3629,9 +3565,10 @@ struct ContentView: View {
         } else {
             logStore.log("Failed to start wineserver (error: \(result))", level: .error)
         }
+        return result == 0
     }
 
-    private func startWineProcess() {
+    private func startWineProcess(_ launch: UUID?) {
         logStore.log("Starting Wine process...")
 
         if wineserver_is_running() == 0 {
@@ -3643,6 +3580,14 @@ struct ContentView: View {
         let winePrefixPath = documentsPath.appendingPathComponent("wine").path
 
         // Call synchronously — caller already waited for wineserver to be ready
+        if let launch {
+            do { try IridiumMadeiraRuntime.shared.submit(launch, configuration: MadeiraConfig.sessionEnvironment()) }
+            catch {
+                DispatchQueue.main.async { library.error = "Windows could not prepare its game request." }
+                return
+            }
+            IridiumMadeiraRuntime.shared.configureHost()
+        }
         let result = wine_process_start(winePrefixPath)
         if result == 0 {
             logStore.log("Wine process thread launched", level: .success)
@@ -4187,6 +4132,7 @@ final class TouchControlsModel: ObservableObject {
 /// the game underneath — mouse-look must keep working between the buttons.
 final class ControlsWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !IridiumImportCoordinator.shared.blocksLaunch else { return nil }
         guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }
         let m = TouchControlsModel.shared
         // Edit mode owns the whole screen: drags and the scale pinch must not

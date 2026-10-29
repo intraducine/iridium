@@ -16,6 +16,7 @@ import time
 import sys
 import tempfile
 import madeira_audio_volume
+import madeira_threads
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
@@ -27,15 +28,15 @@ REVISION = engine_pins.get('madeira')['revision']
 PSP_REVISION = engine_pins.get('ppsspp')['revision']
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
-RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n'
+RUNTIME_HEADERS = '\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n#import "IRArchive.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
-    'NSCameraUsageDescription': 'A PSP game can use your camera to emulate the Go!Cam accessory.',
-    'NSMicrophoneUsageDescription': 'A PSP game can request microphone input for the Go!Cam or Talkman accessory.',
-    'NSMotionUsageDescription': 'Wii and PSP controls use device motion while you play.',
+    'NSCameraUsageDescription': 'PSP and 3DS games can request camera input while you play.',
+    'NSMicrophoneUsageDescription': 'PSP and 3DS games can request microphone input while you play.',
+    'NSMotionUsageDescription': 'Wii, 3DS, and PSP controls use device motion while you play.',
     'NSLocationWhenInUseUsageDescription': 'A PSP game can use your location to emulate the Go!Explore GPS accessory while playing.',
     'NSPhotoLibraryUsageDescription': 'Choose a photo for the PPSSPP background when you request it.',
-    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP multiplayer and on-device JIT pairing.',
+    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP and Dreamcast multiplayer and on-device JIT pairing.',
 }
 def overlay(name, text):
     """Legacy test entry point: read maintained shipping source, never rewrite upstream UI."""
@@ -64,6 +65,12 @@ def verify_pin():
         repos.append(UPSTREAM / line.split()[1])
     for repo in repos:
         changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
+        if repo == UPSTREAM / 'FEX':
+            for managed, adapt in [('FEXCore/Source/Utils/AllocWatch.cpp', madeira_threads.apply_fex),
+                                   ('Source/Windows/ARM64EC/Module.cpp', madeira_threads.apply_fex_arm64ec)]:
+                if managed not in changes: continue
+                original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed], text=True)
+                if (repo / managed).read_text() == adapt(original): changes.remove(managed)
         if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.js', '.pbxproj', '.y', '.l',
                                      '.sh', '.rs', '.metal', '.S', '.inc', '.in', '.cmake'}
                or Path(name).name == 'CMakeLists.txt' for name in changes):
@@ -103,6 +110,10 @@ def project(source, names):
     objects[asset_build] = dict(isa='PBXBuildFile', fileRef=asset_ref)
     resources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXResourcesBuildPhase')
     resources['files'].append(asset_build); group['children'].append(asset_ref)
+    audio_ref, audio_build = 'F20000000000000000000006', 'F20000000000000000000007'
+    objects[audio_ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='MenuAudio', sourceTree='<group>')
+    objects[audio_build] = dict(isa='PBXBuildFile', fileRef=audio_ref)
+    resources['files'].append(audio_build); group['children'].append(audio_ref)
     if (os.environ.get('IRIDIUM_PHASE3') == '1'):
         phase3 = [('host', 'libIridiumRetroPlayer.dylib'), ('dolphin', 'libIridiumDolphin.dylib'),
                   ('azahar', 'azahar_libretro.dylib'), ('play', 'play_libretro_ios.dylib'), ('flycast', 'flycast_libretro.dylib')]
@@ -135,7 +146,7 @@ def project(source, names):
                                       '$(SRCROOT)/../../../vendor/SameBoy/libretro',
                                       '$(SRCROOT)/../../ppsspp/$(PLATFORM_NAME)/include'])
         append('LIBRARY_SEARCH_PATHS', ['$(SRCROOT)/../../sameboy/$(PLATFORM_NAME)'])
-        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-framework', 'CoreFoundation'], unique=False)
+        append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-larchive', '-framework', 'CoreFoundation'], unique=False)
         append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PPSSPP'])
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
@@ -193,10 +204,12 @@ def prepare():
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
-    for name in ('IridiumCoreBridge.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
+    for name in ('IridiumCoreBridge.h', 'IRArchive.h', 'IRCoreOptions.h', 'IRCheats.h', 'IRWindowsThreads.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n')
+    import madeira_session
+    madeira_session.build(app / 'Madeira/arm64ec-windows')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('enginePin') != engine_pins.selected('psp') or psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -256,7 +269,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')
@@ -273,6 +286,8 @@ def check_psp_jit_interface(record):
         or record.get('executableMemoryHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest()
         or '_ir_native_psp_set_volume' not in record.get('exports', [])
         or record.get('audioVolumeHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest()
+        or record.get('optionsHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest()
+        or record.get('cheatsHeaderSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRAudioVolume.c') != hashlib.sha256((RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest()
         or record.get('adapterSHA256') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest()
         or record.get('compiledInputSHA256', {}).get('Iridium/IRPSPExecutableMemory.cpp') != hashlib.sha256((RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest()
@@ -315,6 +330,9 @@ def check_bundle(app):
                  'i386-windows/d3d9.dll', 'i386-windows/winemetal.dll'):
         if not (app / name).is_file() or not (app / name).stat().st_size:
             raise ValueError('The WoW64 runtime is missing: ' + name)
+
+    import madeira_session
+    madeira_session.verify(app / 'arm64ec-windows')
 
 
 def compiler_tools():
@@ -422,6 +440,71 @@ def run_checked_recipe(name, env=None):
              'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/ntdll-unix'))),
             ('echo "Results: $SUCCEEDED succeeded, $FAILED failed"',
              'echo "Results: $SUCCEEDED succeeded, $FAILED failed"\n[ "$FAILED" -eq 0 ] || exit 1')]
+        for source, object_name in [('process_ios.c', 'process'), ('thread_ios.c', 'thread')]:
+            generated = OUTPUT / 'embedding' / source
+            original = UPSTREAM / 'build/ntdll-unix' / source
+            generated.write_text(madeira_threads.apply(original.read_text(), source, RUNTIME_BRIDGE / 'IRWindowsThreads.h'))
+            patches.append(('compile_one "$BUILD_DIR/' + source + '" "' + object_name + '"',
+                            'compile_one ' + shlex.quote(str(generated)) + ' "' + object_name + '" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/server_ios.c'
+        generated.write_text(madeira_threads.apply_process_server((UPSTREAM / 'build/ntdll-unix/server_ios.c').read_text()))
+        patches.append(('compile_one "$BUILD_DIR/server_ios.c" "server"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "server" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/loader_ios.c'
+        generated.write_text(madeira_threads.apply_loader((UPSTREAM / 'build/ntdll-unix/loader_ios.c').read_text()))
+        patches.append(('compile_one "$BUILD_DIR/loader_ios.c" "loader"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "loader" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/signal_arm64_ios.c'
+        generated.write_text(madeira_threads.apply_signal((UPSTREAM / 'build/ntdll-unix/signal_arm64_ios.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsThreads.h'))
+        patches.append(('compile_one "$BUILD_DIR/signal_arm64_ios.c" "signal_arm64"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "signal_arm64" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/virtual_ios.c'
+        madeira_threads.verify_futex_layout((UPSTREAM / 'wine/dlls/ntdll/unix/sync.c').read_text(),
+                                           (UPSTREAM / 'wine/dlls/ntdll/sync.c').read_text())
+        generated.write_text(madeira_threads.apply_virtual((UPSTREAM / 'build/ntdll-unix/virtual_ios.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsJITPool.h'))
+        patches.append(('compile_one "$BUILD_DIR/virtual_ios.c" "virtual"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "virtual" -I"$BUILD_DIR"'))
+    elif name == 'wineserver':
+        generated = OUTPUT / 'embedding/mach_ios.c'
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text(madeira_threads.apply_server((UPSTREAM / 'build/wineserver/mach_ios.c').read_text()))
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/wineserver'))),
+            ('"mach_ios:mach_ios.c:mach.o"', '"mach_ios:' + str(generated) + ':mach.o"')]
+    elif name == 'win32u-unix':
+        generated = OUTPUT / 'embedding/window_ios.c'
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text(madeira_threads.apply_window((UPSTREAM / 'wine/dlls/win32u/window.c').read_text()))
+        classes = OUTPUT / 'embedding/class_ios.c'
+        classes.write_text(madeira_threads.apply_class((UPSTREAM / 'build/win32u-unix/class_ios.c').read_text()))
+        for unit, adapt in [('dc', madeira_threads.apply_dc), ('gdiobj', madeira_threads.apply_gdi)]:
+            (OUTPUT / ('embedding/' + unit + '_ios.c')).write_text(adapt((UPSTREAM / 'wine/dlls/win32u' / (unit + '.c')).read_text()))
+        patches = [
+            ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
+             'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/win32u-unix'))),
+            ('    case "$name" in', '    case "$name" in\n        window)\n            compile_one '
+             + shlex.quote(str(generated)) + ' "window"\n            continue\n            ;;')]
+        for unit in ('dc', 'gdiobj'):
+            patches.append(('    case "$name" in', '    case "$name" in\n        ' + unit + ')\n            compile_one '
+                            + shlex.quote(str(OUTPUT / ('embedding/' + unit + '_ios.c'))) + ' "' + unit + '"\n            continue\n            ;;'))
+        patches.append(('compile_one "$BUILD_DIR/class_ios.c" "class"',
+                        'compile_one ' + shlex.quote(str(classes)) + ' "class"'))
+        patches.append(('ar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o',
+                        'rm -f "$OBJ_DIR/libwin32u_unix.a"\nar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o'))
+    elif name == 'fex-arm64ec':
+        for relative, adapt in [('FEXCore/Source/Utils/AllocWatch.cpp', madeira_threads.apply_fex),
+                                ('Source/Windows/ARM64EC/Module.cpp', madeira_threads.apply_fex_arm64ec)]:
+            source = UPSTREAM / 'FEX' / relative
+            original = source.read_text()
+            patched = adapt(original)
+            if original != patched: source.write_text(patched)
+        patches = [('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"',
+                    'R=' + shlex.quote(str(UPSTREAM))),
+                   ('if [ ! -f "$B/CMakeCache.txt" ]; then', ''),
+                   ('\nfi\ncmake --build', '\ncmake --build'),
+                   ('-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF',
+                    '-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_fmt=TRUE')]
     elif name == 'wine-i386':
         patches = [
             ('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"', 'R=' + shlex.quote(str(UPSTREAM))),
@@ -469,6 +552,7 @@ def bootstrap():
 def build_native():
     """Build the upstream archives, including the absent cold-build server base."""
     verify_pin()
+    run_checked_recipe('fex-arm64ec')
     def run(*args): subprocess.run(args, cwd=UPSTREAM, check=True)
     for name in ('llvm-project/llvm', 'llvm-ios-build/lib', 'gnutls-ios/include'):
         if not (UPSTREAM / 'toolchains' / name).is_dir():
@@ -511,8 +595,7 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 '''
         subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
-        if component == 'ntdll-unix': run_checked_recipe(component)
-        else: run('bash', f'build/{component}/build.sh')
+        run_checked_recipe(component)
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
     headers.mkdir(parents=True, exist_ok=True)
     for name in ('air_msad', 'air_samplepos', 'air_tessellation'):
@@ -529,6 +612,23 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
         run('xcrun', '--sdk', 'iphoneos', 'metal', '-std=metal3.1', '--target=air64-apple-ios18.0', '-c', str(source), '-o', str(air))
         run('xxd', '-n', name, '-i', str(air), str(headers / f'{name}.h'))
     text = (UPSTREAM / 'build/dxmt-ios/build.sh').read_text()
+    metal = OUTPUT / 'embedding/winemetal_ios.c'
+    metal.parent.mkdir(parents=True, exist_ok=True)
+    metal.write_text(madeira_threads.apply_metal(
+        (UPSTREAM / 'dxmt/src/winemetal/unix/winemetal_unix.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsMetal.h'))
+    signature = OUTPUT / 'embedding/dxbc_signature.cpp'
+    signature.write_text(madeira_threads.apply_vertex_outputs(
+        (UPSTREAM / 'dxmt/src/airconv/dxbc_signature.cpp').read_text()))
+    marker = '    compile_cxx "$DXMT_SRC/airconv/$cpp" "$name"'
+    if text.count(marker) != 1: raise ValueError('Madeira shader signature build recipe changed')
+    text = text.replace(marker, '    if [ "$cpp" = dxbc_signature.cpp ]; then\n'
+                        '        compile_cxx ' + shlex.quote(str(signature)) + ' "$name"\n'
+                        '    else\n' + marker + '\n    fi')
+    text = text.replace('INCLUDES="', 'INCLUDES="-iquote' + str(UPSTREAM / 'dxmt/src/airconv') + ' ', 1)
+    marker = 'compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix'
+    if text.count(marker) != 1: raise ValueError('Madeira Metal build recipe changed')
+    text = text.replace(marker, 'INCLUDES="$INCLUDES -iquote' + str(UPSTREAM / 'dxmt/src/winemetal/unix')
+                        + '"\ncompile_objc ' + shlex.quote(str(metal)) + ' winemetal_unix')
     text = text.replace('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
                         'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/dxmt-ios')))
     # Select the installed Metal tool. The AIR target and language remain the
@@ -607,7 +707,11 @@ def native_source_identity():
             if path.is_file(): value += ':' + file_digest(path)
             observed_mode = '120000'
         elif path.is_file():
-            value = file_digest(path)
+            if name == 'vendor/Madeira/FEX/FEXCore/Source/Utils/AllocWatch.cpp':
+                value = hashlib.sha256(madeira_threads.apply_fex(path.read_text()).encode()).hexdigest()
+            elif name == 'vendor/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp':
+                value = hashlib.sha256(madeira_threads.apply_fex_arm64ec(path.read_text()).encode()).hexdigest()
+            else: value = file_digest(path)
             observed_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
         else:
             raise ValueError('Missing native source file: ' + name)
@@ -631,8 +735,10 @@ def native_inputs():
                 ('native_source_inventory', native_source_inventory), ('native_source_identity', native_source_identity),
                 ('run_checked_recipe', run_checked_recipe), ('stage_crypto_libraries', stage_crypto_libraries))},
             'files': {name: file_digest(ROOT / name) for name in (
-                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py',
-                'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h')},
+                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
+                'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
+                'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
+                'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h')},
             'cryptoLibraries': list(CRYPTO_LIBRARIES), 'tools': tools, 'upstreamSources': native_source_identity()}
 
 
@@ -650,6 +756,7 @@ def native_required_outputs():
         'FEXCore/Source/libFEXCore.a', 'FEXCore/Source/libFEXCore_Base.a', 'FEXCore/Source/libJemallocLibs.a')]
     return app + fex + ['toolchains/gnutls-ios/lib/lib' + name + '.a' for name in CRYPTO_LIBRARIES] + [
         'app/Madeira/arm64ec-windows/dockhost.exe', 'app/Madeira/arm64ec-windows/dock-notices.txt',
+        'app/Madeira/arm64ec-windows/xtajit64.dll',
         'app/Madeira/legal/LICENSES-rppairing-crates.txt']
 
 
@@ -720,7 +827,7 @@ def require_fresh_native_substages():
              'toolchains/ffmpeg-ios', 'build/ffmpeg/obj', 'build/gnutls-ios/obj', 'build/wineserver/obj',
              'build/ntdll-unix/obj', 'build/win32u-unix/obj', 'build/dxmt-ios/obj',
              'build/dxmt-ios/shader-headers', 'build/dxmt-ios/libdxmt_combined.a',
-             'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'build/freetype-ios/build',
+             'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'FEX/build-arm64ec', 'build/freetype-ios/build',
              'wine/build-macos', 'build/rppairing-ios/target')
     existing = [name for name in paths if (UPSTREAM / name).exists() or (UPSTREAM / name).is_symlink()]
     if existing:
@@ -744,6 +851,7 @@ def native(reuse_only=False):
     outputs += crypto
     outputs += [UPSTREAM / 'app/Madeira' / name for name in (
         'arm64ec-windows/dockhost.exe', 'arm64ec-windows/dock-notices.txt',
+        'arm64ec-windows/xtajit64.dll',
         'legal/LICENSES-rppairing-crates.txt')]
     if native_inputs() != inputs:
         raise ValueError('Native inputs changed during compilation; completion record not written')

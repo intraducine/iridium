@@ -38,6 +38,9 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
 COMPONENT_INPUTS = {
     'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
+                       'ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                       'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
+                       'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
     'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
@@ -94,7 +97,7 @@ COMPONENT_INPUTS = {
 FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tree',
                                     'prepare', 'verify', 'app', 'check_bundle'))
 FRONTEND_APP_METADATA = frozenset(('PSP_PRIVACY_DESCRIPTIONS',))
-FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume',
+FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume', 'madeira_threads',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
                               'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins'))
 # This reviewed route cannot run app preparation during a compiler action.

@@ -1,5 +1,6 @@
 """One migration check: old paths, save conflicts, containment and retry."""
 import pathlib
+import os
 import hashlib
 import json
 import importlib.util
@@ -20,6 +21,34 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_converter_signing_obeys_unsigned_build_setting(self):
+        project = plistlib.loads((ROOT / 'iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj').read_bytes())
+        script = next(value['shellScript'] for value in project['objects'].values()
+                      if value.get('name') == 'Sign bundled dylibs')
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            app = folder / 'Iridium.app'
+            (app / 'd3d12').mkdir(parents=True)
+            (app / 'licenses').mkdir()
+            (app / 'd3d12/libmetalirconverter.dylib').write_bytes(b'fixture')
+            for source, target in [('COPYING', 'LICENSE-MADEIRA-GPL-3.0.txt'), ('LICENSE-EXCEPTION.md', 'LICENSE-MADEIRA-EXCEPTION.txt')]:
+                (folder / source).write_text(source)
+                (app / 'licenses' / target).write_text(source)
+            tools = folder / 'tools'; tools.mkdir()
+            capture = folder / 'calls'
+            signer = tools / 'codesign'
+            signer.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n')
+            signer.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                       SRCROOT=str(folder / 'source'), CODESIGNING_FOLDER_PATH=str(app), CAPTURE=str(capture))
+            (folder / 'source').mkdir()
+            for allowed, identity in [('NO', ''), ('NO', 'fixture-identity'), ('YES', ''), ('YES', 'fixture-identity')]:
+                capture.unlink(missing_ok=True)
+                subprocess.run(['/bin/sh'], input=script, text=True,
+                               env=dict(env, CODE_SIGNING_ALLOWED=allowed, EXPANDED_CODE_SIGN_IDENTITY=identity), check=True)
+                self.assertEqual(capture.exists(), allowed == 'YES')
+                if allowed == 'YES': self.assertEqual(capture.read_text().splitlines()[2], identity or '-')
+
     def test_preparation_refreshes_only_generated_source_links(self):
         import textwrap
         source = pathlib.Path(BUILD.__file__).read_text()
@@ -47,6 +76,8 @@ class FrontendImportTests(unittest.TestCase):
             'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
             'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
             'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
+            'optionsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest(),
+            'cheatsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest(),
             'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
             'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
             'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
@@ -56,6 +87,8 @@ class FrontendImportTests(unittest.TestCase):
                        *({'exports': [name for name in record['exports'] if name != missing]}
                          for missing in ('_ir_native_psp_exec_prepare_shared', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_set_volume')),
                        {'audioVolumeHeaderSHA256': '0' * 64},
+                       {'optionsHeaderSHA256': '0' * 64},
+                       {'cheatsHeaderSHA256': '0' * 64},
                        {'diagnosticHeaderSHA256': '0' * 64}, {'sharedMemoryHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
             with self.assertRaisesRegex(ValueError, 'matching JIT validation'):
                 BUILD.check_psp_jit_interface(dict(record, **change))
@@ -202,6 +235,8 @@ class FrontendImportTests(unittest.TestCase):
                 'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
                 'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
                 'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
+                'optionsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest(),
+                'cheatsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest(),
                 'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
                 'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
                 'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
@@ -213,6 +248,16 @@ class FrontendImportTests(unittest.TestCase):
                     (parent / farm).mkdir(parents=True)
                     (parent / farm / '.gitkeep').touch()
                     if farm != 'i386-windows': (parent / farm / 'ntdll.dll').write_bytes(b'binary')
+            import madeira_session
+            session = app / 'arm64ec-windows/iridium-session.exe'
+            pe = bytearray(256); pe[0x3c:0x40] = (128).to_bytes(4, 'little')
+            pe[128:132] = b'PE\0\0'; pe[132:134] = (0x8664).to_bytes(2, 'little')
+            pe[220:222] = (2).to_bytes(2, 'little')
+            session.write_bytes(pe)
+            (session.parent / 'iridium-session-notices.txt').write_text('Runtime notice fixture')
+            (session.parent / 'iridium-session.json').write_text(json.dumps({
+                'protocol': 1, 'enginePin': madeira_session.engine_pins.selected('madeira-native'),
+                'sources': madeira_session.inputs(), 'toolchainSHA256': madeira_session.toolchain()['sha256'], 'sha256': madeira_session.digest(session)}))
             with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
@@ -299,7 +344,9 @@ class FrontendImportTests(unittest.TestCase):
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
                          if key != 'existing-resource']
         self.assertEqual(resource_refs, [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
-                                         'path': 'PSP', 'sourceTree': '<group>'}])
+                                         'path': 'PSP', 'sourceTree': '<group>'},
+                                        {'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+                                         'path': 'MenuAudio', 'sourceTree': '<group>'}])
         self.assertIn('existing-resource', result['resources']['files'])
         source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
                        if key != 'existing-source']
