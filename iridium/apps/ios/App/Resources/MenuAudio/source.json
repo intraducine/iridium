@@ -1,0 +1,70 @@
+{
+  "upstream": "https://atkeysounds.itch.io/ui-sounds",
+  "version": "2026-10-21",
+  "license": "LicenseRef-Atkey-UI-Sounds-1",
+  "archiveSHA256": "1ef2057bf84b008dad70cfbf0a3ba1cf8d392e95fbb03a580a4acdfdee6123e6",
+  "licenseFile": "Atkey-license.txt",
+  "licenseSHA256": "420b67dc21ab60ab7b4e02bec141b231761c5cbe87c689992080a1b76d71f235",
+  "files": {
+    "focus1.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_41.wav",
+      "sourceSHA256": "03a3e67fb1de44fd2035ed9b5eedd4e7eace1bb7227fa009deb77da32a154818",
+      "sha256": "d2c1c991d84e446114433c02981d101e07540d6e34963b4b6345a4d775729fbd",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=5991,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.132850340:d=0.003,volume=0.059965049"
+    },
+    "focus2.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_08.wav",
+      "sourceSHA256": "6f43d39237022b76aa93f9359a4c88e910436846d25f79e8dc68d3c494e72d8c",
+      "sha256": "35150e57fd17c9d71fbb2028a5e492bdea232dddd5b9d658d35d5ea3a3dd954e",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=11030,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.247113379:d=0.003,volume=0.096138907"
+    },
+    "focus3.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_09.wav",
+      "sourceSHA256": "e5710ba51d75e3c754a5591ad7b5fbdbbcfcc3aed13d8fc3524c1c07766c4940",
+      "sha256": "873d33fe381550f37a690ed6405b32ce38362edcd1d8736d594be647796cdbb9",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=11893,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.266682540:d=0.003,volume=0.089366650"
+    },
+    "focus4.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_11.wav",
+      "sourceSHA256": "610009ceecc1e620d107c0124dcd7bdaa8f0d69282882ecc91402f0238b056a4",
+      "sha256": "8b46830e5b1cc47bbb6845aa9870efc6b0d3a13e05f2cc49ff93f5751d8d85b8",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=11664,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.261489796:d=0.003,volume=0.078841860"
+    },
+    "invoke.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_07.wav",
+      "sourceSHA256": "0e1b392de691b66db165d77fd295e3d07624bfb815c4f1ebb6b54e3d834aafad",
+      "sha256": "478b7bf65ea05183eb92eafcac8869d54d490017776482a4f8e60b2961f07b59",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=18020,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.405616780:d=0.003,volume=0.172514320"
+    },
+    "show.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_05.wav",
+      "sourceSHA256": "3ffebeaa30a55701482f740db10fef27427d4601df79ffbfc74fe1a34985cce7",
+      "sha256": "148f55d5c2c1d62881f142c741f76bac163681b5b7d5d0b8b65aefe270e365c2",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=28391,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.640786848:d=0.003,volume=0.132277400"
+    },
+    "hide.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_06.wav",
+      "sourceSHA256": "d94fbbc421192e71873a80440fb9ccfca1dc0d707627d6e10591af067afb326b",
+      "sha256": "30f254c537a0b003511b98377b054d686bf6600a24674c1c5ecc5576fe7e9924",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=41237,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.932079365:d=0.003,volume=0.150570896"
+    },
+    "back.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_40.wav",
+      "sourceSHA256": "42d9dc71a4c66cbf98fb4555f00f00fe816df0639320ac01e8641b55f5ab8f26",
+      "sha256": "c841cc147c94e6fb2725d4f618f3e9346c32928abab13df63fbff9eab16e5080",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=22807,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.514165533:d=0.003,volume=0.242741062"
+    },
+    "next.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_12.wav",
+      "sourceSHA256": "b58a3119afa6d39e7208b3905c44299a0fcdf22f55cbd59f78df11764cc40c1c",
+      "sha256": "6d1b55576231515b1204d8845f97c095d87dd669634ec2793a8bc51209d1608c",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=38638,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.873145125:d=0.003,volume=0.157456921"
+    },
+    "previous.wav": {
+      "source": "Atkey Ui Sounds #1/Wav/UI Sound WAV_13.wav",
+      "sourceSHA256": "20805dfd000dad3bf9faaf882c997421fba95248d6be9f2a32c40b5f582770af",
+      "sha256": "7fd5bba311abce1dfd18d0afad8191e3827c03fc2b412921e2cc068840361f6f",
+      "conversion": "Mono 44.1 kHz 16-bit PCM; original pitch and timbre; excess silence and very low tails trimmed, 2 ms start/3 ms end fades, reduced level, metadata removed; ffmpeg filters: aresample=44100,atrim=start_sample=0:end_sample=36944,asetpts=PTS-STARTPTS,afade=t=in:d=0.002,afade=t=out:st=0.834732426:d=0.003,volume=0.210565780"
+    }
+  }
+}

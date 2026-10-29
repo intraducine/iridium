@@ -428,16 +428,11 @@ final class LibraryModel: ObservableObject {
     /// When the starting screen went up, for its elapsed-time line.
     var startingSince: Date { launching ? launchStarted : preparingSince }
     func prepare(_ entry: LibraryEntry) {
-        guard MadeiraConfig.flag("MADEIRA_LAUNCH_EARLY"), current == nil else { return }   // 0: Play keeps the Game details page up until the session begins
+        guard current == nil else { return }
         preparingSince = Date(); preparing = entry
         // The starting screen draws in the controls window (LibraryHUD), which otherwise
         // only comes up with the session's game view.
         TouchControlsHost.attach()
-        let id = entry.id
-        // A start that neither begins nor reports an error lets the screen go.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            if let self, self.preparing?.id == id, self.current == nil { self.preparing = nil }
-        }
     }
     /// A Steam game's saves may not be the latest (SteamOwnedLibrary.cloudHold):
     /// the alert Play shows before starting it.

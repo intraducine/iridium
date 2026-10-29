@@ -154,13 +154,16 @@ struct IridiumConsolePlayer: View {
         }.clipped()
     }
     private var starting: some View {
+        ScrollView {
         VStack(spacing: 12) {
             ProgressView().tint(.white)
             Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
             Text(session.phase == .stopping ? "Closing game…" : "Starting \(platform)…")
                 .font(.subheadline).foregroundStyle(.secondary)
             if isDolphin { Text(session.phase3Status).font(.footnote).multilineTextAlignment(.center) }
-        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            IridiumLaunchMemoryView().frame(maxWidth: 360)
+        }.padding(24).frame(maxWidth: .infinity)
+        }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private func menu(in size: CGSize) -> some View {
         ZStack {

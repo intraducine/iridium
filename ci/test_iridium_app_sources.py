@@ -20,6 +20,15 @@ class OwnedAppTests(unittest.TestCase):
             self.assertIn('IridiumApp.swift', names)
             self.assertFalse((stage / 'Madeira/RenamedUpstreamUI.swift').exists())
             self.assertFalse((stage / 'MadeiraJITHelper/obsolete.swift').exists())
+            stale = stage / 'Madeira/MenuAudio/obsolete.wav'
+            stale.write_bytes(b'obsolete cue')
+            app.stage(stage)
+            self.assertFalse(stale.exists())
+            cue = stage / 'Madeira/MenuAudio/focus1.wav'
+            original = cue.read_bytes()
+            cue.write_bytes(b'broken sound')
+            with self.assertRaisesRegex(ValueError, 'MenuAudio/focus1.wav'): app.verify(stage)
+            cue.write_bytes(original)
             native = stage / 'Madeira/IridiumMadeiraServices.swift'
             native.write_text(native.read_text() + '\n// stale output')
             with self.assertRaisesRegex(ValueError, 'IridiumMadeiraServices'): app.verify(stage)
