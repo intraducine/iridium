@@ -1,24 +1,46 @@
 {
-  "upstream": "https://kenney.nl/assets/ui-audio",
-  "version": "1.0",
-  "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
-  "license": "CC0-1.0",
-  "conversion": "Mono 44.1 kHz signed 16-bit PCM WAV, metadata removed, amplitude multiplied by 0.22.",
+  "sources": {
+    "kenney-ui-audio": {
+      "upstream": "https://kenney.nl/assets/ui-audio",
+      "version": "1.0",
+      "license": "CC0-1.0",
+      "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6"
+    },
+    "lokif-gui-sound-effects": {
+      "upstream": "https://opengameart.org/content/gui-sound-effects",
+      "version": "2009-08-14",
+      "license": "CC0-1.0",
+      "archiveSHA256": "883e817fefa2271d77e29db35b6959174f56de073655693dad1e6962619c529d"
+    }
+  },
   "files": {
     "move.wav": {
       "source": "Audio/rollover2.ogg",
       "sourceSHA256": "d0bc0fcba496d73df1da8c145e5330df75f87ab5a4f33a9b71461b006b5c338e",
-      "sha256": "408d20e68ef636ea2b7c41523c7a84452737b503de00aee24feba77289a9d3fc"
+      "sha256": "408d20e68ef636ea2b7c41523c7a84452737b503de00aee24feba77289a9d3fc",
+      "pack": "kenney-ui-audio",
+      "conversion": "Mono 44.1 kHz signed 16-bit PCM; metadata removed; amplitude multiplied by 0.22."
     },
     "select.wav": {
-      "source": "Audio/click3.ogg",
-      "sourceSHA256": "e3e7fc7ccd9c5cfdf77bffa05aee10d4973812076c76dc889ba2b16ea434127f",
-      "sha256": "ae6503dd58f10283af59760e7b5551f3081acff243fd0d7c62fb0498f42e26d4"
+      "pack": "lokif-gui-sound-effects",
+      "source": "GUI_Sound_Effects_by_Lokif/positive.wav",
+      "sourceSHA256": "946a2de4c87dcb6c47edc3564e403944646ee9efa08dea0ce16fe2e78e125e03",
+      "sha256": "223044c35f3021dc138cce691a4f9062537bfb69b6a5fb2f1c75fbe6e2d5e8dd",
+      "conversion": "Mono 44.1 kHz signed 16-bit PCM; metadata removed; ffmpeg filters: atrim=end=0.9,afade=t=in:d=0.004,afade=t=out:st=0.78:d=0.12,volume=0.081499214."
+    },
+    "open.wav": {
+      "pack": "lokif-gui-sound-effects",
+      "source": "GUI_Sound_Effects_by_Lokif/misc_menu_4.wav",
+      "sourceSHA256": "b9615e9d0a13a721cd9a011fa106b12114d4bc83f6bb9b76d4c63e57bac5fdf1",
+      "sha256": "d0db8f410fdc8b05bf817ccf5b8f9dc78edafcfe77a4d93e6be4506d81161aca",
+      "conversion": "Mono 44.1 kHz signed 16-bit PCM; metadata removed; ffmpeg filters: atrim=end=0.65,afade=t=in:d=0.004,afade=t=out:st=0.53:d=0.12,volume=0.137915076."
     },
     "back.wav": {
-      "source": "Audio/click1.ogg",
-      "sourceSHA256": "59175ac17cd49a68dd736285738441287636112a84a6f7ce0d89921bda5a5360",
-      "sha256": "adf483c26614f8708c7f84fb353c94b94a67c201157cbfd7e75ab2478e373f35"
+      "pack": "lokif-gui-sound-effects",
+      "source": "GUI_Sound_Effects_by_Lokif/negative.wav",
+      "sourceSHA256": "1b8d94d220905624559a70e2eaca0ec6514a5f536cf58ad411b2906c8180c0ba",
+      "sha256": "315ceea599b26619b70f612c2674c91ed5550720832f7013501313a9536b21e8",
+      "conversion": "Mono 44.1 kHz signed 16-bit PCM; metadata removed; ffmpeg filters: atrim=end=0.65,afade=t=in:d=0.004,afade=t=out:st=0.53:d=0.12,volume=0.274156107."
     }
   }
 }

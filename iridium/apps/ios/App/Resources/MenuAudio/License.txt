@@ -17,3 +17,13 @@ UI SFX Set
 
 	Follow on Twitter for updates:
 	@KenneyNL
+
+GUI Sound Effects by Lokif
+Source: https://opengameart.org/content/gui-sound-effects
+Published: 2009-08-14
+License: Creative Commons Zero, CC0 1.0
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The author lists this pack as CC0 on the source page.
+Iridium uses positive.wav, misc_menu_4.wav and negative.wav, converted to
+mono PCM, trimmed with edge fades, and reduced in level.

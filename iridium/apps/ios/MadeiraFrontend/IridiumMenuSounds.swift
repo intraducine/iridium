@@ -4,7 +4,7 @@ import Foundation
 import UIKit
 
 @MainActor enum IridiumMenuSounds {
-    enum Cue: String { case move, select, back }
+    enum Cue: String { case move, select, open, back }
     static let settingsKey = "iridium.menuSounds"
     private static var sounds: [Cue: SystemSoundID] = [:]
     private static var lastMove = -Double.infinity

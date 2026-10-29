@@ -1289,7 +1289,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
                 }
             }
             .onChange(of: iridiumPages) { old, pages in
-                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .select : .back) }
+                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .open : .back) }
                 if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
             }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }

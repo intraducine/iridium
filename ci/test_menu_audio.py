@@ -72,24 +72,35 @@ METHODS
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_assets_are_pinned_short_quiet_pcm_with_original_license(self):
+    def test_assets_are_pinned_short_quiet_pcm_with_license_notices(self):
         manifest = json.loads((SOUNDS / 'source.json').read_text())
-        pin = next(x for x in json.loads((ROOT / 'UPSTREAM-SOURCES.json').read_text())['assets']
-                   if x['id'] == 'kenney-ui-audio')
-        self.assertEqual(pin['archiveSHA256'], manifest['archiveSHA256'])
-        self.assertEqual(pin['license'], 'CC0-1.0')
-        self.assertIn('Kenney', (SOUNDS / 'License.txt').read_text())
-        self.assertEqual(set(manifest['files']), {'move.wav', 'select.wav', 'back.wav'})
+        pins = {x['id']: x for x in json.loads((ROOT / 'UPSTREAM-SOURCES.json').read_text())['assets']}
+        self.assertEqual(set(manifest['sources']), {'kenney-ui-audio', 'lokif-gui-sound-effects'})
+        for key, source in manifest['sources'].items():
+            for field in ('archiveSHA256', 'upstream', 'version', 'license'):
+                self.assertEqual(pins[key][field], source[field])
+            self.assertEqual(source['license'], 'CC0-1.0')
+        notice = (SOUNDS / 'License.txt').read_text()
+        self.assertIn('Kenney', notice)
+        self.assertIn('GUI Sound Effects by Lokif', notice)
+        self.assertEqual(set(manifest['files']), {'move.wav', 'select.wav', 'open.wav', 'back.wav'})
+        self.assertEqual(set(manifest['files']), {p.name for p in SOUNDS.glob('*.wav')})
         for name, record in manifest['files'].items():
+            self.assertIn(record['pack'], manifest['sources'])
             data = (SOUNDS / name).read_bytes()
             self.assertEqual(hashlib.sha256(data).hexdigest(), record['sha256'], name)
             self.assertRegex(record['sourceSHA256'], r'^[a-f0-9]{64}$')
             with wave.open(str(SOUNDS / name)) as cue:
                 self.assertEqual((cue.getnchannels(), cue.getsampwidth(), cue.getframerate()), (1, 2, 44100))
                 self.assertGreater(cue.getnframes(), 0)
-                self.assertLess(cue.getnframes() / cue.getframerate(), 0.12)
+                duration = cue.getnframes() / cue.getframerate()
+                self.assertLess(duration, 0.075 if name == 'move.wav' else 1.0)
                 samples = struct.unpack('<' + 'h' * cue.getnframes(), cue.readframes(cue.getnframes()))
                 self.assertLessEqual(max(abs(x) for x in samples), 0.221 * 32768)
+                if name != 'move.wav':
+                    self.assertGreater(duration, 0.5, 'Tonal cues must retain their body and decay')
+                    self.assertLessEqual(abs(samples[0]), 2)
+                    self.assertLessEqual(abs(samples[-1]), 2, 'Trimmed tails must fade to silence')
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_player_mute_runtime_guards_rate_limit_cache_and_load_failure(self):
@@ -148,11 +159,11 @@ PLAYER
         ProcessInfo.processInfo.systemUptime += 0.01
         IridiumMenuSounds.play(.move)
         precondition(Output.played.count == 1)
-        IridiumMenuSounds.play(.select); IridiumMenuSounds.play(.back)
-        precondition(Output.played.count == 3, "Confirmation and back must not be throttled by movement")
+        IridiumMenuSounds.play(.select); IridiumMenuSounds.play(.open); IridiumMenuSounds.play(.back)
+        precondition(Output.played.count == 4, "Tonal cues must not be throttled by movement")
         ProcessInfo.processInfo.systemUptime += 0.08
         IridiumMenuSounds.play(.move)
-        precondition(Output.played.count == 4 && Output.created.count == 3)
+        precondition(Output.played.count == 5 && Output.created.count == 4)
         UserDefaults.standard.enabled = false
         IridiumMenuSounds.play(.select)
         UserDefaults.standard.enabled = true
@@ -165,10 +176,10 @@ PLAYER
         IridiumMenuSounds.play(.select)
         LibraryModel.shared.current = nil; IridiumConsoleSession.shared.isActive = true
         IridiumMenuSounds.play(.select)
-        precondition(Output.played.count == 4)
+        precondition(Output.played.count == 5)
         IridiumConsoleSession.shared.isActive = false
         IridiumMenuSounds.play(.select)
-        precondition(Output.played.count == 5 && Output.created.count == 3, "Menu playback resumes after a game")
+        precondition(Output.played.count == 6 && Output.created.count == 4, "Menu playback resumes after a game")
     }
 }
 '''.replace('PLAYER', source)

@@ -264,6 +264,15 @@
       "license": "CC0-1.0",
       "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
       "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
+    },
+    {
+      "id": "lokif-gui-sound-effects",
+      "path": "iridium/apps/ios/App/Resources/MenuAudio",
+      "upstream": "https://opengameart.org/content/gui-sound-effects",
+      "version": "2009-08-14",
+      "license": "CC0-1.0",
+      "archiveSHA256": "883e817fefa2271d77e29db35b6959174f56de073655693dad1e6962619c529d",
+      "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
     }
   ]
 }

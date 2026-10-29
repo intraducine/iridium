@@ -89,7 +89,7 @@ struct IridiumLibraryView: View {
         } catch { library.error = error.localizedDescription }
     }
     private func options(_ game: IridiumGame) {
-        IridiumMenuSounds.play(.select)
+        IridiumMenuSounds.play(.open)
         if let windows = game.windows { detail = windows }
         else { consoleDetail = game.console }
     }
@@ -165,7 +165,7 @@ struct IridiumLibraryView: View {
                         .onChange(of: showFocus) { _, shown in if shown { revealFocusedSection(in: page) } }
                         .onChange(of: chromeHeight) { _, _ in if showFocus { revealFocusedSection(in: page) } }
                         .onChange(of: searching) { _, active in
-                            IridiumMenuSounds.play(active ? .select : .back)
+                            IridiumMenuSounds.play(active ? .open : .back)
                             touchCoverHeight = nil; if active { page.scrollTo("header", anchor: .top) }
                         }
                 }
@@ -234,8 +234,8 @@ struct IridiumLibraryView: View {
                 }
             }
             .onChange(of: favorites) { _, _ in IridiumMenuSounds.play(.select) }
-            .onChange(of: features) { _, value in if value != nil { IridiumMenuSounds.play(.select) } }
-            .onChange(of: choosingAdd) { _, value in if value { IridiumMenuSounds.play(.select) } }
+            .onChange(of: features) { _, value in if value != nil { IridiumMenuSounds.play(.open) } }
+            .onChange(of: choosingAdd) { _, value in if value { IridiumMenuSounds.play(.open) } }
             // Display-name edits can change search membership without changing
             // either runtime's records. Reconcile only the effective identities.
             .onChange(of: games.map(\.id)) { _, _ in keepSelection() }
@@ -615,7 +615,7 @@ struct IridiumLibraryView: View {
             case "search": beginSearch()
             case "add": choosingAdd = true
             case "settings": features = 1
-            case "games": IridiumMenuSounds.play(.select); focus = "play"
+            case "games": IridiumMenuSounds.play(.open); focus = "play"
             case "options": if let selected { options(selected) }
             default: if let selected { launch(selected) }
             }
