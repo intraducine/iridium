@@ -65,10 +65,12 @@ def verify_pin():
         repos.append(UPSTREAM / line.split()[1])
     for repo in repos:
         changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
-        managed = 'FEXCore/Source/Utils/AllocWatch.cpp'
-        if repo == UPSTREAM / 'FEX' and managed in changes:
-            original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed], text=True)
-            if (repo / managed).read_text() == madeira_threads.apply_fex(original): changes.remove(managed)
+        if repo == UPSTREAM / 'FEX':
+            for managed, adapt in [('FEXCore/Source/Utils/AllocWatch.cpp', madeira_threads.apply_fex),
+                                   ('Source/Windows/ARM64EC/Module.cpp', madeira_threads.apply_fex_arm64ec)]:
+                if managed not in changes: continue
+                original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed], text=True)
+                if (repo / managed).read_text() == adapt(original): changes.remove(managed)
         if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.js', '.pbxproj', '.y', '.l',
                                      '.sh', '.rs', '.metal', '.S', '.inc', '.in', '.cmake'}
                or Path(name).name == 'CMakeLists.txt' for name in changes):
@@ -487,10 +489,12 @@ def run_checked_recipe(name, env=None):
         patches.append(('ar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o',
                         'rm -f "$OBJ_DIR/libwin32u_unix.a"\nar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o'))
     elif name == 'fex-arm64ec':
-        source = UPSTREAM / 'FEX/FEXCore/Source/Utils/AllocWatch.cpp'
-        original = source.read_text()
-        patched = madeira_threads.apply_fex(original)
-        if original != patched: source.write_text(patched)
+        for relative, adapt in [('FEXCore/Source/Utils/AllocWatch.cpp', madeira_threads.apply_fex),
+                                ('Source/Windows/ARM64EC/Module.cpp', madeira_threads.apply_fex_arm64ec)]:
+            source = UPSTREAM / 'FEX' / relative
+            original = source.read_text()
+            patched = adapt(original)
+            if original != patched: source.write_text(patched)
         patches = [('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"',
                     'R=' + shlex.quote(str(UPSTREAM))),
                    ('if [ ! -f "$B/CMakeCache.txt" ]; then', ''),
@@ -701,6 +705,8 @@ def native_source_identity():
         elif path.is_file():
             if name == 'vendor/Madeira/FEX/FEXCore/Source/Utils/AllocWatch.cpp':
                 value = hashlib.sha256(madeira_threads.apply_fex(path.read_text()).encode()).hexdigest()
+            elif name == 'vendor/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp':
+                value = hashlib.sha256(madeira_threads.apply_fex_arm64ec(path.read_text()).encode()).hexdigest()
             else: value = file_digest(path)
             observed_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
         else:

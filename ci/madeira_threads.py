@@ -555,6 +555,27 @@ def apply_fex(text):
     raise ValueError('Madeira FEX allocation-watch thread identity changed')
 
 
+def apply_fex_arm64ec(text):
+    marker = '  uint64_t& DispatcherLoopTopEnterEC() const {'
+    helper = '''  FEXCore::Core::InternalThreadState* ThreadStateIfPresent() const {
+    // Native startup threads can receive callbacks before ARM64EC initialization.
+    return Area ? ThreadState() : nullptr;
+  }
+
+'''
+    if text.count(marker) != 1: raise ValueError('Madeira ARM64EC CPU area changed')
+    if helper not in text:
+        if text.count('GetCPUArea().ThreadState()') != 13 or text.count('if (!CPUArea.ThreadState())') != 1:
+            raise ValueError('Madeira ARM64EC thread-state callbacks changed')
+        text = text.replace(marker, helper + marker)
+        text = text.replace('GetCPUArea().ThreadState()', 'GetCPUArea().ThreadStateIfPresent()')
+        text = text.replace('if (!CPUArea.ThreadState())', 'if (!CPUArea.ThreadStateIfPresent())')
+        marker = '  bool Cont {};\n  if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {'
+        if text.count(marker) != 1: raise ValueError('Madeira ARM64EC exception callback changed')
+        text = text.replace(marker, '  if (!GetCPUArea().Area) return STATUS_SUCCESS;\n' + marker)
+    return text
+
+
 def apply_loader(text):
     old = 'if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_AMD64 && !is_arm64ec())'
     done = '    CHILD_STAGE( "server_init_process_done" );'

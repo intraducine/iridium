@@ -17,6 +17,86 @@ SESSION = ROOT / madeira_session.SOURCE
 
 
 class WindowsRuntimeTests(unittest.TestCase):
+    def test_arm64ec_callbacks_before_cpu_area_and_thread_state_exist(self):
+        original = (ROOT / 'vendor/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp').read_text()
+        source = madeira_threads.apply_fex_arm64ec(original)
+        self.assertEqual(madeira_threads.apply_fex_arm64ec(source), source)
+        with self.assertRaises(ValueError): madeira_threads.apply_fex_arm64ec(original + original)
+        area = source[source.index('struct ThreadCPUArea {'):source.index('struct FrontendThreadData {')]
+        functions = []
+        for name in ('NotifyMemoryAlloc', 'NotifyMemoryFree', 'NotifyMemoryProtect', 'NotifyUnmapViewOfSection',
+                     'FlushInstructionCacheHeavy', 'BTCpu64FlushInstructionCache', 'BTCpu64NotifyMemoryDirty'):
+            start = source.index('void ' + name + '(')
+            end = source.index('\n}', start) + 2
+            functions.append(source[start:end])
+        reset = source[source.index('NTSTATUS ResetToConsistentState('):source.index('void NotifyMemoryAlloc(')]
+        self.assertLess(reset.index('if (!GetCPUArea().Area)'), reset.index('ScopedCallbackDisable guard;'))
+        fixture = r'''
+#include <cassert>
+#include <cstdint>
+#include <cstddef>
+#include <mutex>
+#include <utility>
+namespace FEXCore::Core {struct InternalThreadState {};struct CpuStateFrame {};}
+struct ARM64EC_NT_CONTEXT {};
+struct CHPE_V2_CPU_AREA_INFO {
+ uint64_t EmulatorStackLimit, EmulatorStackBase;
+ ARM64EC_NT_CONTEXT *ContextAmd64;
+ uintptr_t EmulatorData[8];
+};
+struct _TEB {char pad[0x1788];CHPE_V2_CPU_AREA_INFO *area;};
+static _TEB teb{};
+static _TEB *NtCurrentTeb(){return &teb;}
+using SIZE_T=size_t;using ULONG=unsigned;using BOOL=int;using NTSTATUS=int;
+constexpr ULONG MEM_RESET=0x80000, MEM_RESET_UNDO=0x1000000;
+struct Tracker {
+ int protects{},invalidations{},unmaps{};
+ void HandleMemoryProtectionNotification(uint64_t,uint64_t,ULONG){protects++;}
+ void InvalidateAlignedInterval(uint64_t,uint64_t,bool){invalidations++;}
+ std::pair<uint64_t,size_t> InvalidateContainingSection(uint64_t,bool){unmaps++;return {1,1};}
+};
+static Tracker tracker;
+static Tracker *InvalidationTracker=&tracker;
+static int image_unmaps;
+static void HandleImageUnmap(uint64_t,size_t){image_unmaps++;}
+static std::recursive_mutex ThreadCreationMutex;
+''' + area + r'''
+static ThreadCPUArea GetCPUArea(){return ThreadCPUArea(NtCurrentTeb());}
+''' + '\n'.join(functions) + r'''
+static void callbacks(){
+ for(bool after:{false,true}){
+  NotifyMemoryAlloc((void*)0x1000,4096,0,4,after,0);
+  NotifyMemoryFree((void*)0x1000,4096,0,after,0);
+  NotifyMemoryProtect((void*)0x1000,4096,4,after,0);
+  NotifyUnmapViewOfSection((void*)0x1000,after,0);
+ }
+ FlushInstructionCacheHeavy((void*)0x1000,4096);
+ BTCpu64FlushInstructionCache((void*)0x1000,4096);
+ BTCpu64NotifyMemoryDirty((void*)0x1000,4096);
+}
+int main(){
+ callbacks();assert(!tracker.protects && !tracker.invalidations && !tracker.unmaps);
+ CHPE_V2_CPU_AREA_INFO area{};teb.area=&area;
+ callbacks();assert(!tracker.protects && !tracker.invalidations && !tracker.unmaps);
+ FEXCore::Core::InternalThreadState state;
+ GetCPUArea().ThreadState()=&state;
+ assert(GetCPUArea().ThreadStateIfPresent()==&state);
+ callbacks();assert(tracker.protects==2 && tracker.invalidations==4 && tracker.unmaps==1 && image_unmaps==1);
+ NotifyMemoryAlloc((void*)0x1000,4096,MEM_RESET,4,true,0);
+ NotifyMemoryProtect((void*)0x1000,4096,4,true,-1);
+ assert(tracker.protects==2);
+ GetCPUArea().ThreadState()=nullptr;callbacks();
+ teb.area=nullptr;callbacks();assert(tracker.protects==2 && tracker.invalidations==4);
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.cpp').write_text(fixture)
+            subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
+                            '-fsanitize=address,undefined', str(path / 'main.cpp'), '-o', str(path / 'check')],
+                           check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10, capture_output=True)
+
     def test_native_gdi_cache_survives_game_cleanup_and_wow_keeps_its_namespace(self):
         original = (ROOT / 'vendor/Madeira/wine/dlls/win32u/dc.c').read_text()
         source = madeira_threads.apply_dc(original)

@@ -234,12 +234,16 @@ class NativeReuseTests(unittest.TestCase):
 
 class NativeSourceIdentityTests(unittest.TestCase):
     def test_only_the_exact_managed_fex_patch_is_accepted_and_hashed_consistently(self):
+        module_relative = 'Source/Windows/ARM64EC/Module.cpp'
+        module_original = (build.ROOT / 'vendor/Madeira/FEX' / module_relative).read_text()
         with source_fixture() as (root, upstream):
             fex = upstream / 'FEX'; fex.mkdir()
             relative = 'FEXCore/Source/Utils/AllocWatch.cpp'
             source = fex / relative; source.parent.mkdir(parents=True)
             original = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)\n#endif\n'
             source.write_text(original)
+            module = fex / module_relative; module.parent.mkdir(parents=True)
+            module.write_text(module_original)
             def git(repo, *args):
                 return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
             git(fex, 'init', '-q'); git(fex, 'add', '.')
@@ -254,6 +258,12 @@ class NativeSourceIdentityTests(unittest.TestCase):
                 build.verify_pin(); before = build.native_source_identity()
                 source.write_text(build.madeira_threads.apply_fex(original))
                 build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(build.madeira_threads.apply_fex_arm64ec(module_original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(module.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+                module.write_text(module_original)
                 source.write_text(source.read_text() + '// unrelated edit\n')
                 with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
                 self.assertNotEqual(before, build.native_source_identity())
