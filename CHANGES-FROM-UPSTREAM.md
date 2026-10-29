@@ -43,6 +43,18 @@ not replace the global working layout. Iridium keeps its own library and
 navigation; the upstream zoomable grid is not included. Windows launch content
 stays visible when an animation is interrupted or disabled. Gesture-zone options
 fit their content and scroll when the available height is too small.
+Steam WebSocket setup and logon share a single-completion guard. Repeated ping
+callbacks cannot resume a continuation twice, and a retired socket cannot start
+receiving after a later disconnect or replacement.
+The generated Metal adapter records owned graphics references by guest process
+and session. After guest kernel threads end, it drains completed processes'
+submitted GPU work before releasing their remaining references or private memory.
+Live, unknown and shared references retain their normal lifetime. A failed or
+timed-out GPU drain keeps the old references and mappings in place.
+The native shader adapter fills unwritten vertex-output lanes and replaces
+non-finite floating-point interpolants with zero. Metal cannot safely interpolate
+NaN or infinity. Integer outputs, pixel outputs and position handling keep their
+upstream paths. The adapter checks the pinned signature and build recipe.
 
 ### Selected compatibility ports
 
@@ -214,9 +226,38 @@ signals and debugger memory access keep their upstream behavior. Process thread
 counts and deferred TEB disposal are keyed to each pseudo-process. Cleanup waits
 for that process's last guest thread. Completed socket, identity and file-cache
 slots are released or reused rather than imposing a lifetime session limit.
+The Mach exception registry and per-thread JIT trampolines share bounded slots.
+A slot can be reused only after its retained Mach port proves the previous
+kernel thread ended, including TLS destructors. An unknown thread never uses
+the host process's exception state. Live-slot exhaustion fails admission.
 Steered memory reservations retire their tracking records when a view is deleted.
-Cleanup checks the current view under the memory lock and only releases untouched
-reservations. A later game can reuse an address without an old record freeing it.
+Cleanup checks the current view under the memory lock. Private views and large
+reservations carry their owning process and job number. Split views retain that
+ownership. Process exit retires them; admission to a later
+job releases their data pages only after all prior guest kernel threads and TLS
+destructors have ended. Cleanup also unmaps the dead process's original PE images;
+their reusable JIT pool copies stay allocated. Live images, anonymous executable
+memory, shared files, special and replaced views stay protected.
+A later game can reuse an address without an old record freeing it.
+Windows image copies keep their complete pool allocation after process exit.
+A later job can reuse it only after the old guest threads end, no live ledger
+entry overlaps it, and its code, data and trampoline pages fit the new image.
+Writable pages must already be data pages. Reuse cannot remove execute access
+from more pool pages. The anonymous-code allocator keeps its original checks.
+Before unmapping retired private data, cleanup removes its abandoned WaitOnAddress
+entries from Wine's shared queues. Live and current-job entries remain linked.
+A busy queue defers reclamation. The adapter checks the pinned PE and native
+queue layouts before compilation.
+Native TEB cache blocks belong to the resident host even when a game's thread
+causes a block to be allocated. Per-window WoW64 TEB blocks keep their process
+ownership. Private-data cleanup preserves the shared cache for the next thread.
+Native GDI table and 64-bit DC attribute buckets also retain host ownership.
+Metal shared-event listeners retain their run loops and release their dummy
+sources on thread exit. Callbacks use non-repeating registry handles instead of
+capturing freed listener pointers. Retirement stops pending delivery, and a later
+job releases abandoned listener registrations after the guest threads end.
+The next process can reuse these shared graphics caches after game data is
+released. WoW64 DC buckets retain their process-window ownership.
 Each x64 child uses Madeira's existing fresh ARM64EC ntdll loader. A private
 pool copy alone can inherit hooks written into the shared PE image by a prior
 game. Other child architectures keep their upstream loader path.
@@ -235,6 +276,20 @@ Windows preparation holds launch admission until error cleanup completes.
 A missing-debugger failure releases its launch reservation only after
 the shared helper confirms cleanup. A failed native initialization retains admission. Allocation errors report the
 failure without terminating the app on a timer.
+JIT execution checks preserve resident signal handlers' masks, alternate-stack
+and restart flags. Unrelated faults keep their existing handler. One-shot and
+legacy handlers remain unsupported; changed handlers are never overwritten.
+Core state, rewind, cheat, patch and disc completions retain the pause intent from
+their request. A later pause prevents automatic resume. Windows status polling
+grants one background grace period per observed heartbeat; slow polls cannot
+renew a missing heartbeat indefinitely.
+Data reservations can retain read/write protection flags during cleanup.
+Address ownership, job admission and special-view checks still protect live memory.
+Core state files open from Foundation's app or temporary directory, so iOS does
+not need to grant access to filesystem ancestors. Canonical-path and no-symlink
+checks still apply to each save directory and state file.
+Diagnostic exports release temporary Foundation strings after each sanitized
+line instead of retaining them until the full export completes.
 
 
 Per-game volume uses a shared saved gain and menu slider. SameBoy, native PSP,

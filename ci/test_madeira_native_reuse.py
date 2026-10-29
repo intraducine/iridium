@@ -60,7 +60,7 @@ def source_fixture():
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
         for name in ('ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
                      'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
-                     'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h'):
+                     'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
             destination = root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((build.ROOT / name).read_bytes())
@@ -98,7 +98,7 @@ class NativeReuseTests(unittest.TestCase):
             helper.write_bytes(original_helper)
             self.assertEqual(before, build.native_inputs())
             for name in ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
-                         'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h'):
+                         'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
                 path = root / name; saved = path.read_bytes()
                 path.write_bytes(saved + b'\n/* Changed thread adapter */\n')
                 self.assertNotEqual(before, build.native_inputs(), name)

@@ -152,6 +152,8 @@ and teardown checks.
 The shared menu owns pause, resume, controls, and close. A runtime lease is
 released only after confirmed teardown. Play!/Flycast also pause their upstream
 VM threads. Libraries remain loaded after stop.
+State, rewind, cheat, patch and disc operations resume only if no later pause was
+requested. This also preserves pauses from backgrounding and audio interruptions.
 
 Play! drains remaining graphics commands after VM pause, before state capture or
 the single GS release during teardown. The
@@ -161,9 +163,40 @@ job must have no remaining new Wine guest threads before admission returns to th
 library. The adapter tracks guest creation with checked hooks and retained Mach
 thread ports, without changing Wine's thread join or detach rules. Idle host
 services, such as Core Audio, can remain alive.
+The Mach exception registry and JIT trampolines reuse the same thread slots only
+after the previous kernel thread ends. Live and uncertain owners stay protected.
+An unregistered thread cannot fall back to another process's exception state.
 Stale status and close requests carry a different launch token and cannot finish or
 stop the current game. A failed or uncertain drain retains ownership and requires
 an app restart. Closing a game never initializes Wine or wineserver again.
+After a background gap, one grace period lets the Windows status writer resume.
+Another grace period requires a fresh status update. Repeated slow checks cannot
+keep an unresponsive host admitted indefinitely.
+Private views and large reservations record their process and admitted job number.
+Split views retain that ownership. Process exit retires them. Admission to a later
+job releases their data pages only after the previous
+job's guest threads and TLS destructors have ended. Cleanup checks the current
+view under the virtual-memory lock. It also releases the ended process's original
+PE image mappings. It keeps live images, anonymous executable memory, shared files,
+special and iOS-managed views. Shared JIT arenas and reusable image copies stay allocated.
+Windows image copies retain whole pool allocations for later jobs. Reuse checks
+the new image's code, writable data and trampolines against the existing page
+protections, after the old threads end. This avoids splitting each completed
+image into small executable fragments. Anonymous code keeps its own allocator.
+Dead threads can leave WaitOnAddress entries on their stacks. Cleanup unlinks
+those entries under Wine's shared queue locks before releasing the stacks.
+It preserves live waiters and defers reclamation if a queue is busy.
+The native TEB free list remains owned by the host. Creating its cache block
+from a game thread does not make the block eligible for game cleanup. WoW64
+keeps its separate cache inside each process window.
+The shared GDI table and native DC attribute buckets also stay with the host.
+WoW64 graphics buckets remain tied to their own process window.
+Metal event notifications use registered listener handles. Destroyed or retired
+listeners cannot signal a later game. Run loops stay retained through shutdown;
+thread exit removes their dummy sources and releases their run-loop references.
+The native shader adapter gives unused vertex-output lanes fixed values and
+replaces NaN and infinity in floating-point interpolants with zero before Metal
+interpolation. It preserves integer, pixel and position outputs.
 
 Shared JIT preparation creates the retained Windows arena and the reusable console
 arena during one owned built-in-helper activation. Later games reuse these arenas;

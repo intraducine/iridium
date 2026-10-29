@@ -128,7 +128,7 @@ class CompiledComponentsTests(unittest.TestCase):
             for name in ('ci/engine_pins.py', 'UPSTREAM-SOURCES.json'):
                 (root / name).write_bytes((components.ROOT / name).read_bytes())
             tracker_inputs = ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
-                              'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h')
+                              'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h')
             for name in tracker_inputs:
                 path = root / name; path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes((components.ROOT / name).read_bytes())

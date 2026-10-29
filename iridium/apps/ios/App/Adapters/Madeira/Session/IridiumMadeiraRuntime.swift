@@ -22,6 +22,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
     private var lastPoll: TimeInterval?
     private var lastProgress: TimeInterval = 0
     private var lastModification: Date?
+    private var backgroundGraceUsed = false
     private let clock: @Sendable () -> TimeInterval
     private var polling = false
     private var nativePending: [String: String] = [:]
@@ -140,11 +141,12 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
         }
         owner = token; pending = request; submitted = false; drainingSince = nil
         deadline = clock() + 120; lastProgress = clock(); lastPoll = nil; lastModification = nil
+        backgroundGraceUsed = false
         if booted { try publishRequest() }
     }
     private func publishRequest() throws {
         if cancelled == owner { pending = nil; return }
-        guard let pending, beginFence(), !FileManager.default.fileExists(atPath: root.appendingPathComponent("request.bin").path) else { throw Failure.busy }
+        guard let pending, !FileManager.default.fileExists(atPath: root.appendingPathComponent("request.bin").path), beginFence() else { throw Failure.busy }
         for (key, value) in nativePending {
             nativeOverrides.append((key, getenv(key).map { String(cString: $0) }))
             setenv(key, value, 1)
@@ -183,7 +185,9 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                 if self.poisoned { throw Failure.busy }
                 let now = self.clock()
                 if self.lastPoll == nil { fputs("[windows-session] observing game status\n", stderr) }
-                if let last = self.lastPoll, now - last > 3 { self.lastProgress = now }
+                if let last = self.lastPoll, now - last > 3, !self.backgroundGraceUsed {
+                    self.lastProgress = now; self.backgroundGraceUsed = true
+                }
                 self.lastPoll = now
                 if now > self.deadline { throw Failure.invalidStatus }
                 if self.booted && !self.nativeRunning() { throw Failure.invalidStatus }
@@ -195,6 +199,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                 guard modification.isSymbolicLink != true else { throw Failure.invalidStatus }
                 if modification.contentModificationDate != self.lastModification {
                     self.lastModification = modification.contentModificationDate; self.lastProgress = now
+                    self.backgroundGraceUsed = false
                 }
                 if now - self.lastProgress > 15 { throw Failure.invalidStatus }
                 let handle = try FileHandle(forReadingFrom: file)

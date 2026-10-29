@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <mach/mach.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 
 struct guest_thread {
@@ -16,6 +17,39 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static struct guest_thread *threads;
 static uint64_t generation, baseline;
 static bool captured;
+static _Atomic uint64_t session_epoch;
+extern void ir_windows_reclaim_completed(void);
+
+int ir_windows_thread_slot(void) {
+    static mach_port_t owners[IR_WINDOWS_THREAD_SLOTS];
+    static int count;
+    mach_port_t port = mach_thread_self();
+    int slot;
+    if (port == MACH_PORT_NULL) return -1;
+    pthread_mutex_lock(&lock);
+    for (slot = 0; slot < count; slot++) {
+        if (owners[slot] != port) continue;
+        mach_port_deallocate(mach_task_self(), port);
+        pthread_mutex_unlock(&lock);
+        return slot;
+    }
+    for (slot = 0; slot < count; slot++) {
+        mach_port_type_t type = 0;
+        // Keep uncertain and live owners, including their TLS destructors.
+        if (mach_port_type(mach_task_self(), owners[slot], &type) == KERN_SUCCESS &&
+            (type & MACH_PORT_TYPE_DEAD_NAME)) break;
+    }
+    if (slot == IR_WINDOWS_THREAD_SLOTS) {
+        mach_port_deallocate(mach_task_self(), port);
+        pthread_mutex_unlock(&lock);
+        return -1;
+    }
+    if (slot < count) mach_port_deallocate(mach_task_self(), owners[slot]);
+    else count++;
+    owners[slot] = port;
+    pthread_mutex_unlock(&lock);
+    return slot;
+}
 
 static void *guest_start(void *argument) {
     struct guest_thread *thread = argument;
@@ -74,9 +108,10 @@ static bool drained(void) {
 }
 bool ir_windows_threads_begin(void) {
     pthread_mutex_lock(&lock);
-    bool valid = prune() && (!captured || drained());
-    if (valid) { baseline = generation; captured = true; }
+    bool valid = prune() && (!captured || drained()) && atomic_load(&session_epoch) != UINT64_MAX;
+    if (valid) { baseline = generation; captured = true; atomic_fetch_add(&session_epoch, 1); }
     pthread_mutex_unlock(&lock);
+    if (valid) ir_windows_reclaim_completed();
     return valid;
 }
 bool ir_windows_threads_drained(void) {
@@ -85,3 +120,4 @@ bool ir_windows_threads_drained(void) {
     pthread_mutex_unlock(&lock);
     return valid;
 }
+uint64_t ir_windows_session_epoch(void) { return atomic_load(&session_epoch); }

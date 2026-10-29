@@ -40,6 +40,7 @@ COMPONENT_INPUTS = {
                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
                        'ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
                        'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
+                       'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
     'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',

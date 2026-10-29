@@ -11,6 +11,9 @@ SOURCE = ROOT / "iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift"
 
 HARNESS = r'''
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 @main struct DiagnosticLogExportTests {
     static func main() throws {
@@ -24,6 +27,22 @@ import Foundation
         func put(_ name: String, _ text: String) throws {
             try Data(text.utf8).write(to: dir.appendingPathComponent(name))
         }
+        #if canImport(Darwin)
+        let memoryDir = dir.appendingPathComponent("export-memory")
+        try fm.createDirectory(at: memoryDir.appendingPathComponent("logs"), withIntermediateDirectories: true)
+        let event = "[xp] 17:08:40.889 cpu=274 memory=5861 MB slots=64 free=10 phase=running flag=1 event=periodic measurement\n"
+        let bytes = Data(String(repeating: event, count: 11_000).utf8)
+        for index in 0..<3 {
+            try bytes.write(to: memoryDir.appendingPathComponent(String(format: "logs/fixture-2026-10-27_00-00-%02d.txt", index)))
+        }
+        let memoryExport = try RuntimeDiagnosticLogFiles.export(in: memoryDir, destination: memoryDir)
+        let memoryExportBytes = try memoryExport.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        precondition(memoryExportBytes > 3_000_000)
+        var usage = rusage()
+        precondition(getrusage(RUSAGE_SELF, &usage) == 0)
+        precondition(usage.ru_maxrss < 128 * 1024 * 1024) // Regex temporaries must not accumulate across export lines.
+        try fm.removeItem(at: memoryDir)
+        #endif
         precondition(names().isEmpty) // No logs is valid, not an error.
         try put("iridium-runtime.log", "host: zero presents\n")
         precondition(names() == ["iridium-runtime.log"]) // Legacy-only installs.

@@ -17,7 +17,95 @@ SESSION = ROOT / madeira_session.SOURCE
 
 
 class WindowsRuntimeTests(unittest.TestCase):
-    def test_steered_reservation_reuse_never_reclaims_a_new_or_committed_view(self):
+    def test_native_gdi_cache_survives_game_cleanup_and_wow_keeps_its_namespace(self):
+        original = (ROOT / 'vendor/Madeira/wine/dlls/win32u/dc.c').read_text()
+        source = madeira_threads.apply_dc(original)
+        buckets = source[source.index('struct dc_attr_bucket\n'):source.index('static BOOL DC_DeleteObject')]
+        allocate = source[source.index('static DC_ATTR *alloc_dc_attr('):source.index('/***********************************************************************\n *           set_initial_dc_state')]
+        virtual = madeira_threads.apply_virtual((ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text())
+        keep = virtual[virtual.index('void ir_windows_keep_view( void *base'):]
+        fixture = r'''
+#include <assert.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include "wine/list.h"
+#define WINE_IOS 1
+#define FALSE 0
+#define MEM_RESERVE 1
+#define MEM_COMMIT 2
+#define PAGE_READWRITE 4
+typedef unsigned DWORD;
+typedef int BOOL;
+typedef size_t SIZE_T;
+typedef struct {char data[192];} DC_ATTR;
+static struct {void *Peb;struct {void *UniqueProcess;} ClientId;int WowTebOffset;} teb;
+#define NtCurrentTeb() (&teb)
+#define HandleToULong(x) ((DWORD)(uintptr_t)(x))
+static int win32u_wow_session=1;
+static struct {size_t AllocationGranularity;} system_info={4096};
+static pthread_mutex_t dc_attr_lock=PTHREAD_MUTEX_INITIALIZER;
+static void win32u_gdi_check_publish(void){}
+static int caller_zero_bits(void){return teb.WowTebOffset;}
+static void *GetCurrentProcess(void){return (void*)-1;}
+struct file_view {void *base;size_t size;void *ios_owner;uint64_t ios_epoch;unsigned ios_retired;};
+static struct file_view views[10];
+static unsigned count;
+static int virtual_mutex,locked;
+static void server_enter_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && !locked);locked=1;}
+static void server_leave_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && locked);locked=0;}
+static struct file_view *find_view(void*p,size_t size){
+ assert(locked);
+ for(unsigned i=0;i<count;i++)if(views[i].base==p && size<=views[i].size)return &views[i];
+ return NULL;
+}
+static int NtAllocateVirtualMemory(void*process,void**p,int bits,size_t*size,int flags,int prot){
+ (void)process;(void)bits;(void)flags;(void)prot;assert(count<10);
+ *p=mmap(0,*size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);assert(*p!=MAP_FAILED);
+ views[count++]=(struct file_view){*p,*size,teb.Peb,1,0};return 0;
+}
+''' + keep + buckets + allocate + r'''
+static void retire(void *owner){
+ for(unsigned i=0;i<count;i++)if(views[i].ios_owner==owner){
+  views[i].ios_retired=1;assert(!mprotect(views[i].base,views[i].size,PROT_NONE));
+ }
+}
+int main(void){
+ teb.Peb=(void*)1;teb.ClientId.UniqueProcess=(void*)1;
+ DC_ATTR *native=alloc_dc_attr();assert(native && !views[0].ios_owner);
+ free_dc_attr(native);retire(teb.Peb);
+ for(unsigned i=2;i<302;i++){
+  teb.Peb=(void*)(uintptr_t)i;teb.ClientId.UniqueProcess=teb.Peb;
+  DC_ATTR *next=alloc_dc_attr();assert(next==native && count==1);next->data[0]=42;
+  free_dc_attr(next);retire(teb.Peb);
+ }
+ teb.WowTebOffset=1;teb.Peb=(void*)400;teb.ClientId.UniqueProcess=teb.Peb;
+ DC_ATTR *wow=alloc_dc_attr();assert(wow!=native && count==2 && views[1].ios_owner==teb.Peb);
+ free_dc_attr(wow);retire(teb.Peb);
+ teb.Peb=(void*)401;teb.ClientId.UniqueProcess=teb.Peb;
+ DC_ATTR *other=alloc_dc_attr();assert(other!=wow && count==3 && views[2].ios_owner==teb.Peb);
+ free_dc_attr(other);teb.WowTebOffset=0;teb.Peb=(void*)402;teb.ClientId.UniqueProcess=teb.Peb;
+ assert(alloc_dc_attr()==native && count==3 && !locked);
+ ir_windows_keep_view((void*)0x1234,4096);assert(!locked);
+ for(unsigned i=0;i<count;i++)assert(!munmap(views[i].base,views[i].size));
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'vendor/Madeira/wine/include'),
+                            str(path / 'main.c'), '-pthread', '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        gdi = (ROOT / 'vendor/Madeira/wine/dlls/win32u/gdiobj.c').read_text()
+        self.assertIn('ir_windows_keep_view( gdi_shared, size );', madeira_threads.apply_gdi(gdi))
+        for adapt, text in [(madeira_threads.apply_dc, original), (madeira_threads.apply_gdi, gdi)]:
+            with self.assertRaises(ValueError): adapt(text + text)
+
+    def test_steered_reservations_wait_for_process_exit_and_next_thread_fence(self):
         original = (ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
         source = madeira_threads.apply_virtual(original)
         table = source[source.index('#define IOS_STEER_MAX'):source.index('static uint64_t ios_steer_reclaim_dead( void );')]
@@ -29,38 +117,73 @@ class WindowsRuntimeTests(unittest.TestCase):
 #include <signal.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #define dprintf(...) ((void)0)
+#define VPROT_READ 0x01
+#define VPROT_WRITE 0x02
+#define VPROT_EXEC 0x04
 #define VPROT_COMMITTED 0x20
 static int virtual_mutex,locked;
-static const size_t page_size=4096;
-static unsigned deleted,committed;
+static unsigned deleted,committed,freed_committed;
+static int waiters_ready=1;
+static uint64_t epoch=1;
+static _Atomic uint64_t ios_cleanup_epoch=1;
+static bool metal_ready=true;
+static bool ir_windows_metal_reclaim(uint64_t e){assert(e==epoch && !locked);return metal_ready;}
+static void ir_windows_metal_owner_died(void*p){(void)p;}
+static uintptr_t owner=0xa;
+static uint64_t ir_windows_session_epoch(void){return epoch;}
+static void *ios_jit_current_peb(void){return (void*)owner;}
+static void ios_views_owner_died(void*p){(void)p;}
+static uint64_t ios_views_reclaim(uint64_t e){assert(e==ios_cleanup_epoch);return 0;}
+static int ios_views_forget_waiters(uint64_t e){assert(e==ios_cleanup_epoch);return waiters_ready;}
 struct file_view {void *base;size_t size;unsigned protect,ios_flags;};
 static struct file_view current;
+static int ios_view_reclaimable(const struct file_view*v,uint64_t e){assert(e==ios_cleanup_epoch);return !(v->protect&~(VPROT_READ|VPROT_WRITE|VPROT_COMMITTED)) && !v->ios_flags;}
 static void server_enter_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && !locked);locked=1;}
 static void server_leave_uninterrupted_section(int*m,sigset_t*s){(void)s;assert(m==&virtual_mutex && locked);locked=0;}
 ''' + table + ownership + r'''
 static struct file_view *find_view(void*p,size_t n){(void)n;assert(locked);return current.base==p?&current:0;}
-static unsigned get_page_vprot(char*p){assert(locked);return committed && p==(char*)current.base+4096?VPROT_COMMITTED:0;}
 static void ios_bigres_release(void*p){assert(locked && p==current.base);}
-static void delete_view(struct file_view*v){assert(locked);ios_steer_forget(v->base,v->size);v->base=0;deleted++;}
+static void delete_view(struct file_view*v){assert(locked);ios_steer_forget(v->base,v->size);v->base=0;deleted++;freed_committed+=committed;}
 ''' + reclaim + r'''
 int main(void){
  current=(struct file_view){(void*)0x10000,8192,0,0};ios_steer_record(current.base,current.size,1);ios_thread_died(1);
+ assert(!ios_steer_reclaim_dead()); /* An allocator thread can end while its process lives. */
+ ios_steer_owner_died((void*)0xb);assert(!ios_steer[0].retired);
+ ios_steer_owner_died((void*)owner);assert(!ios_steer_reclaim_dead());
  /* Explicit free, then a different allocation at the same address. */
  ios_steer_forget(current.base,current.size);assert(ios_steer_reclaim_dead()==0 && !deleted);
+ epoch++;ios_cleanup_epoch=epoch;owner=0xb;
  ios_steer_record(current.base,current.size,2);assert(ios_steer_n==1 && !ios_tid_is_dead(2));
+ ios_steer_owner_died((void*)0xa);assert(!ios_steer[0].retired);
  assert(ios_steer_reclaim_dead()==0 && !deleted);ios_thread_died(2);
- committed=1;assert(ios_steer_reclaim_dead()==0 && !deleted);committed=0;
+ committed=1;ios_steer[0].inuse=1;
+ assert(ios_steer_reclaim_dead()==0 && !deleted);
+ ios_steer_owner_died((void*)owner);assert(!ios_steer_reclaim_dead());
+ epoch++;ios_cleanup_epoch=epoch; /* begin() can advance only after all previous guest TLS destructors end. */
  current.protect=0x10000;assert(ios_steer_reclaim_dead()==0);current.protect=0;
+ current.protect=VPROT_EXEC;assert(ios_steer_reclaim_dead()==0);current.protect=0;
  current.ios_flags=4;assert(ios_steer_reclaim_dead()==0);current.ios_flags=0;
- ios_steer[0].inuse=1;assert(ios_steer_reclaim_dead()==0);ios_steer[0].inuse=0;
- assert(ios_steer_reclaim_dead()==8192 && deleted==1 && ios_steer[0].freed);
+ waiters_ready=0;assert(!ios_steer_reclaim_dead() && !deleted && !locked);waiters_ready=1;
+ metal_ready=false;ios_cleanup_epoch=epoch-1;
+ ir_windows_reclaim_completed();assert(!deleted && ios_cleanup_epoch==epoch-1);
+ assert(!ios_steer_reclaim_dead() && !deleted); /* An allocation cannot bypass a failed GPU fence. */
+ metal_ready=true;ir_windows_reclaim_completed();
+ assert(deleted==1 && ios_steer[0].freed && ios_cleanup_epoch==epoch);
  for(unsigned i=0;i<300;i++){
-  current=(struct file_view){(void*)0x10000,8192,0,0};ios_steer_record(current.base,current.size,2);
+  unsigned protection=i%2?VPROT_READ:VPROT_READ|VPROT_WRITE;
+  current=(struct file_view){(void*)0x10000,8192,protection,0};ios_steer_record(current.base,current.size,2);
   assert(!ios_tid_is_dead(2) && ios_steer_n==1 && !ios_steer[0].inuse);
-  assert(!ios_steer_reclaim_dead());ios_thread_died(2);assert(ios_steer_reclaim_dead()==8192);
+  assert(!ios_steer_reclaim_dead());ios_thread_died(2);
+  committed=1;ios_steer[0].inuse=1;assert(!ios_steer_reclaim_dead());
+  ios_steer_owner_died((void*)owner);assert(!ios_steer_reclaim_dead());epoch++;ios_cleanup_epoch=epoch;
+  assert(ios_steer_reclaim_dead()==8192);
  }
- assert(deleted==301 && !locked);return 0;
+ current=(struct file_view){(void*)0x10000,8192,0,0};owner=0;
+ ios_steer_record(current.base,current.size,2);ios_steer_owner_died(0);epoch++;ios_cleanup_epoch=epoch;
+ assert(!ios_steer_reclaim_dead());
+ assert(deleted==301 && freed_committed==301 && !locked);return 0;
 }
 '''
         with tempfile.TemporaryDirectory() as folder:
@@ -72,7 +195,176 @@ int main(void){
         deletion = source.split('static void delete_view(', 1)[1].split('static uint64_t ios_steer_reclaim_dead(', 1)[0]
         self.assertLess(deletion.index('ios_steer_forget('), deletion.index('unmap_area('))
         self.assertNotIn('NtFreeVirtualMemory(', reclaim)
+        self.assertIn('!ios_view_reclaimable( view, epoch )', reclaim)
         with self.assertRaises(ValueError): madeira_threads.apply_virtual(original + original)
+
+    def test_dead_image_cleanup_preserves_live_images_shared_views_and_private_code(self):
+        original = (ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
+        source = madeira_threads.apply_virtual(original)
+        helpers = source[source.index('static void ios_view_created('):source.index('struct ios_session_futex_queue')]
+        split = source.split('        new_view->ios_owner = view->ios_owner;', 1)[1].split('\n\n', 1)[0]
+        fixture = r'''
+#include <assert.h>
+#include <stdint.h>
+#include <stddef.h>
+#define VPROT_READ 1
+#define VPROT_WRITE 2
+#define VPROT_EXEC 4
+#define VPROT_WRITECOPY 8
+#define VPROT_COMMITTED 0x20
+#define VPROT_WRITEWATCH 0x40
+#define VPROT_ARM64EC 0x100
+#define SEC_FILE 0x800000
+#define SEC_IMAGE 0x1000000
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+static const size_t page_size=4096;
+struct file_view {void *base;size_t size;unsigned protect,ios_flags;void *ios_owner;uint64_t ios_epoch;unsigned ios_retired;};
+static struct file_view views[320];
+static unsigned view_count,deleted;
+static uintptr_t owner=1,executable;
+static uint64_t epoch=1;
+static int locked=1;
+static void *ios_jit_current_peb(void){return (void*)owner;}
+static uint64_t ir_windows_session_epoch(void){return epoch;}
+static unsigned get_page_vprot(void*p){return (uintptr_t)p==executable?VPROT_EXEC:0;}
+static void ios_bigres_release(void*p){assert(locked && p);}
+static void delete_view(struct file_view*v){assert(locked && v->base);v->base=0;deleted++;}
+#define WINE_RB_FOR_EACH_ENTRY(v,tree,type,entry) for(unsigned idx=0;idx<view_count;idx++) if(((v)=&views[idx])->base)
+''' + helpers + r'''
+static struct file_view *make(void){
+ struct file_view*v=&views[view_count++];assert(view_count<ARRAY_SIZE(views));
+ *v=(struct file_view){.base=(void*)((uintptr_t)view_count*8192),.size=8192,.protect=VPROT_READ|VPROT_WRITE|VPROT_COMMITTED};
+ ios_view_created(v);return v;
+}
+static void split_owner(struct file_view *new_view,struct file_view *view){
+ new_view->ios_owner=view->ios_owner;
+''' + split + r'''
+}
+int main(void){
+ for(unsigned i=0;i<300;i++)make();
+ owner=2;struct file_view*live=make();
+ owner=1;struct file_view*code=make();code->protect|=VPROT_EXEC;
+ struct file_view*upgraded=make();executable=(uintptr_t)upgraded->base+page_size;
+ struct file_view*file=make();file->protect|=0x10000;
+ struct file_view*system=make();system->protect|=0x200;
+ struct file_view*placeholder=make();placeholder->protect|=0x400;
+ struct file_view*quarantined=make();quarantined->ios_flags=4;
+ struct file_view*image=make();image->protect=SEC_IMAGE|SEC_FILE|VPROT_COMMITTED|VPROT_READ|VPROT_EXEC|VPROT_WRITECOPY|VPROT_ARM64EC;
+ struct file_view*system_image=make();system_image->protect=image->protect|0x200;
+ struct file_view*shared_file=make();shared_file->protect|=SEC_FILE;
+ struct file_view*quarantined_image=make();quarantined_image->protect=image->protect;quarantined_image->ios_flags=4;
+ owner=2;struct file_view*live_image=make();live_image->protect=image->protect;owner=1;
+ epoch=0;struct file_view*resident=make();epoch=1;
+ owner=0;struct file_view*unknown=make();owner=1;
+ ios_views_owner_died((void*)owner);assert(!live->ios_retired && code->ios_retired);
+ assert(!ios_views_reclaim(1) && !deleted);
+ epoch=2;struct file_view*current=make();ios_views_owner_died((void*)owner);
+ assert(ios_views_reclaim(2)==301*8192 && deleted==301 && !image->base);
+ assert(live->base && code->base && upgraded->base && file->base && system->base && placeholder->base && quarantined->base && resident->base && unknown->base && current->base);
+ assert(system_image->base && shared_file->base && quarantined_image->base && live_image->base);
+ struct file_view*reused=&views[0];reused->base=(void*)8192;owner=3;ios_view_created(reused);
+ assert(reused->ios_owner==(void*)3 && reused->ios_epoch==2 && !reused->ios_retired);
+ ios_views_owner_died((void*)1);assert(!reused->ios_retired && !ios_views_reclaim(2));
+ struct file_view copy={0};split_owner(&copy,current);
+ assert(copy.ios_owner==current->ios_owner && copy.ios_epoch==current->ios_epoch && copy.ios_retired==current->ios_retired);
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', str(path / 'main.c'),
+                            '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
+    def test_reclaim_removes_dead_waiters_and_preserves_shared_teb_cache_and_live_wakes(self):
+        native = (ROOT / 'vendor/Madeira/wine/dlls/ntdll/unix/sync.c').read_text()
+        pe = (ROOT / 'vendor/Madeira/wine/dlls/ntdll/sync.c').read_text()
+        madeira_threads.verify_futex_layout(native, pe)
+        with self.assertRaises(ValueError): madeira_threads.verify_futex_layout(native, pe.replace('    DWORD tid;', '    DWORD changed;'))
+        source = madeira_threads.apply_virtual((ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text())
+        cleanup = source[source.index('struct ios_session_futex_queue'):source.index('/* A later epoch proves')]
+        resident = source[source.index('            if (!wow)\n            {'):source.index('            *p_teb_block = ptr;')]
+        start = source.index('    if (*p_next_free_teb)')
+        cached = source[start:source.index('\n    else\n    {', start)]
+        structs = pe[pe.index('struct futex_entry\n'):pe.index('static struct futex_queue futex_queues[256];')]
+        start = pe.index('void WINAPI RtlWakeAddressAll(')
+        wake = pe[start:pe.index('\n}', start) + 2]
+        fixture = r'''
+#include <assert.h>
+#include <stdint.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include "wine/list.h"
+typedef int32_t LONG;
+typedef uint32_t DWORD;
+typedef uintptr_t ULONG_PTR;
+typedef void *HANDLE;
+#define WINAPI
+#define TRACE(...) ((void)0)
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+static LONG InterlockedCompareExchange(LONG*p,LONG value,LONG expected){return __sync_val_compare_and_swap(p,expected,value);}
+static void InterlockedExchange(LONG*p,LONG value){__sync_lock_test_and_set(p,value);}
+static void InterlockedIncrement64(long long*p){++*p;}
+static struct {long long woa_wake_all;} ios_xp_nt;
+struct file_view {void *base;size_t size;uint64_t ios_epoch;int ios_retired;void *ios_owner;};
+static struct file_view views[3];
+static struct file_view *find_view(void*p,size_t size){
+ for(unsigned i=0;i<ARRAY_SIZE(views);i++)
+  if((uintptr_t)p>=(uintptr_t)views[i].base && size<=views[i].size && (uintptr_t)p-(uintptr_t)views[i].base<=views[i].size-size)return &views[i];
+ return 0;
+}
+static int ios_view_reclaimable(const struct file_view*v,uint64_t epoch){return v->ios_owner && v->ios_retired && v->ios_epoch && v->ios_epoch<epoch;}
+static void keep_shared_teb(void *ptr,size_t total,int wow){
+''' + resident + r'''
+}
+static void *reuse_teb(void ***p_next_free_teb){
+ void *ptr=0;const size_t teb_size=64;
+''' + cached + r'''
+ return ptr;
+}
+''' + structs + cleanup + r'''
+static struct ios_session_futex_queue queues[256];
+void *ios_get_shared_futex_queues(void){return queues;}
+static struct futex_queue *get_futex_queue(const void*addr){return (void*)&queues[((uintptr_t)addr>>4)%256];}
+static void spin_lock(LONG*p){assert(!InterlockedCompareExchange(p,-1,0));}
+static void spin_unlock(LONG*p){InterlockedExchange(p,0);}
+static unsigned alerts;
+static void NtAlertMultipleThreadByThreadId(HANDLE*tids,unsigned count,void*a,void*b){
+ (void)a;(void)b;for(unsigned i=0;i<count;i++){assert((uintptr_t)tids[i]==2 || (uintptr_t)tids[i]==3);alerts++;}
+}
+static void ios_futex_note_wake(const char*s,const void*a,const void*q,int n){(void)s;(void)a;(void)q;(void)n;}
+''' + wake + r'''
+int main(void){
+ _Static_assert(sizeof(struct futex_entry)==sizeof(struct ios_session_futex_entry),"waiter layout");
+ _Static_assert(sizeof(struct futex_queue)==sizeof(struct ios_session_futex_queue),"queue layout");
+ size_t size=(size_t)sysconf(_SC_PAGESIZE);
+ void*dead=mmap(0,size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);assert(dead!=MAP_FAILED);
+ void*pool=mmap(0,size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANON,-1,0);assert(pool!=MAP_FAILED);
+ struct futex_entry*old=dead,live={0},current={0};
+ int key=0;old->addr=live.addr=current.addr=&key;old->tid=1;live.tid=2;current.tid=3;
+ views[0]=(struct file_view){dead,size,1,1,(void*)1};views[1]=(struct file_view){&current,sizeof(current),2,1,(void*)1};
+ views[2]=(struct file_view){pool,size,1,1,(void*)1};
+ keep_shared_teb(pool,size,1);assert(views[2].ios_owner==(void*)1); /* A WoW cache belongs to its own window. */
+ keep_shared_teb(pool,size,0);assert(!views[2].ios_owner && !views[2].ios_epoch && !views[2].ios_retired);
+ struct futex_queue*q=get_futex_queue(&key);list_init(&q->queue);
+ list_add_tail(&q->queue,&old->entry);list_add_tail(&q->queue,&live.entry);list_add_tail(&q->queue,&current.entry);
+ queues[0].lock=-1;assert(!ios_views_forget_waiters(2) && old->addr==&key);queues[0].lock=0;
+ assert(ios_views_forget_waiters(2) && !old->addr && live.addr==&key && current.addr==&key);
+ assert(!mprotect(dead,size,PROT_NONE));
+ if(ios_view_reclaimable(&views[2],2))assert(!mprotect(pool,size,PROT_NONE));
+ void **free_teb=pool;*(void**)pool=0;assert(reuse_teb(&free_teb)==pool && !free_teb);
+ RtlWakeAddressAll(&key);assert(alerts==2 && !live.addr && !current.addr && list_empty(&q->queue));
+ assert(!munmap(dead,size) && !munmap(pool,size));return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'vendor/Madeira/wine/include'),
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
 
     def test_window_callbacks_reuse_completed_process_slots_without_touching_live_owners(self):
         original = (ROOT / 'vendor/Madeira/build/win32u-unix/class_ios.c').read_text()
@@ -480,6 +772,38 @@ for _ in 0..<9 {
  if case .blocked=poll(stalledID,from:stalled){expired=true;break}
 }
 precondition(expired && stalled.isBusy,"silent host released admission")
+let slowRoot=folder.appendingPathComponent("slow-polls"),slowID=UUID()
+let slow=IridiumMadeiraRuntime(root:slowRoot,nativeRunning:{true},beginFence:{true},drained:{true},clock:{observation.now()})
+try slow.submit(slowID);slow.configureHost();try status(zero,phase:0,inRoot:slowRoot)
+_=poll(slowID,from:slow)
+try FileManager.default.removeItem(at:slowRoot.appendingPathComponent("request.bin"))
+try status(slowID,phase:1,inRoot:slowRoot);_=poll(slowID,from:slow)
+observation.advance(30)
+if case .running=poll(slowID,from:slow){}else{fatalError("first background gap needs grace")}
+var slowExpired=false
+for _ in 0..<5 {
+ observation.advance(5)
+ if case .blocked=poll(slowID,from:slow){slowExpired=true;break}
+}
+precondition(slowExpired && slow.isBusy,"repeated slow polls must not renew a silent supervisor forever")
+let recoveredRoot=folder.appendingPathComponent("fresh-heartbeat"),recoveredID=UUID()
+let recovered=IridiumMadeiraRuntime(root:recoveredRoot,nativeRunning:{true},beginFence:{true},drained:{true},clock:{observation.now()})
+try recovered.submit(recoveredID);recovered.configureHost();try status(zero,phase:0,inRoot:recoveredRoot)
+_=poll(recoveredID,from:recovered)
+try FileManager.default.removeItem(at:recoveredRoot.appendingPathComponent("request.bin"))
+try status(recoveredID,phase:1,inRoot:recoveredRoot);_=poll(recoveredID,from:recovered)
+for i in 0..<3 {
+ observation.advance(30)
+ if case .running=poll(recoveredID,from:recovered){}else{fatalError("real background gap poisoned a recovering host")}
+ try FileManager.default.setAttributes([.modificationDate:Date(timeIntervalSince1970:Double(i))],ofItemAtPath:recoveredRoot.appendingPathComponent("status.bin").path)
+ if case .running=poll(recoveredID,from:recovered){}else{fatalError("new heartbeat must restore background grace")}
+}
+precondition(!recovered.requiresRestart)
+let occupiedRoot=folder.appendingPathComponent("occupied"),occupiedID=UUID()
+let occupied=IridiumMadeiraRuntime(root:occupiedRoot,nativeRunning:{true},beginFence:{fatalError("unpublished request advanced the session epoch")},drained:{true},clock:{observation.now()})
+try occupied.submit(occupiedID);occupied.configureHost();try status(zero,phase:0,inRoot:occupiedRoot)
+try Data("pending request".utf8).write(to:occupiedRoot.appendingPathComponent("request.bin"))
+if case .blocked=poll(occupiedID,from:occupied){}else{fatalError("overwrote a pending request")}
 let foreign=folder.appendingPathComponent("foreign")
 try FileManager.default.createDirectory(at:foreign,withIntermediateDirectories:true)
 try Data("user data".utf8).write(to:foreign.appendingPathComponent("status.bin"))
@@ -517,6 +841,108 @@ int main(int argc,char**argv){
                             str(c), '-o', str(path / 'wire')], check=True, timeout=30)
             subprocess.run([str(path / 'wire'), str(path / 'request.bin')], check=True, timeout=5)
 
+    def test_thread_slots_refuse_live_or_uncertain_owners_and_never_fall_back(self):
+        bridge = ROOT / 'iridium/apps/ios/RuntimeBridge'
+        native = (bridge / 'IRWindowsThreads.c').read_text()
+        allocator = native[native.index('int ir_windows_thread_slot(void)'):native.index('static void *guest_start(')]
+        fixture = r"""
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#define IR_WINDOWS_THREAD_SLOTS 3
+#define MACH_PORT_NULL 0
+#define KERN_SUCCESS 0
+#define MACH_PORT_TYPE_DEAD_NAME 1
+typedef unsigned mach_port_t;
+typedef unsigned mach_port_type_t;
+static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+static unsigned current=1,types[2000],failed,refs[2000];
+static unsigned mach_task_self(void){return 1;}
+static unsigned mach_thread_self(void){refs[current]++;return current;}
+static int mach_port_deallocate(unsigned task,unsigned port){(void)task;assert(refs[port]);refs[port]--;return 0;}
+static int mach_port_type(unsigned task,unsigned port,unsigned *type){(void)task;if(port==failed)return 1;*type=types[port];return 0;}
+""" + allocator + r"""
+int main(void){
+ assert(ir_windows_thread_slot()==0 && refs[1]==1);
+ assert(ir_windows_thread_slot()==0 && refs[1]==1);
+ current=2;assert(ir_windows_thread_slot()==1);
+ current=3;assert(ir_windows_thread_slot()==2);
+ current=4;assert(ir_windows_thread_slot()==-1 && !refs[4]);
+ failed=2;types[2]=MACH_PORT_TYPE_DEAD_NAME;
+ assert(ir_windows_thread_slot()==-1 && !refs[4]);failed=0;
+ for(current=4;current<1500;current++){
+  unsigned old=current==4?2:current-1;types[old]=MACH_PORT_TYPE_DEAD_NAME;
+  assert(ir_windows_thread_slot()==1 && !refs[old]);
+  assert(ir_windows_thread_slot()==1 && refs[current]==1);
+  assert(refs[1]==1 && refs[3]==1);
+ }
+ return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder); (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', str(path / 'main.c'),
+                            '-pthread', '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+        signal = (ROOT / 'vendor/Madeira/build/ntdll-unix/signal_arm64_ios.c').read_text()
+        adapted = madeira_threads.apply_signal(signal, bridge / 'IRWindowsThreads.h')
+        lookup = adapted[adapted.index('static int ios_lookup_thread('):adapted.index('/* ml405', adapted.index('static int ios_lookup_thread('))]
+        self.assertNotIn('ios_thread_registry[0]', lookup)
+        self.assertIn('int idx = ios_my_slot;', adapted)
+        self.assertIn('if (ios_my_slot < 0) abort_thread( STATUS_NO_MEMORY );', adapted)
+        virtual = madeira_threads.apply_virtual((ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text())
+        self.assertIn('int slot = ir_windows_thread_slot();', virtual)
+        self.assertNotIn('ios_jit_next_slot', virtual)
+        with self.assertRaises(ValueError):
+            madeira_threads.apply_signal(signal.replace('#define IOS_MAX_WINE_THREADS 512', '#define IOS_MAX_WINE_THREADS 513'), bridge / 'IRWindowsThreads.h')
+
+    @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
+    def test_thread_slots_and_exception_records_reuse_after_kernel_thread_exit(self):
+        bridge = ROOT / 'iridium/apps/ios/RuntimeBridge'
+        signal = madeira_threads.apply_signal((ROOT / 'vendor/Madeira/build/ntdll-unix/signal_arm64_ios.c').read_text(), bridge / 'IRWindowsThreads.h')
+        layout = signal[signal.index('struct ios_thread_entry {'):signal.index('/* Exact-match registry probe')]
+        lookup = signal[signal.index('static int ios_lookup_thread('):signal.index('\n/*', signal.index('static int ios_lookup_thread('))]
+        setup = signal[signal.index('    int idx = ios_my_slot;'):signal.index('    /* Set exception port for this thread')]
+        fixture = r"""
+#include "IRWindowsThreads.h"
+#include <assert.h>
+#include <mach/mach.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#define IOS_MAX_WINE_THREADS IR_WINDOWS_THREAD_SLOTS
+#define STATUS_NO_MEMORY 1
+static _Thread_local int ios_my_slot;
+static void abort_thread(int status){(void)status;abort();}
+void ir_windows_reclaim_completed(void){}
+""" + layout + lookup + '\nstatic void register_thread(thread_t pe_thread,uintptr_t teb,void *trampoline){\n' + setup + r"""
+}
+static void *worker(void *value){
+ ios_my_slot=ir_windows_thread_slot();assert(ios_my_slot>0 && ios_my_slot<64);
+ assert(ios_my_slot==ir_windows_thread_slot());
+ thread_t port=mach_thread_self();register_thread(port,(uintptr_t)value,value);
+ uintptr_t teb;void *tramp;assert(ios_lookup_thread(port,&teb,&tramp));
+ assert(teb==(uintptr_t)value && tramp==value);mach_port_deallocate(mach_task_self(),port);return 0;
+}
+int main(void){
+ assert(ir_windows_thread_slot()==0);
+ register_thread(pthread_mach_thread_np(pthread_self()),1,(void*)1);
+ for(uintptr_t i=2;i<1602;i++){
+  pthread_t t;assert(!pthread_create(&t,0,worker,(void*)i));assert(!pthread_join(t,0));
+ }
+ pthread_t group[32];for(uintptr_t i=0;i<32;i++)assert(!pthread_create(&group[i],0,worker,(void*)(i+2000)));
+ for(unsigned i=0;i<32;i++)assert(!pthread_join(group[i],0));
+ uintptr_t teb=1;void *tramp=(void*)1;
+ assert(!ios_lookup_thread(MACH_PORT_DEAD,&teb,&tramp) && !teb && !tramp);
+ assert(ios_thread_count<64);return 0;
+}
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder); (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-I', str(bridge),
+                            str(path / 'main.c'), str(bridge / 'IRWindowsThreads.c'), '-pthread',
+                            '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=30)
+
     @unittest.skipUnless(os.uname().sysname == 'Darwin', 'Mach thread APIs required')
     def test_guest_thread_exit_destructors_and_retained_host_services(self):
         fixture = r'''
@@ -526,6 +952,8 @@ int main(int argc,char**argv){
 #include <stdatomic.h>
 #include <unistd.h>
 static atomic_bool entered,stop,host_stop,destructing,release_destructor;
+static uint64_t cleaned;
+void ir_windows_reclaim_completed(void){assert(ir_windows_threads_drained());assert(ir_windows_session_epoch()==++cleaned);}
 static pthread_key_t key;
 static void*host(void*unused){(void)unused;while(!atomic_load(&host_stop))usleep(1000);return 0;}
 static void destructor(void*value){(void)value;atomic_store(&destructing,true);while(!atomic_load(&release_destructor))usleep(1000);}
@@ -540,18 +968,21 @@ static void wait_drain(void){for(int i=0;i<5000&&!ir_windows_threads_drained();+
 int main(void){
  assert(!pthread_key_create(&key,destructor));
  pthread_t baseline,system_thread,thread;
+ assert(ir_windows_session_epoch()==0);
  assert(!ir_windows_pthread_create(&baseline,0,host,0));
  assert(!ir_windows_threads_drained());assert(ir_windows_threads_begin());wait_drain();
+ assert(ir_windows_session_epoch()==1);
  assert(!pthread_create(&system_thread,0,host,0));wait_drain();
  for(int mode=0;mode<100;++mode){
   atomic_store(&entered,false);atomic_store(&stop,false);atomic_store(&destructing,false);atomic_store(&release_destructor,false);
   assert(ir_windows_threads_begin());
+  uint64_t epoch=ir_windows_session_epoch();assert(epoch==(uint64_t)mode+2);
   pthread_attr_t attr;assert(!pthread_attr_init(&attr));
   bool detached=mode%2; if(detached)assert(!pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED));
   assert(!ir_windows_pthread_create(&thread,&attr,worker,(void*)(long)(mode%3)));assert(!pthread_attr_destroy(&attr));
-  assert(!ir_windows_threads_drained());assert(!ir_windows_threads_begin());wait_for(&entered);
+  assert(!ir_windows_threads_drained());assert(!ir_windows_threads_begin());assert(ir_windows_session_epoch()==epoch);wait_for(&entered);
   atomic_store(&stop,true);wait_for(&destructing);
-  assert(!ir_windows_threads_drained());atomic_store(&release_destructor,true);
+  assert(!ir_windows_threads_drained());assert(!ir_windows_threads_begin());assert(ir_windows_session_epoch()==epoch);atomic_store(&release_destructor,true);
   if(!detached)assert(!pthread_join(thread,0));
   wait_drain();
  }
@@ -576,6 +1007,7 @@ int main(void){
 #include <errno.h>
 int fail_create(pthread_t*t,const pthread_attr_t*a,void*(*s)(void*),void*v){(void)t;(void)a;(void)s;(void)v;return EAGAIN;}
 static void*worker(void*v){return v;}
+void ir_windows_reclaim_completed(void){assert(ir_windows_threads_drained());}
 int main(void){pthread_t thread;assert(ir_windows_threads_begin());assert(ir_windows_pthread_create(&thread,0,worker,0)==EAGAIN);assert(ir_windows_threads_drained());return 0;}
 '''
         with tempfile.TemporaryDirectory() as folder:

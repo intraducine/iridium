@@ -8,6 +8,17 @@
 
 import Foundation
 
+final class SteamResumeGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if done { return false }
+        done = true
+        return true
+    }
+}
+
 // MARK: - WebSocket Delegate
 
 /// Logs WebSocket lifecycle events: protocol negotiation, server-initiated close.
@@ -85,8 +96,10 @@ actor SteamConnection {
         task.resume()
 
         // Verify the connection completed (WebSocket handshake + ping round-trip)
+        let resumeOnce = SteamResumeGuard()
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             task.sendPing { error in
+                guard resumeOnce.claim() else { return }
                 if let error {
                     cont.resume(throwing: SteamError.connectionFailed(error.localizedDescription))
                 } else {
@@ -96,6 +109,7 @@ actor SteamConnection {
         }
 
         await serverList.markSuccess(endpoint: server.endpoint)
+        guard webSocketTask === task else { throw SteamError.disconnected }
         scheduleReceive(task)
         SteamLog.trace("WebSocket connected — ready for protocol messages")
     }

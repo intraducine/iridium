@@ -18,6 +18,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var phase3JITVerified = false
     @Published private(set) var phase3Status = "Waiting for the engine"
     private var phase3Generation: UInt64 = 0 // main-thread callback admission
+    private var phase3CommandIntent: UInt64?
     @Published private(set) var pspReady = false
     @Published private(set) var pspResolution = 2
     @Published private(set) var pspCPUMode = "Not reported"
@@ -141,7 +142,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             dolphinCPUMode = "Waiting for JIT"
             dolphinPerformance = "Waiting for speed data"
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
-            coreControls = IridiumCoreControls(); coreStateStatus = nil; coreOperationPending = false
+            coreControls = IridiumCoreControls(); coreStateStatus = nil; coreOperationPending = false; phase3CommandIntent = nil
             cheats = savedCheats; pendingCheats = nil; restoredCheats = false
             fastForward = false; rewindEnabled = false
             pspJITStatus = "Off — using IR interpreter"
@@ -323,10 +324,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         case 4: pause()
         case 5: phase3JITVerified = true
         case 6:
+            let commandIntent = phase3CommandIntent; phase3CommandIntent = nil
             if message == "Cheats applied." { finishCheats(success: true) }
             dolphinStatePending = false; dolphinStateStatus = message
-            coreOperationPending = false; coreStateStatus = message; resume()
+            coreOperationPending = false; coreStateStatus = message; resumeAfterOperation(commandIntent)
         case 7:
+            phase3CommandIntent = nil
             finishCheats(success: false)
             dolphinStatePending = false; dolphinStateStatus = message
             coreOperationPending = false; coreStateStatus = message; error = message
@@ -691,6 +694,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard game?.runtimeID == "dolphin", phase3Ready, phase == .paused, !dolphinStatePending, !coreOperationPending else {
             error = "Wait for Dolphin to start and pause the game before using save states."; return
         }
+        phase3CommandIntent = currentIntentGeneration
         dolphinStatePending = true; dolphinStateStatus = load ? "Loading state…" : "Saving state…"
         ir_phase3_dolphin_state(load, UInt32(dolphinStateSlot))
     }
@@ -751,7 +755,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private func sendCoreCommand(_ command: [String: Any]) -> Bool {
         guard let data = try? JSONSerialization.data(withJSONObject: command),
               let text = String(data: data, encoding: .utf8) else { return false }
-        return ir_phase3_command(text)
+        let accepted = ir_phase3_command(text)
+        if accepted, let operation = command["operation"] as? String,
+           ["state", "cheats", "patches", "disc", "discFile"].contains(operation) {
+            phase3CommandIntent = currentIntentGeneration
+        }
+        return accepted
     }
 
     private func publishSameBoyOptions(_ owner: IridiumRuntimeLease) {
@@ -789,6 +798,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         do { try IridiumCheat.validate(items, formats: coreControls.cheatFormats ?? []) }
         catch { self.error = error.localizedDescription; return false }
         let command = IridiumCheat.command(items)
+        let generation = currentIntentGeneration
         pendingCheats = items
         if game.platform == .psp {
             guard let data = try? JSONSerialization.data(withJSONObject: command),
@@ -810,7 +820,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     guard self.lease == owner else { return }
                     self.finishCheats(success: success)
-                    if success { self.resume() } else { self.error = "Check the cheat format and code. Existing codes have been kept." }
+                    if success { self.resumeAfterOperation(generation) } else { self.error = "Check the cheat format and code. Existing codes have been kept." }
                 }
             }
         }
@@ -865,6 +875,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard let game, let owner = lease, phase == .paused, coreControls.states, !coreOperationPending else { return }
         let slot = coreStateSlot
         guard (0..<5).contains(slot) else { return }
+        let generation = currentIntentGeneration
         coreOperationPending = true; coreStateStatus = load ? "Loading state…" : "Saving state…"
         if game.platform.isPhase3 {
             var command: [String: Any] = ["operation": "state", "load": load, "slot": slot]
@@ -902,7 +913,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async {
                 guard self.lease == owner else { return }
                 self.coreOperationPending = false; self.coreStateStatus = failure ?? (load ? "State loaded." : "State saved.")
-                if let failure { self.error = failure } else { self.resume() }
+                if let failure { self.error = failure } else { self.resumeAfterOperation(generation) }
             }
         }
     }
@@ -944,6 +955,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     }
     func rewind() {
         guard let owner = lease, game?.runtimeID == "sameboy", phase == .paused, rewindEnabled, !coreOperationPending else { return }
+        let generation = currentIntentGeneration
         coreOperationPending = true
         queue.async {
             guard self.queueOwner == owner, self.requested == .pause else { return }
@@ -962,7 +974,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async {
                 guard self.lease == owner else { return }
                 self.coreOperationPending = false
-                if let message { self.error = message } else { self.resume() }
+                if let message { self.error = message } else { self.resumeAfterOperation(generation) }
             }
         }
     }
@@ -1014,11 +1026,17 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return intent.request
     }
 
+    private func resumeAfterOperation(_ generation: UInt64?) {
+        guard let generation, generation == currentIntentGeneration else { return }
+        resume()
+    }
+
     func pause() {
         MainActor.assumeIsolated { controllerHaptics?.stopAll() }
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let owner = lease, phase == .running || phase == .starting else { return }
+        guard let owner = lease, phase == .running || phase == .starting || phase == .paused else { return }
         lock.lock(); intent.pause(); intentGeneration &+= 1; lock.unlock()
+        if phase == .paused { return }
         phase = .paused; releaseButtons(); dolphinMotion.stop()
         diagnostics.phase = "pause requested"
         LibraryController.shared.configure(enabled: true, ownsInput: true)

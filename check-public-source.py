@@ -39,9 +39,10 @@ PUBLIC_SELF_TEST = {
         # Xcode 27.1 rebuild: every complete PEM block is byte-identical
         # to the pinned public crypto-selftests-pk.c source fixture.
         '791f856b68f4f5d8af72f2198712cec7b5d7e7ee4e90658a1f76f23cb16a8e17',
-        # Isolated Xcode 27.1 rebuild: all 12 complete key blocks match the
+        # Isolated Xcode 27.1 rebuilds: all 12 complete key blocks match the
         # pinned public source, including the 11 headers this scanner matches.
         '25b616afd4774c41736160d3b32baef64fc7576ae7324ac78c4f93abdd68041a',
+        'de7c32a4a193a0ce333f8edf8abe94e9b2a15a8bb8a666a4d09afef65749a586',
     },
 }
 # Only reviewed public upstream bytes may bypass the signing-file suffix check.

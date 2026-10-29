@@ -44,6 +44,7 @@ final class IridiumConsoleSession {
     func restoreCheatsIfNeeded() {}
     func finishCheats(success: Bool) {}
     var phase3JITVerified = false, phase3Status = "Waiting for video"
+    var phase3CommandIntent: UInt64?
     var pspResolution = 2, pspCPUMode = "Not reported", pspJITStatus = ""
     var pspJITFallbackReason: String?, pspStateStatus: String?, error: String?
     var nativePSPController: Int? = 1, terminalFailure = false, diagnostics = Progress()

@@ -17,14 +17,22 @@ static int irStateFolder(const char *directory) {
     bool systemAlias = (!strncmp(directory, "/var/", 5) || !strncmp(directory, "/tmp/", 5)) &&
         !strncmp(path, "/private", 8) && !strcmp(path + 8, directory);
     if (strcmp(path, directory) && !systemAlias) return -1;
-    int folder = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    char *cursor = nullptr;
-    for (char *name = strtok_r(path, "/", &cursor); name && folder >= 0; name = strtok_r(nullptr, "/", &cursor)) {
-        int next = strcmp(name, ".") && strcmp(name, "..") ?
-            openat(folder, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
-        close(folder); folder = next;
+    // iOS permits the app container, but not reads of its filesystem ancestors.
+    for (NSString *root in @[NSHomeDirectory(), NSTemporaryDirectory()]) {
+        char base[PATH_MAX];
+        if (!realpath(root.fileSystemRepresentation, base)) continue;
+        size_t length = strlen(base);
+        if (length <= 1 || strncmp(path, base, length) || (path[length] && path[length] != '/')) continue;
+        int folder = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        char *cursor = nullptr;
+        for (char *name = strtok_r(path + length, "/", &cursor); name && folder >= 0; name = strtok_r(nullptr, "/", &cursor)) {
+            int next = strcmp(name, ".") && strcmp(name, "..") ?
+                openat(folder, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
+            close(folder); folder = next;
+        }
+        return folder;
     }
-    return folder;
+    return -1;
 }
 static bool irStateTransfer(int fd, void *bytes, size_t count, bool writing) {
     char *cursor = (char *)bytes;

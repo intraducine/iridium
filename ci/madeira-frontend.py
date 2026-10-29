@@ -448,8 +448,14 @@ def run_checked_recipe(name, env=None):
         generated.write_text(madeira_threads.apply_loader((UPSTREAM / 'build/ntdll-unix/loader_ios.c').read_text()))
         patches.append(('compile_one "$BUILD_DIR/loader_ios.c" "loader"',
                         'compile_one ' + shlex.quote(str(generated)) + ' "loader" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/signal_arm64_ios.c'
+        generated.write_text(madeira_threads.apply_signal((UPSTREAM / 'build/ntdll-unix/signal_arm64_ios.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsThreads.h'))
+        patches.append(('compile_one "$BUILD_DIR/signal_arm64_ios.c" "signal_arm64"',
+                        'compile_one ' + shlex.quote(str(generated)) + ' "signal_arm64" -I"$BUILD_DIR"'))
         generated = OUTPUT / 'embedding/virtual_ios.c'
-        generated.write_text(madeira_threads.apply_virtual((UPSTREAM / 'build/ntdll-unix/virtual_ios.c').read_text()))
+        madeira_threads.verify_futex_layout((UPSTREAM / 'wine/dlls/ntdll/unix/sync.c').read_text(),
+                                           (UPSTREAM / 'wine/dlls/ntdll/sync.c').read_text())
+        generated.write_text(madeira_threads.apply_virtual((UPSTREAM / 'build/ntdll-unix/virtual_ios.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsJITPool.h'))
         patches.append(('compile_one "$BUILD_DIR/virtual_ios.c" "virtual"',
                         'compile_one ' + shlex.quote(str(generated)) + ' "virtual" -I"$BUILD_DIR"'))
     elif name == 'wineserver':
@@ -466,11 +472,16 @@ def run_checked_recipe(name, env=None):
         generated.write_text(madeira_threads.apply_window((UPSTREAM / 'wine/dlls/win32u/window.c').read_text()))
         classes = OUTPUT / 'embedding/class_ios.c'
         classes.write_text(madeira_threads.apply_class((UPSTREAM / 'build/win32u-unix/class_ios.c').read_text()))
+        for unit, adapt in [('dc', madeira_threads.apply_dc), ('gdiobj', madeira_threads.apply_gdi)]:
+            (OUTPUT / ('embedding/' + unit + '_ios.c')).write_text(adapt((UPSTREAM / 'wine/dlls/win32u' / (unit + '.c')).read_text()))
         patches = [
             ('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
              'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/win32u-unix'))),
             ('    case "$name" in', '    case "$name" in\n        window)\n            compile_one '
              + shlex.quote(str(generated)) + ' "window"\n            continue\n            ;;')]
+        for unit in ('dc', 'gdiobj'):
+            patches.append(('    case "$name" in', '    case "$name" in\n        ' + unit + ')\n            compile_one '
+                            + shlex.quote(str(OUTPUT / ('embedding/' + unit + '_ios.c'))) + ' "' + unit + '"\n            continue\n            ;;'))
         patches.append(('compile_one "$BUILD_DIR/class_ios.c" "class"',
                         'compile_one ' + shlex.quote(str(classes)) + ' "class"'))
         patches.append(('ar rcs "$OBJ_DIR/libwin32u_unix.a" "$OBJ_DIR"/*.o',
@@ -593,6 +604,23 @@ ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
         run('xcrun', '--sdk', 'iphoneos', 'metal', '-std=metal3.1', '--target=air64-apple-ios18.0', '-c', str(source), '-o', str(air))
         run('xxd', '-n', name, '-i', str(air), str(headers / f'{name}.h'))
     text = (UPSTREAM / 'build/dxmt-ios/build.sh').read_text()
+    metal = OUTPUT / 'embedding/winemetal_ios.c'
+    metal.parent.mkdir(parents=True, exist_ok=True)
+    metal.write_text(madeira_threads.apply_metal(
+        (UPSTREAM / 'dxmt/src/winemetal/unix/winemetal_unix.c').read_text(), RUNTIME_BRIDGE / 'IRWindowsMetal.h'))
+    signature = OUTPUT / 'embedding/dxbc_signature.cpp'
+    signature.write_text(madeira_threads.apply_vertex_outputs(
+        (UPSTREAM / 'dxmt/src/airconv/dxbc_signature.cpp').read_text()))
+    marker = '    compile_cxx "$DXMT_SRC/airconv/$cpp" "$name"'
+    if text.count(marker) != 1: raise ValueError('Madeira shader signature build recipe changed')
+    text = text.replace(marker, '    if [ "$cpp" = dxbc_signature.cpp ]; then\n'
+                        '        compile_cxx ' + shlex.quote(str(signature)) + ' "$name"\n'
+                        '    else\n' + marker + '\n    fi')
+    text = text.replace('INCLUDES="', 'INCLUDES="-iquote' + str(UPSTREAM / 'dxmt/src/airconv') + ' ', 1)
+    marker = 'compile_objc "$DXMT_SRC/winemetal/unix/winemetal_unix.c" winemetal_unix'
+    if text.count(marker) != 1: raise ValueError('Madeira Metal build recipe changed')
+    text = text.replace(marker, 'INCLUDES="$INCLUDES -iquote' + str(UPSTREAM / 'dxmt/src/winemetal/unix')
+                        + '"\ncompile_objc ' + shlex.quote(str(metal)) + ' winemetal_unix')
     text = text.replace('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"',
                         'BUILD_DIR=' + shlex.quote(str(UPSTREAM / 'build/dxmt-ios')))
     # Select the installed Metal tool. The AIR target and language remain the
@@ -699,7 +727,8 @@ def native_inputs():
             'files': {name: file_digest(ROOT / name) for name in (
                 'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
                 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
-                'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h')},
+                'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
+                'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h')},
             'cryptoLibraries': list(CRYPTO_LIBRARIES), 'tools': tools, 'upstreamSources': native_source_identity()}
 
 

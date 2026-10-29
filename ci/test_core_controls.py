@@ -14,6 +14,91 @@ INCLUDE = ROOT / 'vendor/Flycast/core/deps/libretro-common/include'
 
 
 class CoreControlsTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift required')
+    def test_core_completion_preserves_a_pause_requested_during_the_operation(self):
+        from test_native_psp_frontend import function
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
+        event = function(source, '    private func phase3Event(')
+        completed = event[event.index('        case 6:') + len('        case 6:'):event.index('        case 7:')]
+        cheats = function(source, '    @discardableResult func applyCheats(')
+        state = function(source, '    func requestCoreState(')
+        rewind = function(source, '    func rewind()')
+        def completion(method):
+            block = function(method, '            DispatchQueue.main.async {')
+            return block[block.index('{') + 1:-1]
+        methods = function(source, '    func pause()') + '\n' + function(source, '    private func sendCoreCommand(')
+        if '    private func resumeAfterOperation(' in source:
+            methods += '\n' + function(source, '    private func resumeAfterOperation(')
+        methods += '\n' + function(source, '    func requestDolphinState(')
+        self.compile_run(r'''
+import Foundation
+final class Queue {func async(_ work: @escaping @Sendable () -> Void) {}}
+final class Rumble {func stopAll() {}}
+struct Motion {func stop() {}}
+struct Intent {enum Request {case play,pause};var request=Request.play;mutating func pause(){request = .pause}}
+struct Progress {var phase=""}
+final class LibraryController: @unchecked Sendable {
+    static let shared=LibraryController();func configure(enabled:Bool,ownsInput:Bool) {}
+}
+func ir_phase3_pause(_ paused:Bool) {}
+func ir_psp_native_pause() {}
+func ir_phase3_dolphin_state(_ load:Bool,_ slot:UInt32) {}
+func ir_phase3_command(_ text:String)->Bool {!text.contains("reject")}
+final class Session: @unchecked Sendable {
+    enum Phase {case running,starting,paused,stopping}
+    struct Game {var runtimeID="dolphin"}
+    var game:Game?=Game(),phase=Phase.running,lease:Int?=1,queueOwner:Int?=1
+    let lock=NSLock(),queue=Queue();var intent=Intent(),intentGeneration:UInt64=0
+    var currentIntentGeneration:UInt64 {intentGeneration}
+    var requested:Intent.Request {intent.request}
+    var controllerHaptics:Rumble?=Rumble(),dolphinMotion=Motion()
+    var phase3Controller:Int?=1,nativePSPController:Int?,phase3Ready=true
+    var dolphinStatePending=false,coreOperationPending=false,bootComplete=false
+    var dolphinStateSlot=0,dolphinStateStatus:String?,coreStateStatus:String?,error:String?
+    var phase3CommandIntent:UInt64?,diagnostics=Progress(),progress=Progress(),resumes=0
+    func releaseButtons() {};func stopTimer() {};func silenceAudio() {};func persistSaves() throws {}
+    func publishProgress(_ owner:Int,force:Bool) {};func reportSaveError(_ owner:Int) {}
+    func finishCheats(success:Bool) {coreOperationPending=false}
+    func resume(){resumes+=1;phase = .running}
+    func issue(_ operation:String)->Bool {sendCoreCommand(["operation":operation])}
+    func completed(_ message:String="Cheats applied.") {COMPLETED}
+    func completedCheats(owner:Int,generation:UInt64,success:Bool) {CHEATS}
+    func completedState(owner:Int,generation:UInt64,failure:String?,load:Bool=false) {STATE}
+    func completedRewind(owner:Int,generation:UInt64,message:String?) {REWIND}
+    METHODS
+}
+for operation in ["cheats","state","disc","discFile","patches"] {
+    let normal=Session();normal.pause();precondition(normal.issue(operation));normal.completed()
+    precondition(normal.resumes==1 && normal.phase == .running,"Normal operations still resume")
+    let paused=Session();paused.pause();precondition(paused.issue(operation))
+    paused.pause() // App backgrounding or an audio interruption after admission.
+    precondition(paused.issue("snapshot"),"A snapshot must not replace the operation's pause counter")
+    paused.completed()
+    precondition(paused.resumes==0 && paused.phase == .paused,"Completion must preserve the later pause")
+}
+let dolphin=Session();dolphin.pause();dolphin.requestDolphinState(load:false);dolphin.pause();dolphin.completed("State saved.")
+precondition(dolphin.resumes==0 && !dolphin.dolphinStatePending)
+for operation in 0..<3 {
+    let normal=Session();normal.pause();let generation=normal.currentIntentGeneration
+    if operation==0 {normal.completedCheats(owner:1,generation:generation,success:true)}
+    else if operation==1 {normal.completedState(owner:1,generation:generation,failure:nil)}
+    else {normal.completedRewind(owner:1,generation:generation,message:nil)}
+    precondition(normal.resumes==1)
+    let paused=Session();paused.pause();let previous=paused.currentIntentGeneration;paused.pause()
+    if operation==0 {paused.completedCheats(owner:1,generation:previous,success:true)}
+    else if operation==1 {paused.completedState(owner:1,generation:previous,failure:nil)}
+    else {paused.completedRewind(owner:1,generation:previous,message:nil)}
+    precondition(paused.resumes==0 && paused.phase == .paused)
+}
+let stale=Session();stale.pause();stale.completedCheats(owner:2,generation:stale.currentIntentGeneration,success:true)
+precondition(stale.resumes==0,"An old game's completion cannot resume this game")
+let failed=Session();failed.pause();failed.completedState(owner:1,generation:failed.currentIntentGeneration,failure:"kept")
+precondition(failed.resumes==0 && failed.error=="kept")
+let rejected=Session();rejected.pause();precondition(!rejected.issue("reject"));precondition(rejected.phase3CommandIntent==nil)
+'''.replace('COMPLETED', completed).replace('CHEATS', completion(cheats))
+           .replace('STATE', completion(state)).replace('REWIND', completion(rewind))
+           .replace('METHODS', methods), '.swift')
+
     def test_psp_pending_cheats_can_resume_after_pause_without_releasing_ownership(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
         from test_native_psp_frontend import function
@@ -412,9 +497,22 @@ int main() {
     @unittest.skipUnless(shutil.which('clang++') and subprocess.run(['uname'], capture_output=True, text=True).stdout.strip() == 'Darwin', 'macOS Foundation required')
     def test_state_storage_preserves_slots_on_failure_and_rejects_wrong_versions_and_symlinks(self):
         self.compile_run(r'''
+#import <Foundation/Foundation.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <cerrno>
+static int sandboxOpen(const char *path, int flags) {
+    if (!strcmp(path,"/") || !strcmp(path,"/private")) { errno=EACCES; return -1; }
+    return open(path,flags);
+}
+#define open sandboxOpen
 #include "IRStateFile.h"
+#undef open
 #include <cassert>
 int main() { @autoreleasepool {
+    assert(irStateFolder("/")<0);
+    assert(irStateFolder("/private")<0);
     NSString *root=[[NSTemporaryDirectory() stringByResolvingSymlinksInPath] stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil];
     NSData *first=[@"first game state" dataUsingEncoding:NSUTF8StringEncoding];
