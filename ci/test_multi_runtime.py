@@ -98,7 +98,7 @@ class MultiRuntimeTests(unittest.TestCase):
         continuation = source[start:source.index('\n            }', start)]
         fixture = r'''import Foundation
 @MainActor enum IridiumMenuSounds {
-    enum Cue { case select }
+    enum Cue { case invoke }
     static var selections = 0
     static func play(_ cue: Cue) { selections += 1 }
 }

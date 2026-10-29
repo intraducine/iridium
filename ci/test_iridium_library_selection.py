@@ -20,9 +20,9 @@ class LibrarySelectionTests(unittest.TestCase):
         fixture = r'''import Foundation
 enum IridiumTouchHaptics { case off, medium; static var mode = Self.medium; static func current() -> Self { mode } }
 enum IridiumMenuSounds {
-    enum Cue { case move, select, back }
-    static var moves = 0
-    static func play(_ cue: Cue) { if cue == .move { moves += 1 } }
+    enum Cue { case focus, invoke, show, hide, back, next, previous }
+    static var moves = 0, invokes = 0
+    static func play(_ cue: Cue, count: Int = 1) { if cue == .focus { moves += count }; if cue == .invoke { invokes += 1 } }
 }
 final class UISelectionFeedbackGenerator {
     var valid = true, pulses = 0, preparations = 0
@@ -52,7 +52,7 @@ SELECT
     }
     func focus(_ id: UUID) {
         let old = selection.highlightedID
-        select(id); changed(old, selection.highlightedID)
+        select(id, focused: true); changed(old, selection.highlightedID)
     }
     func changed(_ old: UUID?, _ value: UUID?) {
 CHANGE
@@ -72,7 +72,7 @@ let host = Host([a,b,c])
 host.showFocus = true; host.showHints = true
 host.touch(b)
 precondition(host.selectionFeedback.pulses == 1 && !host.showFocus && !host.showHints)
-host.touch(b); precondition(host.selectionFeedback.pulses == 1 && IridiumMenuSounds.moves == 1)
+host.touch(b); precondition(host.selectionFeedback.pulses == 1 && IridiumMenuSounds.invokes == 2 && IridiumMenuSounds.moves == 0)
 host.swipe(c); precondition(host.selectionFeedback.pulses == 2)
 // Model a feedback resource made unusable during a native session.
 let oldFeedback = host.selectionFeedback; oldFeedback.valid = false
@@ -83,11 +83,17 @@ precondition(host.selectionFeedback.pulses == 2 && oldFeedback.pulses == 2)
 IridiumTouchHaptics.mode = .off
 let moves = IridiumMenuSounds.moves
 host.touch(b); host.swipe(c)
-precondition(host.selectionFeedback.pulses == 2 && IridiumMenuSounds.moves == moves + 2)
+precondition(host.selectionFeedback.pulses == 2 && IridiumMenuSounds.moves == moves + 1)
 IridiumTouchHaptics.mode = .medium
 host.showFocus = true
 host.focus(b)
 precondition(host.selectionFeedback.pulses == 3)
+let before = IridiumMenuSounds.moves
+for i in 0..<40 { host.focus(i % 2 == 0 ? a : b) }
+precondition(IridiumMenuSounds.moves == before + 40, "Every keyboard focus event must sound")
+let swipeBefore = IridiumMenuSounds.moves
+host.swipe(a); host.swipe(c)
+precondition(IridiumMenuSounds.moves == swipeBefore + 3, "Coalesced scrolls retain each crossed cover")
 print("PASS shipping menu haptics: fresh feedback after game dismissal, touch/swipe/controller, no duplicate tap and Off retained")
 '''.replace('SELECT', select).replace('CHANGE', change).replace('DISMISS', dismiss)
         with tempfile.TemporaryDirectory() as folder:

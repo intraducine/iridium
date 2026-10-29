@@ -257,21 +257,12 @@
   ],
   "assets": [
     {
-      "id": "kenney-ui-audio",
+      "id": "atkey-ui-sounds",
       "path": "iridium/apps/ios/App/Resources/MenuAudio",
-      "upstream": "https://kenney.nl/assets/ui-audio",
-      "version": "1.0",
-      "license": "CC0-1.0",
-      "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
-      "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
-    },
-    {
-      "id": "lokif-gui-sound-effects",
-      "path": "iridium/apps/ios/App/Resources/MenuAudio",
-      "upstream": "https://opengameart.org/content/gui-sound-effects",
-      "version": "2009-08-14",
-      "license": "CC0-1.0",
-      "archiveSHA256": "883e817fefa2271d77e29db35b6959174f56de073655693dad1e6962619c529d",
+      "upstream": "https://atkeysounds.itch.io/ui-sounds",
+      "version": "2026-10-21",
+      "license": "LicenseRef-Atkey-UI-Sounds-1",
+      "archiveSHA256": "1ef2057bf84b008dad70cfbf0a3ba1cf8d392e95fbb03a580a4acdfdee6123e6",
       "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
     }
   ]

@@ -1289,7 +1289,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
                 }
             }
             .onChange(of: iridiumPages) { old, pages in
-                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .open : .back) }
+                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .next : .back) }
                 if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
             }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
@@ -1388,7 +1388,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
             let next = order[min(max(index + step, 0), order.count - 1)]
-            if next != iridiumFocus { IridiumMenuSounds.play(.move); iridiumFocus = next }
+            if next != iridiumFocus { IridiumMenuSounds.play(.focus); iridiumFocus = next }
         } else if command == "accept" {
             if iridiumFocus == "Menu sounds" { menuSounds.toggle() }
             else { iridiumPages.append(iridiumFocus) }
@@ -1462,7 +1462,7 @@ NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
                     .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 Toggle("Menu sounds", isOn: $menuSounds).id("Menu sounds")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Menu sounds" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
-                    .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.select) } }
+                    .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.invoke) } else { IridiumMenuSounds.stop() } }
             }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))

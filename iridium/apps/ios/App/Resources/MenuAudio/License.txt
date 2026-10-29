@@ -1,29 +1,15 @@
-UI SFX Set
+UI Sounds - Nintendo-ish Menu Sounds
+Sounds by AtkeySounds (Atkey).
+Source: https://atkeysounds.itch.io/ui-sounds
+Published: 2026-10-21
+License: LicenseRef-Atkey-UI-Sounds-1. See Atkey-license.txt for the original terms.
 
-	by  Kenney Vleugels (Kenney.nl)
+The sounds are licensed separately from Iridium's source code. The license
+permits use and modification in apps and distribution within finished projects.
+It prohibits standalone redistribution or resale of the sounds and distribution
+as another sound pack or asset library.
 
-			------------------------------
-
-	License (Creative Commons Zero, CC0)
-	http://creativecommons.org/publicdomain/zero/1.0/
-
-	You may use these assets in personal and commercial projects.
-	Credit (Kenney or www.kenney.nl) would be nice but is not mandatory.
-
-			------------------------------
-
-	Donate:   http://support.kenney.nl
-	Request:  http://request.kenney.nl
-
-	Follow on Twitter for updates:
-	@KenneyNL
-
-GUI Sound Effects by Lokif
-Source: https://opengameart.org/content/gui-sound-effects
-Published: 2009-08-14
-License: Creative Commons Zero, CC0 1.0
-https://creativecommons.org/publicdomain/zero/1.0/
-
-The author lists this pack as CC0 on the source page.
-Iridium uses positive.wav, misc_menu_4.wav and negative.wav, converted to
-mono PCM, trimmed with edge fades, and reduced in level.
+Iridium uses ten selected clips for menu feedback. They are converted to mono
+16-bit PCM with excess silence and very low tails trimmed, short edge fades,
+lower levels, and file metadata removed. Original pitch and timbre are retained.
+source.json records the original archive, source files, output hashes and edits.

@@ -93,7 +93,8 @@ class ProductionUXTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_setup_completion_enters_main_library_after_dismissal(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
-        handler=source[source.index('    private func completeOnboardingAction()'):source.index('    private func restoreKeyboardFocus()')]
+        start=source.index('    private func completeOnboardingAction()')
+        handler=source[start:source.index('\n    private func ',start+1)]
         fixture='''import Foundation
 @MainActor final class Setup {
  enum Action { case library }
