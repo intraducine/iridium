@@ -11,6 +11,12 @@ licenses in `iridium/apps/ios/App/source-ownership.json` and `App/Origin`.
 Iridium owns its library, artwork, navigation, setup, controls, settings, and
 runtime adapters. Frozen build-43 overlays remain test fixtures only.
 
+Library and Settings navigation use three quiet cues from Kenney's UI Audio 1.0
+(CC0-1.0). The app bundles short PCM conversions, the original license, and
+source/output hashes in `App/Resources/MenuAudio`. A saved Menu sounds switch
+controls playback. System Sound Services preserve silent-mode behavior without
+changing emulator audio sessions. Rapid scroll updates do not queue sounds.
+
 Adaptations include:
 
 - Shared player/input ownership, isolated console records, Favorites, artwork,

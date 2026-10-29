@@ -254,5 +254,16 @@
       "build": "ci/build-phase3.py",
       "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/console-engines.md for platform adapters, complete source and unverified limits."
     }
+  ],
+  "assets": [
+    {
+      "id": "kenney-ui-audio",
+      "path": "iridium/apps/ios/App/Resources/MenuAudio",
+      "upstream": "https://kenney.nl/assets/ui-audio",
+      "version": "1.0",
+      "license": "CC0-1.0",
+      "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+      "manifest": "iridium/apps/ios/App/Resources/MenuAudio/source.json"
+    }
   ]
 }

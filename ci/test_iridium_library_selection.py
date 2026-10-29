@@ -19,6 +19,11 @@ class LibrarySelectionTests(unittest.TestCase):
         change = view[start:view.index('\n            }', start)]
         fixture = r'''import Foundation
 enum IridiumTouchHaptics { case off, medium; static var mode = Self.medium; static func current() -> Self { mode } }
+enum IridiumMenuSounds {
+    enum Cue { case move, select, back }
+    static var moves = 0
+    static func play(_ cue: Cue) { if cue == .move { moves += 1 } }
+}
 final class UISelectionFeedbackGenerator {
     var valid = true, pulses = 0, preparations = 0
     func selectionChanged() { if valid { pulses += 1 } }
@@ -67,7 +72,7 @@ let host = Host([a,b,c])
 host.showFocus = true; host.showHints = true
 host.touch(b)
 precondition(host.selectionFeedback.pulses == 1 && !host.showFocus && !host.showHints)
-host.touch(b); precondition(host.selectionFeedback.pulses == 1)
+host.touch(b); precondition(host.selectionFeedback.pulses == 1 && IridiumMenuSounds.moves == 1)
 host.swipe(c); precondition(host.selectionFeedback.pulses == 2)
 // Model a feedback resource made unusable during a native session.
 let oldFeedback = host.selectionFeedback; oldFeedback.valid = false
@@ -76,8 +81,9 @@ precondition(host.selectionFeedback !== oldFeedback && host.selectionFeedback.pr
 host.swipe(b); host.touch(a)
 precondition(host.selectionFeedback.pulses == 2 && oldFeedback.pulses == 2)
 IridiumTouchHaptics.mode = .off
+let moves = IridiumMenuSounds.moves
 host.touch(b); host.swipe(c)
-precondition(host.selectionFeedback.pulses == 2)
+precondition(host.selectionFeedback.pulses == 2 && IridiumMenuSounds.moves == moves + 2)
 IridiumTouchHaptics.mode = .medium
 host.showFocus = true
 host.focus(b)

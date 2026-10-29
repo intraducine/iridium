@@ -1,0 +1,24 @@
+{
+  "upstream": "https://kenney.nl/assets/ui-audio",
+  "version": "1.0",
+  "archiveSHA256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+  "license": "CC0-1.0",
+  "conversion": "Mono 44.1 kHz signed 16-bit PCM WAV, metadata removed, amplitude multiplied by 0.22.",
+  "files": {
+    "move.wav": {
+      "source": "Audio/rollover2.ogg",
+      "sourceSHA256": "d0bc0fcba496d73df1da8c145e5330df75f87ab5a4f33a9b71461b006b5c338e",
+      "sha256": "408d20e68ef636ea2b7c41523c7a84452737b503de00aee24feba77289a9d3fc"
+    },
+    "select.wav": {
+      "source": "Audio/click3.ogg",
+      "sourceSHA256": "e3e7fc7ccd9c5cfdf77bffa05aee10d4973812076c76dc889ba2b16ea434127f",
+      "sha256": "ae6503dd58f10283af59760e7b5551f3081acff243fd0d7c62fb0498f42e26d4"
+    },
+    "back.wav": {
+      "source": "Audio/click1.ogg",
+      "sourceSHA256": "59175ac17cd49a68dd736285738441287636112a84a6f7ce0d89921bda5a5360",
+      "sha256": "adf483c26614f8708c7f84fb353c94b94a67c201157cbfd7e75ab2478e373f35"
+    }
+  }
+}

@@ -97,6 +97,11 @@ class MultiRuntimeTests(unittest.TestCase):
         start = source.index(marker) + len(marker)
         continuation = source[start:source.index('\n            }', start)]
         fixture = r'''import Foundation
+@MainActor enum IridiumMenuSounds {
+    enum Cue { case select }
+    static var selections = 0
+    static func play(_ cue: Cue) { selections += 1 }
+}
 struct LibraryEntry { let id = UUID() }
 struct IridiumGame {
     var windows: LibraryEntry?
@@ -141,10 +146,12 @@ CONTINUATION
                 let host = Host(); host.jitState.enabled = enabled
                 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
                     runtimeID: runtime, fileExtension: "iso", importedAt: Date())
-                let count = nativeStarts.count; host.start(game)
+                let count = nativeStarts.count, selections = IridiumMenuSounds.selections
+                host.start(game)
                 precondition(nativeStarts.count == count + 1 && nativeStarts.last == game.id)
                 precondition(host.enables == 0 && host.pendingSupportGame == nil && host.library.error == nil)
                 host.enabledChanged(true); precondition(nativeStarts.count == count + 1)
+                precondition(IridiumMenuSounds.selections == selections + 1)
             }
         }
         let blocked = Host(); blocked.consoleSession.busy = true

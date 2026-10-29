@@ -54,10 +54,11 @@ def stage(app, root=ROOT):
     helper = root / APP / ownership(root)['helper']
     shutil.copy2(helper, app / 'MadeiraJITHelper/MadeiraJITHelper.swift')
     resources = root / APP / 'Resources'
-    catalog = destination / 'Assets.xcassets'
-    if catalog.exists():
-        shutil.rmtree(catalog)
-    shutil.copytree(resources / 'Assets.xcassets', catalog)
+    for name in ('Assets.xcassets', 'MenuAudio'):
+        target = destination / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(resources / name, target)
     for source in resources.iterdir():
         if source.is_file():
             shutil.copy2(source, destination / source.name)

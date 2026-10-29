@@ -67,6 +67,7 @@ struct IridiumLibraryView: View {
         favoriteIDs.split(separator: ",").contains(Substring(entry.id.uuidString))
     }
     private func launch(_ game: IridiumGame) {
+        IridiumMenuSounds.play(.select)
         #if IRIDIUM_UX_PREVIEW
         IridiumSimulatorLaunch.shared.attempt(game)
         return
@@ -88,6 +89,7 @@ struct IridiumLibraryView: View {
         } catch { library.error = error.localizedDescription }
     }
     private func options(_ game: IridiumGame) {
+        IridiumMenuSounds.play(.select)
         if let windows = game.windows { detail = windows }
         else { consoleDetail = game.console }
     }
@@ -99,6 +101,7 @@ struct IridiumLibraryView: View {
     private func select(_ id: UUID, touched: Bool = false) {
         if touched {
             showFocus = false; showHints = false
+            if selection.highlightedID != id { IridiumMenuSounds.play(.move) }
             if selection.highlightedID != id, IridiumTouchHaptics.current() != .off {
                 selectionFeedback.selectionChanged(); selectionFeedback.prepare()
             }
@@ -161,7 +164,10 @@ struct IridiumLibraryView: View {
                         .onChange(of: focus) { _, _ in revealFocusedSection(in: page) }
                         .onChange(of: showFocus) { _, shown in if shown { revealFocusedSection(in: page) } }
                         .onChange(of: chromeHeight) { _, _ in if showFocus { revealFocusedSection(in: page) } }
-                        .onChange(of: searching) { _, active in touchCoverHeight = nil; if active { page.scrollTo("header", anchor: .top) } }
+                        .onChange(of: searching) { _, active in
+                            IridiumMenuSounds.play(active ? .select : .back)
+                            touchCoverHeight = nil; if active { page.scrollTo("header", anchor: .top) }
+                        }
                 }
             }.onChange(of: compact, initial: true) { _, value in wideLayout = value }
                 .onChange(of: geometry.size.height) { _, _ in touchCoverHeight = nil }
@@ -216,15 +222,20 @@ struct IridiumLibraryView: View {
             }
             .onChange(of: selection.highlightedID) { old, value in
                 pageArtwork = selected?.id.uuidString ?? ""
-                if old != nil, value != nil, reorderSession.active == nil, (selection.userIsScrolling || showFocus),
-                   IridiumTouchHaptics.current() != .off {
-                    let ids = games.map(\.id)
-                    let boundaries = IridiumLibrarySelection.boundaries(from: old, to: value, in: ids)
-                    // Emit now; no timer, throttle or queued work outlives this scroll update.
-                    for _ in 0..<boundaries { selectionFeedback.selectionChanged() }
-                    selectionFeedback.prepare()
+                if old != nil, value != nil, reorderSession.active == nil, (selection.userIsScrolling || showFocus) {
+                    IridiumMenuSounds.play(.move)
+                    if IridiumTouchHaptics.current() != .off {
+                        let ids = games.map(\.id)
+                        let boundaries = IridiumLibrarySelection.boundaries(from: old, to: value, in: ids)
+                        // Emit now; no timer, throttle or queued work outlives this scroll update.
+                        for _ in 0..<boundaries { selectionFeedback.selectionChanged() }
+                        selectionFeedback.prepare()
+                    }
                 }
             }
+            .onChange(of: favorites) { _, _ in IridiumMenuSounds.play(.select) }
+            .onChange(of: features) { _, value in if value != nil { IridiumMenuSounds.play(.select) } }
+            .onChange(of: choosingAdd) { _, value in if value { IridiumMenuSounds.play(.select) } }
             // Display-name edits can change search membership without changing
             // either runtime's records. Reconcile only the effective identities.
             .onChange(of: games.map(\.id)) { _, _ in keepSelection() }
@@ -571,9 +582,14 @@ struct IridiumLibraryView: View {
     }
     private func restoreKeyboardFocus() {
         keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingFiles && features == nil && fileSource == nil && !choosingAdd && artworkDetail == nil && !onboarding.presented
+        if keyboardFocus { IridiumMenuSounds.play(.back) }
     }
     private func command(_ value: String) {
         guard !searchFocus else { if value == "back" { endSearch() }; return }
+        let previousFocus = focus
+        defer {
+            if focus != previousFocus, ["left", "right", "up", "down"].contains(value) { IridiumMenuSounds.play(.move) }
+        }
         let toolbar = ["search", "add", "settings"], actions = ["play", "options"]
         switch value {
         case "tab": favorites.toggle(); keepSelection()
@@ -599,11 +615,13 @@ struct IridiumLibraryView: View {
             case "search": beginSearch()
             case "add": choosingAdd = true
             case "settings": features = 1
-            case "games": focus = "play"
+            case "games": IridiumMenuSounds.play(.select); focus = "play"
             case "options": if let selected { options(selected) }
             default: if let selected { launch(selected) }
             }
-        case "back": if searching { endSearch() } else { focus = "games" }
+        case "back":
+            if searching { endSearch() }
+            else if focus != "games" { IridiumMenuSounds.play(.back); focus = "games" }
         default: break
         }
     }
