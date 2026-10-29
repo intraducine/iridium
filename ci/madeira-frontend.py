@@ -103,6 +103,10 @@ def project(source, names):
     objects[asset_build] = dict(isa='PBXBuildFile', fileRef=asset_ref)
     resources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXResourcesBuildPhase')
     resources['files'].append(asset_build); group['children'].append(asset_ref)
+    audio_ref, audio_build = 'F20000000000000000000006', 'F20000000000000000000007'
+    objects[audio_ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='MenuAudio', sourceTree='<group>')
+    objects[audio_build] = dict(isa='PBXBuildFile', fileRef=audio_ref)
+    resources['files'].append(audio_build); group['children'].append(audio_ref)
     if (os.environ.get('IRIDIUM_PHASE3') == '1'):
         phase3 = [('host', 'libIridiumRetroPlayer.dylib'), ('dolphin', 'libIridiumDolphin.dylib'),
                   ('azahar', 'azahar_libretro.dylib'), ('play', 'play_libretro_ios.dylib'), ('flycast', 'flycast_libretro.dylib')]

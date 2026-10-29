@@ -11,6 +11,23 @@ licenses in `iridium/apps/ios/App/source-ownership.json` and `App/Origin`.
 Iridium owns its library, artwork, navigation, setup, controls, settings, and
 runtime adapters. Frozen build-43 overlays remain test fixtures only.
 
+Library and Settings navigation use ten selected clips from AtkeySounds'
+Nintendo-ish Menu Sounds pack, published on 2026-10-21. Its royalty-free
+license permits app use and modification and distribution within finished
+projects, and prohibits standalone redistribution or resale of the sounds.
+The audio is licensed separately from Iridium's code. The original license,
+archive/source/output hashes, and PCM conversion details are bundled in
+`App/Resources/MenuAudio`. A saved Menu sounds switch controls playback.
+Focus, invoke, overlay show/hide, page movement, and Back have separate cues.
+Four existing focus clips alternate. Each crossed cover gets a cue, including
+coalesced scroll updates and rapid keyboard/controller steps. Independent
+AVAudioPlayer voices retain overlapping tails; coalesced focus onsets are spaced
+12 ms apart. Idle voices are reused. Menu audio uses the ambient audio category
+and stops on mute, interruption, backgrounding, or game launch. Runtime adapters
+keep ownership of the audio session during gameplay. Excess silence and very
+low tails are trimmed; short edge fades and lower levels retain the original
+pitch and timbre. Focus clips are 136-270 ms; other cues are 409-935 ms.
+
 Adaptations include:
 
 - Shared player/input ownership, isolated console records, Favorites, artwork,
@@ -218,3 +235,9 @@ Source collection includes dependency closures, generated recipes, Cargo sources
 compiler-source inputs, manifests, and notices. It omits only exact reviewed unused
 signing fixtures and superseded/prebuilt assets recorded by the source receipts.
 Original vendor checkouts are retained. See [LICENSING.md](LICENSING.md).
+
+## Launch feedback and saved setup
+
+- The owned Windows launch entry shows its starting screen before launch checks and blocks repeated requests while it prepares. The screen stays until a launch result is known.
+- Windows and console starting screens show live app RAM use and available app memory, using the existing shared memory sampler.
+- Setup completion migrates from existing preferences into a separate device-local Keychain record. Replacement installs can restore completion when the same signing identity can read that record. Getting Started remains available in Settings. Keychain retention after app deletion is not guaranteed by iOS.

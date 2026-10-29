@@ -1101,6 +1101,7 @@ struct LibraryView: View {
     @Environment(\.dismiss) private var iridiumDismiss
 
     @State private var iridiumPages: [String] = []
+    @AppStorage(IridiumMenuSounds.settingsKey) private var menuSounds = true
     @State private var iridiumFocus = "Controls"
     @State private var iridiumGuided = false
     @FocusState private var iridiumKeyboard: Bool
@@ -1287,7 +1288,8 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
                     } else { EmptyView() }
                 }
             }
-            .onChange(of: iridiumPages) { _, _ in
+            .onChange(of: iridiumPages) { old, pages in
+                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .next : .back) }
                 if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
             }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
@@ -1385,13 +1387,17 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         if ["left", "right", "up", "down"].contains(command) {
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
-            iridiumFocus = order[min(max(index + step, 0), order.count - 1)]
-        } else if command == "accept" { iridiumPages.append(iridiumFocus) }
+            let next = order[min(max(index + step, 0), order.count - 1)]
+            if next != iridiumFocus { IridiumMenuSounds.play(.focus); iridiumFocus = next }
+        } else if command == "accept" {
+            if iridiumFocus == "Menu sounds" { menuSounds.toggle() }
+            else { iridiumPages.append(iridiumFocus) }
+        }
     }
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Steam", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1453,7 +1459,11 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
 NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
+                    .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+Toggle("Menu sounds", isOn: $menuSounds).id("Menu sounds")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Menu sounds" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                    .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.invoke) } else { IridiumMenuSounds.stop() } }
+            }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 ForEach(IridiumConsoleSystem.all) { system in
@@ -1815,7 +1825,6 @@ struct LibraryDetail: View {
         LaunchCurtain.shared.begin(from: playFrame, appID: steamCover, artwork: steamCover.flatMap { id in
             SteamGamesRules.artwork(appID: id) { SteamOwnedLibrary.shared.game($0) }.first
         })
-        model.prepare(entry)
         let profile = entry
         // Give the pressed state a display turn before saving and handing off.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -3075,6 +3084,7 @@ struct LibraryHUD: View {
                         }
                     }.modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
                 }
+                IridiumLaunchMemoryView().frame(maxWidth: 360)
                 // The starting screen's controls are one row of glyph-only buttons, so a
                 // short screen does not push them below the fold. The words stay as
                 // VoiceOver labels. A stopped Dock start can be closed; while a Dock start
@@ -3124,11 +3134,13 @@ struct LibraryHUD: View {
                 .shadow(color: .black.opacity(0.55), radius: 30, y: 14)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
                 .modifier(LaunchEntrance(visible: launchVisible, step: 0, rise: CGSize(width: -36, height: 0), scale: 0.86, still: curtained))
+            ScrollView {
             VStack(alignment: .leading, spacing: short ? 10 : 14) {
                 Text(entry.title).font(.system(size: short ? 28 : 38, weight: .bold))
                     .lineLimit(2).minimumScaleFactor(0.6)
                     .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 22, height: 0), still: curtained))
                 launchWideStatus.modifier(LaunchEntrance(visible: launchVisible, step: 2, rise: CGSize(width: 22, height: 0), still: curtained))
+                IridiumLaunchMemoryView().frame(maxWidth: 440)
                 HStack(spacing: 12) {
                     if dockStart.failure != nil {
                         launchGlyph("Close session", "stop.circle") { model.requestQuit() }
@@ -3156,6 +3168,7 @@ struct LibraryHUD: View {
             }
             .frame(maxWidth: 520, alignment: .leading)
             .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: showLogs)
+            }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: 520)
             Spacer(minLength: 0)
         }
         .padding(.leading, leading).padding(.trailing, geo.safeAreaInsets.trailing + 24)

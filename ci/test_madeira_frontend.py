@@ -299,7 +299,9 @@ class FrontendImportTests(unittest.TestCase):
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
                          if key != 'existing-resource']
         self.assertEqual(resource_refs, [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
-                                         'path': 'PSP', 'sourceTree': '<group>'}])
+                                         'path': 'PSP', 'sourceTree': '<group>'},
+                                        {'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+                                         'path': 'MenuAudio', 'sourceTree': '<group>'}])
         self.assertIn('existing-resource', result['resources']['files'])
         source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
                        if key != 'existing-source']

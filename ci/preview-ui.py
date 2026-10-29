@@ -71,7 +71,7 @@ def prepare():
     for file in (source / 'Madeira').rglob('*'):
         relative = file.relative_to(source / 'Madeira')
         if file.is_file() and (file.suffix in {'.swift', '.h', '.c', '.metal'} or
-                              relative.parts[0] in {'Assets.xcassets', 'licenses', 'legal'} or
+                              relative.parts[0] in {'Assets.xcassets', 'MenuAudio', 'licenses', 'legal'} or
                               str(relative) in {'Info.plist', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut', 'madeira-jit.js'}):
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +96,7 @@ def prepare():
         elif phase['isa'] == 'PBXFrameworksBuildPhase':
             phase['files'] = [b for b in phase['files'] if objects[objects[b]['fileRef']].get('sourceTree') == 'SDKROOT' and 'MetalFX' not in path(b)]
         else:
-            phase['files'] = [b for b in phase['files'] if path(b) in {'Assets.xcassets', 'licenses', 'legal', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut', 'madeira-jit.js'}]
+            phase['files'] = [b for b in phase['files'] if path(b) in {'Assets.xcassets', 'MenuAudio', 'licenses', 'legal', 'GameConfig.xml', 'cacert.pem', 'Madeira JIT.shortcut', 'madeira-jit.js'}]
             if (OUTPUT / 'PreviewSamples/samples.json').is_file():
                 objects['ABC000000000000000000003'] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='../PreviewSamples', sourceTree='SOURCE_ROOT')
                 objects['ABC000000000000000000004'] = dict(isa='PBXBuildFile', fileRef='ABC000000000000000000003')

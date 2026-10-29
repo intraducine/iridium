@@ -2413,8 +2413,10 @@ struct ContentView: View {
     private func launchAfterJITEnded(started: Bool) {
         guard let launch = launchAfterJIT else { return }
         launchAfterJIT = nil
+        let requestedGame = library.startingJIT
         library.startingJIT = nil
         guard started, StikJITHelper.ready, library.current == nil, wine_process_is_running() == 0 else {
+            if library.preparing?.id == requestedGame { library.preparing = nil }
             logStore.log("[jit-on-play] JIT did not come on: the game was not started")
             // A failure has its own error; this one closes the details page as well.
             if started, library.current == nil { library.error = "JIT is on, but the game could not start. Tap Play again." }
@@ -2518,6 +2520,16 @@ struct ContentView: View {
     /// applies the entry's launch profile and runs the same full sequence as the
     /// developer interface's buttons.
     private func launchLibraryEntry(_ entry: LibraryEntry) {
+        guard library.current == nil, !library.launching, library.preparing == nil else { return }
+        library.prepare(entry)
+        // Draw the launch status before profile checks or native setup can block.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard self.library.preparing?.id == entry.id, self.library.current == nil else { return }
+            self.continueLibraryLaunch(entry)
+        }
+    }
+
+    private func continueLibraryLaunch(_ entry: LibraryEntry) {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
