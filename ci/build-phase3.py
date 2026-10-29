@@ -16,7 +16,8 @@ BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 PINS = {name: (Path(pin['path']).name, pin['revision'], pin['releaseTag'])
         for name in ('dolphin', 'azahar', 'play', 'flycast') for pin in [engine_pins.get(name)]}
 NATIVE_EXPORTS = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames', 'set_volume')}
-DOLPHIN_EXPORTS = NATIVE_EXPORTS | {'_ir_dolphin_api', '_ir_phase3_core_prepare_memory'}
+NATIVE_EXPORTS |= {'_ir_native_engine_command', '_ir_native_engine_input'}
+DOLPHIN_EXPORTS = (NATIVE_EXPORTS - {'_ir_native_engine_input'}) | {'_ir_dolphin_api', '_ir_phase3_core_prepare_memory'}
 AZAHAR_DOWNLOADS = {item['filename']: item['sha256']
                     for item in engine_pins.get('azahar')['artifacts'].values()}
 
@@ -67,10 +68,15 @@ def source_state(source):
 def input_paths(engine):
     names = ['ci/engine_pins.py', 'ci/build-phase3.py', 'ci/phase3-cmake-hook.cmake', 'ci/phase3-targets.cmake',
              'iridium/apps/ios/RuntimeBridge/IRPhase3.h', 'iridium/apps/ios/RuntimeBridge/IRJITMemory.h']
-    bridge = {'host': ['IRRetroPlayer.mm', 'IRFlycastFaultRoute.h'], 'dolphin': ['IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRDolphin.mm', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
+    bridge = {'host': ['IRRetroPlayer.mm', 'IRFlycastFaultRoute.h', 'IRCoreOptions.h', 'IRStateFile.h', 'IRDiscControl.h'], 'dolphin': ['IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRDolphin.mm', 'IRDolphinAPI.h', 'IRDolphinOptions.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'play': ['IRPlayProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
               'flycast': ['IRFlycastProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}
     names += ['iridium/apps/ios/RuntimeBridge/' + name for name in bridge[engine]]
+    if engine == 'play': names += ['iridium/apps/ios/RuntimeBridge/IRDiscControl.h', 'iridium/apps/ios/RuntimeBridge/IRPlayState.h']
+    if engine in ('host', 'azahar', 'dolphin'): names += ['iridium/apps/ios/RuntimeBridge/IRCheats.h']
+    if engine in ('host', 'azahar'): names += ['iridium/apps/ios/RuntimeBridge/IRCameraSource.h']
+    if engine == 'host': names += ['iridium/apps/ios/RuntimeBridge/IRCoreCapture.h', 'iridium/apps/ios/RuntimeBridge/IRCoreCapture.mm']
+    if engine == 'azahar': names += ['iridium/apps/ios/RuntimeBridge/IRAzaharCamera.cpp']
     if engine != 'host': names += ['ci/phase3_' + engine + '.py', 'ci/' + engine + '-targets.cmake']
     if engine in ('host', 'dolphin'):
         names += ['iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h']
@@ -127,6 +133,10 @@ def generated(engine, destination):
     directory.mkdir(parents=True, exist_ok=True)
     (directory / 'native.exports').write_text('\n'.join(sorted(DOLPHIN_EXPORTS if engine == 'dolphin' else NATIVE_EXPORTS)) + '\n')
     (directory / 'retro.exports').write_text('_retro_*\n' + ('_ir_phase3_core_check_jit\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_pause\n' if engine in ('play', 'flycast') else '') + ('_ir_phase3_core_prepare\n' if engine == 'play' else '') + ('_ir_phase3_core_prepare_jit\n_ir_phase3_core_prepare_memory\n' if engine in ('azahar', 'play', 'flycast') else '') + ('_ir_phase3_core_jit_status\n_ir_phase3_core_set_metal_surface\n' if engine == 'azahar' else ''))
+    if engine == 'azahar':
+        with (directory / 'retro.exports').open('a') as stream: stream.write('_ir_phase3_core_cheats\n_ir_phase3_core_install_cia\n_ir_phase3_core_camera\n')
+    if engine == 'play':
+        with (directory / 'retro.exports').open('a') as stream: stream.write('_ir_phase3_core_change_disc_result\n')
     (directory / 'toolchain.cmake').write_text('set(CMAKE_SYSTEM_NAME iOS)\nset(CMAKE_SYSTEM_PROCESSOR aarch64)\nset(IOS ON)\n')
     if engine == 'azahar':
         azahar_module().generated(ROOT, directory)
@@ -145,7 +155,7 @@ def audit(binary, sdk, native=False):
         expected = DOLPHIN_EXPORTS if binary.name == 'libIridiumDolphin.dylib' else NATIVE_EXPORTS
         if symbols != expected:
             raise ValueError('Native player exports differ: ' + str(symbols ^ expected))
-    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause', '_ir_phase3_core_prepare_jit', '_ir_phase3_core_prepare_memory', '_ir_phase3_core_jit_status', '_ir_phase3_core_set_metal_surface'} for s in symbols):
+    elif not all(s.startswith('_retro_') or s in {'_ir_phase3_core_check_jit', '_ir_phase3_core_prepare', '_ir_phase3_core_pause', '_ir_phase3_core_prepare_jit', '_ir_phase3_core_prepare_memory', '_ir_phase3_core_jit_status', '_ir_phase3_core_set_metal_surface', '_ir_phase3_core_cheats', '_ir_phase3_core_change_disc_result', '_ir_phase3_core_install_cia', '_ir_phase3_core_camera'} for s in symbols):
         raise ValueError('Upstream C++ symbols escape the core boundary')
     if not native and '_retro_run' not in symbols:
         raise ValueError('Missing upstream core interface')
@@ -220,7 +230,7 @@ def build(engine, sdk, jobs):
                   buildInputs=fixed_inputs(engine), sourceRevisions=source_state(source),
                   recipeSHA256=digest(Path(__file__)),
                   embedding={p.relative_to(embedding).as_posix(): digest(p) for p in embedding.rglob('*') if p.is_file()})
-    bridge_sources = {'dolphin': ['IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRPhase3.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
+    bridge_sources = {'dolphin': ['IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRDolphin.mm', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRDolphinOptions.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'], 'azahar': ['IRAzaharJIT.cpp', 'IRAzaharGraphics.mm', 'IRPhase3.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
         'play': ['IRPlayProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h'],
         'flycast': ['IRFlycastProbe.cpp', 'IRSharedJITMemory.cpp', 'IRSharedJITMemory.h', 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h']}[engine]
     record['adapterSources'] = {name: digest(BRIDGE / name) for name in bridge_sources}
@@ -258,8 +268,8 @@ def host(sdk):
     arguments = ['xcrun', '--sdk', sdk, 'clang++', '-std=c++17', '-fobjc-arc', '-dynamiclib', '-O2',
         '-target', target, '-isysroot', output('xcrun', '--sdk', sdk, '--show-sdk-path'),
         '-I', ROOT / 'vendor/Flycast/core/deps/libretro-common/include', '-I', BRIDGE,
-        BRIDGE / 'IRRetroPlayer.mm', BRIDGE / 'IRAudioVolume.c', '-Wl,-exported_symbols_list,' + str(exports),
-        '-framework', 'UIKit', '-framework', 'AVFAudio', '-framework', 'CoreGraphics',
+        BRIDGE / 'IRRetroPlayer.mm', BRIDGE / 'IRCoreCapture.mm', BRIDGE / 'IRAudioVolume.c', '-Wl,-exported_symbols_list,' + str(exports),
+        '-framework', 'UIKit', '-framework', 'AVFAudio', '-framework', 'AVFoundation', '-framework', 'CoreMedia', '-framework', 'CoreVideo', '-framework', 'CoreGraphics', '-framework', 'CoreMotion',
         '-framework', 'OpenGLES', '-framework', 'QuartzCore', '-install_name', '@rpath/' + binary.name, '-o', binary]
     run(*arguments)
     if fixed_inputs('host') != inputs:

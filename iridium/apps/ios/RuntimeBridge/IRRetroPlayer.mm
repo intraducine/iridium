@@ -6,6 +6,7 @@
 #import <OpenGLES/ES3/gl.h>
 #import <OpenGLES/ES3/glext.h>
 #import <AVFAudio/AVFAudio.h>
+#import <CoreMotion/CoreMotion.h>
 #include <atomic>
 #include <algorithm>
 #include <cmath>
@@ -13,7 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
-#include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <dlfcn.h>
@@ -21,6 +22,12 @@
 #include "IRPhase3.h"
 #include "IRAudioVolume.h"
 #include "IRFlycastFaultRoute.h"
+#define IR_CORE_OPTIONS_IMPLEMENTATION
+#include "IRCoreOptions.h"
+#include "IRDiscControl.h"
+#include "IRCheats.h"
+#include "IRStateFile.h"
+#include "IRCoreCapture.h"
 
 @interface IRRetroSurface : UIView
 @end
@@ -48,9 +55,14 @@ struct RetroAPI {
     decltype(&retro_unload_game) unload;
     decltype(&retro_run) run;
     decltype(&retro_set_controller_port_device) controller;
+    decltype(&retro_serialize_size) stateSize;
+    decltype(&retro_serialize) saveState;
+    decltype(&retro_unserialize) loadState;
     bool (*pause)(bool);
     unsigned (*jitStatus)(void);
     bool (*metalSurface)(void *);
+    bool (*cheats)(const IRCheat *, size_t);
+    IRDiscResult (*changeDisc)(const char *);
 };
 
 @interface IRRetroPlayer : UIViewController {
@@ -62,9 +74,20 @@ struct RetroAPI {
     IRPhase3Event event;
     uint64_t generation;
     IRPhase3Poll input;
-    IRPhase3Input sampled;
+    IRPhase3PollPlayer playerInput;
+    IRPhase3Rumble rumble;
+    IRPhase3Input sampled[4];
     std::string engine, core, game, saves, system;
-    std::map<std::string, std::string> options;
+    IROptions options;
+    retro_core_options_update_display_callback optionDisplay;
+    bool controlsDirty;
+    retro_disk_control_ext_callback discs;
+    NSArray *controllerChoices[4];
+    unsigned controllerDevices[4];
+    CMMotionManager *motion;
+    IRCoreCapture *capture;
+    NSString *captureStatus;
+    unsigned sensorDemand;
     retro_hw_render_callback hardware;
     retro_frame_time_callback frameTime;
     retro_pixel_format pixelFormat;
@@ -88,6 +111,7 @@ struct RetroAPI {
     id audioConfigurationObserver, audioInterruptionObserver;
     void *coreImage;
     double displayAspect;
+    CGFloat surfaceAspect;
     double currentFPS, initialAudioRate;
     double diagnosticTime;
     uint64_t diagnosticFrames;
@@ -103,6 +127,8 @@ struct RetroAPI {
 - (bool)updateTiming:(retro_system_timing)timing;
 - (bool)restartAudio;
 - (bool)setPaused:(bool)value;
+- (void)controlsSnapshot;
+- (void)command:(NSDictionary *)request;
 @end
 static IRRetroPlayer *active;
 static constexpr uint32_t audioCapacity = 16384;
@@ -119,14 +145,104 @@ static void coreLog(enum retro_log_level, const char *, ...) {
     // Cores require a callable logger. Guest titles, firmware paths and other
     // arbitrary upstream format arguments must not enter exported app logs.
 }
+static bool coreRumble(unsigned port, retro_rumble_effect motor, uint16_t strength) {
+    return active && port < 4 && active->rumble && active->rumble(port, (unsigned)motor, strength);
+}
+static bool protectedOption(const char *key) {
+    return key && (!strcmp(key, "citra_graphics_api") || !strcmp(key, "citra_use_cpu_jit") || !strcmp(key, "citra_use_shader_jit") || !strcmp(key,"citra_use_libretro_save_path"));
+}
+static IRCoreCapture *microphone(const void *handle) { return active&&handle==(__bridge const void *)active->capture?active->capture:nil; }
+static void *microphoneOpen(const IRMicrophoneParams *) {return active?(__bridge void *)active->capture:nullptr;}
+static void microphoneClose(void *handle) { [microphone(handle)requestMicrophone:false]; }
+static bool microphoneParams(const void *handle,IRMicrophoneParams *params) {if(!microphone(handle)||!params)return false;params->rate=48000;return true;}
+static bool microphoneSet(void *handle,bool value) {IRCoreCapture *capture=microphone(handle);if(!capture)return false;[capture requestMicrophone:value];return true;}
+static bool microphoneGet(const void *handle) {return [microphone(handle)microphoneActive];}
+static int microphoneRead(void *handle,int16_t *samples,size_t count) {IRCoreCapture *capture=microphone(handle);return capture?[capture readMicrophone:samples count:count]:-1;}
+static void configureCapture(IRRetroPlayer *p) {
+    IROption *camera=ir_option_find(&p->options,"iridium_camera",false),*mic=ir_option_find(&p->options,"iridium_microphone",false);
+    unsigned selection=camera&&camera->value?(!strcmp(camera->value,"rear")?1:!strcmp(camera->value,"front")?2:0):0;
+    [p->capture configureCamera:selection microphone:mic&&mic->value&&!strcmp(mic->value,"on")];
+}
+static bool allowedOption(const char *key,const char *value) {
+    if(!key||!value)return false;
+    if(!strcmp(key,"citra_resolution_factor")||!strcmp(key,"play_res_multi"))return atoi(value)>=1&&atoi(value)<=4;
+    if(strstr(key,"_internal_resolution")) {
+        unsigned width=0,height=0;
+        if(sscanf(value,"%ux%u",&width,&height)==2)return width&&height&&width<=4096&&height<=4096;
+    }
+    return true;
+}
+static bool sensorState(unsigned port, retro_sensor_action action, unsigned rate) {
+    IRRetroPlayer *p=active;
+    if(!p||port||!p->motion.isDeviceMotionAvailable)return false;
+    switch(action) {
+    case RETRO_SENSOR_ACCELEROMETER_ENABLE:p->sensorDemand|=1;break;
+    case RETRO_SENSOR_GYROSCOPE_ENABLE:p->sensorDemand|=2;break;
+    case RETRO_SENSOR_ACCELEROMETER_DISABLE:p->sensorDemand&=~1u;break;
+    case RETRO_SENSOR_GYROSCOPE_DISABLE:p->sensorDemand&=~2u;break;
+    default:return false;
+    }
+    p->motion.deviceMotionUpdateInterval=1.0/std::clamp(rate,1u,120u);
+    if(p->sensorDemand&&!p->paused)[p->motion startDeviceMotionUpdates];
+    else [p->motion stopDeviceMotionUpdates];
+    return true;
+}
+static float sensorInput(unsigned port,unsigned sensor) {
+    IRRetroPlayer *p=active;if(!p||port||p->paused)return 0;
+    CMDeviceMotion *sample=p->motion.deviceMotion;if(!sample)return sensor==RETRO_SENSOR_ACCELEROMETER_Z?-1:0;
+    CMAcceleration g=sample.gravity,u=sample.userAcceleration;CMRotationRate r=sample.rotationRate;
+    switch(sensor) {
+    case RETRO_SENSOR_ACCELEROMETER_X:return -(g.x+u.x);
+    case RETRO_SENSOR_ACCELEROMETER_Y:return -(g.z+u.z);
+    case RETRO_SENSOR_ACCELEROMETER_Z:return g.y+u.y;
+    case RETRO_SENSOR_GYROSCOPE_X:return -r.x;
+    case RETRO_SENSOR_GYROSCOPE_Y:return -r.z;
+    case RETRO_SENSOR_GYROSCOPE_Z:return r.y;
+    default:return 0;
+    }
+}
+static void appendOption(void *context, const char *key, const char *title, const char *info,
+    const char *category, const char *value, const char *defaultValue,
+    const char *const *values, const char *const *labels, size_t count, bool visible) {
+    if(protectedOption(key))return;
+    NSMutableArray *choices=[NSMutableArray array];
+    for(size_t i=0;i<count;++i)if(allowedOption(key,values[i]))[choices addObject:@{@"value":@(values[i]),@"title":@(labels[i])}];
+    [(__bridge NSMutableArray *)context addObject:@{@"key":@(key),@"title":@(title),@"info":@(info),
+        @"category":@(category),@"value":@(value),@"defaultValue":@(defaultValue),@"choices":choices,@"visible":@(visible)}];
+}
 static bool environment(unsigned command, void *data) {
     IRRetroPlayer *p = active;
     if (!p) return false;
     switch (command) {
+    case (75|RETRO_ENVIRONMENT_EXPERIMENTAL): {
+        if(!data||!p->capture)return false;
+        auto api=(IRMicrophoneInterface *)data;
+        if(api->version!=1)return false;
+        *api={1,microphoneOpen,microphoneClose,microphoneParams,microphoneSet,microphoneGet,microphoneRead};return true;
+    }
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE: ((retro_log_callback *)data)->log=coreLog; return true;
     case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES:
         *(uint64_t *)data=(1ull<<RETRO_DEVICE_JOYPAD)|(1ull<<RETRO_DEVICE_ANALOG)|(1ull<<RETRO_DEVICE_POINTER);return true;
-    case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS: *(unsigned *)data=1;return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS: *(unsigned *)data=p->engine=="azahar"?1:4;return true;
+    case RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE:
+        if(!data||!p->rumble)return false;
+        ((retro_rumble_interface *)data)->set_rumble_state=coreRumble;return true;
+    case RETRO_ENVIRONMENT_GET_SENSOR_INTERFACE:
+        if(!data||!p->motion.isDeviceMotionAvailable)return false;
+        ((retro_sensor_interface *)data)->set_sensor_state=sensorState;
+        ((retro_sensor_interface *)data)->get_sensor_input=sensorInput;return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE:
+        if(!data)return false;
+        { const auto& legacy=*(retro_disk_control_callback *)data;
+          p->discs={legacy.set_eject_state,legacy.get_eject_state,legacy.get_image_index,legacy.set_image_index,
+              legacy.get_num_images,legacy.replace_image_index,legacy.add_image_index}; }
+        return true;
+    case RETRO_ENVIRONMENT_GET_DISK_CONTROL_INTERFACE_VERSION:
+        if(!data)return false;
+        *(unsigned *)data=1;return true;
+    case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
+        if(!data)return false;
+        p->discs=*(retro_disk_control_ext_callback *)data;return true;
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE: *(int *)data=p->paused?0:3;return true;
     case RETRO_ENVIRONMENT_GET_FASTFORWARDING: *(bool *)data=false;return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char **)data = p->system.c_str(); return true;
@@ -137,42 +253,20 @@ static bool environment(unsigned command, void *data) {
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS: return true;
     case RETRO_ENVIRONMENT_GET_JIT_CAPABLE: *(bool *)data = p->jit; return true;
     case RETRO_ENVIRONMENT_GET_LANGUAGE: *(unsigned *)data = RETRO_LANGUAGE_ENGLISH; return true;
-    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION: *(unsigned *)data = 2; return true;
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: {
-        auto options = (retro_core_options_v2_intl *)data;
-        return options && options->us && environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, options->us);
-    }
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: {
-        auto definitions = ((retro_core_options_v2 *)data)->definitions;
-        for (auto item = definitions; item && item->key; ++item)
-            if (!p->options.count(item->key)) p->options[item->key] = item->default_value ? item->default_value : item->values[0].value;
-        return true;
-    }
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS: {
-        for (auto item = (retro_core_option_definition *)data; item && item->key; ++item)
-            if (!p->options.count(item->key)) p->options[item->key] = item->default_value ? item->default_value : item->values[0].value;
-        return true;
-    }
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL: {
-        auto options = (retro_core_options_intl *)data;
-        return options && options->us && environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS, options->us);
-    }
-    case RETRO_ENVIRONMENT_SET_VARIABLES: {
-        for (auto item = (retro_variable *)data; item && item->key; ++item) {
-            if (p->options.count(item->key) || !item->value) continue;
-            std::string value(item->value);
-            auto separator = value.find("; ");
-            if (separator != std::string::npos) p->options[item->key] = value.substr(separator + 2, value.find('|', separator + 2) - separator - 2);
-        }
-        return true;
-    }
-    case RETRO_ENVIRONMENT_GET_VARIABLE: {
-        auto variable = (retro_variable *)data;
-        auto found = p->options.find(variable->key);
-        variable->value = found == p->options.end() ? nullptr : found->second.c_str();
-        return found != p->options.end();
-    }
-    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *(bool *)data = false; return true;
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL:
+    case RETRO_ENVIRONMENT_SET_VARIABLES:
+    case RETRO_ENVIRONMENT_GET_VARIABLE:
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
+        if(command==RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY)p->controlsDirty=true;
+        return ir_options_environment(&p->options, command, data);
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:
+        if(!data)return false;
+        p->optionDisplay=*(retro_core_options_update_display_callback *)data;return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
         if (*(retro_pixel_format *)data != RETRO_PIXEL_FORMAT_XRGB8888 && *(retro_pixel_format *)data != RETRO_PIXEL_FORMAT_RGB565) return false;
         p->pixelFormat = *(retro_pixel_format *)data; return true;
@@ -193,11 +287,24 @@ static bool environment(unsigned command, void *data) {
         auto info=(retro_system_av_info *)data;
         return [p updateGeometry:info->geometry] && [p updateTiming:info->timing];
     }
-    case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
+    case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:return true;
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
+        if(!data)return false;
+        for(unsigned port=0;port<4;++port) {
+            auto info=((retro_controller_info *)data)[port];if(!info.num_types)break;
+            NSMutableArray *choices=[NSMutableArray arrayWithObject:@{@"value":@"0",@"title":@"None"}];
+            for(unsigned i=0;i<std::min(info.num_types,32u);++i) {
+                const char *name=info.types[i].desc;
+                if(!name)continue;
+                NSString *title=@(name);
+                if([@[@"Controller",@"Arcade Stick",@"Twin Stick",@"Saturn Twin-Stick",@"Race Controller",@"Full Controller"]containsObject:title])
+                    [choices addObject:@{@"value":[NSString stringWithFormat:@"%u",info.types[i].id],@"title":title}];
+            }
+            p->controllerChoices[port]=choices;
+        }
+        return true;
     case RETRO_ENVIRONMENT_SET_MEMORY_MAPS:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
     case RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT: return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE:
@@ -211,14 +318,14 @@ static bool environment(unsigned command, void *data) {
 }
 static void pollInput() {
     if(!active||!active->input)return;
-    active->input(&active->sampled);
-    // L3 is Azahar's screen-swap hotkey, not a 3DS gameplay button. Keep the
-    // selected top-bottom layout consistent with the lower-screen touch map.
-    if(active->engine=="azahar")active->sampled.buttons &= ~(1u << RETRO_DEVICE_ID_JOYPAD_L3);
+    memset(active->sampled,0,sizeof active->sampled);
+    if(active->playerInput)for(unsigned port=0;port<(active->engine=="azahar"?1u:4u);++port)
+        active->playerInput(port,&active->sampled[port]);
+    else active->input(&active->sampled[0]);
 }
 static int16_t inputState(unsigned port, unsigned device, unsigned index, unsigned id) {
-    if (!active || port != 0) return 0;
-    const auto &v = active->sampled;
+    if (!active || port >= 4 || (active->engine=="azahar" && port)) return 0;
+    const auto &v = active->sampled[port];
     if (device == RETRO_DEVICE_JOYPAD) return id == RETRO_DEVICE_ID_JOYPAD_MASK ? (int16_t)v.buttons : id < 16 && (v.buttons & (1u << id)) ? 1 : 0;
     if (device == RETRO_DEVICE_ANALOG && index <= 1 && id <= 1)
         return index == 0 ? (id == 0 ? v.left_x : v.left_y) : (id == 0 ? v.right_x : v.right_y);
@@ -247,6 +354,119 @@ static void audioSample(int16_t l, int16_t r) { const int16_t sample[] = {l, r};
 static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) { [active video:data width:w height:h pitch:pitch]; }
 
 @implementation IRRetroPlayer
+- (void)controlsSnapshot {
+    controlsDirty=false;
+    NSMutableArray *items=[NSMutableArray array];
+    ir_options_visit(&options,appendOption,(__bridge void *)items);
+    if(engine=="flycast")for(unsigned port=0;port<4;++port)if(controllerChoices[port]) {
+        NSString *value=[NSString stringWithFormat:@"%u",controllerDevices[port]];
+        [items addObject:@{@"key":[NSString stringWithFormat:@"iridium_device_port_%u",port],@"title":[NSString stringWithFormat:@"Controller Port %u",port+1],
+            @"category":@"Controllers",@"value":value,@"defaultValue":@"1",@"choices":controllerChoices[port],@"visible":@YES,
+            @"info":@"Other ports use physical controllers. Touch and keyboard control port 1. VMU and rumble-pack choices are in the expansion-slot settings."}];
+    }
+    unsigned count=discs.get_num_images?discs.get_num_images():0;
+    NSDictionary *snapshot=@{@"options":items,@"states":@(api.stateSize&&api.saveState&&api.loadState),
+        @"discCount":@(count),@"discIndex":@(discs.get_image_index?discs.get_image_index():0),
+        @"players":@(engine=="azahar"?1:engine=="play"?2:4),@"aspect":@(displayAspect>0?displayAspect:400.0/480.0),
+        @"cheatFormats":api.cheats?@[@"gateway"]:@[],@"canChangeDisc":@(api.changeDisc||(discs.replace_image_index&&discs.get_image_path)),@"captureStatus":capture.status?:@""};
+    NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+    if(data)report(8,[[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding] UTF8String]);
+}
+- (void)command:(NSDictionary *)request {
+    if(finishing||stopped.load()||cleanupUncertain)return;
+    NSString *operation=request[@"operation"];
+    if([operation isEqual:@"configure"]&&!initializationEntered) {
+        NSDictionary *values=request[@"values"];
+        if([values isKindOfClass:NSDictionary.class])for(id key in values) {
+            id value=values[key];
+            if([key isKindOfClass:NSString.class]&&[value isKindOfClass:NSString.class]&&!protectedOption([key UTF8String])&&allowedOption([key UTF8String],[value UTF8String]))
+                ir_option_set(&options,[key UTF8String],[value UTF8String],true);
+        }
+        return;
+    }
+    if(!loaded)return;
+    if([operation isEqual:@"snapshot"]) { [self controlsSnapshot];return; }
+    if(!paused) { report(7,"Pause the game before changing core controls.");return; }
+    if([operation isEqual:@"option"]) {
+        id key=request[@"key"],value=request[@"value"];
+        if(engine=="flycast"&&[key isKindOfClass:NSString.class]&&[value isKindOfClass:NSString.class]) {
+            for(unsigned port=0;port<4;++port)if([key isEqual:[NSString stringWithFormat:@"iridium_device_port_%u",port]]) {
+                for(NSDictionary *choice in controllerChoices[port])if([choice[@"value"]isEqual:value]) {
+                    controllerDevices[port]=[value unsignedIntValue];api.controller(port,controllerDevices[port]);
+                    if(optionDisplay.callback)optionDisplay.callback();[self controlsSnapshot];return;
+                }
+                report(7,"This controller type is unavailable.");return;
+            }
+        }
+        if(![key isKindOfClass:NSString.class]||![value isKindOfClass:NSString.class]||protectedOption([key UTF8String])||!allowedOption([key UTF8String],[value UTF8String])||
+           !ir_option_set(&options,[key UTF8String],[value UTF8String],false)) {
+            report(7,"This core setting is unavailable.");return;
+        }
+        if(optionDisplay.callback)optionDisplay.callback();
+        configureCapture(self);
+        [self controlsSnapshot];return;
+    }
+    [EAGLContext setCurrentContext:context];
+    bool success=false;
+    try {
+        if([operation isEqual:@"cheats"]&&api.cheats) {
+            std::vector<IRCheat> items;
+            success=ir_cheats_decode(request[@"items"],items)&&api.cheats(items.data(),items.size());
+            if(success)report(6,"Cheats applied.");
+        } else if([operation isEqual:@"state"]&&api.stateSize&&api.saveState&&api.loadState) {
+            id slot=request[@"slot"],load=request[@"load"];
+            id gameID=request[@"gameID"];
+            if(gameID&&![gameID isKindOfClass:NSString.class])throw std::runtime_error("state identity");
+            if(![slot isKindOfClass:NSNumber.class]||![load isKindOfClass:NSNumber.class]||[slot intValue]<0||[slot intValue]>=5)
+                throw std::runtime_error("state request");
+            retro_system_info info{};api.info(&info);
+            NSString *identity=[NSString stringWithFormat:@"%s|%s|%s",engine.c_str(),info.library_name?:"",info.library_version?:""];
+            size_t count=api.stateSize();
+            if(!count||count>irStateLimit)throw std::runtime_error("state size");
+            NSMutableData *current=[NSMutableData dataWithLength:count];
+            if(!current||!api.saveState(current.mutableBytes,count))throw std::runtime_error("state backup");
+            if([load boolValue]) {
+                NSData *saved=irStateRead(saves.c_str(),[slot unsignedIntValue],identity,gameID);
+                if(saved) {
+                    success=api.loadState(saved.bytes,saved.length);
+                    if(!success&&!api.loadState(current.bytes,current.length)) {
+                        cleanupUncertain=true;report(3,"The core could not restore the game after a failed state load. Fully close and reopen Iridium.");
+                    }
+                }
+            } else success=irStateWrite(saves.c_str(),[slot unsignedIntValue],identity,current,gameID);
+            if(success) {readAudio.store(writeAudio.load());report(6,[load boolValue]?"State loaded.":"State saved.");}
+        } else if([operation isEqual:@"discFile"]) {
+            NSString *path=request[@"path"];
+            if([path isKindOfClass:NSString.class]&&path.isAbsolutePath&&[[NSFileManager defaultManager]isReadableFileAtPath:path]) {
+                const auto result=api.changeDisc?api.changeDisc(path.UTF8String):irDiscReplace(discs,path.UTF8String);
+                success=result==IRDiscResult::Changed;
+                if(result==IRDiscResult::RestoreFailed) {
+                    cleanupUncertain=true;
+                    report(3,"The previous disc could not be restored. Fully close and reopen Iridium.");
+                }
+                if(success)report(6,"Disc changed.");
+            }
+        } else if([operation isEqual:@"disc"]) {
+            id number=request[@"index"];
+            if([number isKindOfClass:NSNumber.class]&&[number intValue]>=0&&discs.set_eject_state&&discs.set_image_index&&discs.get_num_images&&
+               [number unsignedIntValue]<discs.get_num_images()) {
+                unsigned previous=discs.get_image_index?discs.get_image_index():0;
+                if(discs.set_eject_state(true)) {
+                    success=discs.set_image_index([number unsignedIntValue])&&discs.set_eject_state(false);
+                    if(!success) {
+                        bool restored=discs.set_eject_state(true);
+                        restored=discs.set_image_index(previous)&&restored;
+                        restored=discs.set_eject_state(false)&&restored;
+                        if(!restored) {cleanupUncertain=true;report(3,"The previous disc could not be restored. Fully close and reopen Iridium.");}
+                    }
+                }
+            }
+            if(success) { [self controlsSnapshot];report(6,"Disc changed."); }
+        }
+    } catch (...) {success=false;}
+    [EAGLContext setCurrentContext:nil];
+    if(!success&&!cleanupUncertain)report(7,"The core could not complete this operation. Existing save files have been kept.");
+}
 - (bool)restartAudio {
     if(!audioEngine)return true;
     NSError *error=nil;
@@ -257,7 +477,32 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     if(!geometry.base_width||!geometry.base_height||geometry.base_width>4096||geometry.base_height>4096)return false;
     double aspect=geometry.aspect_ratio>0?geometry.aspect_ratio:(double)geometry.base_width/geometry.base_height;
     if(!std::isfinite(aspect)||aspect<0.05||aspect>8)return false;
-    displayAspect=aspect;return true;
+    bool changed=displayAspect!=aspect;displayAspect=aspect;
+    if(hardwareSelected&&color&&depth&&(geometry.base_width>maxWidth||geometry.base_height>maxHeight)) {
+        GLint texture=0,renderbuffer=0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);glGetIntegerv(GL_RENDERBUFFER_BINDING,&renderbuffer);
+        maxWidth=std::max(maxWidth,geometry.base_width);maxHeight=std::max(maxHeight,geometry.base_height);
+        glBindTexture(GL_TEXTURE_2D,color);
+        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,maxWidth,maxHeight,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+        glBindRenderbuffer(GL_RENDERBUFFER,depth);
+        glRenderbufferStorage(GL_RENDERBUFFER,GL_DEPTH24_STENCIL8,maxWidth,maxHeight);
+        glBindTexture(GL_TEXTURE_2D,(GLuint)texture);glBindRenderbuffer(GL_RENDERBUFFER,(GLuint)renderbuffer);
+        GLint target=0;glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&target);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,renderTarget);
+        bool complete=glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)target);
+        if(!complete)return false;
+    }
+    if(api.metalSurface) {
+        unsigned w=geometry.base_width,h=geometry.base_height;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->surfaceAspect=aspect;
+            ((CAMetalLayer *)self->surface.layer).drawableSize=CGSizeMake(w,h);
+            [self.view setNeedsLayout];
+        });
+    }
+    if(changed&&loaded)[self controlsSnapshot];
+    return true;
 }
 - (bool)updateTiming:(retro_system_timing)timing {
     if(!std::isfinite(timing.fps)||timing.fps<1||timing.fps>240||!std::isfinite(timing.sample_rate)||timing.sample_rate<8000||timing.sample_rate>192000)return false;
@@ -287,6 +532,10 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     [EAGLContext setCurrentContext:nil];
     if(!accepted)return false;
     paused=value;muted.store(value);
+    [capture suspend:value];
+    if(value)[motion stopDeviceMotionUpdates];
+    else if(sensorDemand)[motion startDeviceMotionUpdates];
+    if(value&&rumble)for(unsigned port=0;port<4;++port)for(unsigned motor=0;motor<2;++motor)rumble(port,motor,0);
     if(api.pause)report(0,value?"The upstream virtual machine paused.":"The upstream virtual machine resumed.");
     return true;
 }
@@ -312,7 +561,8 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     [super viewDidLayoutSubviews];
     if(api.metalSurface) {
         CGSize size=self.view.bounds.size;
-        CGFloat w=MIN(size.width,size.height*400.0/480.0),h=w*480.0/400.0;
+        CGFloat aspect=surfaceAspect>0?surfaceAspect:400.0/480.0;
+        CGFloat w=MIN(size.width,size.height*aspect),h=w/aspect;
         surface.frame=CGRectMake((size.width-w)/2,(size.height-h)/2,w,h);
         return;
     }
@@ -380,6 +630,18 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         report(3,"The engine audio session could not start.");[self finish];return;
     }
     api.environment(environment); api.video(videoFrame); api.audio(audioSample); api.batch(audioBatch); api.poll(pollInput); api.input(inputState);
+    if(capture) {
+        auto bind=(bool(*)(const IRCameraSource *))dlsym(coreImage,"ir_phase3_core_camera");
+        IRCameraSource camera{1,(__bridge void *)capture,
+            [](void *context,unsigned camera,bool active){[(__bridge IRCoreCapture *)context requestCamera:camera active:active];},
+            [](void *context,uint32_t *pixels,size_t capacity,unsigned *width,unsigned *height){return [(__bridge IRCoreCapture *)context readCamera:pixels capacity:capacity width:width height:height];}};
+        if(bind&&!bind(&camera)){report(3,"The 3DS camera interface is incompatible.");[self finish];return;}
+        const retro_core_option_value cameras[]={{"off","Off"},{"rear","Rear Camera"},{"front","Front Camera"},{nullptr,nullptr}};
+        const retro_core_option_value microphones[]={{"off","Off"},{"on","On"},{nullptr,nullptr}};
+        if(bind)ir_option_define(&options,"iridium_camera","Phone Camera","Uses one phone camera for the 3DS camera view. iOS asks for access when a game requests capture.","Camera",cameras,"off");
+        ir_option_define(&options,"iridium_microphone","Phone Microphone","Enable this and choose Frontend as Microphone Input. iOS asks for access when the game requests recording.","Audio",microphones,"off");
+        configureCapture(self);
+    }
     if(!api.metalSurface)context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES3];
     [EAGLContext setCurrentContext:context];
     if(engine=="flycast" && !flycastFaultRoute.begin()) {
@@ -418,9 +680,19 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         if (needsContextReset && hardware.context_reset) hardware.context_reset();
         needsContextReset = false;
     }
-    api.controller(0, RETRO_DEVICE_JOYPAD);
+    for(unsigned port=0;port<4;++port) {
+        controllerDevices[port]=RETRO_DEVICE_JOYPAD;
+        if(engine=="flycast") {
+            std::string key="iridium_device_port_"+std::to_string(port);
+            IROption *saved=ir_option_find(&options,key.c_str(),false);
+            if(saved&&saved->value)for(NSDictionary *choice in controllerChoices[port])
+                if([choice[@"value"]isEqual:@(saved->value)])controllerDevices[port]=[choice[@"value"]unsignedIntValue];
+        }
+    }
+    api.controller(0, controllerDevices[0]);
     // Flycast refreshes expansion slots only after every port is configured.
-    if(engine=="flycast")for(unsigned port=1;port<4;++port)api.controller(port, RETRO_DEVICE_NONE);
+    if(engine=="flycast"||engine=="play")for(unsigned port=1;port<4;++port)api.controller(port,controllerDevices[port]);
+    [self controlsSnapshot];
     double rate = info.timing.sample_rate, fps = info.timing.fps;
     if (!std::isfinite(rate) || rate < 8000 || rate > 192000 || !std::isfinite(fps) || fps < 1 || fps > 240) { report(3, "The core reported invalid audio or video timing."); [self finish]; return; }
     samples.resize(audioCapacity * 2);
@@ -474,6 +746,9 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         if (self->frameTime.callback) self->frameTime.callback((retro_usec_t)(1000000 / self->currentFPS));
         try {
             self->api.run();
+            NSString *captureStatus=self->capture.status;
+            if(captureStatus!=self->captureStatus&&![captureStatus isEqual:self->captureStatus]) {self->captureStatus=captureStatus;self->controlsDirty=true;}
+            if(self->controlsDirty)[self controlsSnapshot];
             if(self->api.jitStatus) {
                 unsigned status=self->api.jitStatus();
                 if((status&1)&&!(self->reportedJIT&1))report(0,"Azahar CPU JIT completed guest execution.");
@@ -513,14 +788,21 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
             return;
         }
         if (!hardwareSelected || w > maxWidth || h > maxHeight) { shutdownRequested = true; report(3, "The core exceeded the configured render target."); return; }
+        GLint readTarget=0,drawTarget=0,previousRenderbuffer=0;GLfloat clear[4];
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&readTarget);glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&drawTarget);
+        glGetIntegerv(GL_RENDERBUFFER_BINDING,&previousRenderbuffer);glGetFloatv(GL_COLOR_CLEAR_VALUE,clear);
+        GLboolean scissor=glIsEnabled(GL_SCISSOR_TEST);
         glBindFramebuffer(GL_READ_FRAMEBUFFER, renderTarget); glBindFramebuffer(GL_DRAW_FRAMEBUFFER, displayTarget);
         glDisable(GL_SCISSOR_TEST); glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
         double aspect=displayAspect>0?displayAspect:(double)w/h;
         GLint rw=(GLint)std::min((double)width,height*aspect),rh=(GLint)(rw/aspect),x=(width-rw)/2,y=(height-rh)/2;
         glBlitFramebuffer(0, hardware.bottom_left_origin ? 0 : h, w, hardware.bottom_left_origin ? h : 0, x,y,x+rw,y+rh,GL_COLOR_BUFFER_BIT,GL_NEAREST);
         glBindRenderbuffer(GL_RENDERBUFFER, displayColor);
-        if (![context presentRenderbuffer:GL_RENDERBUFFER]) return;
-        glBindFramebuffer(GL_FRAMEBUFFER, renderTarget);
+        bool presented=[context presentRenderbuffer:GL_RENDERBUFFER];
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)readTarget);glBindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)drawTarget);
+        glBindRenderbuffer(GL_RENDERBUFFER,(GLuint)previousRenderbuffer);glClearColor(clear[0],clear[1],clear[2],clear[3]);
+        if(scissor)glEnable(GL_SCISSOR_TEST);else glDisable(GL_SCISSOR_TEST);
+        if(!presented)return;
     } else {
         const size_t bpp = pixelFormat == RETRO_PIXEL_FORMAT_RGB565 ? 2 : 4;
         if (pitch < w * bpp || pitch > 65536 || imagePending.exchange(true)) return;
@@ -544,13 +826,18 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     if (frameCount.fetch_add(1)==0) report(1,"The upstream core produced its first video frame.");
 }
 - (void)finish {
-    if (finishing || stopped.load() || cleanupUncertain) return;
-    finishing = true; muted.store(true);
+    [capture close];
+    if (stopped.load()) return;
+    muted.store(true);
+    [motion stopDeviceMotionUpdates];motion=nil;sensorDemand=0;
+    if(rumble)for(unsigned port=0;port<4;++port)for(unsigned motor=0;motor<2;++motor)rumble(port,motor,0);
+    if(clock) { dispatch_source_cancel(clock); clock=nil; }
+    if (finishing || cleanupUncertain) return;
+    finishing = true;
     if(audioConfigurationObserver)[NSNotificationCenter.defaultCenter removeObserver:audioConfigurationObserver];
     if(audioInterruptionObserver)[NSNotificationCenter.defaultCenter removeObserver:audioInterruptionObserver];
     audioConfigurationObserver=nil;audioInterruptionObserver=nil;
     [EAGLContext setCurrentContext:context];
-    if(clock) { dispatch_source_cancel(clock); clock=nil; }
     if((initializationEntered&&!initialized)||(loadEntered&&!loadReturned)) {
         report(3,"Fully close and reopen Iridium before trying another game.");
         return;
@@ -569,6 +856,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         return;
     }
     loaded=false;initialized=false;
+    ir_options_clear(&options);
     if(!flycastFaultRoute.restore()) {
         report(3,"The Dreamcast memory fault handler could not close. Fully close and reopen Iridium.");return;
     }
@@ -600,11 +888,12 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
     AVAudioSession *audio=AVAudioSession.sharedInstance;
     p->previousAudioCategory=audio.category;p->previousAudioMode=audio.mode;p->previousAudioOptions=audio.categoryOptions;
     p->pixelFormat=RETRO_PIXEL_FORMAT_XRGB8888;
+    if(p->engine=="azahar"){p->motion=[[CMMotionManager alloc]init];p->capture=[[IRCoreCapture alloc]init];}
     // Deterministic launch policy, independent of a previous core's options.
     if(p->engine=="azahar") {
-        p->options["citra_graphics_api"]="Vulkan";p->options["citra_use_cpu_jit"]="enabled";
-        p->options["citra_use_shader_jit"]="enabled";
-        p->options["citra_layout_option"]="default";p->options["citra_swap_screen"]="Top";
+        ir_option_set(&p->options,"citra_graphics_api","Vulkan",true);
+        ir_option_set(&p->options,"citra_use_cpu_jit","enabled",true);
+        ir_option_set(&p->options,"citra_use_shader_jit","enabled",true);
     }
     p->frameCount.store(0);p->muted.store(true);p->imagePending.store(false);p->resizeQueued.store(false);p->stopped.store(false);
     p->readAudio.store(0);p->writeAudio.store(0);p->samples.resize(audioCapacity*2);
@@ -617,6 +906,11 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
     BIND(load,retro_load_game);BIND(unload,retro_unload_game);BIND(run,retro_run);BIND(controller,retro_set_controller_port_device);
     if(p->engine=="azahar") {BIND(metalSurface,ir_phase3_core_set_metal_surface);}
 #undef BIND
+    p->api.stateSize=(decltype(p->api.stateSize))dlsym(image,"retro_serialize_size");
+    p->api.saveState=(decltype(p->api.saveState))dlsym(image,"retro_serialize");
+    p->api.loadState=(decltype(p->api.loadState))dlsym(image,"retro_unserialize");
+    p->api.cheats=(decltype(p->api.cheats))dlsym(image,"ir_phase3_core_cheats");
+    p->api.changeDisc=(decltype(p->api.changeDisc))dlsym(image,"ir_phase3_core_change_disc_result");
     auto version=(unsigned(*)(void))dlsym(image,"retro_api_version");
     if(!version||version()!=RETRO_API_VERSION)return nullptr;
     active=p; return (__bridge_retained void *)p;
@@ -633,3 +927,14 @@ extern "C" void ir_native_engine_stop() {
     dispatch_async(p->owner, ^{[p finish];});
 }
 extern "C" uint64_t ir_native_engine_frames() { return active?active->frameCount.load():0; }
+extern "C" void ir_native_engine_input(IRPhase3PollPlayer poll,IRPhase3Rumble rumble) {
+    IRRetroPlayer *p=active;if(!p)return;
+    dispatch_async(p->owner, ^{if(!p->starting){p->playerInput=poll;p->rumble=rumble;}});
+}
+extern "C" bool ir_native_engine_command(const char *json) {
+    IRRetroPlayer *p=active;if(!p||!json||strlen(json)>131072)return false;
+    NSData *data=[NSData dataWithBytes:json length:strlen(json)];
+    id request=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if(![request isKindOfClass:NSDictionary.class]||![request[@"operation"] isKindOfClass:NSString.class])return false;
+    dispatch_async(p->owner, ^{[p command:request];});return true;
+}

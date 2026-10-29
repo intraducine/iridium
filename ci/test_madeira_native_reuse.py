@@ -58,8 +58,9 @@ def source_fixture():
         (root / 'ci').mkdir()
         for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
-        for name in ('ci/madeira_audio_volume.py', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
-                     'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'):
+        for name in ('ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
+                     'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
+                     'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
             destination = root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((build.ROOT / name).read_bytes())
@@ -91,8 +92,17 @@ class NativeReuseTests(unittest.TestCase):
             manifest.write_text(json.dumps(data))
             self.assertNotEqual(before, build.native_inputs())
             manifest.write_text(original)
-            helper = root / 'ci/engine_pins.py'; helper.write_text(helper.read_text() + '\n# Changed reader\n')
+            helper = root / 'ci/engine_pins.py'; original_helper = helper.read_bytes()
+            helper.write_bytes(original_helper + b'\n# Changed reader\n')
             self.assertNotEqual(before, build.native_inputs())
+            helper.write_bytes(original_helper)
+            self.assertEqual(before, build.native_inputs())
+            for name in ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                         'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
+                path = root / name; saved = path.read_bytes()
+                path.write_bytes(saved + b'\n/* Changed thread adapter */\n')
+                self.assertNotEqual(before, build.native_inputs(), name)
+                path.write_bytes(saved)
 
     def check_rejected(self, root, message, inputs=None):
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
@@ -223,6 +233,41 @@ class NativeReuseTests(unittest.TestCase):
 
 
 class NativeSourceIdentityTests(unittest.TestCase):
+    def test_only_the_exact_managed_fex_patch_is_accepted_and_hashed_consistently(self):
+        module_relative = 'Source/Windows/ARM64EC/Module.cpp'
+        module_original = (build.ROOT / 'vendor/Madeira/FEX' / module_relative).read_text()
+        with source_fixture() as (root, upstream):
+            fex = upstream / 'FEX'; fex.mkdir()
+            relative = 'FEXCore/Source/Utils/AllocWatch.cpp'
+            source = fex / relative; source.parent.mkdir(parents=True)
+            original = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)\n#endif\n'
+            source.write_text(original)
+            module = fex / module_relative; module.parent.mkdir(parents=True)
+            module.write_text(module_original)
+            def git(repo, *args):
+                return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+            git(fex, 'init', '-q'); git(fex, 'add', '.')
+            git(fex, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture')
+            revision = git(fex, 'rev-parse', 'HEAD')
+            (upstream / '.gitmodules').write_text('[submodule "FEX"]\npath = FEX\nurl = https://example.invalid/FEX\n')
+            git(upstream, 'add', '.gitmodules')
+            git(upstream, 'update-index', '--add', '--cacheinfo', '160000,' + revision + ',FEX')
+            git(upstream, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture FEX')
+            git(upstream, 'config', 'submodule.FEX.url', str(fex))
+            with patch.object(build, 'REVISION', git(upstream, 'rev-parse', 'HEAD')):
+                build.verify_pin(); before = build.native_source_identity()
+                source.write_text(build.madeira_threads.apply_fex(original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(build.madeira_threads.apply_fex_arm64ec(module_original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(module.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+                module.write_text(module_original)
+                source.write_text(source.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+
     def test_tracked_grammars_and_build_configuration_are_bound_to_actual_bytes(self):
         with source_fixture() as (root, upstream):
             inventory = build.native_source_inventory()

@@ -71,7 +71,7 @@ struct LibraryEntry { let id: UUID }
  var startingJIT: UUID?, preparing: LibraryEntry?, current: UUID?, error: String?
 }
 @MainActor enum StikJITHelper { static var ready = false }
-func wine_process_is_running() -> Int { 0 }
+@MainActor final class IridiumMadeiraRuntime { static let shared = IridiumMadeiraRuntime(); var isBusy = false }
 struct LogStore { func log(_ text: String) {} }
 @MainActor final class Host {
  let library = LibraryModel(), logStore = LogStore()
@@ -93,6 +93,11 @@ struct LogStore { func log(_ text: String) {} }
   host.launchAfterJIT = { launches += 1 }; StikJITHelper.ready = true; host.finish(true)
   precondition(launches == 1 && host.library.preparing?.id == request)
   host.finish(true); precondition(launches == 1)
+  IridiumMadeiraRuntime.shared.isBusy = true
+  host.library.startingJIT = request; host.library.preparing = .init(id: request)
+  host.launchAfterJIT = { launches += 1 }; host.finish(true)
+  precondition(launches == 1 && host.library.preparing == nil)
+
  }
 }
 ''')

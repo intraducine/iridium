@@ -100,8 +100,9 @@ MainActor.assumeIsolated {
     enum Phase { case paused, running }
     enum Request { case play, stop }
     var lease: Int? = 1, phase = Phase.paused, requested = Request.play
-    var dolphinStatePending = false, phase3JITRequested = true, phase3PreparingJIT = false
+    var dolphinStatePending = false, coreOperationPending = false, phase3JITRequested = true, phase3PreparingJIT = false
     var phase3Controller: Int? = 1, resumed = 0, error: String?
+    var nativePSPController: Int?, pendingCheats: Int?
     let lock = NSLock()
     var intentGeneration = 0
 RESUME
@@ -303,7 +304,7 @@ int main() {
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for controller reconnect checks')
     def test_dolphin_controller_slots_reuse_disconnects_without_player_aliasing(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
-        slots = source[source.index('    private func updateDolphinControllers('):source.index('    private func fillDolphinInput(')]
+        slots = source[source.index('    private func updateDolphinControllers('):source.index('    private func controllerRumble(')]
         inputs = source[source.index('    private func fillPhase3Input('):source.index('    private func startTimer(')]
         fixture = '''import Foundation
 final class Button { var isPressed = false }
@@ -327,12 +328,15 @@ struct IRPhase3Input {
     var right_x: Int16 = 0, right_y: Int16 = 0, pointer_x: Int16 = 0, pointer_y: Int16 = 0
     var pointer_down = false
 }
+final class Rumble { func stop(_ controller: GCController) {} }
 final class Host {
     enum Backend { case sameBoy, psp, advanced }
     enum Request { case play, pause }
     struct Intent { var request = Request.play }
     let lock = NSLock()
     var dolphinControllers = [GCController?](repeating: nil, count: 4)
+    var rumbleStrengths = [UInt16](repeating: 0, count: 8)
+    var controllerHaptics: Rumble? = Rumble()
     var digitalInput = IridiumPolledInput(), intent = Intent(), backend = Backend.advanced
     var touchAnalog: (Int16, Int16) = (0, 0), keyboardAnalog: (Int16, Int16) = (0, 0), rightAnalog: (Int16, Int16) = (0, 0)
     var consolePointer: (Int16, Int16, Bool) = (0, 0, false)
@@ -580,12 +584,14 @@ int main() {
                             str(main), '-o', str(executable)], check=True, timeout=30)
             subprocess.run([str(executable)], check=True, timeout=5)
 
-    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler required for native session adapter tests')
+    @unittest.skipUnless(shutil.which('c++') and (ROOT / 'vendor/Play/Source/ui_libretro/PH_Libretro_Input.cpp').is_file(), 'C++ compiler and pinned Play controller sources required')
     def test_generated_vm_pause_pumps_without_destroying_graphics(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source = root / 'vendor/Play/Source/ui_libretro/main_libretro.cpp'
             source.parent.mkdir(parents=True)
+            for name in ('PH_Libretro_Input.h', 'PH_Libretro_Input.cpp'):
+                shutil.copy2(ROOT / 'vendor/Play/Source/ui_libretro' / name, source.parent / name)
             shared = source.parent.parent / 'app_shared'
             shared.mkdir()
             (shared / 'AppConfig.h').write_text('class CAppConfig {\n\tCAppConfig();\n};\n')
@@ -597,24 +603,53 @@ namespace fs = std::filesystem;
 struct CAppConfig { fs::path GetBasePath() const; };
 #include "DefaultAppConfig.h"
 struct CVirtualMachine { enum { PAUSED, RUNNING }; };
-static int status = CVirtualMachine::RUNNING, flushes = 0;
-static bool pauseRequested = false;
+static int status = CVirtualMachine::RUNNING, flushes = 0, destroyed = 0, released = 0;
+static bool pauseRequested = false, stuck = false, drainedAfterPause = false;
 struct CGSH_OpenGL_Libretro {
-    void FlushMailBox() { assert(pauseRequested); if (++flushes == 2) status = CVirtualMachine::PAUSED; }
+    void FlushMailBox() {
+        assert(pauseRequested);
+        if(status == CVirtualMachine::PAUSED) drainedAfterPause = true;
+        if (++flushes >= 2 && !stuck) status = CVirtualMachine::PAUSED;
+    }
+    void Release() { assert(status == CVirtualMachine::PAUSED); ++released; }
 };
 struct CPS2VM {
+    struct Mailbox { template<typename F> void SendCall(F&& f, bool) { f(); } } m_mailBox;
     CGSH_OpenGL_Libretro gs;
     int GetStatus() { return status; }
     void* GetGSHandler() { return &gs; }
     void PauseAsync() { pauseRequested = true; }
     void Resume() { status = CVirtualMachine::RUNNING; }
+    void DestroyPadHandler() { assert(status == CVirtualMachine::PAUSED); }
+    void DestroyGSHandler() { assert(status == CVirtualMachine::PAUSED && released == destroyed + 1); }
+    void DestroySoundHandler() { assert(status == CVirtualMachine::PAUSED); }
+    void Destroy() { ++destroyed; }
 };
-static CPS2VM vm;
-static CPS2VM* m_virtualMachine = &vm;
+static CPS2VM* m_virtualMachine = nullptr;
 static bool first_run = false;
-void retro_init()\n{\n}\nvoid checkVarsUpdates() {\n\tstatic bool updates = true;\n}
+void retro_init()\n{\n    m_virtualMachine = new CPS2VM();\n}\nvoid checkVarsUpdates() {\n\tstatic bool updates = true;\n}
+void retro_deinit() {
+    if(m_virtualMachine) {
+\t\tm_virtualMachine->PauseAsync();
+        auto gsHandler = static_cast<CGSH_OpenGL_Libretro*>(m_virtualMachine->GetGSHandler());
+        if(gsHandler) while(m_virtualMachine->GetStatus() != CVirtualMachine::PAUSED) {
+            std::this_thread::yield();
+            gsHandler->Release();
+        }
+\t\tm_virtualMachine->DestroyPadHandler();
+        m_virtualMachine->DestroyGSHandler();
+        m_virtualMachine->DestroySoundHandler();
+        m_virtualMachine->Destroy();
+        delete m_virtualMachine; m_virtualMachine = nullptr;
+    }
+}
 extern "C" const char* ir_play_save_root() { return "isolated-root"; }
 ''')
+            source.write_text(source.read_text() + 'size_t retro_serialize_size(void) {}\nvoid* retro_get_memory_data(unsigned) { return nullptr; }\n')
+            for name in ('ui_libretro/GSH_OpenGL_Libretro.cpp', 'gs/GSHandler.cpp'):
+                target = source.parent.parent / name
+                target.parent.mkdir(exist_ok=True)
+                shutil.copy2(ROOT / 'vendor/Play/Source' / name, target)
             memory = root / 'vendor/Play/deps/CodeGen/src/MemoryFunction.cpp'
             memory.parent.mkdir(parents=True)
             memory.write_text('\tvm_size_t page_size = 0;\nold allocation\n#elif defined(MEMFUNC_USE_MMAP)\n'
@@ -626,13 +661,31 @@ extern "C" const char* ir_play_save_root() { return "isolated-root"; }
             shutil.copy2(ROOT / 'ci/phase3_play.py', root / 'ci/phase3_play.py')
             with patch.object(builder, 'ROOT', root): generated = builder.generated('play', root / 'output')
             main = generated / 'main_libretro.cpp'
+            main.write_text(main.read_text().split('#include "DiskUtils.h"')[0])
+            text = main.read_text()
+            start = text.index('#include "IRPlayState.h"')
+            main.write_text(text[:start] + text[text.index('void* retro_get_memory_data(', start):])
             main.write_text(main.read_text() + '''
 int main() {
     assert(ir_phase3_core_pause(true) && !pauseRequested);
-    first_run = true;
-    assert(ir_phase3_core_pause(true));
-    assert(status == CVirtualMachine::PAUSED && flushes == 2);
-    assert(ir_phase3_core_pause(false) && status == CVirtualMachine::RUNNING);
+    for (int i = 1; i <= 2; ++i) {
+        m_virtualMachine = new CPS2VM();
+        first_run = false; status = CVirtualMachine::RUNNING; flushes = 0;
+        assert(ir_phase3_core_pause(true));
+        assert(status == CVirtualMachine::PAUSED && flushes == 3 && drainedAfterPause);
+        drainedAfterPause = false;
+        assert(ir_phase3_core_pause(false) && status == CVirtualMachine::PAUSED);
+        first_run = true;
+        assert(ir_phase3_core_pause(false) && status == CVirtualMachine::RUNNING);
+        flushes = 0;
+        retro_deinit();
+        assert(!m_virtualMachine && destroyed == i && released == i);
+    }
+    m_virtualMachine = new CPS2VM(); stuck = true; status = CVirtualMachine::RUNNING;
+    try { retro_deinit(); assert(false); } catch (const std::runtime_error&) {}
+    assert(m_virtualMachine && destroyed == 2 && released == 2);
+    stuck = false; retro_deinit();
+    assert(!m_virtualMachine && destroyed == 3 && released == 3);
     assert(CAppConfig().GetBasePath() == "isolated-root");
 }
 ''')
@@ -714,7 +767,7 @@ int main() {
             source.parent.mkdir(parents=True)
             source.write_text('#ifdef HAVE_OPENGLES\n   hw_render.context_type       = RETRO_HW_CONTEXT_OPENGLES2;\n#endif\n')
             main = root / 'vendor/Flycast/shell/libretro/libretro.cpp'
-            main.parent.mkdir(parents=True); main.write_text('static bool first_run = true;\n')
+            main.parent.mkdir(parents=True); main.write_text((ROOT / 'vendor/Flycast/shell/libretro/libretro.cpp').read_text())
             memory = root / 'vendor/Flycast/core/linux/posix_vmem.cpp'
             memory.parent.mkdir(parents=True)
             memory.write_text('// Prepares the code region for JIT operations\nold allocator\n} // namespace virtmem\n')

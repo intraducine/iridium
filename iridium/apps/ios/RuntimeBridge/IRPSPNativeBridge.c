@@ -171,6 +171,7 @@ static struct {
     uint64_t (*frames)(void);
     bool (*request)(unsigned, int);
     int (*resolution)(void);
+    bool (*command)(const char *);
 } api;
 
 static bool load(const char *component, const IRJITDiagnosticSink *sink) {
@@ -187,6 +188,7 @@ static bool load(const char *component, const IRJITDiagnosticSink *sink) {
         LOAD(abi) LOAD(check_jit) LOAD(create) LOAD(pause) LOAD(resume) LOAD(request) LOAD(resolution) LOAD(stop) LOAD(frames)
 #undef LOAD
         loaded = true;
+        api.command = (__typeof__(api.command))dlsym(handle, "ir_native_psp_command");
     }
     if (!ir_jit_diagnostic_mark(sink, IR_JIT_ABI_ENTER, 0, 0, 0)) return false;
     uint32_t version = api.abi ? api.abi() : 0;
@@ -219,6 +221,7 @@ void *ir_psp_native_open(const char *component, const char *game, const char *me
 void ir_psp_native_pause(void) { if (api.pause) api.pause(); }
 void ir_psp_native_resume(void) { if (api.resume) api.resume(); }
 bool ir_psp_native_request(unsigned operation, int value) { return api.request && api.request(operation, value); }
+bool ir_psp_native_command(const char *json) { return api.command && json && api.command(json); }
 int ir_psp_native_resolution(void) { return api.resolution ? api.resolution() : 2; }
 void ir_psp_native_stop(void) { if (api.stop) api.stop(); }
 uint64_t ir_psp_native_frames(void) { return api.frames ? api.frames() : 0; }

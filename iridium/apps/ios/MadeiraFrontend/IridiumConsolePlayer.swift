@@ -6,9 +6,12 @@ struct IridiumConsolePlayer: View {
     @ObservedObject private var session = IridiumConsoleSession.shared
     @ObservedObject private var controller = IridiumPhysicalController.shared
     @ObservedObject private var controls = TouchControlsModel.shared
+    @State private var showingCheats = false
+    @State private var showingPatches = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var keyboardFocus: Bool
+    @FocusState private var coreValueFocus: Bool
     @AppStorage("IridiumConsoleTouchControls") private var touchEnabled = true
     private var controlOpacity: Binding<Double> { Binding(get: { controls.iridiumConsoleOpacity }, set: { controls.iridiumConsoleOpacity = $0; controls.iridiumSaveConsole() }) }
     @State private var analogKeys: Set<String> = []
@@ -22,13 +25,34 @@ struct IridiumConsolePlayer: View {
     @State private var closeConfirmation = IridiumCloseConfirmation()
     @State private var helpSection = 0
     @State private var showingLogs = false
+    @State private var selectedCoreOption: String?
+    @State private var coreOptionDraft = ""
     private var isPSP: Bool { session.game?.platform == .psp }
     private var isDolphin: Bool { session.game?.runtimeID == "dolphin" }
     private var stateSlot: Int {
-        get { isDolphin ? session.dolphinStateSlot : session.pspStateSlot }
-        nonmutating set { if isDolphin { session.dolphinStateSlot = newValue } else { session.pspStateSlot = newValue } }
+        get { isDolphin ? session.dolphinStateSlot : isPSP ? session.pspStateSlot : session.coreStateSlot }
+        nonmutating set {
+            if isDolphin { session.dolphinStateSlot = newValue }
+            else if isPSP { session.pspStateSlot = newValue }
+            else { session.coreStateSlot = newValue }
+        }
     }
-    private var stateStatus: String? { isDolphin ? session.dolphinStateStatus : session.pspStateStatus }
+    private var stateStatus: String? { isDolphin ? session.dolphinStateStatus : isPSP ? session.pspStateStatus : session.coreStateStatus }
+    private var coreOptions: [IridiumCoreOption] {
+        session.coreControls.options.filter(\.visible).sorted { ($0.category, $0.title) < ($1.category, $1.title) }
+    }
+    private var coreOption: IridiumCoreOption? { coreOptions.first { $0.key == selectedCoreOption } }
+    private var hasStates: Bool { isPSP || isDolphin || session.coreControls.states }
+    private var canChangeDisc: Bool { session.coreControls.discCount > 1 || session.coreControls.canChangeDisc == true }
+    private var availableDiscs: [IridiumConsoleGame] {
+        IridiumConsoleLibrary.shared.games.filter { $0.platform == session.game?.platform && !["elf", "dol", "wad"].contains($0.fileExtension) }
+    }
+    private var libraryDiscChoices: [String] { availableDiscs.enumerated().map { "Library Disc \($0.offset + 1): \($0.element.title)" } }
+    private var sameBoyActions: [String] {
+        guard session.game?.runtimeID == "sameboy" else { return [] }
+        return [session.fastForward ? "Speed: 2×" : "Speed: 1×", session.rewindEnabled ? "Rewind History: On" : "Rewind History: Off"]
+            + (session.rewindEnabled ? ["Rewind 3 Seconds"] : [])
+    }
     private var remoteName: String { ["Sideways Wii Remote", "Wii Remote and Nunchuk", "Classic Controller"][session.dolphinSettings.remote] }
     private var aspectName: String { ["Auto", "16:9", "4:3"][session.dolphinSettings.aspect] }
     private var profile: IridiumPlayerProfile { .consoleProfile(session.game?.platform.rawValue) }
@@ -120,6 +144,12 @@ struct IridiumConsolePlayer: View {
                     if session.phase == .paused { session.resume() } else { session.pause() }
                 } : nil)
         }
+        .sheet(isPresented: $showingCheats) {
+            IridiumCheatEditor(draft: session.cheats, formats: session.coreControls.cheatFormats ?? [], apply: session.applyCheats)
+        }
+        .sheet(isPresented: $showingPatches) {
+            IridiumCheatEditor(draft: session.coreControls.patches?.map(\.cheat) ?? [], formats: ["patch"], title: "Game Patches", apply: session.applyDolphinPatches)
+        }
         .alert("Runtime", isPresented: Binding(get: { session.error != nil }, set: { if !$0 { session.error = nil } })) {
             Button("OK") { session.error = nil }
         } message: { Text(session.error ?? "") }
@@ -186,7 +216,16 @@ struct IridiumConsolePlayer: View {
                                     Text(session.dolphinPerformance).monospacedDigit().font(.subheadline)
                                     menuRow("Dolphin Settings", "slider.horizontal.3")
                                 }
-                                if isPSP || isDolphin { menuRow("Save States", "square.and.arrow.down") }
+                                if !coreOptions.isEmpty { menuRow("Core Settings", "slider.horizontal.3") }
+                                if hasStates { menuRow("Save States", "square.and.arrow.down") }
+                                if !(session.coreControls.cheatFormats ?? []).isEmpty { menuRow("Cheats", "list.bullet") }
+                                if isDolphin { menuRow("Game Patches", "wrench") }
+                                if canChangeDisc { menuRow("Change Disc", "opticaldisc") }
+                                ForEach(sameBoyActions, id: \.self) { menuRow($0, $0 == "Rewind 3 Seconds" ? "backward" : "speedometer") }
+                                if session.game?.runtimeID == "sameboy" {
+                                    Text("Speed 2× mutes game audio. Rewind records up to 32 MB while you play.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                }
                                 menuRow("Close Game", "stop.circle")
                             } else if menuPage == "Controls" {
                                 menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
@@ -203,7 +242,7 @@ struct IridiumConsolePlayer: View {
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                             } else if menuPage == "PSP Settings" {
-                                Text("PPSSPP 1.20.4 · Native graphics and media").font(.subheadline)
+                                Text("PPSSPP · Native graphics and media").font(.subheadline)
                                 Text("CPU: \(session.pspCPUMode)").font(.footnote).foregroundStyle(.secondary)
                                 Text(session.pspJITStatus).font(.footnote).foregroundStyle(.secondary)
                                 ForEach(1...4, id: \.self) { scale in
@@ -226,6 +265,43 @@ struct IridiumConsolePlayer: View {
                                 menuRow("Players: \(session.dolphinSettings.players)", "person.2")
                                 menuRow(session.dolphinSettings.dualCore ? "Dual Core: On" : "Dual Core: Off", "cpu")
                                 Text("Player count and dual core apply after you close and reopen the game. Players follow controller connection order. Touch and keyboard control player 1.").font(.footnote).foregroundStyle(.secondary)
+                            } else if menuPage == "Core Settings" {
+                                if let status = session.coreControls.captureStatus, !status.isEmpty { Text(status).font(.footnote) }
+                                Text("Settings apply to this game. Some changes need you to close and reopen the game.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                Text("Controllers: \(session.coreControls.players) player\(session.coreControls.players == 1 ? "" : "s"). Touch and keyboard control player 1. Other players follow controller connection order.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                if isPSP {
+                                    Text("Multiplayer: enable Networking on both devices. For a local host, enable Host Ad Hoc Server and use 127.0.0.1 as its server address. Other devices use the host's local IP address. Use matching channel and port-offset values, then reopen the game and enter its multiplayer mode.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                } else if session.game?.runtimeID == "flycast" {
+                                    Text("Dreamcast network games use Broadband Adapter Emulation. Enable it before opening a supported game, then use that game's network setup. Arcade link games need compatible external server software; this menu does not create a server.")
+                                        .font(.footnote).foregroundStyle(.secondary)
+                                }
+                                ForEach(coreOptions) { option in
+                                    menuRow(option.title + ": " + option.selectedTitle, "slider.horizontal.3")
+                                }
+                            } else if menuPage == "Core Option", let option = coreOption {
+                                Text(option.title).font(.headline)
+                                if !option.info.isEmpty { Text(option.info).font(.footnote).foregroundStyle(.secondary) }
+                                if option.choices.isEmpty {
+                                    TextField(option.title, text: $coreOptionDraft)
+                                        .focused($coreValueFocus)
+                                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                        .accessibilityLabel(option.title)
+                                    menuRow("Apply Setting", "checkmark")
+                                } else {
+                                    ForEach(option.choices, id: \.value) { choice in
+                                        menuRow(choice.title, choice.value == option.value ? "checkmark.circle.fill" : "circle")
+                                    }
+                                }
+                            } else if menuPage == "Change Disc" {
+                                ForEach(libraryDiscChoices, id: \.self) { menuRow($0, "opticaldisc") }
+                                Text("Import another disc into the library first. Changing discs keeps the current game running.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                ForEach(0..<session.coreControls.discCount, id: \.self) { index in
+                                    menuRow("Disc \(index + 1)", index == session.coreControls.discIndex ? "checkmark.circle.fill" : "opticaldisc")
+                                }
                             } else if menuPage == "Save States" {
                                 menuRow("Slot \(stateSlot + 1)", "number.square")
                                 menuRow("Save State and Resume", "square.and.arrow.down")
@@ -273,11 +349,31 @@ struct IridiumConsolePlayer: View {
     private func activate(_ title: String) {
         switch title {
         case "Resume": resume()
+        case "Cheats": releaseInput(); showingCheats = true
+        case "Game Patches": releaseInput(); showingPatches = true
         case "Slot \(stateSlot + 1)": stateSlot = (stateSlot + 1) % 5; menuFocus = "Slot \(stateSlot + 1)"
         case "Save State and Resume", "Load State and Resume":
             releaseInput()
             if isDolphin { session.requestDolphinState(load: title == "Load State and Resume") }
-            else { session.requestPSPState(load: title == "Load State and Resume") }
+            else if isPSP { session.requestPSPState(load: title == "Load State and Resume") }
+            else { session.requestCoreState(load: title == "Load State and Resume") }
+        case "Speed: 1×", "Speed: 2×": session.toggleFastForward()
+        case "Rewind History: On", "Rewind History: Off": session.toggleRewind()
+        case "Rewind 3 Seconds": session.rewind()
+        case let value where menuPage == "Core Settings":
+            if let option = coreOptions.first(where: { $0.title + ": " + $0.selectedTitle == value }) {
+                selectedCoreOption = option.key; coreOptionDraft = option.value
+                menuPage = "Core Option"; menuFocus = option.choices.isEmpty ? "Apply Setting" : option.selectedTitle
+            }
+        case let value where menuPage == "Core Option":
+            coreValueFocus = false
+            if let option = coreOption {
+                if option.choices.isEmpty, value == "Apply Setting" { session.setCoreOption(option, value: coreOptionDraft) }
+                else if let choice = option.choices.first(where: { $0.title == value }) { session.setCoreOption(option, value: choice.value) }
+            }
+        case let value where menuPage == "Change Disc":
+            if let index = libraryDiscChoices.firstIndex(of: value) { session.changeDisc(to: availableDiscs[index]) }
+            else if let number = Int(value.dropFirst(5)) { session.changeDisc(number - 1) }
         case let value where value.hasPrefix("Resolution "):
             if let scale = Int(value.dropFirst(11).prefix(1)) {
                 if isDolphin { session.setDolphin { $0.resolution = scale } }
@@ -310,6 +406,8 @@ struct IridiumConsolePlayer: View {
     }
     private func command(_ value: String) {
         if showingLogs { if value == "back" || value == "menu" { showingLogs = false }; return }
+        if showingCheats { if value == "back" || value == "menu" { showingCheats = false }; return }
+        if showingPatches { if value == "back" || value == "menu" { showingPatches = false }; return }
         if controls.editing {
             if value == "back" || value == "menu" { controls.editing = false; controls.selected = nil }
             return
@@ -328,7 +426,12 @@ struct IridiumConsolePlayer: View {
             if value == "accept" || value == "back" { session.returnToLibraryAfterTimeout() }
             return
         }
-        if value == "back" { if menuPage == "Session" { resume() } else { menuPage = "Session"; menuFocus = "Resume" }; return }
+        if value == "back" {
+            if menuPage == "Session" { resume() }
+            else if menuPage == "Core Option" { menuPage = "Core Settings"; menuFocus = coreOption.map { $0.title + ": " + $0.selectedTitle } ?? "" }
+            else { menuPage = "Session"; menuFocus = "Resume" }
+            return
+        }
         if menuPage == "Session", menuFocus == "Volume", value == "left" || value == "right" {
             IridiumGameAudio.shared.adjust(value); return
         }
@@ -349,7 +452,14 @@ struct IridiumConsolePlayer: View {
         let order: [String]
         switch menuPage {
         case "Session": order = IridiumSessionMenuActions.items(windows: false).map { $0.0 }
-            + (isPSP ? ["PSP Settings", "Save States"] : isDolphin ? ["Dolphin Settings", "Save States"] : []) + ["Close Game"]
+            + (isPSP ? ["PSP Settings"] : isDolphin ? ["Dolphin Settings"] : [])
+            + (coreOptions.isEmpty ? [] : ["Core Settings"]) + (hasStates ? ["Save States"] : [])
+            + ((session.coreControls.cheatFormats ?? []).isEmpty ? [] : ["Cheats"])
+            + (isDolphin ? ["Game Patches"] : [])
+            + (canChangeDisc ? ["Change Disc"] : []) + sameBoyActions + ["Close Game"]
+        case "Core Settings": order = coreOptions.map { $0.title + ": " + $0.selectedTitle }
+        case "Core Option": order = coreOption.map { $0.choices.isEmpty ? ["Apply Setting"] : $0.choices.map(\.title) } ?? []
+        case "Change Disc": order = libraryDiscChoices + (0..<session.coreControls.discCount).map { "Disc \($0 + 1)" }
         case "PSP Settings": order = (1...4).map { "Resolution \($0)×" }
         case "Dolphin Settings": order = (1...4).map { "Resolution \($0)×" } + ["Aspect: \(aspectName)"]
             + (session.game?.platform == .wii ? [remoteName, session.dolphinSettings.motion ? "Phone Motion: On" : "Phone Motion: Off"] : [])
@@ -363,6 +473,8 @@ struct IridiumConsolePlayer: View {
         } else if value == "accept" { activate(menuFocus) }
     }
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        if showingCheats || showingPatches { return .ignored }
+        if coreValueFocus { return .ignored }
         if menuVisible {
             guard press.phase == .down else { return .handled }
             switch press.key {

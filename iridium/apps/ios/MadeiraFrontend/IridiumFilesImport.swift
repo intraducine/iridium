@@ -4,6 +4,69 @@ import Foundation
 /// Copy-only import from an explicitly selected Files document or folder.
 /// The caller owns security-scoped access and runs this work off the UI thread.
 enum IridiumFilesImport {
+    static func importContent(from source: URL, to destination: URL, backup: URL) throws {
+        let source = try checkedPath(source), destination = try checkedPath(destination), backup = try checkedPath(backup)
+        if ["zip", "7z", "rar"].contains(source.pathExtension.lowercased()) { throw Failure.archiveNeedsExtraction }
+        guard !isInside(destination, root: source), !isInside(source, root: destination), source != destination,
+              !FileManager.default.fileExists(atPath: backup.path) else { throw Failure.conflictingPath }
+        let limits = Limits()
+        let fm = FileManager.default
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staging = destination.deletingLastPathComponent().appendingPathComponent(".content-" + UUID().uuidString)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: staging) }
+        var bytes: Int64 = 0
+        var names: [String: String] = [:]
+        func merge(_ input: URL, entries: [Item]) throws {
+            for entry in entries {
+                let folded = entry.relativePath.precomposedStringWithCanonicalMapping.lowercased()
+                if let old = names[folded], old != entry.relativePath { throw Failure.conflictingPath }
+                names[folded] = entry.relativePath
+                let output = staging.appendingPathComponent(entry.relativePath)
+                if entry.isDirectory {
+                    if fm.fileExists(atPath: output.path), try attributes(output)[.type] as? FileAttributeType != .typeDirectory { throw Failure.conflictingPath }
+                    try fm.createDirectory(at: output, withIntermediateDirectories: true)
+                } else {
+                    try fm.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if fm.fileExists(atPath: output.path) {
+                        guard try attributes(output)[.type] as? FileAttributeType == .typeRegular else { throw Failure.conflictingPath }
+                        try fm.removeItem(at: output)
+                    }
+                    try copy(entry, from: input.appendingPathComponent(entry.relativePath), to: output, root: input,
+                             copiedBytes: &bytes, limit: limits.maximumBytes, isCancelled: { false })
+                }
+            }
+        }
+        let exists = fm.fileExists(atPath: destination.path)
+        if exists { try merge(destination, entries: contents(in: destination, limits: limits, isCancelled: { false })) }
+        if try attributes(source)[.type] as? FileAttributeType == .typeDirectory {
+            try merge(source, entries: contents(in: source, limits: limits, isCancelled: { false }))
+        } else {
+            try merge(source.deletingLastPathComponent(), entries: [item(at: source, root: source.deletingLastPathComponent())])
+        }
+        guard names.count <= limits.maximumEntries else { throw Failure.tooManyFiles }
+        try publishContent(staging: staging, destination: destination, backup: backup)
+    }
+
+    static func publishContent(staging: URL, destination: URL, backup: URL) throws {
+        let fm = FileManager.default
+        _ = try checkedPath(staging); _ = try checkedPath(destination); _ = try checkedPath(backup)
+        guard staging.standardizedFileURL != destination.standardizedFileURL,
+              !isInside(backup, root: destination), !isInside(staging, root: destination),
+              !isInside(backup, root: staging),
+              !fm.fileExists(atPath: backup.path) else { throw Failure.conflictingPath }
+        guard try attributes(staging)[.type] as? FileAttributeType == .typeDirectory else { throw Failure.notRegularFile }
+        let exists = fm.fileExists(atPath: destination.path)
+        if exists {
+            try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.moveItem(at: destination, to: backup)
+        }
+        do { try fm.moveItem(at: staging, to: destination) }
+        catch {
+            if exists { try fm.moveItem(at: backup, to: destination) }
+            throw error
+        }
+    }
     /// Stable diagnostics contain neither source names nor provider paths.
     static func diagnosticCode(_ error: Error) -> String {
         if let failure = error as? Failure { return "files." + String(describing: failure) }
@@ -71,19 +134,21 @@ enum IridiumFilesImport {
         case invalidPath, symbolicLink, notRegularFile, invalidExecutable
         case unsupportedArchitecture, outsideFolder, tooManyFiles, tooLarge
         case tooManyExecutables, conflictingPath, sourceChanged
+        case archiveNeedsExtraction
 
         var errorDescription: String? {
             switch self {
-            case .invalidPath: return "A game file has a path Windows cannot use. Choose a folder with ordinary file names."
+            case .archiveNeedsExtraction: return "Extract the archive first, then choose its content folder."
+            case .invalidPath: return "A file has an unsupported path. Use ordinary file and folder names."
             case .symbolicLink: return "This selection contains a symbolic link. Choose the original game files instead."
-            case .notRegularFile: return "Choose a regular Windows executable (.exe) or its game folder."
+            case .notRegularFile: return "Choose a regular file or a folder that contains its files."
             case .invalidExecutable: return "This file is not a valid Windows executable."
             case .unsupportedArchitecture: return "Only x86 and x64 Windows executables are supported."
             case .outsideFolder: return "The executable must be inside the selected game folder."
             case .tooManyFiles: return "This folder contains too many files. Choose a smaller game folder."
             case .tooLarge: return "This game exceeds the import size limit. Choose a smaller game folder."
             case .tooManyExecutables: return "This folder contains too many executables. Choose a more specific game folder."
-            case .conflictingPath: return "Two files use the same Windows path, or an import destination already exists. No existing files were replaced."
+            case .conflictingPath: return "Two files use the same path, or an import destination already exists. Existing files were kept."
             case .sourceChanged: return "The game files changed during import. Wait for any download or copy to finish, then try again."
             }
         }

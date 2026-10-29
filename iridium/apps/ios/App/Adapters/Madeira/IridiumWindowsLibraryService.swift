@@ -55,7 +55,7 @@ final class LibraryModel: ObservableObject {
     // Why a session ended by itself (not Quit): the program the app launched
     // exited with a Windows error (wine_crash_exit_status, WineProcessBridge.m).
     // MADEIRA_EXIT_REPORT=0 returns to the library without a message.
-    private var quitRequested = false
+    private(set) var quitRequested = false
     private func exitReport() -> String? {
         guard !quitRequested, MadeiraConfig.flag("MADEIRA_EXIT_REPORT") else { return nil }
         var status: UInt32 = 0
@@ -129,7 +129,7 @@ final class LibraryModel: ObservableObject {
     }
 
     func refreshFlag() {
-        guard current == nil, wine_process_is_running() == 0 else { return }
+        guard current == nil, !IridiumMadeiraRuntime.shared.isBusy else { return }
         // Fixed for the whole run (FrontendChoice); a change applies at the next start.
         let allowed = FrontendChoice.startup.useNew
         if enabled != allowed { fputs("[frontend] library enabled=\(allowed ? 1 : 0)\n", stderr) }
@@ -405,12 +405,28 @@ final class LibraryModel: ObservableObject {
 
     // MARK: session
 
-    /// Wine sessions started in this app run. A second one cannot start in the
-    /// same process: the wineserver's permanent objects from the first session
-    /// are still there and init_registry aborts on "\Registry". Madeira asks for
-    /// a restart instead. MADEIRA_ONE_SESSION_PER_RUN=0 lets the launch go ahead.
+    /// Initialize the embedded Windows host once. Game jobs reuse that host;
+    /// a failed native initialization still retains admission.
     static var sessionsThisRun = 0
-    static let restartMessage = "Restart Madeira to start another game: swipe Madeira away in the app switcher, then open it again."
+    private static var nativeInitializationStarted = false
+    private(set) var nativeLaunchID = UUID()
+    static let restartMessage = "Windows could not finish the session safely. Close and reopen Iridium."
+    @MainActor static func reserveNativeSession() -> Bool {
+        guard !nativeInitializationStarted else { return false }
+        nativeInitializationStarted = true
+        sessionsThisRun = 1
+        return true
+    }
+    @MainActor func launchFailedBeforeNative(_ owner: UUID, reason: String? = nil, offerJIT: Bool = false) {
+        guard nativeLaunchID == owner else { return }
+        guard !Self.nativeInitializationStarted else { launchFailed(Self.restartMessage); return }
+        JITCoordinator.shared.releaseAttachedDebugger { clean in
+            guard self.nativeLaunchID == owner, !Self.nativeInitializationStarted else { return }
+            guard clean else { self.launchFailed(Self.restartMessage); return }
+            Self.sessionsThisRun = 0
+            self.launchFailed(reason, offerJIT: offerJIT)
+        }
+    }
     @Published var restartNotice: String? { didSet { if restartNotice != nil { preparing = nil } } }
     /// CS_DEBUGGED is set but no debugger is attached (JIT was enabled outside
     /// Madeira): the text of the alert that offers Madeira's own Enable JIT.
@@ -459,6 +475,7 @@ final class LibraryModel: ObservableObject {
         wine_exit_status_reset()
         quitRequested = false
         LibraryController.shared.configure(enabled: enabled, ownsInput: false)
+        nativeLaunchID = UUID()
         Self.sessionsThisRun += 1
         launchPresent = madeira_get_present_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
         launchSurface = winios_surface_present_count()
@@ -518,9 +535,29 @@ final class LibraryModel: ObservableObject {
         DockStartScreen.shared.begin(dock, at: launchStarted)
         sawProcess = false
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.poll() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
     }
-    private func poll() {
+    @MainActor private func poll() {
+        if IridiumMadeiraRuntime.shared.isResident {
+            let owner = nativeLaunchID
+            IridiumMadeiraRuntime.shared.poll(owner) { event in
+                guard self.nativeLaunchID == owner, self.current != nil else { return }
+                switch event {
+                case .starting: break
+                case .running:
+                    self.sawProcess = true
+                    if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
+                case .ended(let status):
+                    self.finish()
+                    if status != 0 && !self.quitRequested { self.error = "The Windows game ended with code \(status)." }
+                case .blocked(let message):
+                    self.timer?.invalidate(); self.timer = nil
+                    self.launching = false; self.error = message
+                }
+            }
+        }
         let dockStart = DockStartScreen.shared
         if dockStart.active {
             // A Dock start: the desktop's own frames (explorer, the host's console window)
@@ -536,10 +573,10 @@ final class LibraryModel: ObservableObject {
                 showGameView(reason: "surface")
             } else if Date().timeIntervalSince(launchStarted) > 30 { launchSlow = true }
         }
-        if wine_process_is_running() != 0 {
+        if !IridiumMadeiraRuntime.shared.isResident, wine_process_is_running() != 0 {
             sawProcess = true
             if sessionMessage == "Starting…" { sessionMessage = "" }
-        } else if sawProcess && wineserver_is_running() == 0 { finish() }
+        } else if !IridiumMadeiraRuntime.shared.isResident, sawProcess && wineserver_is_running() == 0 { finish() }
         // The first frame gives Aspect and Fill height the drawable's shape.
         if current != nil, !laidOutAfterFirstPresent, madeira_get_present_count() != MetalBackedView.presentCountAtLaunch {
             laidOutAfterFirstPresent = true
@@ -608,14 +645,23 @@ final class LibraryModel: ObservableObject {
     }
     func requestQuit() {
         LibraryKeyboard.hide()
+        if quitRequested, IridiumMadeiraRuntime.shared.isResident {
+            IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID)
+            sessionMessage = "Ending the remaining game processes…"
+            menu = false
+            return
+        }
         quitRequested = true
+        if !sawProcess { IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID) }
+        let closingOwner = nativeLaunchID
         // Ask the application to close (Alt+F4) through the normal input queue,
         // so it can save; the surface stays up until the native session ends.
         winios_post_key(0x12, 1); winios_post_key(0x73, 1)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard self.nativeLaunchID == closingOwner, self.current != nil else { return }
             winios_post_key(0x73, 0); winios_post_key(0x12, 0)
         }
-        sessionMessage = "Close requested. Confirm any in-game exit dialog."
+        sessionMessage = "Confirm the exit in the game. Close again to end remaining processes."
         menu = false
         fputs("[frontend] graceful close requested\n", stderr)
     }

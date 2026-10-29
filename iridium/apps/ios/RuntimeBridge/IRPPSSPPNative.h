@@ -29,6 +29,7 @@ IR_NATIVE_EXPORT void *ir_native_psp_create(const char *game, const char *memory
 IR_NATIVE_EXPORT void ir_native_psp_pause(void);
 IR_NATIVE_EXPORT void ir_native_psp_resume(void);
 IR_NATIVE_EXPORT bool ir_native_psp_request(unsigned operation, int value);
+IR_NATIVE_EXPORT bool ir_native_psp_command(const char *json);
 IR_NATIVE_EXPORT int ir_native_psp_resolution(void);
 IR_NATIVE_EXPORT void ir_native_psp_stop(void);
 IR_NATIVE_EXPORT void ir_native_psp_restart(void);
@@ -36,6 +37,7 @@ bool ir_native_psp_jit_available(void);
 IR_NATIVE_EXPORT uint64_t ir_native_psp_frames(void);
 void ir_native_psp_poll_input(void);
 void ir_native_psp_frontend_frame(void);
+void ir_native_psp_frontend_startup(void);
 void ir_native_psp_frontend_event(unsigned kind, const char *message);
 // Platform hooks are internal; engine code and serialized state are unchanged.
 void ir_native_psp_platform_init(void);

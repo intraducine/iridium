@@ -135,6 +135,30 @@ enum JITPairingSource { case imported }
             require(!fm.fileExists(atPath: exe.path), "Uninstall removes the recorded installation")
             require(!fm.fileExists(atPath: storage.games.appendingPathComponent(moved.uuidString).path), "Uninstall leaves no orphan game data")
             require(fm.fileExists(atPath: save.path), "Uninstall leaves console saves intact")
+        case "installed-content":
+            let rawID = UUID(), owner = UUID()
+            let raw = IridiumConsoleGame(id: rawID, title: "Raw Game", platform: .gameBoy,
+                runtimeID: "sameboy", fileExtension: "gb", importedAt: Date())
+            var installed = IridiumConsoleGame(id: UUID(), title: "Installed Game", platform: .nintendo3DS,
+                runtimeID: "azahar", fileExtension: "app", importedAt: Date())
+            installed.storageOwnerID = owner; installed.installedPath = "sdmc/title/content.app"
+            let store = IridiumConsoleLibrary.shared.store
+            try store.save([raw, installed])
+            try put("IridiumRuntimes/Games/" + rawID.uuidString + "/game.gb", rom())
+            var content = Data(repeating: 0, count: 512)
+            content.replaceSubrange(0x100..<0x104, with: Data("NCCH".utf8)); content[0x104] = 1
+            let executable = try put("IridiumRuntimes/Saves/azahar/" + owner.uuidString + "/Azahar/" + installed.installedPath!, content)
+            let save = try put("IridiumRuntimes/Saves/azahar/" + owner.uuidString + "/Azahar/save.bin")
+            let titles = [rawID: raw.title, installed.id: installed.title]
+            for _ in 0..<2 {
+                try await worker.prepare(windows: [], consoles: [rawID, installed.id], oldConsoleRoot: old, titles: titles)
+                require(try store.load() == [raw, installed], "Migration retains installed records and owners")
+                require(try store.rom(installed) == executable, "Installed content stays in its shared 3DS storage")
+                require(try store.validateROM(installed) == executable, "Installed content remains launchable")
+                require(try Data(contentsOf: save) == Data("asset".utf8), "Shared 3DS saves stay intact")
+                require(try Data(contentsOf: store.validateROM(raw)) == rom(), "Raw ROM uses its named Games folder")
+                require(!fm.fileExists(atPath: try storage.gameFolder(installed.id).path), "Installed content does not gain a duplicate ROM folder")
+            }
         case "windows-paths":
             let id = UUID()
             try await worker.prepare(windows: [], consoles: [], oldConsoleRoot: old)

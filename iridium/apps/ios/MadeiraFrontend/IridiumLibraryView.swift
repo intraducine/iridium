@@ -36,6 +36,7 @@ struct IridiumLibraryView: View {
     @State private var detail: LibraryEntry?
     @State private var consoleDetail: IridiumConsoleGame?
     @State private var importingFiles = false
+    @State private var installingCIA = false
     @State private var features: Int?
     @State private var showingImportFolder = false
     @State private var pendingDetail: LibraryEntry?
@@ -171,7 +172,7 @@ struct IridiumLibraryView: View {
                                             description: Text("Add favorites through Game Options."))
                                     } else {
                                         ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                            description: Text("Choose Files, Steam or a console system from Add Game (+). Games appear together in this library."))
+                                            description: Text("Choose files, Steam, or a 3DS CIA from Add Game (+). Games appear together in this library."))
                                     }
                                 }.frame(maxWidth: .infinity, minHeight: layout.freeSpace)
                             }
@@ -202,7 +203,7 @@ struct IridiumLibraryView: View {
             .onKeyPress(.return) { key("accept") }
             .onKeyPress(.escape) { command("back"); return .handled }
             .onReceive(controller.commands) { value in
-                guard !consoleSession.isActive, consoleDetail == nil, !importingFiles, features == nil, detail == nil, !showingImportFolder, !choosingAdd, artworkDetail == nil, !onboarding.presented else { return }
+                guard !consoleSession.isActive, consoleDetail == nil, !importingFiles, !installingCIA, features == nil, detail == nil, !showingImportFolder, !choosingAdd, artworkDetail == nil, !onboarding.presented else { return }
                 showHints = true; showFocus = true; command(value)
             }
             .onAppear {
@@ -336,6 +337,9 @@ struct IridiumLibraryView: View {
             }
             .sheet(isPresented: $showingImportFolder, onDismiss: restoreKeyboardFocus) {
                 IridiumImportFolderView()
+            }
+            .sheet(isPresented: $installingCIA, onDismiss: restoreKeyboardFocus) {
+                IridiumCIAImport()
             }
             .sheet(isPresented: $choosingAdd, onDismiss: finishAdding) {
                 IridiumAddGameView(choose: { pendingAdd = $0; choosingAdd = false })
@@ -558,7 +562,7 @@ struct IridiumLibraryView: View {
         }
         if steamRepairID(game) != nil { return "Files missing" }
         guard (try? IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.console?.runtimeID)) != nil else { return "Unavailable" }
-        if LibraryModel.sessionsThisRun > 0 || consoleSession.phase == .restartRequired { return "Reopen Iridium" }
+        if IridiumMadeiraRuntime.shared.requiresRestart || consoleSession.phase == .restartRequired { return "Reopen Iridium" }
         return ""
     }
     private func steamRepairID(_ game: IridiumGame) -> Int? {
@@ -610,13 +614,14 @@ struct IridiumLibraryView: View {
         guard !searchFocus, !consoleSession.isActive else { return .ignored }
         showFocus = true; showHints = false; command(value); return .handled
     }
-    private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; showingImportFolder = false; pendingAdd = nil; choosingAdd = false }
+    private func closePages() { artworkDetail = nil; detail = nil; features = nil; pendingDetail = nil; showingImportFolder = false; pendingAdd = nil; choosingAdd = false; installingCIA = false }
     private func finishAdding() {
         defer { pendingAdd = nil; restoreKeyboardFocus() }
         switch pendingAdd {
         case .steam: features = 0
         case .files: importingFiles = true
         case .importFolder: showingImportFolder = true
+        case .cia: installingCIA = true
         default: break
         }
     }
@@ -636,7 +641,7 @@ struct IridiumLibraryView: View {
         favorites = value; keepSelection()
     }
     private func restoreKeyboardFocus() {
-        keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingFiles && features == nil && !showingImportFolder && !choosingAdd && artworkDetail == nil && !onboarding.presented
+        keyboardFocus = detail == nil && consoleDetail == nil && !consoleSession.isActive && !importingFiles && !installingCIA && features == nil && !showingImportFolder && !choosingAdd && artworkDetail == nil && !onboarding.presented
         if keyboardFocus { IridiumMenuSounds.play(.hide) }
     }
     private func command(_ value: String) {

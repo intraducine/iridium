@@ -2986,7 +2986,8 @@ struct LibraryHUD: View {
                 }
                 if confirmClose {
                     IridiumPlayerCloseConfirmation(selection: closeConfirmation.selection,
-                        message: "Requests a normal game exit. Confirm any in-game prompt. Unsaved progress may be lost.",
+                        message: model.quitRequested ? "Ends the remaining game processes. Unsaved progress may be lost."
+                            : "Requests a normal game exit. Confirm any in-game prompt. Unsaved progress may be lost.",
                         cancel: { iridiumCancelClose() },
                         close: { confirmClose = false; model.requestQuit() }, command: iridiumMenuNavigate)
                 }

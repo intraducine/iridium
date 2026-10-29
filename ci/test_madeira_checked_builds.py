@@ -21,6 +21,26 @@ def executable(path, body):
 
 
 class CheckedBuildTests(unittest.TestCase):
+    def test_repeated_win32u_builds_merge_only_one_copy_of_freetype(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.object(build, 'OUTPUT', root / 'generated'), patch.object(build.subprocess, 'run') as run:
+                build.run_checked_recipe('win32u-unix')
+            recipe = run.call_args.kwargs['input']
+            archive = recipe[recipe.index('echo "=== Building libwin32u_unix.a ==="'):]
+            obj = root / 'obj'; obj.mkdir()
+            fonts = root / 'fonts/build'; fonts.mkdir(parents=True)
+            for name, output in [('unit', obj), ('fixture_font', root)]:
+                source = root / (name + '.c'); source.write_text('int ' + name + '(void){return 1;}\n')
+                subprocess.run(['cc', '-c', str(source), '-o', str(output / (name + '.o'))], check=True)
+            subprocess.run(['ar', 'rcs', str(fonts / 'libfreetype.a'), str(root / 'fixture_font.o')], check=True)
+            env = dict(os.environ, OBJ_DIR=str(obj), FREETYPE_DIR=str(fonts.parent), APP_LIB=str(root / 'app.a'))
+            for _ in range(2):
+                subprocess.run(['bash', '-e'], input=archive, text=True, env=env, check=True, capture_output=True)
+                members = subprocess.check_output(['ar', 't', str(root / 'app.a')], text=True).splitlines()
+                self.assertEqual(members.count('fixture_font.o'), 1)
+                self.assertEqual(members.count('unit.o'), 1)
+
     def test_ntdll_failed_compilation_cannot_archive_stale_objects(self):
         text = (ROOT / 'vendor/Madeira/build/ntdll-unix/build.sh').read_text()
         with tempfile.TemporaryDirectory() as folder:
@@ -31,11 +51,15 @@ class CheckedBuildTests(unittest.TestCase):
             (recipe.parent / 'audio_null_ios.c').write_text(
                 'static OSStatus ios_audio_render_cb(void) {\n'
                 '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}')
+            for name in ('process_ios.c', 'thread_ios.c', 'server_ios.c', 'loader_ios.c', 'virtual_ios.c', 'signal_arm64_ios.c'):
+                (recipe.parent / name).write_text((ROOT / 'vendor/Madeira/build/ntdll-unix' / name).read_text())
             obj = recipe.parent / 'obj'; obj.mkdir()
             for name in re.findall(r'\$OBJ_DIR/([^"/]+\.o)', text[text.index('ar rcs '):]):
                 (obj / name).write_bytes(b'stale object')
             unix = root / 'wine/dlls/ntdll/unix'; unix.mkdir(parents=True)
             (unix / 'file.c').write_text('broken source')
+            for name in ('sync.c', 'unix/sync.c'):
+                (root / 'wine/dlls/ntdll' / name).write_text((ROOT / 'vendor/Madeira/wine/dlls/ntdll' / name).read_text())
             app = root / 'app/Madeira'; app.mkdir(parents=True)
             output = app / 'libntdll_unix.a'; output.write_bytes(b'previous app archive')
             executable(root / 'build/crypto-unix/gen_gnutls_symtab.sh', 'exit 0')
@@ -109,6 +133,7 @@ class CheckedBuildTests(unittest.TestCase):
                 build.native(); build.native()
                 self.assertEqual(compile.call_count, 1)
                 record = json.loads((root / '.build/iridium-native.json').read_text())
+                self.assertIn('app/Madeira/arm64ec-windows/xtajit64.dll', record['outputs'])
                 for name in build.CRYPTO_LIBRARIES:
                     self.assertEqual((app / f'lib{name}.a').read_bytes(), (prefix / f'lib{name}.a').read_bytes())
                     self.assertIn(f'toolchains/gnutls-ios/lib/lib{name}.a', record['outputs'])

@@ -245,14 +245,17 @@ final class JITCoordinator: ObservableObject {
                 self.consoleMemoryFailed = self.builtInHelperReleased == false
                 let message = self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
                     : self.builtInHelper != nil ? "The JIT helper stopped. Try again."
-                    : "Shared console JIT needs the built-in helper. Disconnect any external debugger and choose Built-in in JIT Settings."
+                    : "Shared JIT needs the built-in helper. Disconnect any external debugger and choose Built-in in JIT Settings."
                 self.error = message
                 completion(.failure(CoordinatorError.setupRequired(message))); return
             }
             self.consoleMemoryBusy = true; self.busy = true
             self.status = "Preparing JIT memory…"
             DispatchQueue.global(qos: .userInitiated).async {
-                let prepared = ir_jit_memory_prepare(jit26_prepare_region)
+                // Both arenas are prepared during this one owned helper activation.
+                // Madeira's arena persists; console cores lease reusable pages separately.
+                let windows = IridiumMadeiraRuntime.prepareJITMemory()
+                let prepared = windows && ir_jit_memory_prepare(jit26_prepare_region)
                 DispatchQueue.main.async {
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
@@ -275,6 +278,7 @@ final class JITCoordinator: ObservableObject {
     }
 
     func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
+        if !requiresAttachedDebugger { prepareConsoleMemory(completion: completion); return }
         guard enableRequest == nil, !busy, !consoleMemoryBusy,
               !requiresAttachedDebugger || builtInHelper == nil || builtInHelperReleased == true || isDebuggerAttached() else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")

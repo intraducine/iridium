@@ -46,7 +46,7 @@ enum IridiumRuntimeRegistry {
     // Only linked and implemented runtimes belong here. Research candidates
     // are deliberately absent from the import UI and compatibility claims.
     static let madeira = IridiumRuntimeDescriptor(id: "madeira", name: "Madeira", platforms: [.windows],
-        jit: .required, supportsPause: false, restartAfterStop: true)
+        jit: .required, supportsPause: false, restartAfterStop: false)
     static let sameBoy = IridiumRuntimeDescriptor(id: "sameboy", name: "SameBoy", platforms: [.gameBoy, .gameBoyColor],
         jit: .none, supportsPause: true, restartAfterStop: false)
     static let ppsspp = IridiumRuntimeDescriptor(id: "ppsspp", name: "PPSSPP", platforms: [.psp],
@@ -55,10 +55,8 @@ enum IridiumRuntimeRegistry {
         jit: .required, supportsPause: true, restartAfterStop: false)
     static let azahar = IridiumRuntimeDescriptor(id: "azahar", name: "Azahar", platforms: [.nintendo3DS],
         jit: .required, supportsPause: true, restartAfterStop: false)
-    // Play's app configuration is a process-lifetime upstream singleton. Its
-    // per-game data root cannot safely change until a new process is started.
     static let play = IridiumRuntimeDescriptor(id: "play", name: "Play!", platforms: [.playStation2],
-        jit: .required, supportsPause: true, restartAfterStop: true)
+        jit: .required, supportsPause: true, restartAfterStop: false)
     static let flycast = IridiumRuntimeDescriptor(id: "flycast", name: "Flycast", platforms: [.dreamcast, .arcade],
         jit: .required, supportsPause: true, restartAfterStop: false)
     #if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
@@ -138,7 +136,7 @@ struct IridiumConsoleSystem: Identifiable {
             case "azahar": return Self(runtime: runtime, title: "Azahar · Nintendo 3DS", primaryPlatform: .nintendo3DS,
                 extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
             case "play": return Self(runtime: runtime, title: "Play! · PlayStation 2", primaryPlatform: .playStation2,
-                extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Reopen Iridium after finishing a game.")
+                extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Open the game menu for core settings, save states, and disc changes.")
             case "flycast": return Self(runtime: runtime, title: "Flycast · Dreamcast / Arcade", primaryPlatform: .dreamcast,
                 extensions: ["elf", "cdi", "chd", "gdi", "cue", "zip"], guidance: "Dreamcast and arcade games use Flycast.")
             default: return nil
@@ -207,9 +205,18 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
     // Missing in existing version-1 records; nil deliberately means off.
     var pspJIT: Bool? = nil
     var originalFilename: String? = nil // Arcade set names are part of Flycast's loader protocol.
+    var storageOwnerID: UUID? = nil
+    var installedPath: String? = nil
     var pspJITEnabled: Bool { platform == .psp && pspJIT == true }
 
     func validate() throws {
+        if let path = installedPath {
+            let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard runtimeID == "azahar", platform == .nintendo3DS, fileExtension == "app", storageOwnerID != nil,
+                  path.utf8.count <= 4096, parts.count <= 32,
+                  parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("\0") })
+            else { throw IridiumRuntimeError.unsafePath }
+        } else if storageOwnerID != nil { throw IridiumRuntimeError.unsafePath }
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.utf8.count <= 512
         else { throw IridiumRuntimeError.invalidGame }
         // Durable record validity is independent of the runtimes linked into
@@ -320,6 +327,9 @@ struct IridiumConsoleStore: Sendable {
 
     func rom(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
+        if let relative = game.installedPath, let owner = game.storageOwnerID {
+            return try checked(["Saves", "azahar", owner.uuidString, "Azahar"] + relative.split(separator: "/").map(String.init))
+        }
         return try gamePath(game, [game.originalFilename ?? "game." + game.fileExtension])
     }
 
@@ -341,7 +351,7 @@ struct IridiumConsoleStore: Sendable {
 
     func saveDirectory(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
-        let directory = try checked(["Saves", game.runtimeID, game.id.uuidString], createDirectory: true)
+        let directory = try checked(["Saves", game.runtimeID, (game.storageOwnerID ?? game.id).uuidString], createDirectory: true)
         if game.platform == .psp || game.platform.isPhase3 {
             // PPSSPP owns a nested memory-stick tree. A safe root alone does
             // not prevent an existing PSP/SAVEDATA link from escaping it.

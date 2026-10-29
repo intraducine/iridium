@@ -93,6 +93,7 @@ class ImportFolderTests(unittest.TestCase):
     def test_pairing_choice_survives_restart(self): self.check('pairing-restart')
     def test_picker_receives_all_inputs_even_during_scan(self): self.check('picker')
     def test_existing_and_shared_installs_move_and_recover(self): self.check('migration')
+    def test_installed_3ds_content_and_shared_saves_survive_named_rom_migration(self): self.check('installed-content')
     def test_migration_conflict_preserves_both_sides(self): self.check('conflict')
     def test_receipts_survive_restart_and_changed_inputs_are_kept(self): self.check('receipt')
     def test_windows_copy_is_reused_after_interrupted_registration(self): self.check('windows-retry')

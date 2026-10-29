@@ -1041,7 +1041,7 @@ final class SteamOwnedLibrary: ObservableObject {
 
     /// Whether a Wine session runs in this app run (any interface).
     private var sessionRunning: Bool {
-        LibraryModel.shared.current != nil || wine_process_is_running() != 0 || wineserver_is_running() != 0
+        LibraryModel.shared.current != nil || IridiumMadeiraRuntime.shared.isBusy
     }
 
     /// Compares the app's session state with what downloads assumed. Called
