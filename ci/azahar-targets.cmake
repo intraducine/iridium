@@ -31,6 +31,8 @@ get_target_property(sources citra_libretro SOURCES)
 list(REMOVE_ITEM sources citra_libretro.cpp)
 set_property(TARGET citra_libretro PROPERTY SOURCES "${sources}")
 target_sources(citra_libretro PRIVATE "${IRIDIUM_PHASE3_GENERATED}/citra_libretro.cpp"
+  "${bridge}/IRAzaharCamera.cpp"
   "${bridge}/IRAzaharJIT.cpp" "${bridge}/IRAzaharGraphics.mm" "${bridge}/IRJITExecutionProbe.c")
+target_include_directories(citra_libretro PRIVATE "${CMAKE_SOURCE_DIR}/externals/json")
 set_source_files_properties("${bridge}/IRAzaharGraphics.mm" TARGET_DIRECTORY citra_libretro PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 target_link_libraries(citra_libretro PRIVATE "${IRIDIUM_AZAHAR_MOLTENVK}" "-framework Metal" "-framework QuartzCore" "-framework CoreGraphics" "-framework UIKit")

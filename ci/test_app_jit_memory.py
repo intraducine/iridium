@@ -129,6 +129,34 @@ int main() {
 
 class AppJITCoordinatorTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_windows_arena_retry_and_process_lifetime_reuse(self):
+        from host_tests import module_cache
+        text = (ROOT / 'iridium/apps/ios/App/JIT/StikJITHelper.swift').read_text()
+        body = text[text.index('    private static let poolLock'):text.index('    private static func createPool(')]
+        fixture = """import Foundation
+        enum Pool {
+            static var calls=0
+            static func createPool(poolSize:Int)->(rx:UnsafeMutableRawPointer,rw:UnsafeMutableRawPointer,size:Int)?{
+                calls += 1
+                if calls == 1{return nil}
+                return (UnsafeMutableRawPointer(bitPattern:4096)!,UnsafeMutableRawPointer(bitPattern:8192)!,poolSize)
+            }
+        BODY
+        }
+        precondition(Pool.allocatePool(poolSize:128) == nil && Pool.calls==1)
+        let first=Pool.allocatePool(poolSize:256)!
+        for _ in 0..<1000{
+            let next=Pool.allocatePool(poolSize:512)!
+            precondition(next.rx==first.rx && next.rw==first.rw && next.size==256)
+        }
+        precondition(Pool.calls==2)
+        """.replace('BODY', body)
+        with tempfile.TemporaryDirectory() as folder:
+            folder=Path(folder);(folder/'main.swift').write_text(fixture)
+            subprocess.run(['swiftc','-module-cache-path',module_cache(),str(folder/'main.swift'),'-o',str(folder/'check')],check=True,timeout=45)
+            subprocess.run([str(folder/'check')],check=True,timeout=10)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_preparation_detach_reuse_and_failed_cleanup(self):
         from host_tests import module_cache
         text = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
@@ -145,6 +173,9 @@ final class Memory: @unchecked Sendable {
 }
 func ir_jit_memory_ready() -> Bool { Memory.shared.isReady() }
 func ir_jit_memory_prepare(_ callback: Int) -> Bool { Memory.shared.prepared() }
+enum IridiumMadeiraRuntime {
+    static func prepareJITMemory() -> Bool { true }
+}
 let jit26_prepare_region = 1
 func isDebuggerAttached() -> Bool { true }
 @MainActor final class Host {

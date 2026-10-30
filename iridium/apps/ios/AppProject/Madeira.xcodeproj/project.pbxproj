@@ -1431,6 +1431,7 @@ done
 # this configuration resolved to, rather than hardcoding one.
 DYLIB="$CODESIGNING_FOLDER_PATH/d3d12/libmetalirconverter.dylib"
 [ -f "$DYLIB" ] || exit 0
+[ "$CODE_SIGNING_ALLOWED" != "NO" ] || exit 0
 if [ -n "$EXPANDED_CODE_SIGN_IDENTITY" ] &amp;&amp; [ "$CODE_SIGNING_ALLOWED" != "NO" ]; then
   codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$DYLIB"
 else

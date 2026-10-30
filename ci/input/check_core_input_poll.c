@@ -10,6 +10,7 @@ static retro_input_state_t fake_input;
 static unsigned runs, run_polls;
 static bool accept_game = true, fail_in_run;
 static uint16_t expected_buttons;
+bool ir_sameboy_cheats(const IRCheat *items, size_t count) { return ir_cheats_valid(items, count); }
 
 void retro_set_environment(retro_environment_t callback) { fake_environment = callback; }
 void retro_set_video_refresh(retro_video_refresh_t callback) { (void)callback; }
@@ -44,6 +45,10 @@ void retro_get_system_av_info(struct retro_system_av_info *av)
 }
 void retro_unload_game(void) { fake_poll(); }
 void retro_deinit(void) { fake_poll(); }
+void retro_get_system_info(struct retro_system_info *info) { info->library_version = "fixture"; }
+size_t retro_serialize_size(void) { return 4; }
+bool retro_serialize(void *bytes, size_t size) { (void)bytes; return size == 4; }
+bool retro_unserialize(const void *bytes, size_t size) { (void)bytes; return size == 4; }
 size_t retro_get_memory_size(unsigned id) { (void)id; fake_poll(); return 0; }
 void *retro_get_memory_data(unsigned id)
 {

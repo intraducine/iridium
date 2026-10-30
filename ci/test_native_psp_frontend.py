@@ -9,6 +9,15 @@ from ppsspp_frontend_overlay import body
 
 ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge/IRPPSSPPNative.mm'
+CHEATS_FIXTURE = '#include "' + str(NATIVE.parent / 'IRCheats.h') + '"\n' + r'''
+#include <sstream>
+#include <string>
+#include <vector>
+struct CheatLine { uint32_t part1,part2; };
+struct CheatCode { std::string name;std::vector<CheatLine> lines; };
+static std::vector<CheatCode> managedCheats;
+void ir_psp_managed_cheats(std::vector<CheatCode> items) {managedCheats=std::move(items);}
+'''
 
 
 def function(text, signature):
@@ -29,6 +38,7 @@ class NativePSPFrontendTests(unittest.TestCase):
         values = ROOT / 'vendor/PPSSPP/Core/ConfigValues.h'
         if not values.exists(): self.skipTest('Pinned checkout required')
         harness = r'''#include <atomic>
+#include <mutex>
 #include <cassert>
 #include <string>
 #include <utility>
@@ -38,6 +48,7 @@ struct Config { int iInternalResolution=3; CPUCore iCpuCore=CPUCore::IR_INTERPRE
 struct CoreParameter { CPUCore cpuCore; } active;
 CoreParameter &PSP_CoreParameter() { return active; }
 static std::atomic<int> currentResolution;
+static bool optionsReported = true;
 static std::vector<std::pair<unsigned,std::string>> events;
 void event(unsigned kind,const char *message) { events.emplace_back(kind,message); }
 ADAPTER
@@ -55,7 +66,7 @@ int main() {
   assert(events.size()==2 && events[0].first==8 && events[0].second==name);
   assert(events[1].first==4 && events[1].second=="boot complete");
   assert(active.cpuCore==core && g_Config.iCpuCore==saved && g_Config.iInternalResolution==3);
-  assert(currentResolution==3);
+  assert(currentResolution==3 && !optionsReported);
  }
  events.clear();ir_native_psp_frontend_event(7,"pause");
  assert(events.size()==1 && events[0].first==7);
@@ -154,6 +165,7 @@ int main() {
     def test_actual_input_adapter_maps_all_buttons_and_retires_to_neutral(self):
         source = NATIVE.read_text()
         harness = '''#include <atomic>
+#include <mutex>
 #include <cassert>
 #include <cmath>
 #include "Core/HLE/sceCtrl.h"
@@ -194,6 +206,7 @@ int main() {
         source = NATIVE.read_text()
         harness = r'''#import <Foundation/Foundation.h>
 #include <atomic>
+#include <mutex>
 #include <cassert>
 #include <functional>
 #include <memory>
@@ -206,6 +219,10 @@ int main() {
 @implementation Owner
 @end
 static Owner *container;
+static std::mutex optionsLock;
+static NSDictionary *pendingOptions,*startupOptions;
+static bool optionsReported=true;
+static NSArray *irPSPOptions(NSString *,NSString *,bool *) { return @[]; }
 static std::atomic<int> pendingResolution, currentResolution, pendingState;
 static std::atomic<bool> stateBusy,acceptingCallbacks;
 static std::atomic<uint64_t> generation;
@@ -217,20 +234,20 @@ static int lastSlot;
 bool PSP_IsInited() { return initialized; }
 bool ir_native_psp_generation_current(uint64_t owner) { return acceptingCallbacks && generation==owner; }
 void event(unsigned kind,const char *) { ++events;lastKind=kind; }
-struct Config { int iInternalResolution=2; void Save(const char*) { ++saves; } } g_Config;
+struct Config { int iInternalResolution=2; bool Save(const char*) { ++saves; return true; } } g_Config;
 namespace Reporting { void UpdateConfig() {} }
 enum class UIMessage { GPU_RENDER_RESIZED };
 void System_PostUIMessage(UIMessage) { ++notifications; }
-static int g_paramSFO;
+static struct ParamSFO { std::string GetDiscID() { return "FIXTURE"; } } g_paramSFO;
 namespace SaveState {
  enum class Status { FAILURE,WARNING,SUCCESS };
  using Callback=std::function<void(Status,std::string_view)>;
  static Callback completion;
- std::string GetGamePrefix(int) { return "fixture"; }
+ std::string GetGamePrefix(const ParamSFO &) { return "fixture"; }
  void SaveSlot(std::string_view prefix,int slot,Callback cb) { assert(prefix=="fixture");++saves;lastSlot=slot;completion=cb; }
  void LoadSlot(std::string_view prefix,int slot,Callback cb) { assert(prefix=="fixture");++loads;lastSlot=slot;completion=cb; }
 }
-''' + function(source, 'bool ir_native_psp_request(') + '\n' + function(source, 'void ir_native_psp_frontend_frame(') + r'''
+''' + CHEATS_FIXTURE + function((NATIVE.parent/'IRPPSSPPOptions.h').read_text(), 'static bool irPSPStartupKey(') + function(source, 'bool ir_native_psp_request(') + '\n' + function(source, 'bool ir_native_psp_command(') + '\n' + function(source, 'void ir_native_psp_frontend_frame(') + r'''
 int main() { @autoreleasepool {
  assert(!ir_native_psp_request(1,2));
  container=[Owner new];container.initialized=YES;acceptingCallbacks=true;generation=10;
@@ -238,6 +255,7 @@ int main() { @autoreleasepool {
  assert(!ir_native_psp_request(2,-1) && !ir_native_psp_request(3,5));
  assert(ir_native_psp_request(1,1));assert(ir_native_psp_request(1,4));
  assert(ir_native_psp_request(2,3));assert(!ir_native_psp_request(3,2));
+ assert(!ir_native_psp_command(R"({"operation":"cheats","items":[]})"));
  ir_native_psp_frontend_frame();assert(pendingState==23 && pendingResolution==4 && saves==0);
  initialized=true;ir_native_psp_frontend_frame();
  assert(currentResolution==4 && notifications==1 && saves==2 && lastSlot==3 && stateBusy);
@@ -249,6 +267,13 @@ int main() { @autoreleasepool {
  old(SaveState::Status::SUCCESS,"retired");assert(stateBusy && events==before);
  stateBusy=false;assert(ir_native_psp_request(3,2));ir_native_psp_frontend_frame();
  SaveState::completion(SaveState::Status::FAILURE,"failed");assert(!stateBusy && lastKind==6);
+ assert(ir_native_psp_command(R"({"operation":"cheats","items":[{"name":"Health","format":"cwcheat","code":"12345678 90ABCDEF","enabled":true}]})"));
+ assert(!ir_native_psp_request(2,0));
+ ir_native_psp_frontend_frame();assert(lastKind==5 && managedCheats.size()==1 && managedCheats[0].lines[0].part2==0x90abcdef);
+ assert(ir_native_psp_command(R"({"operation":"cheats","items":[{"name":"Invalid","format":"cwcheat","code":"bad","enabled":true}]})"));
+ ir_native_psp_frontend_frame();assert(lastKind==6 && managedCheats.size()==1 && managedCheats[0].name=="Health");
+ assert(ir_native_psp_command(R"({"operation":"cheats","items":[]})"));
+ ir_native_psp_frontend_frame();assert(lastKind==5 && managedCheats.empty());
  container.closing=YES;assert(!ir_native_psp_request(2,0));
  coreState=CORE_RUNTIME_ERROR;ir_native_psp_frontend_frame();assert(lastKind==2);
  unsigned errors=events;ir_native_psp_frontend_frame();assert(events==errors);

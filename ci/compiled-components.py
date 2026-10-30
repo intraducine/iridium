@@ -25,6 +25,7 @@ PATHS = {
                        FRONTEND + '.build/iridium-native.json',
                        FRONTEND + 'app/Madeira/arm64ec-windows/dockhost.exe',
                        FRONTEND + 'app/Madeira/arm64ec-windows/dock-notices.txt',
+                       FRONTEND + 'app/Madeira/arm64ec-windows/xtajit64.dll',
                        FRONTEND + 'app/Madeira/legal/LICENSES-rppairing-crates.txt'),
     'madeira-windows': (FRONTEND + 'app/Madeira/i386-windows', FRONTEND + '.build/iridium-i386.json'),
     'native': (

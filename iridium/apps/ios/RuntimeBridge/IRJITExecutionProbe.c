@@ -16,7 +16,6 @@ static _Thread_local uintptr_t start, end;
 static _Thread_local volatile sig_atomic_t fault_signal, fault_offset;
 
 static void probe_signal(int signal, siginfo_t *info, void *context) {
-    (void)info;
     uintptr_t pc = 0;
 #if defined(__APPLE__) && defined(__aarch64__)
     pc = ((ucontext_t *)context)->uc_mcontext->__ss.__pc;
@@ -34,6 +33,8 @@ static void probe_signal(int signal, siginfo_t *info, void *context) {
         if (previous[i].sa_handler == SIG_DFL) {
             sigaction(signal, &previous[i], NULL);
             raise(signal);
+        } else {
+            previous[i].sa_sigaction(signal, info, context);
         }
         return;
     }
@@ -47,24 +48,23 @@ bool ir_jit_probe_execute_diagnostic(void *code, size_t length, int64_t expected
     if (!ir_jit_diagnostic_mark(sink, IR_JIT_GUARD_ENTER, pass, 0, 0)) return false;
     if (!code || !length || (uintptr_t)code > UINTPTR_MAX - length) return false;
     if (pthread_mutex_trylock(&probe_lock)) return false;
-    // Calling a foreign handler directly cannot preserve its signal mask,
-    // alternate stack, reset or nodefer semantics. Decline before changing any
-    // disposition or executing code if another subsystem owns one of them.
+    // Wine remains resident between games. Preserve its delivery mask and flags;
+    // one-shot and legacy handlers still decline before any disposition changes.
     for (size_t i = 0; i < 3; ++i) {
         if (sigaction(signals[i], NULL, &previous[i]) ||
-            (previous[i].sa_handler != SIG_DFL && previous[i].sa_handler != SIG_IGN)) {
+            (previous[i].sa_flags & SA_RESETHAND) ||
+            (previous[i].sa_handler != SIG_DFL && previous[i].sa_handler != SIG_IGN &&
+             !(previous[i].sa_flags & SA_SIGINFO))) {
             ir_jit_diagnostic_mark(sink, IR_JIT_GUARD_DECLINED, pass, signals[i], -1);
             pthread_mutex_unlock(&probe_lock);
             return false;
         }
     }
-    struct sigaction action;
-    memset(&action, 0, sizeof action);
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = SA_SIGINFO;
-    action.sa_sigaction = probe_signal;
     size_t installed = 0;
     for (; installed < 3; ++installed) {
+        struct sigaction action = previous[installed];
+        action.sa_flags |= SA_SIGINFO;
+        action.sa_sigaction = probe_signal;
         if (sigaction(signals[installed], &action, NULL)) break;
     }
     bool result = false;
@@ -96,7 +96,11 @@ bool ir_jit_probe_execute_diagnostic(void *code, size_t length, int64_t expected
     bool restored = true;
     while (installed) {
         --installed;
-        if (sigaction(signals[installed], &previous[installed], NULL)) { result = false; restored = false; }
+        struct sigaction current;
+        if (sigaction(signals[installed], NULL, &current) || !(current.sa_flags & SA_SIGINFO) ||
+            current.sa_sigaction != probe_signal || sigaction(signals[installed], &previous[installed], NULL)) {
+            result = false; restored = false;
+        }
     }
     if (!ir_jit_diagnostic_mark(sink, IR_JIT_HANDLERS_RESTORED, pass, restored, restored ? 0 : -1)) result = false;
     pthread_mutex_unlock(&probe_lock);

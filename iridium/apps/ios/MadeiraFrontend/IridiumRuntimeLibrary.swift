@@ -26,7 +26,7 @@ struct IridiumGame: Identifiable {
         let library = LibraryModel.shared
         if library.launching { return .starting }
         if library.current != nil { return .running }
-        return LibraryModel.sessionsThisRun > 0 ? .restartRequired : .idle
+        return IridiumMadeiraRuntime.shared.requiresRestart ? .restartRequired : .idle
     }
     func launch(gameID: UUID) throws {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
@@ -87,6 +87,21 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
     private let queue = DispatchQueue(label: "software.iridium.runtime-library", qos: .userInitiated)
 
     private init() { reload() }
+    func registerInstalled(title: String, path: String, owner: UUID, completion: @escaping @Sendable (String?) -> Void) {
+        queue.async {
+            do {
+                var games = try self.store.load()
+                if !games.contains(where: { $0.storageOwnerID == owner && $0.installedPath == path }) {
+                    var game = IridiumConsoleGame(id: UUID(), title: title, platform: .nintendo3DS,
+                        runtimeID: "azahar", fileExtension: "app", importedAt: Date())
+                    game.storageOwnerID = owner; game.installedPath = path
+                    try game.validate(); games.append(game); try self.store.save(games)
+                }
+                let result = games
+                DispatchQueue.main.async { self.games = result; completion(nil) }
+            } catch { DispatchQueue.main.async { completion(error.localizedDescription) } }
+        }
+    }
     func reload() {
         queue.async {
             do {
@@ -243,6 +258,13 @@ struct IridiumConsoleOptions: View {
                     }
                 }
                 if game.runtimeID == "dolphin" { IridiumDolphinGameOptions(game: currentGame) }
+                if ["ppsspp", "dolphin", "azahar", "flycast"].contains(game.runtimeID) {
+                    Section("Emulator Content") {
+                        NavigationLink { IridiumCoreFiles(game: currentGame) } label: {
+                            Label("Emulator Files", systemImage: "folder")
+                        }
+                    }
+                }
                 Section("Controls") {
                     IridiumGameControlsButton(target: .init(platform: game.platform, title: artwork.title(IridiumGame(console: currentGame)), gameID: game.id))
                 }

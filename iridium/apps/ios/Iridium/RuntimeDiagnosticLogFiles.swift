@@ -145,6 +145,15 @@ enum RuntimeDiagnosticLogFiles {
     ].map { try! NSRegularExpression(pattern: $0) }
 
     static func sanitizedLine(_ line: String) -> String {
+        #if canImport(ObjectiveC)
+        // Large exports must release temporary Foundation strings between lines.
+        return autoreleasepool { sanitizedText(line) }
+        #else
+        return sanitizedText(line)
+        #endif
+    }
+
+    private static func sanitizedText(_ line: String) -> String {
         if line.range(of: #"\bstage=(?:probe\.base|image\.base|app\.image\.base)(?=\s|$)|\b(?:pc|addr)="#,
                       options: .regularExpression) != nil {
             return "[Private JIT address entry redacted]"
