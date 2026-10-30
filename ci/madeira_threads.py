@@ -719,6 +719,11 @@ def apply(text, source, header):
         text = text[:begin] + cleanup + entry + text[end:]
     if source == 'thread_ios.c':
         changes = {
+            'ios_ii->Machine == IMAGE_FILE_MACHINE_AMD64)':
+                '''(ios_ii->Machine == IMAGE_FILE_MACHINE_AMD64 ||
+         (ios_ii->Machine == IMAGE_FILE_MACHINE_ARM64 && is_arm64ec())))''',
+            "     * desktop need it, aarch64 threads must not get it. */":
+                "     * desktop need it. Native ARM64 children also need it when they\n     * inherit the session's ARM64EC ntdll and its dispatch interface. */",
             '''void abort_thread( int status )
 {''': '''void abort_thread( int status )
 {

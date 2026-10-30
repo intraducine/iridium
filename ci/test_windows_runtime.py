@@ -97,6 +97,41 @@ int main(){
                            check=True, timeout=30)
             subprocess.run([str(path / 'check')], check=True, timeout=10, capture_output=True)
 
+    def test_native_arm64_children_in_ec_sessions_have_a_cpu_area(self):
+        source = (ROOT / 'vendor/Madeira/build/ntdll-unix/thread_ios.c').read_text()
+        patched = madeira_threads.apply(source, 'thread_ios.c', ROOT / 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h')
+        start = patched.index('    if (current_machine == IMAGE_FILE_MACHINE_ARM64 &&')
+        condition = patched[start:patched.index('\n    {', start)]
+        fixture = r'''
+#include <assert.h>
+#define IMAGE_FILE_MACHINE_ARM64 0xaa64
+#define IMAGE_FILE_MACHINE_AMD64 0x8664
+static struct {int Machine;} image;
+static int current_machine=IMAGE_FILE_MACHINE_ARM64, host_ec;
+#define is_arm64ec() host_ec
+static int needs_area(int machine,int ec){
+ image.Machine=machine;host_ec=ec;
+ const typeof(image) *ios_ii=&image;
+''' + condition + r''' return 1;
+ return 0;
+}
+int main(void){
+ for(int ec=0;ec<2;ec++){
+  assert(needs_area(IMAGE_FILE_MACHINE_AMD64,ec));
+  assert(needs_area(IMAGE_FILE_MACHINE_ARM64,ec)==ec);
+  assert(!needs_area(0x14c,ec));
+ }
+ current_machine=IMAGE_FILE_MACHINE_AMD64;
+ assert(!needs_area(IMAGE_FILE_MACHINE_AMD64,1));
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(path / 'main.c'), '-o', str(path / 'check')],
+                           check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=10)
+
     def test_native_gdi_cache_survives_game_cleanup_and_wow_keeps_its_namespace(self):
         original = (ROOT / 'vendor/Madeira/wine/dlls/win32u/dc.c').read_text()
         source = madeira_threads.apply_dc(original)
