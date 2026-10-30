@@ -97,7 +97,7 @@ int main(){
                            check=True, timeout=30)
             subprocess.run([str(path / 'check')], check=True, timeout=10, capture_output=True)
 
-    def test_native_arm64_children_in_ec_sessions_have_a_cpu_area(self):
+    def test_only_x64_threads_receive_an_emulator_cpu_area(self):
         source = (ROOT / 'vendor/Madeira/build/ntdll-unix/thread_ios.c').read_text()
         patched = madeira_threads.apply(source, 'thread_ios.c', ROOT / 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h')
         start = patched.index('    if (current_machine == IMAGE_FILE_MACHINE_ARM64 &&')
@@ -118,7 +118,7 @@ static int needs_area(int machine,int ec){
 int main(void){
  for(int ec=0;ec<2;ec++){
   assert(needs_area(IMAGE_FILE_MACHINE_AMD64,ec));
-  assert(needs_area(IMAGE_FILE_MACHINE_ARM64,ec)==ec);
+  assert(!needs_area(IMAGE_FILE_MACHINE_ARM64,ec));
   assert(!needs_area(0x14c,ec));
  }
  current_machine=IMAGE_FILE_MACHINE_AMD64;
@@ -693,19 +693,24 @@ int main(void){
                             str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
             subprocess.run([str(path / 'check')], check=True, timeout=10, capture_output=True)
 
-    def test_each_x64_child_loads_a_fresh_ntdll_in_both_host_modes(self):
+    def test_each_cross_arch_child_loads_ntdll_for_its_own_machine(self):
         source = (ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text()
         patched = madeira_threads.apply_loader(source)
-        condition = patched.split('CHILD_STAGE( "load_child_ec_ntdll" );', 1)[0].rsplit('if (', 1)[1].split('\n', 1)[0]
+        condition = patched.split('CHILD_STAGE( "load_child_ec_ntdll" );', 1)[0].rsplit('if (', 1)[1].split('\n        {', 1)[0].strip()
+        self.assertIn('const char *pe_dir = get_pe_dir( machine );', patched)
+        self.assertIn('                                   machine, FALSE, 0 );', patched)
+        self.assertIn('ios_load_child_ntdll( child_peb, ios_cur_image_info()->Machine )', patched)
+        self.assertIn('if (machine == IMAGE_FILE_MACHINE_AMD64 && !child_peb->EcCodeBitMap)', patched)
         fixture = '''#include <assert.h>
 #define IMAGE_FILE_MACHINE_AMD64 0x8664
+#define IMAGE_FILE_MACHINE_ARM64 0xaa64
 static struct {int Machine;} image;
 static int fresh_loads, pool_copies, host_ec;
 #define is_arm64ec() host_ec
 static void launch(int machine,int ec){image.Machine=machine;host_ec=ec;assert(host_ec==0 || host_ec==1);
 if (''' + condition + ''' {fresh_loads++;}else{pool_copies++;}}
-int main(void){launch(0x8664,0);launch(0x8664,1);launch(0xaa64,0);launch(0x14c,0);
-assert(fresh_loads==2 && pool_copies==2);return 0;}
+int main(void){launch(0x8664,0);launch(0x8664,1);launch(0xaa64,1);launch(0xaa64,0);launch(0x14c,0);launch(0x14c,1);
+assert(fresh_loads==3 && pool_copies==3);return 0;}
 '''
         fixture = fixture.replace('ios_cur_image_info()', '(&image)')
         with tempfile.TemporaryDirectory() as folder:

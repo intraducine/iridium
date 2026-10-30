@@ -581,8 +581,25 @@ def apply_loader(text):
     done = '    CHILD_STAGE( "server_init_process_done" );'
     if text.count(old) != 1 or text.count(done) != 1:
         raise ValueError('Madeira child ntdll selection changed')
-    # A pool copy alone still inherits game hooks from the shared PE image.
-    text = text.replace(old, 'if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_AMD64)')
+    # Each child needs an unmodified ntdll for its own instruction set.
+    changes = {
+        'static int ios_load_child_ec_ntdll( PEB *child_peb )':
+            'static int ios_load_child_ntdll( PEB *child_peb, USHORT machine )',
+        'get_pe_dir( IMAGE_FILE_MACHINE_AMD64 );  /* owner-aware → /arm64ec-windows */':
+            'get_pe_dir( machine );',
+        '                                   IMAGE_FILE_MACHINE_AMD64, FALSE, 0 );':
+            '                                   machine, FALSE, 0 );',
+        '    if (!child_peb->EcCodeBitMap) child_peb->EcCodeBitMap = ios_arm64ec_bitmap_base();':
+            '    if (machine == IMAGE_FILE_MACHINE_AMD64 && !child_peb->EcCodeBitMap)\n'
+            '        child_peb->EcCodeBitMap = ios_arm64ec_bitmap_base();',
+        old: '''if (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_AMD64 ||
+            (ios_cur_image_info()->Machine == IMAGE_FILE_MACHINE_ARM64 && is_arm64ec()))''',
+        'ios_load_child_ec_ntdll( child_peb )':
+            'ios_load_child_ntdll( child_peb, ios_cur_image_info()->Machine )',
+    }
+    for before, after in changes.items():
+        if text.count(before) != 1: raise ValueError('Madeira child ntdll mapping changed')
+        text = text.replace(before, after)
     return text.replace(done, '''    /* The shared win32u host must publish its table into every new process. */
     { extern void win32u_gdi_publish_shared(void); win32u_gdi_publish_shared(); }
 ''' + done)
@@ -719,11 +736,6 @@ def apply(text, source, header):
         text = text[:begin] + cleanup + entry + text[end:]
     if source == 'thread_ios.c':
         changes = {
-            'ios_ii->Machine == IMAGE_FILE_MACHINE_AMD64)':
-                '''(ios_ii->Machine == IMAGE_FILE_MACHINE_AMD64 ||
-         (ios_ii->Machine == IMAGE_FILE_MACHINE_ARM64 && is_arm64ec())))''',
-            "     * desktop need it, aarch64 threads must not get it. */":
-                "     * desktop need it. Native ARM64 children also need it when they\n     * inherit the session's ARM64EC ntdll and its dispatch interface. */",
             '''void abort_thread( int status )
 {''': '''void abort_thread( int status )
 {

@@ -28,8 +28,8 @@ The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
 operation. Existing sources/notices are retained with these build recipes.
 ARM64EC callbacks tolerate missing CPU areas on native startup threads, before
-the emulator initializes their thread state. Native ARM64 children also receive
-a CPU area when they inherit an ARM64EC session's ntdll dispatch interface.
+the emulator initializes their thread state. Native ARM64 children in an x64
+session load their own native ntdll instead of inheriting the ARM64EC loader.
 
 The Madeira update through `e3a88fddb8daed1f5ac28a45dcb4663d65192629`
 retains the native memory, process, synchronization, audio, archive and input
