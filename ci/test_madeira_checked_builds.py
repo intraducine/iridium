@@ -57,7 +57,8 @@ class CheckedBuildTests(unittest.TestCase):
             for name in re.findall(r'\$OBJ_DIR/([^"/]+\.o)', text[text.index('ar rcs '):]):
                 (obj / name).write_bytes(b'stale object')
             unix = root / 'wine/dlls/ntdll/unix'; unix.mkdir(parents=True)
-            (unix / 'file.c').write_text('broken source')
+            (unix / 'file.c').write_text((ROOT / 'vendor/Madeira/wine/dlls/ntdll/unix/file.c').read_text()
+                                         + '\n#error intentional compilation failure\n')
             for name in ('sync.c', 'unix/sync.c'):
                 (root / 'wine/dlls/ntdll' / name).write_text((ROOT / 'vendor/Madeira/wine/dlls/ntdll' / name).read_text())
             app = root / 'app/Madeira'; app.mkdir(parents=True)

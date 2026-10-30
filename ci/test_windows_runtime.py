@@ -132,6 +132,83 @@ int main(void){
                            check=True, timeout=30)
             subprocess.run([str(path / 'check')], check=True, timeout=10)
 
+    def test_native_system_file_view_is_private_to_read_only_builtin_opens(self):
+        loader = madeira_threads.apply_loader((ROOT / 'vendor/Madeira/build/ntdll-unix/loader_ios.c').read_text())
+        function = loader[loader.index('char *ir_native_system_file('):loader.index('static int ios_load_child_ntdll(')]
+        original = (ROOT / 'vendor/Madeira/wine/dlls/ntdll/unix/file.c').read_text()
+        file = madeira_threads.apply_file(original)
+        start = file.index('        if (disposition == FILE_OPEN && !new_attr.RootDirectory &&')
+        condition = file[start:file.index('\n        {', start)]
+        with self.assertRaises(ValueError): madeira_threads.apply_file(original + original)
+        fixture = r'''
+#define _GNU_SOURCE
+#include <assert.h>
+#include <ctype.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+typedef uint16_t WCHAR;
+typedef size_t SIZE_T;
+typedef struct {WCHAR *Buffer;uint16_t Length;} UNICODE_STRING;
+#define IMAGE_FILE_MACHINE_ARM64 0xaa64
+static int current_machine=0xaa64,host_ec=1;
+static struct {int Machine;} image={0xaa64};
+static const void *build_dir;
+static const char *ntdll_dir,*dll_dir;
+#define ios_cur_image_info() (&image)
+#define is_arm64ec() host_ec
+enum {GENERIC_WRITE=1,GENERIC_ALL=2,MAXIMUM_ALLOWED=4,DELETE=8,WRITE_DAC=16,WRITE_OWNER=32,
+ FILE_WRITE_DATA=64,FILE_APPEND_DATA=128,FILE_WRITE_EA=256,FILE_WRITE_ATTRIBUTES=512,
+ FILE_DIRECTORY_FILE=1,FILE_OPEN_REPARSE_POINT=2,FILE_OPEN=1};
+''' + function + r'''
+static int can_redirect(unsigned access,int disposition,int options,int root){
+ struct {int RootDirectory;} new_attr={root};
+''' + condition + r''' {return 1;}
+ return 0;
+}
+static UNICODE_STRING name(const char *text){
+ static WCHAR buffer[600];size_t len=strlen(text);assert(len<600);
+ for(size_t i=0;i<len;i++)buffer[i]=(unsigned char)text[i];
+ return (UNICODE_STRING){buffer,len*sizeof(WCHAR)};
+}
+int main(int argc,char **argv){
+ assert(argc==6);dll_dir=ntdll_dir=argv[1];
+ UNICODE_STRING nt=name("\\??\\C:\\windows\\system32\\SHELL32.DLL");
+ char *result=ir_native_system_file(&nt,argv[2]);assert(result && !strcmp(result,argv[3]));free(result);
+ image.Machine=0x8664;assert(!ir_native_system_file(&nt,argv[2]));image.Machine=0xaa64;
+ host_ec=0;assert(!ir_native_system_file(&nt,argv[2]));host_ec=1;
+ current_machine=0x8664;assert(!ir_native_system_file(&nt,argv[2]));current_machine=0xaa64;
+ assert(!ir_native_system_file(&nt,argv[4]));
+ nt=name("\\??\\C:\\windows\\system32\\missing.dll");assert(!ir_native_system_file(&nt,argv[5]));
+ nt=name("\\??\\C:\\games\\shell32.dll");assert(!ir_native_system_file(&nt,argv[2]));
+ nt=name("\\??\\C:\\windows\\system32\\..\\shell32.dll");assert(!ir_native_system_file(&nt,argv[2]));
+ nt=name("\\??\\C:\\windows\\system32\\dockhost.exe");assert(!ir_native_system_file(&nt,argv[2]));
+ nt=name("\\??\\C:\\windows\\system32\\shell32.dll");nt.Length--;assert(!ir_native_system_file(&nt,argv[2]));
+ nt=name("\\??\\C:\\windows\\system32\\shell32.dll");nt.Buffer[5]=0x100;assert(!ir_native_system_file(&nt,argv[2]));
+ nt.Buffer=NULL;assert(!ir_native_system_file(&nt,argv[2]));
+ assert(can_redirect(1<<20,FILE_OPEN,0,0));
+ for(unsigned flag=1;flag<=512;flag<<=1)assert(!can_redirect(flag,FILE_OPEN,0,0));
+ assert(!can_redirect(0,2,0,0) && !can_redirect(0,FILE_OPEN,0,1));
+ assert(!can_redirect(0,FILE_OPEN,FILE_DIRECTORY_FILE,0));
+ assert(!can_redirect(0,FILE_OPEN,FILE_OPEN_REPARSE_POINT,0));
+}
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)
+            (path / 'arm64ec-windows').mkdir(); (path / 'aarch64-windows').mkdir()
+            source = path / 'arm64ec-windows/shell32.dll'; source.write_bytes(b'builtin')
+            native = path / 'aarch64-windows/shell32.dll'; native.write_bytes(b'native')
+            linked = path / 'system32.dll'; linked.symlink_to(source)
+            custom = path / 'custom.dll'; custom.write_bytes(source.read_bytes())
+            missing = path / 'arm64ec-windows/missing.dll'; missing.write_bytes(b'no native counterpart')
+            (path / 'main.c').write_text(fixture)
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
+                            str(path / 'main.c'), '-o', str(path / 'check')], check=True, timeout=30)
+            subprocess.run([str(path / 'check'), str(path), str(linked), str(native), str(custom), str(missing)],
+                           check=True, timeout=10, capture_output=True)
+
     def test_native_gdi_cache_survives_game_cleanup_and_wow_keeps_its_namespace(self):
         original = (ROOT / 'vendor/Madeira/wine/dlls/win32u/dc.c').read_text()
         source = madeira_threads.apply_dc(original)

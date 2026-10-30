@@ -30,6 +30,9 @@ operation. Existing sources/notices are retained with these build recipes.
 ARM64EC callbacks tolerate missing CPU areas on native startup threads, before
 the emulator initializes their thread state. Native ARM64 children in an x64
 session load their own native ntdll instead of inheriting the ARM64EC loader.
+Read-only system32 opens in those children select the native copy when the
+shared prefix resolves to a bundled ARM64EC DLL. User files and the parent
+process retain their existing file view.
 
 The Madeira update through `e3a88fddb8daed1f5ac28a45dcb4663d65192629`
 retains the native memory, process, synchronization, audio, archive and input

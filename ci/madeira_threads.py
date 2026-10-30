@@ -582,9 +582,52 @@ def apply_loader(text):
     if text.count(old) != 1 or text.count(done) != 1:
         raise ValueError('Madeira child ntdll selection changed')
     # Each child needs an unmodified ntdll for its own instruction set.
+    native_view = r'''char *ir_native_system_file( const UNICODE_STRING *name, const char *unix_name )
+{
+    static const char prefix[] = "\\??\\c:\\windows\\system32\\";
+    struct stat actual, bundled, native;
+    char file[256], *source = NULL, *target = NULL;
+    const char *base = build_dir ? ntdll_dir : dll_dir;
+    SIZE_T i, count, start = sizeof(prefix) - 1;
+
+    if (!name || !name->Buffer || !unix_name || current_machine != IMAGE_FILE_MACHINE_ARM64 ||
+        ios_cur_image_info()->Machine != IMAGE_FILE_MACHINE_ARM64 || !is_arm64ec()) return NULL;
+    if (name->Length % sizeof(WCHAR)) return NULL;
+    count = name->Length / sizeof(WCHAR);
+    if (count <= start || count - start >= sizeof(file)) return NULL;
+    for (i = 0; i < start; ++i)
+        if (name->Buffer[i] > 127 || tolower( name->Buffer[i] ) != prefix[i]) return NULL;
+    for (i = start; i < count; ++i)
+    {
+        WCHAR ch = name->Buffer[i];
+        if (!ch || ch > 127 || ch == '/' || ch == '\\') return NULL;
+        file[i - start] = tolower( ch );
+    }
+    count -= start;
+    file[count] = 0;
+    if (count < 5 || (strcmp( file + count - 4, ".dll" ) && strcmp( file + count - 4, ".drv" ))) return NULL;
+    if (asprintf( &source, "%s/arm64ec-windows/%s", base, file ) < 0) return NULL;
+    /* Replace only the bundled builtin, never a game or user-supplied file. */
+    if (stat( unix_name, &actual ) || stat( source, &bundled ) ||
+        actual.st_dev != bundled.st_dev || actual.st_ino != bundled.st_ino)
+    {
+        free( source );
+        return NULL;
+    }
+    free( source );
+    if (asprintf( &target, "%s/aarch64-windows/%s", base, file ) < 0) return NULL;
+    if (stat( target, &native ) || !S_ISREG( native.st_mode ))
+    {
+        free( target );
+        return NULL;
+    }
+    return target;
+}
+
+'''
     changes = {
         'static int ios_load_child_ec_ntdll( PEB *child_peb )':
-            'static int ios_load_child_ntdll( PEB *child_peb, USHORT machine )',
+            native_view + 'static int ios_load_child_ntdll( PEB *child_peb, USHORT machine )',
         'get_pe_dir( IMAGE_FILE_MACHINE_AMD64 );  /* owner-aware → /arm64ec-windows */':
             'get_pe_dir( machine );',
         '                                   IMAGE_FILE_MACHINE_AMD64, FALSE, 0 );':
@@ -603,6 +646,22 @@ def apply_loader(text):
     return text.replace(done, '''    /* The shared win32u host must publish its table into every new process. */
     { extern void win32u_gdi_publish_shared(void); win32u_gdi_publish_shared(); }
 ''' + done)
+
+def apply_file(text):
+    marker = 'NTSTATUS WINAPI NtCreateFile( HANDLE *handle, ACCESS_MASK access, OBJECT_ATTRIBUTES *attr,'
+    before = '        name_hidden = is_hidden_file( unix_name );'
+    if text.count(marker) != 1 or text.count(before) != 1:
+        raise ValueError('Madeira system file lookup changed')
+    text = text.replace(marker, 'extern char *ir_native_system_file( const UNICODE_STRING *, const char *);\n\n' + marker)
+    return text.replace(before, '''        if (disposition == FILE_OPEN && !new_attr.RootDirectory &&
+            !(options & (FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT)) &&
+            !(access & (GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED | DELETE | WRITE_DAC | WRITE_OWNER |
+                        FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES)))
+        {
+            char *native = ir_native_system_file( new_attr.ObjectName, unix_name );
+            if (native) { free( unix_name ); unix_name = native; }
+        }
+''' + before)
 
 
 def apply_window(text):

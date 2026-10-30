@@ -446,6 +446,10 @@ def run_checked_recipe(name, env=None):
         generated.write_text(madeira_threads.apply_process_server((UPSTREAM / 'build/ntdll-unix/server_ios.c').read_text()))
         patches.append(('compile_one "$BUILD_DIR/server_ios.c" "server"',
                         'compile_one ' + shlex.quote(str(generated)) + ' "server" -I"$BUILD_DIR"'))
+        generated = OUTPUT / 'embedding/file_ios.c'
+        generated.write_text(madeira_threads.apply_file((UPSTREAM / 'wine/dlls/ntdll/unix/file.c').read_text()))
+        patches.append(('    case "$name" in\n        loader)',
+                        '    case "$name" in\n        file)\n            compile_one ' + shlex.quote(str(generated)) + ' "file"\n            ;;\n        loader)'))
         generated = OUTPUT / 'embedding/loader_ios.c'
         generated.write_text(madeira_threads.apply_loader((UPSTREAM / 'build/ntdll-unix/loader_ios.c').read_text()))
         patches.append(('compile_one "$BUILD_DIR/loader_ios.c" "loader"',
