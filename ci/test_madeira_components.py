@@ -2,6 +2,7 @@
 """Runtime module checks bind recipes, source inventories and signed code bytes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +15,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimeComponentTests(unittest.TestCase):
+    def test_recipe_installer_cannot_consume_remaining_commands(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            recipes = root / 'tools/build'; recipes.mkdir(parents=True)
+            shutil.copy2(ROOT / 'vendor/Madeira/tools/build/build-runtime-component.sh', recipes)
+            (recipes / 'prepare-graphics.sh').write_text('printf "%s" "$1" > completed\nexit "${RECIPE_RESULT:-0}"\n')
+            tools = root / 'bin'; tools.mkdir()
+            brew = tools / 'brew'
+            brew.write_text('#!/bin/sh\ncase "$1" in\nlist) exit 1;;\ninstall) cat >/dev/null;;\n--prefix) printf /fixture;;\nesac\n')
+            brew.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'])
+            components.build_recipe(root, 'kosmickrisp', env)
+            self.assertEqual((root / 'completed').read_text(), 'kosmickrisp')
+            with self.assertRaises(subprocess.CalledProcessError):
+                components.build_recipe(root, 'kosmickrisp', dict(env, RECIPE_RESULT='7'))
+
     def fixture(self, root):
         contract = root / 'tools/build'; contract.mkdir(parents=True)
         shutil.copy2(ROOT / 'vendor/Madeira/tools/build/runtime-components.py', contract / 'runtime-components.py')

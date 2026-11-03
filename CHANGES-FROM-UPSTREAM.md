@@ -75,6 +75,8 @@ its loose compiler objects, transfer copy and verified consumed toolchain archiv
 The 20 GiB reserve and 20 GiB Windows working-space check remain enforced.
 Both native and Windows FEX steps clear the outer CMake cache launchers because
 FEX supplies its own compiler-cache wrapper.
+Runtime bootstrap recipes run separately from standard input, so an installer
+cannot consume the shell commands that follow it. Failed builds still fail.
 
 The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
