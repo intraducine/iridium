@@ -8,6 +8,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 TRANSFERS = ('media', 'native-compiled', 'wine-compiled', 'windows-compiled',
@@ -49,6 +50,47 @@ def checked_path(root, path):
         if part == root: break
         if part.is_symlink(): raise ValueError('Cleanup target has a symlink parent')
     return path
+
+
+def cleanup_ci_runtimes(root):
+    # The fresh hosted VM belongs to this device-build job; no simulator runs here.
+    if (os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted'
+            or Path(os.environ.get('GITHUB_WORKSPACE', '/')).resolve() != root.resolve()
+            or os.environ.get('IRIDIUM_CHROME_SIMULATOR')):
+        raise ValueError('Runtime image cleanup requires this hosted device-build workspace')
+    before = shutil.disk_usage(root).free
+    target = 60 * 1024**3  # Reserve + Windows working space + pinned inputs/staging.
+    if before >= target: return
+    devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
+    if any(device.get('state') == 'Booted' for group in devices['devices'].values() for device in group):
+        raise ValueError('A simulator is active; keep its runtime images')
+    sdks = [subprocess.check_output(['xcrun', '--sdk', name, '--show-sdk-path'], text=True).strip()
+            for name in ('iphoneos', 'iphonesimulator')]
+    if not all(Path(sdk).is_dir() for sdk in sdks): raise ValueError('Build SDKs must exist before runtime image cleanup')
+    images = json.loads(subprocess.check_output(['xcrun', 'simctl', 'runtime', 'list', '--json'], text=True))
+    identifiers = []
+    for image in images.values():
+        identifier = image['identifier']
+        if (not re.fullmatch(r'[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}', identifier)
+                or not image['runtimeIdentifier'].startswith('com.apple.CoreSimulator.SimRuntime.')):
+            raise ValueError('Unexpected simulator runtime identifier')
+        identifiers.append(identifier)
+    removed = 0
+    for identifier in identifiers:
+        # Recheck immediately: runtime deletion must never shut down another task.
+        devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
+        if any(device.get('state') == 'Booted' for group in devices['devices'].values() for device in group):
+            raise ValueError('A simulator became active; keep remaining runtime images')
+        subprocess.run(['xcrun', 'simctl', 'runtime', 'delete', identifier], check=True)
+        removed += 1
+        if shutil.disk_usage(root).free >= target: break
+    current = [subprocess.check_output(['xcrun', '--sdk', name, '--show-sdk-path'], text=True).strip()
+               for name in ('iphoneos', 'iphonesimulator')]
+    if current != sdks or not all(Path(sdk).is_dir() for sdk in sdks):
+        raise ValueError('Build SDK paths changed during runtime image cleanup')
+    after = shutil.disk_usage(root).free
+    print(f'Hosted device build removed {removed} unused simulator images; '
+          f'free before={before} after={after} measured_reclaimed={max(0, after - before)} bytes', flush=True)
 
 
 def cleanup_native(root):
@@ -111,6 +153,10 @@ def cleanup(root):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--madeira-native', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--madeira-native', action='store_true')
+    mode.add_argument('--hosted-device-build', action='store_true')
     args = parser.parse_args()
-    cleanup_native(ROOT) if args.madeira_native else cleanup(ROOT)
+    if args.hosted_device_build: cleanup_ci_runtimes(ROOT)
+    elif args.madeira_native: cleanup_native(ROOT)
+    else: cleanup(ROOT)

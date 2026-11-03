@@ -52,6 +52,10 @@ All runtimes share the loading layout, live RAM readout, movable menu position,
 and return fade. Native console players fit video once in the available display
 area. Startup presentation and JIT helper handoff do not open the pause menu;
 backgrounding or an audio interruption pauses a running game.
+The disposable hosted device-build job removes unused simulator disk images
+through simctl only when no simulator is active. It checks that both build SDKs
+stay in place, then logs measured free space. Local machines and self-hosted
+runners cannot enter this cleanup path.
 The Actions job validates and retains its native checkpoint before removing only
 its loose compiler objects, transfer copy and verified consumed toolchain archives.
 The 20 GiB reserve and 20 GiB Windows working-space check remain enforced.

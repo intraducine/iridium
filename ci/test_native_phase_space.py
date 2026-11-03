@@ -76,3 +76,42 @@ class NativePhaseSpaceTests(unittest.TestCase):
                  patch.object(space.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100, 20, 39 * 1024**3)), \
                  self.assertRaisesRegex(ValueError, 'available=39.00 GiB'):
                 space.cleanup_native(root)
+
+
+class HostedImageSpaceTests(unittest.TestCase):
+    def test_local_and_self_hosted_machines_are_rejected_before_tools_run(self):
+        for hosted, actions in [('self-hosted', 'true'), ('github-hosted', 'false')]:
+            with patch.dict(os.environ, RUNNER_ENVIRONMENT=hosted, GITHUB_ACTIONS=actions), \
+                 patch.object(space.subprocess, 'check_output') as commands, \
+                 self.assertRaisesRegex(ValueError, 'hosted device-build workspace'):
+                space.cleanup_ci_runtimes(Path.cwd())
+            commands.assert_not_called()
+
+    def test_only_identified_idle_images_are_removed_and_sdks_are_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sdks = {name: root / name for name in ('iphoneos', 'iphonesimulator')}
+            for path in sdks.values(): path.mkdir()
+            identifier = '12345678-1234-1234-1234-1234567890ab'
+            def output(command, **kwargs):
+                if command[1] == '--sdk': return str(sdks[command[2]])
+                if 'devices' in command: return json.dumps({'devices': {}})
+                return json.dumps({identifier: {'identifier': identifier, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'}})
+            free = [shutil._ntuple_diskusage(100, 80, n * 1024**3) for n in (22, 66, 66)]
+            with patch.dict(os.environ, RUNNER_ENVIRONMENT='github-hosted', GITHUB_ACTIONS='true', GITHUB_WORKSPACE=str(root), IRIDIUM_CHROME_SIMULATOR=''), \
+                 patch.object(space.subprocess, 'check_output', side_effect=output), \
+                 patch.object(space.subprocess, 'run') as remove, \
+                 patch.object(space.shutil, 'disk_usage', side_effect=free):
+                space.cleanup_ci_runtimes(root)
+            remove.assert_called_once_with(['xcrun', 'simctl', 'runtime', 'delete', identifier], check=True)
+            self.assertTrue(all(path.is_dir() for path in sdks.values()))
+
+    def test_booted_simulator_blocks_removal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.dict(os.environ, RUNNER_ENVIRONMENT='github-hosted', GITHUB_ACTIONS='true', GITHUB_WORKSPACE=str(root), IRIDIUM_CHROME_SIMULATOR=''), \
+                 patch.object(space.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(100, 80, 22 * 1024**3)), \
+                 patch.object(space.subprocess, 'check_output', return_value=json.dumps({'devices': {'runtime': [{'state': 'Booted'}]}})), \
+                 patch.object(space.subprocess, 'run') as remove, self.assertRaisesRegex(ValueError, 'simulator is active'):
+                space.cleanup_ci_runtimes(root)
+            remove.assert_not_called()
