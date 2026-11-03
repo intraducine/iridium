@@ -53,9 +53,12 @@ class WindowsChromeSourceTests(unittest.TestCase):
         ready_guard = 'guard jit_check_debugged(), ir_jit_memory_ready(), !jitCoordinator.consoleMemoryRequiresRestart else {'
         self.assertIn(ready_guard, admission)
         admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
-        self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, ''),
+        diagnostic = '            DeviceDiagnostics.logLaunch()\n'
+        worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
+        self.assertGreater(admission.index(diagnostic), worker)
+        self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, '').replace(diagnostic, ''),
                          original[original.index(start):original.index(end)].replace(
-                             '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', ''))
+                             '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', '').replace('        DeviceDiagnostics.logLaunch()\n', ''))
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
         spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira-frontend.py')
@@ -119,7 +122,7 @@ final class SteamOwnedLibrary {static let shared=SteamOwnedLibrary();func sessio
 @MainActor final class IridiumImportCoordinator {
     static let shared=IridiumImportCoordinator();var blocksLaunch=false;var launchMessage="Import in progress"
 }
-@MainActor enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
+enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
 func jit_check_debugged()->Bool {true}
 var ws_log_quiet:Int32=0
 @MainActor final class LibraryModel:ObservableObject {
@@ -186,7 +189,7 @@ final class FixtureScene:UIResponder,UIWindowSceneDelegate {
         let button=UIButton(type:.system)
         button.addAction(UIAction {_ in self.launch.begin()},for:.touchUpInside)
         button.sendActions(for:.touchUpInside)
-        orderingRestored=DeviceDiagnostics.called && LogStore.shared.uiPaused && ws_log_quiet==1
+        orderingRestored=LogStore.shared.uiPaused && ws_log_quiet==1
         let baseline=ProcessInfo.processInfo.arguments.contains("baseline31")
         precondition(orderingRestored != baseline)
         DispatchQueue.main.asyncAfter(deadline:.now()+0.6) {
