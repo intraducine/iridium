@@ -55,10 +55,16 @@ do{try game.validate();fatalError("unsafe installed path")}catch{}
 
     def test_cia_first_game_updates_and_failed_import_keep_library_and_storage(self):
         from test_native_psp_frontend import function
-        installer=function((FRONTEND/'IridiumConsoleSession.swift').read_text(),'    @MainActor func install3DSCIA(')
+        source=(FRONTEND/'IridiumConsoleSession.swift').read_text()
+        start=source.index('    @MainActor func install3DSCIA(')
+        # The default completion closure precedes the function's body.
+        body=source.index(') {',start)+2
+        installer=source[start:body]+function(source[body:],'{')
         register=function((FRONTEND/'IridiumRuntimeLibrary.swift').read_text(),'    func registerInstalled(')
+        library_error=function((ROOT/'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text(),'enum LibraryError:')
         self.compile_run(r'''
 import Foundation
+'''+library_error+r'''
 struct Bundle {static let main=Bundle();let privateFrameworksURL:URL?=FileManager.default.temporaryDirectory}
 enum IridiumFilesAccess {static func read<T>(_ url:URL,operation:(URL)throws->T)throws->T{try operation(url)}}
 final class IridiumConsoleLibrary:@unchecked Sendable {
@@ -83,32 +89,37 @@ final class Session:@unchecked Sendable {
     let queue=DispatchQueue(label:"test.installer")
     var dolphinMaintenance=false
     var dolphinSystemStatus:String?
-    @MainActor func beginContentMaintenance()->Bool{if dolphinMaintenance{return false};dolphinMaintenance=true;return true}
+    @MainActor func beginContentMaintenance(importOwner:UUID?=nil)->Bool{if dolphinMaintenance{return false};dolphinMaintenance=true;return true}
 '''+installer+r'''
 }
 let fm=FileManager.default,library=IridiumConsoleLibrary.shared,s=Session(),root=IridiumConsoleLibrary.shared.store.root
 try fm.createDirectory(at:root,withIntermediateDirectories:true)
 defer{try? fm.removeItem(at:root)}
 for name in ["base","update","invalid","encrypted"]{try Data(name.utf8).write(to:root.appendingPathComponent(name+".cia"))}
+var outcomes:[Bool]=[]
+@MainActor func completed(_ result:Result<Void,Error>){
+    switch result{case .success:outcomes.append(true);case .failure:outcomes.append(false)}
+}
 func wait(){let end=Date(timeIntervalSinceNow:5);while s.dolphinMaintenance&&Date()<end{
     _=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.005))
 };precondition(!s.dolphinMaintenance,"installer did not finish")}
-s.install3DSCIA(root.appendingPathComponent("update.cia"));wait()
+s.install3DSCIA(root.appendingPathComponent("update.cia"),completion:completed);wait()
 precondition(library.games.isEmpty&&s.dolphinSystemStatus!.contains("existing"))
-s.install3DSCIA(root.appendingPathComponent("base.cia"));wait()
+s.install3DSCIA(root.appendingPathComponent("base.cia"),completion:completed);wait()
 precondition(library.games.count==1&&library.games[0].installedPath=="title.app")
 let game=library.games[0],rom=try library.store.validateROM(game),before=try Data(contentsOf:rom)
 let saved=try library.store.load();precondition(game.storageOwnerID != game.id && saved==[game])
-s.install3DSCIA(root.appendingPathComponent("update.cia"),game:game);wait()
+s.install3DSCIA(root.appendingPathComponent("update.cia"),game:game,completion:completed);wait()
 precondition(library.games==[game]&&s.dolphinSystemStatus=="3DS update or DLC installed.")
 let user=rom.deletingLastPathComponent()
 precondition(fm.fileExists(atPath:user.appendingPathComponent("update.bin").path))
 for name in ["invalid","encrypted"]{
-    s.install3DSCIA(root.appendingPathComponent(name+".cia"),game:game);wait()
+    s.install3DSCIA(root.appendingPathComponent(name+".cia"),game:game,completion:completed);wait()
     let after=try Data(contentsOf:rom);precondition(library.games==[game] && after==before)
     precondition(fm.fileExists(atPath:user.appendingPathComponent("update.bin").path))
 }
 precondition(fm.fileExists(atPath:root.appendingPathComponent("base.cia").path))
+precondition(outcomes==[false,true,true,false,false])
 ''', '.swift',sources=[SUPPORT/'IridiumRuntime.swift',SUPPORT/'IridiumCoreContent.swift',FRONTEND/'IridiumFilesImport.swift'])
 
     def test_flycast_state_calls_preserve_running_and_paused_vm(self):
