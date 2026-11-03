@@ -153,6 +153,8 @@ jobs:
           path: .build/madeira-native-compiled-transfer/
           if-no-files-found: error
           retention-days: 14
+      - name: Reclaim retained native phase scratch
+        run: python3 ci/free-build-space.py --madeira-native
       - name: Select completed i386 compilation
         id: compiled_madeira_windows
         env:

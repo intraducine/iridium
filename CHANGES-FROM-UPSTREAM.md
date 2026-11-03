@@ -57,6 +57,19 @@ Adaptations include:
 - Source-built native/i386 dependencies, fail-on-error compilation, checked
   completion records, architecture validation, and independent component reuse.
 
+The Windows supervisor is a native ARM64 program. It does not force ARM64EC
+for the whole host, so native store launchers and translated games can coexist.
+Its distinct filename prevents an older x64 helper in an existing prefix from
+winning the executable probe. The checked request protocol and thread-drain
+admission remain unchanged.
+All runtimes share the loading layout, live RAM readout, movable menu position,
+and return fade. Native console players fit video once in the available display
+area. Startup presentation and JIT helper handoff do not open the pause menu;
+backgrounding or an audio interruption pauses a running game.
+The Actions job validates and retains its native checkpoint before removing only
+its loose compiler objects, transfer copy and verified consumed toolchain archives.
+The 20 GiB reserve and 20 GiB Windows working-space check remain enforced.
+
 The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
 operation. Existing sources/notices are retained with these build recipes.

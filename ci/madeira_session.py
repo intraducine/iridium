@@ -30,14 +30,14 @@ def build(destination, root=ROOT):
     engine = root / engine_pins.get('madeira')['path']
     compiler_pin = toolchain(root)
     folder = compiler_pin['destination'].replace('testrepos/Madeira/', engine_pins.get('madeira')['path'] + '/', 1)
-    compiler = root / folder / 'bin/x86_64-w64-mingw32-clang'
+    compiler = root / folder / 'bin/aarch64-w64-mingw32-clang'
     if not compiler.is_file():
         raise ValueError('Prepare the pinned Madeira cross compiler before building the session adapter')
     (root / '.build').mkdir(exist_ok=True)
     before = inputs(root)
     with tempfile.TemporaryDirectory(prefix='madeira-session-', dir=root / '.build') as temporary:
         output = Path(temporary)
-        binary = output / 'iridium-session.exe'
+        binary = output / 'iridium-session-native.exe'
         subprocess.run([str(compiler), '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
                         '-municode', '-mwindows', '-static', '-Wl,--strip-all', '-Wl,--no-insert-timestamp',
                         '-o', str(binary), str(root / SOURCE / 'IRWindowsLauncher.c')], check=True)
@@ -56,14 +56,14 @@ def build(destination, root=ROOT):
 
 def verify(destination, root=ROOT):
     record = json.loads((destination / 'iridium-session.json').read_text())
-    binary = (destination / 'iridium-session.exe').read_bytes()
+    binary = (destination / 'iridium-session-native.exe').read_bytes()
     offset = int.from_bytes(binary[0x3c:0x40], 'little')
     if (len(binary) < offset + 94 or binary[offset:offset+4] != b'PE\0\0'
-            or int.from_bytes(binary[offset+4:offset+6], 'little') != 0x8664
+            or int.from_bytes(binary[offset+4:offset+6], 'little') != 0xaa64
             or int.from_bytes(binary[offset+92:offset+94], 'little') != 2):
-        raise ValueError('Madeira session launcher must be a Windows x64 GUI-subsystem executable')
+        raise ValueError('Madeira session launcher must be a Windows ARM64 GUI-subsystem executable')
     if (record.get('protocol') != 1 or record.get('enginePin') != engine_pins.selected('madeira-native')
             or record.get('toolchainSHA256') != toolchain(root)['sha256']
-            or record.get('sources') != inputs(root) or record.get('sha256') != digest(destination / 'iridium-session.exe')
+            or record.get('sources') != inputs(root) or record.get('sha256') != digest(destination / 'iridium-session-native.exe')
             or not (destination / 'iridium-session-notices.txt').is_file()):
         raise ValueError('Madeira session adapter differs from its source or runtime pin')

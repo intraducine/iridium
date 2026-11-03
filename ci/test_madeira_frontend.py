@@ -264,9 +264,9 @@ class FrontendImportTests(unittest.TestCase):
                     (parent / farm / '.gitkeep').touch()
                     if farm != 'i386-windows': (parent / farm / 'ntdll.dll').write_bytes(b'binary')
             import madeira_session
-            session = app / 'arm64ec-windows/iridium-session.exe'
+            session = app / 'aarch64-windows/iridium-session-native.exe'
             pe = bytearray(256); pe[0x3c:0x40] = (128).to_bytes(4, 'little')
-            pe[128:132] = b'PE\0\0'; pe[132:134] = (0x8664).to_bytes(2, 'little')
+            pe[128:132] = b'PE\0\0'; pe[132:134] = (0xaa64).to_bytes(2, 'little')
             pe[220:222] = (2).to_bytes(2, 'little')
             session.write_bytes(pe)
             (session.parent / 'iridium-session-notices.txt').write_text('Runtime notice fixture')

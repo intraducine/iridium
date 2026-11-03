@@ -1047,6 +1047,18 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         resume()
     }
 
+    var hasVideo: Bool {
+        if game?.platform.isPhase3 == true { return phase3Ready }
+        if nativePSPController != nil { return pspReady }
+        return image != nil
+    }
+
+    func pauseForInterruption() {
+        // JIT helper handoff and player presentation are part of startup.
+        guard phase == .running else { return }
+        pause()
+    }
+
     func pause() {
         MainActor.assumeIsolated { controllerHaptics?.stopAll() }
         dispatchPrecondition(condition: .onQueue(.main))
@@ -1198,6 +1210,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     @MainActor private func finishComplete(_ owner: IridiumRuntimeLease, failed: Bool) {
         guard lease == owner else { return }
+        IridiumPlayerTransition.returnToLibrary()
         self.ownership.release(owner)
         self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
         self.jitDiagnostic = nil
@@ -1208,7 +1221,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if failed, let error = self.error { LibraryModel.shared.error = error }
         self.error = nil
         self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
-        self.phase = .idle; self.presented = false
+        self.phase = .idle
+        var transition = Transaction(); transition.disablesAnimations = true
+        withTransaction(transition) { self.presented = false }
         LibraryModel.shared.refreshFlag()
     }
 

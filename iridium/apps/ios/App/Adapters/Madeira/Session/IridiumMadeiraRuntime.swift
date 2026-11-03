@@ -167,10 +167,11 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         booted = true; initializing = false
         for key in ["MADEIRA_CFG_GAME", "MADEIRA_STEAM_APPID", "MADEIRA_STEAM_APPPATH"] { unsetenv(key) }
-        setenv("MADEIRA_EXE", "C:\\windows\\system32\\iridium-session.exe", 1)
+        setenv("MADEIRA_EXE", "iridium-session-native.exe", 1)
         setenv("MADEIRA_ARGS", "\"C:\\iridium-session\"", 1)
         setenv("MADEIRA_WORKDIR", "C:\\", 1)
-        setenv("MADEIRA_USE_ARM64EC", "1", 1)
+        // A native host can start both native store launchers and translated games.
+        setenv("MADEIRA_USE_ARM64EC", "0", 1)
     }
     func poll(_ token: UUID, completion: @escaping @MainActor @Sendable (Event) -> Void) {
         lock.lock()
