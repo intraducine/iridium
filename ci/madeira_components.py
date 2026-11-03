@@ -106,7 +106,9 @@ def build_recipe(upstream, name, env):
     for old, new in replacements.items():
         if script.count(old) != 1: raise ValueError('Madeira component bootstrap changed: ' + old)
         script = script.replace(old, new)
-    subprocess.run(['bash', '-s', '--', name], input=script, text=True, cwd=upstream, env=env, check=True)
+    # Installers may read stdin; keep it separate from the remaining shell program.
+    subprocess.run(['bash', '-c', script, '--', name], stdin=subprocess.DEVNULL, text=True,
+                   cwd=upstream, env=env, check=True)
 
 
 def build(upstream, sdk):
