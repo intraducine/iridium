@@ -55,7 +55,10 @@ def stage(app, root=ROOT):
     helper = root / APP / ownership(root)['helper']
     shutil.copy2(helper, app / 'MadeiraJITHelper/MadeiraJITHelper.swift')
     resources = root / APP / 'Resources'
-    for name in ('Assets.xcassets', 'MenuAudio'):
+    # Retire menu audio from existing incremental staging trees too.
+    retired = destination / 'MenuAudio'
+    if retired.exists(): shutil.rmtree(retired)
+    for name in ('Assets.xcassets',):
         target = destination / name
         if target.exists():
             shutil.rmtree(target)
@@ -68,6 +71,8 @@ def stage(app, root=ROOT):
 
 
 def verify(app, root=ROOT):
+    if (app / "Madeira/MenuAudio").exists():
+        raise ValueError("Retired menu audio remains in the staged app")
     expected = {path.name: path for path in main_sources(root)}
     actual = list((app / 'Madeira').rglob('*.swift'))
     if {path.name for path in actual} != set(expected) or len(actual) != len(expected):
