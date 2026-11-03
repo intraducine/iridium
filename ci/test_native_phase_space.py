@@ -93,17 +93,20 @@ class HostedImageSpaceTests(unittest.TestCase):
             sdks = {name: root / name for name in ('iphoneos', 'iphonesimulator')}
             for path in sdks.values(): path.mkdir()
             identifier = '12345678-1234-1234-1234-1234567890ab'
+            second = '12345678-1234-1234-1234-1234567890ac'
             def output(command, **kwargs):
                 if command[1] == '--sdk': return str(sdks[command[2]])
                 if 'devices' in command: return json.dumps({'devices': {}})
-                return json.dumps({identifier: {'identifier': identifier, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'}})
-            free = [shutil._ntuple_diskusage(100, 80, n * 1024**3) for n in (22, 66, 66)]
+                return json.dumps({key: {'identifier': key, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'}
+                                   for key in (identifier, second)})
+            free = [shutil._ntuple_diskusage(100, 80, n * 1024**3) for n in (22, 66, 96, 96)]
             with patch.dict(os.environ, RUNNER_ENVIRONMENT='github-hosted', GITHUB_ACTIONS='true', GITHUB_WORKSPACE=str(root), IRIDIUM_CHROME_SIMULATOR=''), \
                  patch.object(space.subprocess, 'check_output', side_effect=output), \
                  patch.object(space.subprocess, 'run') as remove, \
                  patch.object(space.shutil, 'disk_usage', side_effect=free):
                 space.cleanup_ci_runtimes(root)
-            remove.assert_called_once_with(['xcrun', 'simctl', 'runtime', 'delete', identifier], check=True)
+            self.assertEqual([call.args[0] for call in remove.call_args_list],
+                             [['xcrun', 'simctl', 'runtime', 'delete', key] for key in (identifier, second)])
             self.assertTrue(all(path.is_dir() for path in sdks.values()))
 
     def test_booted_simulator_blocks_removal(self):

@@ -59,7 +59,7 @@ def cleanup_ci_runtimes(root):
             or os.environ.get('IRIDIUM_CHROME_SIMULATOR')):
         raise ValueError('Runtime image cleanup requires this hosted device-build workspace')
     before = shutil.disk_usage(root).free
-    target = 60 * 1024**3  # Reserve + Windows working space + pinned inputs/staging.
+    target = 90 * 1024**3  # Reserve + native/Windows peaks + pinned inputs/staging.
     if before >= target: return
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
     if any(device.get('state') == 'Booted' for group in devices['devices'].values() for device in group):

@@ -70,6 +70,8 @@ The disposable hosted device-build job removes unused simulator disk images
 through simctl only when no simulator is active. It checks that both build SDKs
 stay in place, then logs measured free space. Local machines and self-hosted
 runners cannot enter this cleanup path.
+The initial space target includes both native and Windows build peaks before
+the unchanged per-stage reserve checks.
 The Actions job validates and retains its native checkpoint before removing only
 its loose compiler objects, transfer copy and verified consumed toolchain archives.
 The 20 GiB reserve and 20 GiB Windows working-space check remain enforced.
