@@ -44,6 +44,8 @@ jobs:
         run: |
           test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
           echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Prepare hosted device-build disk space
+        run: python3 ci/free-build-space.py --hosted-device-build
       - name: Identify pinned runtime sources
         id: runtime_sources
         run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
