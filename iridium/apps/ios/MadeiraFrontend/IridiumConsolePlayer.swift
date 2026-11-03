@@ -58,6 +58,7 @@ struct IridiumConsolePlayer: View {
     private var profile: IridiumPlayerProfile { .consoleProfile(session.game?.platform.rawValue) }
     private var touchVisible: Bool { controls.visible && !controller.hidesTouchControls }
     private var menuVisible: Bool { !controls.editing && (session.phase == .paused || session.phase == .restartRequired) }
+    private var loading: Bool { session.phase != .stopping && session.phase != .restartRequired && !session.hasVideo }
     private var platform: String { session.game?.platform.title ?? "Game" }
     private var keys: [String: UInt16] {
         if session.game?.platform.isPhase3 == true {
@@ -75,11 +76,20 @@ struct IridiumConsolePlayer: View {
     var body: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
-            let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: touchVisible)
+            let insets = geometry.safeAreaInsets
+            let safeBounds = CGRect(x: insets.leading, y: insets.top,
+                width: max(0, bounds.width - insets.leading - insets.trailing),
+                height: max(0, bounds.height - insets.top - insets.bottom))
+            let layout = IridiumPlayerLayout(profile: profile, bounds: safeBounds, touchVisible: touchVisible)
+            // Native engines fit their own video. Do not fit them inside a second 4:3 frame.
+            let native = session.phase3Controller != nil || session.nativePSPController != nil
+            let display = native ? (bounds.width > bounds.height ? bounds : layout.display) : layout.viewport
             ZStack {
                 Color.black.ignoresSafeArea()
-                screen.frame(width: layout.viewport.width, height: layout.viewport.height)
-                    .position(x: layout.viewport.midX, y: layout.viewport.midY)
+                screen.frame(width: display.width, height: display.height)
+                    .position(x: display.midX, y: display.midY)
+                    .allowsHitTesting(session.phase == .running && !loading)
+                if loading { starting.allowsHitTesting(!confirmClose).accessibilityHidden(confirmClose) }
                 if (touchVisible && session.phase == .running) || controls.editing {
                     TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)
                 }
@@ -92,14 +102,9 @@ struct IridiumConsolePlayer: View {
                     ProgressView("Closing game…").padding(24).modifier(IridiumGlassSurface())
                 }
             }.overlay(alignment: .topLeading) {
-                if !menuVisible && !controls.editing {
-                    // The renderer uses safe content bounds. Menu coordinates
-                    // cover the complete window and clamp its safe insets once.
+                if !loading && !menuVisible && !controls.editing {
                     IridiumMovablePlayerMenu(action: openMenu, safeAreaInsets: geometry.safeAreaInsets)
-                        .frame(width: geometry.size.width + geometry.safeAreaInsets.leading + geometry.safeAreaInsets.trailing,
-                               height: geometry.size.height + geometry.safeAreaInsets.top + geometry.safeAreaInsets.bottom)
-                        .offset(x: -geometry.safeAreaInsets.leading, y: -geometry.safeAreaInsets.top)
-                        .disabled(session.phase != .running && session.phase != .starting)
+                        .disabled(session.phase != .running)
                 }
             }.foregroundStyle(.white)
                 .onChange(of: geometry.size) { _, _ in
@@ -115,16 +120,21 @@ struct IridiumConsolePlayer: View {
                     }
                 }
         }
+        .ignoresSafeArea()
         .background(.black).preferredColorScheme(.dark).interactiveDismissDisabled()
-        .statusBarHidden().persistentSystemOverlays(.hidden)
+        .statusBarHidden().persistentSystemOverlays(.hidden).defersSystemGestures(on: .all)
         .focusable().focusEffectDisabled().focused($keyboardFocus)
         .onAppear { keyboardFocus = true; controller.refresh() }
         .onChange(of: session.dolphinSettings.remote) { _, _ in inputGeneration += 1 }
         .onKeyPress(phases: [.down, .up], action: handleKey)
         .onReceive(LibraryController.shared.commands, perform: command)
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { _ in openMenu() }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+            if (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue == AVAudioSession.InterruptionType.began.rawValue {
+                session.pauseForInterruption()
+            }
+        }
         .onKeyPress(.escape, phases: .down) { _ in if menuVisible { command("back") } else { openMenu() }; return .handled }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { openMenu() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .background { session.pauseForInterruption() } }
         .onChange(of: session.phase) { _, phase in
             if phase != .running { releaseInput() }
             if phase == .paused { menuPage = "Session"; menuFocus = "Resume"; keyboardFocus = true }
@@ -161,11 +171,9 @@ struct IridiumConsolePlayer: View {
             if isPSP, let controller = session.nativePSPController {
                 IridiumNativePSPSurface(controller: controller).allowsHitTesting(false)
                     .accessibilityLabel("Game display")
-                    .overlay { if !session.pspReady { starting.background(.black) } }
             } else if let controller = session.phase3Controller {
-                IridiumNativePSPSurface(controller: controller)
+                IridiumNativePSPSurface(controller: controller).allowsHitTesting(false)
                     .accessibilityLabel("Game display")
-                    .overlay { if !session.phase3Ready { starting.background(.black.opacity(0.8)).allowsHitTesting(false) } }
                     .overlay {
                         if session.game?.platform == .nintendo3DS || session.game?.platform == .wii {
                             GeometryReader { geometry in
@@ -178,22 +186,29 @@ struct IridiumConsolePlayer: View {
                     }
             } else if let image = session.image {
                 Image(uiImage: image).resizable().interpolation(.none).scaledToFit().accessibilityLabel("Game display")
-            } else {
-                starting
             }
         }.clipped()
     }
     private var starting: some View {
-        ScrollView {
-        VStack(spacing: 12) {
-            ProgressView().tint(.white)
-            Text(session.game?.title ?? "Game").font(.headline).lineLimit(1).truncationMode(.tail)
-            Text(session.phase == .stopping ? "Closing game…" : "Starting \(platform)…")
-                .font(.subheadline).foregroundStyle(.secondary)
-            if isDolphin { Text(session.phase3Status).font(.footnote).multilineTextAlignment(.center) }
-            IridiumLaunchMemoryView().frame(maxWidth: 360)
-        }.padding(24).frame(maxWidth: .infinity)
-        }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack {
+            if let game = session.game {
+                IridiumGameArtwork(game: IridiumGame(console: game), backdrop: true)
+                    .overlay(.black.opacity(0.65)).ignoresSafeArea()
+                IridiumGameLoadingView(title: game.title) {
+                    IridiumGameArtwork(game: IridiumGame(console: game))
+                } status: {
+                    ProgressView().tint(.white)
+                    Text(session.phase == .paused ? "Paused" : "Starting \(platform)…")
+                    if game.platform.isPhase3 { Text(session.phase3Status).font(.caption) }
+                } actions: {
+                    HStack(spacing: 24) {
+                        if session.phase == .paused { Button("Resume", action: resume).frame(minHeight: 44) }
+                        Button("View Log") { showingLogs = true }.frame(minHeight: 44)
+                        Button("Close Game") { confirmClose = true }.frame(minHeight: 44)
+                    }.frame(minHeight: 44)
+                }
+            }
+        }.background(.black)
     }
     private func menu(in size: CGSize) -> some View {
         ZStack {

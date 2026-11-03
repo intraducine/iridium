@@ -151,7 +151,7 @@ struct IridiumGameArtwork: View {
                 fit: !backdrop && !forceCrop && IridiumArtworkImagePolicy.fitsCover(featured: featured, windows: game.windows != nil,
                     width: Double(image?.size.width ?? 0), height: Double(image?.size.height ?? 0)),
                 filledBacking: featured && !backdrop)
-            if image == nil {
+            if image == nil && !backdrop {
                 VStack(spacing: 12) {
                     Image(systemName: "gamecontroller").font(.largeTitle)
                     Text(artwork.title(game)).font(.headline).lineLimit(1).truncationMode(.tail)
@@ -257,8 +257,9 @@ struct IridiumConsoleOptions: View {
 }.iridiumPageSurface().navigationTitle("Game Options")
                 .sheet(isPresented: $editingArtwork) { IridiumArtworkEditor(game: IridiumGame(console: currentGame)) }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-                .confirmationDialog("Remove this library entry? Its files and saves will stay on this device.", isPresented: $removing) {
-                    Button("Remove Entry", role: .destructive) { library.remove(game); dismiss() }
-                }
+                .alert("Remove from Library?", isPresented: $removing) {
+                    Button("Remove", role: .destructive) { library.remove(game); dismiss() }
+                    Button("Cancel", role: .cancel) {}
+                } message: { Text("Game files and saves will stay on this device.") }
     }
 }

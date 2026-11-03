@@ -163,6 +163,7 @@ struct IridiumPlayerButton: Identifiable {
 
 struct IridiumPlayerLayout {
     let viewport: CGRect
+    let display: CGRect
     let dpad: CGRect
     let stick: CGRect?
     let buttons: [IridiumPlayerButton]
@@ -171,11 +172,12 @@ struct IridiumPlayerLayout {
     /// The viewport is solved before controls. Landscape controls never subtract game area.
     init(profile: IridiumPlayerProfile, bounds: CGRect, touchVisible: Bool) {
         let landscape = bounds.width > bounds.height
-        var display = bounds
+        var available = bounds
         if !landscape && touchVisible {
-            display.size.height = max(0, bounds.height - min(300, bounds.height * 0.48))
+            available.size.height = max(0, bounds.height - min(300, bounds.height * 0.48))
         }
-        viewport = Self.aspectFit(profile.aspectRatio, in: display)
+        display = available
+        viewport = Self.aspectFit(profile.aspectRatio, in: available)
         menu = CGPoint(x: bounds.midX, y: bounds.minY + 26)
         let left = bounds.minX, right = bounds.maxX, bottom = bounds.maxY
         let dpadCenter = CGPoint(x: left + 76, y: bottom - (landscape ? 132 : 166))

@@ -835,7 +835,8 @@ enum Event { case starting, running, ended(UInt32), blocked(String) }
 final class Library {
  var nativeLaunchID=UUID(), current:UUID?=UUID(), sawProcess=false, quitRequested=false, launching=true
  var sessionMessage="Starting…", error:String?, timer:Timer?
- func finish(){current=nil}
+ var startingScreen:Bool { launching }
+ func finish(){current=nil;quitRequested=false}
  func accept(_ event:Event, owner:UUID) {
 ''' + handler + '''
  }
@@ -850,6 +851,12 @@ precondition(library.sawProcess && library.sessionMessage.isEmpty)
 library.sessionMessage="Ending the remaining game processes…"
 library.accept(.running,owner:owner)
 precondition(library.sessionMessage == "Ending the remaining game processes…")
+let early=Library();early.accept(.ended(0),owner:early.nativeLaunchID)
+precondition(early.current == nil && early.error?.contains("before it displayed video") == true)
+let closed=Library();closed.quitRequested=true;closed.accept(.ended(1223),owner:closed.nativeLaunchID)
+precondition(closed.current == nil && closed.error == nil)
+let failed=Library();failed.accept(.ended(5),owner:failed.nativeLaunchID)
+precondition(failed.error?.contains("code 5") == true)
 '''
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
@@ -922,7 +929,10 @@ setenv("MADEIRA_EXE","C:\\Games\\Game A.exe",1);setenv("MADEIRA_ARGS","--level \
 setenv("MADEIRA_WORKDIR","C:\\Games",1)
 let a=UUID(),b=UUID(),c=UUID(),zero=UUID(uuid:(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))
 try runtime.submit(a);precondition(runtime.isBusy && !runtime.isResident)
-runtime.configureHost();try status(zero,phase:0)
+runtime.configureHost()
+precondition(String(cString:getenv("MADEIRA_EXE")) == "iridium-session-native.exe")
+precondition(String(cString:getenv("MADEIRA_USE_ARM64EC")) == "0")
+try status(zero,phase:0)
 if case .starting=poll(a){}else{fatalError("boot did not submit")}
 let request=folder.appendingPathComponent("request.bin")
 let bytes=try Data(contentsOf:request);precondition(bytes.count==77848)
@@ -1405,8 +1415,8 @@ int main(void){
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             madeira_session.build(path)
-            original = (path / 'iridium-session.exe').read_bytes()
-            (path / 'iridium-session.exe').write_bytes(original + b'changed')
+            original = (path / 'iridium-session-native.exe').read_bytes()
+            (path / 'iridium-session-native.exe').write_bytes(original + b'changed')
             with self.assertRaises(ValueError): madeira_session.verify(path)
 
     @unittest.skipUnless(os.environ.get('IRIDIUM_WINDOWS_WINE'), 'Optional desktop Wine process test')

@@ -57,6 +57,28 @@ print("PASS: production progress distinguishes paused, terminal, stale, static a
                             str(main), "-o", str(binary)], check=True, timeout=90)
             subprocess.run([str(binary)], check=True, timeout=15)
 
+    @unittest.skipUnless(shutil.which("swiftc"), "Swift compiler required")
+    def test_real_interruption_policy_ignores_startup_handoff_and_preserves_play_pause(self):
+        source = (IOS / "MadeiraFrontend/IridiumConsoleSession.swift").read_text()
+        method = source.split("    func pauseForInterruption() {", 1)[1].split("\n    func pause()", 1)[0]
+        fixture = """import Foundation
+final class Session {
+    enum Phase: CaseIterable { case idle, starting, running, paused, stopping, restartRequired }
+    var phase = Phase.starting
+    var calls = 0
+    func pause() { calls += 1; phase = .paused }
+    func pauseForInterruption() {METHOD
+}
+for phase in Session.Phase.allCases {
+    let s = Session(); s.phase = phase; s.pauseForInterruption(); s.pauseForInterruption()
+    precondition(s.calls == (phase == .running ? 1 : 0))
+}
+""".replace("METHOD", method)
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder); (folder / "main.swift").write_text(fixture)
+            subprocess.run(["swiftc", str(folder / "main.swift"), "-o", str(folder / "test")], check=True)
+            subprocess.run([str(folder / "test")], check=True)
+
     def test_source_sameboy_records_valid_frames_before_delivery(self):
         text = (IOS / "MadeiraFrontend/IridiumConsoleSession.swift").read_text()
         first = text.index("recordSameBoyProgress(first, owner: owner)")

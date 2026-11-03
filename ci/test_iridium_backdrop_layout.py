@@ -19,9 +19,11 @@ class BackdropLayoutTests(unittest.TestCase):
     def test_actual_canvas_retains_opaque_art_during_rapid_changes(self):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
         canvas = SOURCE.read_text().split('struct IridiumBackdropCanvas:', 1)[1]
+        transition = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLaunchMemoryView.swift').read_text()
+        transition = '@MainActor enum IridiumPlayerTransition' + transition.split('@MainActor enum IridiumPlayerTransition', 1)[1]
         fixture = r'''import UIKit
 import SwiftUI
-struct IridiumBackdropCanvas:''' + canvas + r'''
+''' + transition + '\nstruct IridiumBackdropCanvas:' + canvas + r'''
 @main final class FixtureApp: UIResponder, UIApplicationDelegate {
     func application(_ app: UIApplication, configurationForConnecting session: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
@@ -56,9 +58,21 @@ final class FixtureScene: UIResponder, UIWindowSceneDelegate {
                 precondition(self.canvas.subviews.count == 1 && self.canvas.subviews[0].alpha == 1)
                 self.canvas.show(nil, position: 0.5, animated: false)
                 precondition(self.canvas.subviews.isEmpty)
-                let result = ["opaqueOutgoing": true, "boundedRapidChanges": true, "resize": true, "reducedMotionAndClear": true]
-                let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                try! JSONSerialization.data(withJSONObject: result).write(to: folder.appendingPathComponent("RESULT.json"))
+                let before = window.windowScene!.windows.filter { !$0.isHidden }.count
+                IridiumPlayerTransition.returnToLibrary()
+                let covers = window.windowScene!.windows.filter { !$0.isHidden && $0 !== window }
+                precondition(covers.count == before && covers.last?.isUserInteractionEnabled == false)
+                IridiumPlayerTransition.returnToLibrary()
+                precondition(window.windowScene!.windows.filter { !$0.isHidden }.count == before + 1)
+                root.view.backgroundColor = .systemGreen
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    precondition(window.isKeyWindow && window.rootViewController === root)
+                    precondition(window.windowScene!.windows.filter { !$0.isHidden }.count == before)
+                    let result = ["opaqueOutgoing": true, "boundedRapidChanges": true, "resize": true, "reducedMotionAndClear": true,
+                                  "returnFadeReleased": true]
+                    let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    try! JSONSerialization.data(withJSONObject: result).write(to: folder.appendingPathComponent("RESULT.json"))
+                }
             }
         }
     }

@@ -206,3 +206,15 @@ precondition(IridiumConsoleControlMapping.label("A", profile: .psp) == "Cross")
 
 precondition(IridiumConsoleControlMapping.label("RB", profile: .console, platform: "gameCube") == "Z")
 precondition(IridiumConsoleControlMapping.label("LT", profile: .console, platform: "wii", wiiRemote: 2) == "L")
+
+// Native renderers receive the full display area and perform their own aspect fit.
+for platform in ["wii", "gameCube", "nintendo3DS", "playStation2", "dreamcast", "psp"] {
+    let profile = IridiumPlayerProfile.consoleProfile(platform)
+    for box in bounds {
+        let layout = IridiumPlayerLayout(profile: profile, bounds: box, touchVisible: false)
+        precondition(layout.display == box, "A native renderer must not be nested in a fixed aspect frame")
+        if box.width > box.height {
+            precondition(IridiumPlayerLayout(profile: profile, bounds: box, touchVisible: true).display == box)
+        }
+    }
+}

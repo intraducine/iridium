@@ -746,8 +746,13 @@ final class LibraryModel: ObservableObject {
                     self.sawProcess = true
                     if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
                 case .ended(let status):
+                    let requestedQuit = self.quitRequested
+                    let closedBeforeVideo = self.startingScreen
                     self.finish()
-                    if status != 0 && !self.quitRequested { self.error = "The Windows game ended with code \(status)." }
+                    if !requestedQuit {
+                        if status != 0 { self.error = "The Windows game ended with code \(status)." }
+                        else if closedBeforeVideo && self.error == nil { self.error = "The Windows game closed before it displayed video. Open View Log for details." }
+                    }
                 case .blocked(let message):
                     self.timer?.invalidate(); self.timer = nil
                     self.launching = false; self.error = message
@@ -892,6 +897,7 @@ final class LibraryModel: ObservableObject {
         }
     }
     private func finish() {
+        MainActor.assumeIsolated { IridiumPlayerTransition.returnToLibrary() }
         if sawProcess, let next = steamRunRequest() { restartNotice = next }
         else if sawProcess, let report = exitReport() { error = report }
         timer?.invalidate(); timer = nil

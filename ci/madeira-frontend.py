@@ -266,7 +266,11 @@ def prepare():
     header = app / 'Madeira/Madeira-Bridging-Header.h'
     header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n')
     import madeira_session
-    madeira_session.build(app / 'Madeira/arm64ec-windows')
+    for name in ('iridium-session.exe', 'iridium-session.json', 'iridium-session-notices.txt'):
+        legacy = app / 'Madeira/arm64ec-windows' / name
+        if legacy.is_symlink(): raise ValueError('Legacy session output must not be a symlink')
+        legacy.unlink(missing_ok=True)
+    madeira_session.build(app / 'Madeira/aarch64-windows')
     psp = json.loads((PSP_OUTPUT / 'component.json').read_text())
     component = PSP_OUTPUT / 'libIridiumPPSSPPNative.dylib'
     if psp.get('enginePin') != engine_pins.selected('psp') or psp.get('componentType') != 'native-ios-player' or psp.get('revision') != PSP_REVISION or hashlib.sha256(component.read_bytes()).hexdigest() != psp.get('sha256'):
@@ -390,7 +394,7 @@ def check_bundle(app):
 
     madeira_components.verify(UPSTREAM, app, compiler_identity())
     import madeira_session
-    madeira_session.verify(app / 'arm64ec-windows')
+    madeira_session.verify(app / 'aarch64-windows')
 
 
 def compiler_tools():

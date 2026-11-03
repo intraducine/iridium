@@ -2558,9 +2558,10 @@ Form { Group {
                 if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }
             }
             .onDisappear { if !leaving { model.save(entry) } }
-            .confirmationDialog("Remove this game from the library? Its files and saves will stay.", isPresented: $remove, titleVisibility: .visible) {
-                Button("Remove from Library", role: .destructive) { leaving = true; model.remove(entry.id); dismiss() }
-            }
+            .alert("Remove from Library?", isPresented: $remove) {
+                Button("Remove", role: .destructive) { leaving = true; model.remove(entry.id); dismiss() }
+                Button("Cancel", role: .cancel) {}
+            } message: { Text("Game files and saves will stay on this device.") }
             .onReceive(LibraryController.shared.commands) { command in
                 guard iridiumPages.last != "Rename & Artwork" else { return }
                 guard !leaving, !findCover, !importCover, !remove, !confirmReset else { return }
@@ -3499,7 +3500,6 @@ struct OverlayStyleSettings: View {
 // Keep drag state in this small view. Global translation remains stable while
 // the view moves; local coordinates feed its own movement back in.
 struct LibraryFloatingItem: View {
-    let isMenu: Bool
     let viewport: CGSize
     let insets: EdgeInsets
     @ObservedObject private var model = LibraryModel.shared
@@ -3507,14 +3507,11 @@ struct LibraryFloatingItem: View {
     @AppStorage private var ny: Double
     @GestureState private var drag = CGSize.zero
     @State private var measured = CGSize(width: 48, height: 48)
-    @State private var faded = false
-    @State private var touched = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(isMenu: Bool, viewport: CGSize, insets: EdgeInsets) {
-        self.isMenu = isMenu; self.viewport = viewport; self.insets = insets
-        _nx = AppStorage(wrappedValue: isMenu ? 0.92 : 0.25, isMenu ? "madeiraLibraryMenuX" : "madeiraLibraryMetricsX")
-        _ny = AppStorage(wrappedValue: isMenu ? 0.12 : 0.08, isMenu ? "madeiraLibraryMenuY" : "madeiraLibraryMetricsY")
+    init(viewport: CGSize, insets: EdgeInsets) {
+        self.viewport = viewport; self.insets = insets
+        _nx = AppStorage(wrappedValue: 0.25, "madeiraLibraryMetricsX")
+        _ny = AppStorage(wrappedValue: 0.08, "madeiraLibraryMetricsY")
     }
     private func position(_ translation: CGSize) -> CGPoint {
         let left = insets.leading + measured.width / 2 + 8
@@ -3523,19 +3520,13 @@ struct LibraryFloatingItem: View {
                        y: min(max(top, viewport.height * ny + translation.height), max(top, viewport.height - insets.bottom - measured.height / 2 - 8)))
     }
     private func record(_ rect: CGRect) {
-        if isMenu { model.menuButtonRect = rect } else { model.performanceRect = rect }
+        model.performanceRect = rect
     }
     var body: some View {
         let center = position(drag)
         let rect = CGRect(x: center.x - measured.width / 2, y: center.y - measured.height / 2, width: measured.width, height: measured.height)
-        Group {
-            if isMenu {
-                IridiumPlayerMenuButton(visible: !model.menu) { touched += 1; model.showMenu() }
-                    .frame(width: 48, height: 48).opacity(model.menu ? 0 : 1)
-                    .allowsHitTesting(!model.menu).accessibilityHidden(model.menu)
-            } else { LibraryMetrics().accessibilityHint("Drag to move") }
-        }
-        .frame(maxWidth: isMenu ? 48 : max(48, min(390, viewport.width - insets.leading - insets.trailing - 16)))
+        LibraryMetrics().accessibilityHint("Drag to move")
+        .frame(maxWidth: max(48, min(390, viewport.width - insets.leading - insets.trailing - 16)))
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { proxy in
             Color.clear.onAppear { measured = proxy.size }.onChange(of: proxy.size) { _, size in measured = size }
@@ -3546,17 +3537,12 @@ struct LibraryFloatingItem: View {
         }.onEnded { value in
             let end = position(value.translation)
             withTransaction(Transaction(animation: nil)) {
-                nx = end.x / max(1, viewport.width); ny = end.y / max(1, viewport.height); touched += 1
+                nx = end.x / max(1, viewport.width); ny = end.y / max(1, viewport.height)
             }
         })
         .offset(x: center.x - measured.width / 2, y: center.y - measured.height / 2)
         .onAppear { record(rect) }.onChange(of: rect) { _, value in record(value) }
         .onDisappear { record(.zero) }
-        .task(id: touched) {
-            guard isMenu else { return }
-            faded = false
-            do { try await Task.sleep(for: .seconds(3)); withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.5)) { faded = true } } catch { }
-        }
     }
 }
 
@@ -3616,10 +3602,14 @@ struct LibraryHUD: View {
                         .animation(reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 1.1), value: launchVisible)
                     launchView(entry, geometry: geo)
                 }
-                if !model.startingScreen && model.performance { LibraryFloatingItem(isMenu: false, viewport: geo.size, insets: geo.safeAreaInsets) }
+                if !model.startingScreen && model.performance { LibraryFloatingItem(viewport: geo.size, insets: geo.safeAreaInsets) }
                 if model.liveLogs && !model.startingScreen { LibraryLiveLogs().frame(maxWidth: 550, maxHeight: 140).padding(.top, Self.topInset(geo) + 60).padding(.horizontal, 12).allowsHitTesting(false) }
                 if !model.sessionMessage.isEmpty && !model.startingScreen { Text(model.sessionMessage).font(.caption).padding(10).background(.regularMaterial, in: Capsule()).frame(maxWidth: .infinity).padding(.top, Self.topInset(geo) + 12).allowsHitTesting(false) }
-                if !model.startingScreen { LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets) }
+                if !model.startingScreen && !model.menu {
+                    IridiumMovablePlayerMenu(action: model.showMenu, safeAreaInsets: geo.safeAreaInsets) {
+                        model.menuButtonRect = $0
+                    }
+                }
                 if model.menu {
                     Color.black.opacity(0.5).ignoresSafeArea().onTapGesture { model.menu = false }.allowsHitTesting(!confirmClose).transition(.opacity)
                     (bindsPage ? AnyView(bindsMenu) : AnyView(menu))
@@ -3675,152 +3665,29 @@ struct LibraryHUD: View {
             else if model.menu { iridiumMenuNavigate(command) }
         }
     }
-    /// Landscape: the cover large on the left, the title, status and controls beside it
-    /// (launchWideView). MADEIRA_LAUNCH_WIDE=0 keeps the centred column in landscape too.
-    private let launchWideEnabled = MadeiraConfig.flag("MADEIRA_LAUNCH_WIDE")   // 0: the starting screen is one centred column in landscape too
-    @ViewBuilder private func launchView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
-        if launchWideEnabled && geo.size.width > geo.size.height {
-            launchWideView(entry, geometry: geo)
-        } else {
-            launchColumnView(entry, geometry: geo)
-        }
-    }
-    private func launchColumnView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
-        let compact = geo.size.height < 500
-        let available = max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom)
-        // A landscape phone would have the live log below the fold; it goes
-        // beside the status there instead.
-        let showLogs = model.launchLogs
-        let sideLogs = showLogs && compact && geo.size.width > geo.size.height
-        return HStack(spacing: 12) {
-        VStack(spacing: 0) {
-        ScrollView {
-            VStack(spacing: compact ? 10 : 18) {
-                launchCover(entry).frame(width: compact ? 90 : 120, height: compact ? 135 : 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
-                Text(entry.title).font(.title2.bold()).multilineTextAlignment(.center)
-                    .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 0, height: 14), still: curtained))
-                if dockStart.failure == nil {
-                    ProgressView().tint(.white).modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
+    private let launchWideEnabled = MadeiraConfig.flag("MADEIRA_LAUNCH_WIDE")
+    private func launchView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
+        IridiumGameLoadingView(title: entry.title, wideEnabled: launchWideEnabled) {
+            launchCover(entry)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                    coverFrame = $0; LaunchCurtain.shared.track($0)
                 }
-                if let failure = dockStart.failure {
-                    Text("Madeira Dock stopped").font(.headline)
-                    Text(failure).font(.caption).multilineTextAlignment(.center).frame(maxWidth: 360)
-                } else if dockStart.active {
-                    // What the Dock start is waiting for, from the host's report, and what it
-                    // does with the game's one-time installs.
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack(spacing: 8) {
-                            Text(dockStatus).foregroundStyle(.white.opacity(0.8)).multilineTextAlignment(.center)
-                            if let note = DockInstallers.note {
-                                Text(note).font(.caption).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center).frame(maxWidth: 360)
-                            }
-                            Text("\(Int(context.date.timeIntervalSince(model.startingSince)))s")
-                                .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.4))
-                        }
-                    }
-                    .frame(minHeight: 96, alignment: .top)
-                    .modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack(spacing: 8) {
-                            Text(launchIdleStatus).foregroundStyle(.white.opacity(0.7))
-                            Text("\(Int(context.date.timeIntervalSince(model.startingSince)))s")
-                                .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.4))
-                        }
-                    }.modifier(LaunchEntrance(visible: launchVisible, step: 2, still: curtained))
-                }
-                IridiumLaunchMemoryView().frame(maxWidth: 360)
-                // The starting screen's controls are one row of glyph-only buttons, so a
-                // short screen does not push them below the fold. The words stay as
-                // VoiceOver labels. A stopped Dock start can be closed; while a Dock start
-                // holds the desktop back, Show desktop reveals it.
-                HStack(spacing: 14) {
-                    if dockStart.failure != nil {
-                        launchGlyph(L("Close session"), "stop.circle") { model.requestQuit() }
-                    }
-                    launchGlyph(showLogs ? L("Hide live log") : L("Show live log"), "text.alignleft", on: showLogs) {
-                        model.toggleLaunchLogs()
-                    }
-                    if dockStart.holding {
-                        launchGlyph(L("Show desktop"), "macwindow") { dockStart.showDesktop(model) }
-                            .accessibilityHint(L("Shows the Windows desktop"))
-                    }
-                }.modifier(LaunchEntrance(visible: launchVisible, step: 3, still: curtained))
-                if model.launchSlow && !dockStart.holding {
-                    Button("Show game view") { model.showGameView(reason: "button") }.frame(minHeight: 44)
-                }
-                if showLogs && !sideLogs {
-                    LibraryLiveLogs().frame(maxWidth: 550).frame(height: compact ? 90 : 120).clipped()
-                }
-            }.padding(16).frame(maxWidth: .infinity).frame(minHeight: available)
-        }
-        }.frame(maxWidth: .infinity)
-        if sideLogs {
-            LibraryLiveLogs().frame(width: min(420, geo.size.width * 0.45)).frame(height: max(0, available - 32)).clipped()
-                .padding(.trailing, 16 + geo.safeAreaInsets.trailing)
-        }
-        }
-        .frame(width: geo.size.width, height: available)
-        .padding(.top, geo.safeAreaInsets.top).foregroundStyle(.white).transition(.opacity)
-    }
-    /// The landscape starting screen: a large cover left of centre, and beside it the
-    /// title, what the start is doing in smaller type, and the same glyph row as the
-    /// column (close session, live log, show desktop). The live log opens under the row.
-    private func launchWideView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
-        let available = max(0, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom)
-        let showLogs = model.launchLogs
-        let short = available < 440
-        let coverHeight = min(max(available * (showLogs ? 0.6 : 0.68), 150), 470)
-        let leading = max(geo.safeAreaInsets.leading + 28, geo.size.width * 0.09)
-        return HStack(alignment: .center, spacing: max(28, geo.size.width * 0.045)) {
-            launchCover(entry).frame(width: coverHeight * 2 / 3, height: coverHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.55), radius: 30, y: 14)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { coverFrame = $0; LaunchCurtain.shared.track($0) }
-                .modifier(LaunchEntrance(visible: launchVisible, step: 0, rise: CGSize(width: -36, height: 0), scale: 0.86, still: curtained))
-            ScrollView {
-            VStack(alignment: .leading, spacing: short ? 10 : 14) {
-                Text(entry.title).font(.system(size: short ? 28 : 38, weight: .bold))
-                    .lineLimit(2).minimumScaleFactor(0.6)
-                    .modifier(LaunchEntrance(visible: launchVisible, step: 1, rise: CGSize(width: 22, height: 0), still: curtained))
-                launchWideStatus.modifier(LaunchEntrance(visible: launchVisible, step: 2, rise: CGSize(width: 22, height: 0), still: curtained))
-                IridiumLaunchMemoryView().frame(maxWidth: 440)
-                HStack(spacing: 12) {
-                    if dockStart.failure != nil {
-                        launchGlyph(L("Close session"), "stop.circle") { model.requestQuit() }
-                    }
-                    launchGlyph(showLogs ? L("Hide live log") : L("Show live log"), "text.alignleft", on: showLogs) {
-                        model.toggleLaunchLogs()
-                    }
-                    if dockStart.holding {
-                        launchGlyph(L("Show desktop"), "macwindow") { dockStart.showDesktop(model) }
-                            .accessibilityHint(L("Shows the Windows desktop"))
-                    }
-                    if model.launchSlow && !dockStart.holding {
-                        Button("Show game view") { model.showGameView(reason: "button") }
-                            .font(.subheadline.weight(.semibold)).buttonStyle(.bordered).tint(.white)
-                            .buttonBorderShape(.capsule).frame(minHeight: 44)
-                    }
-                }
-                .padding(.top, short ? 2 : 6)
-                .modifier(LaunchEntrance(visible: launchVisible, step: 3, rise: CGSize(width: 22, height: 0), still: curtained))
-                if showLogs {
-                    LibraryLiveLogs().frame(height: min(170, available * 0.3)).frame(maxWidth: 520)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
+        } status: {
+            launchWideStatus
+        } actions: {
+            HStack(spacing: 20) {
+                if dockStart.failure != nil { Button("Close session") { model.requestQuit() } }
+                Button(model.launchLogs ? "Hide live log" : "Show live log") { model.toggleLaunchLogs() }
+                if dockStart.holding { Button("Show desktop") { dockStart.showDesktop(model) } }
+            }.frame(minHeight: 44)
+            if model.launchSlow && !dockStart.holding {
+                Button("Show game view") { model.showGameView(reason: "button") }.frame(minHeight: 44)
             }
-            .frame(maxWidth: 520, alignment: .leading)
-            .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.86), value: showLogs)
-            }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: 520)
-            Spacer(minLength: 0)
+            if model.launchLogs {
+                LibraryLiveLogs().frame(height: 120).frame(maxWidth: 520)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
         }
-        .padding(.leading, leading).padding(.trailing, geo.safeAreaInsets.trailing + 24)
-        .frame(width: geo.size.width, height: available)
-        .padding(.top, geo.safeAreaInsets.top).foregroundStyle(.white)
     }
     /// The landscape status: a small spinner and one line of what the start is doing,
     /// the one-time-install note and the elapsed time under it; or why the Dock stopped.
