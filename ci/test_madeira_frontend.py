@@ -201,6 +201,21 @@ class FrontendImportTests(unittest.TestCase):
                 archive.write_bytes(b'changed')
                 self.assertTrue(module.blockers(root, profile='madeira-frontend', package=True))
 
+    def test_both_helper_plists_use_the_same_build_version_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app = pathlib.Path(folder)
+            for name in ('MadeiraJITHelper', 'MadeiraMemoryHost'):
+                path = app / name / 'Info.plist'
+                path.parent.mkdir()
+                path.write_bytes(plistlib.dumps({'CFBundleShortVersionString': '1.0', 'CFBundleVersion': '1',
+                    'NSExtension': {'NSExtensionPointIdentifier': 'fixture'}}))
+            BUILD.prepare_helper_versions(app)
+            for name in ('MadeiraJITHelper', 'MadeiraMemoryHost'):
+                data = plistlib.loads((app / name / 'Info.plist').read_bytes())
+                self.assertEqual(data['CFBundleShortVersionString'], '$(MARKETING_VERSION)')
+                self.assertEqual(data['CFBundleVersion'], '$(CURRENT_PROJECT_VERSION)')
+                self.assertEqual(data['NSExtension']['NSExtensionPointIdentifier'], 'fixture')
+
     def test_source_inventory_rejects_unknown_binary(self):
         spec = importlib.util.spec_from_file_location('frontend_collect', ROOT / 'ci/collect-madeira-source.py')
         collect = importlib.util.module_from_spec(spec)

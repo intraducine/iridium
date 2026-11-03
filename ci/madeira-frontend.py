@@ -219,6 +219,16 @@ def refresh_generated_tree(source, destination):
     shutil.copytree(source, destination)
 
 
+def prepare_helper_versions(app):
+    for name in ('MadeiraJITHelper', 'MadeiraMemoryHost'):
+        path = app / name / 'Info.plist'
+        data = plistlib.loads(path.read_bytes())
+        data['CFBundleShortVersionString'] = '$(MARKETING_VERSION)'
+        data['CFBundleVersion'] = '$(CURRENT_PROJECT_VERSION)'
+        if name == 'MadeiraMemoryHost': data['CFBundleDisplayName'] = 'Iridium Memory'
+        path.write_bytes(plistlib.dumps(data))
+
+
 def prepare():
     import iridium_app_sources as app_sources
     import ppsspp_gl_sync_overlay as psp_gl_sync
@@ -249,6 +259,7 @@ def prepare():
     # must be supplied by the user, rather than copied from a maintainer's games.
     (app / 'Madeira/x86_64-vcruntime').mkdir(exist_ok=True)
     names = app_sources.stage(app)
+    prepare_helper_versions(app)
     sources = sorted(p for p in RUNTIME_BRIDGE.glob('*.c')
         if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c'))
     for source in sources:
