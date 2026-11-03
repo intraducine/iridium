@@ -29,6 +29,7 @@ class WindowsNativeSessionTests(unittest.TestCase):
         self.assertNotIn('exit(', branch)
         self.assertNotIn('asyncAfter', branch)
         code = '''import Foundation
+func L(_ text: String) -> String { text }
 final class LogStore {
     static let shared = LogStore()
     enum Level { case error }
@@ -71,6 +72,7 @@ precondition(Allocator.check(valid, requestUnanswered: false, debuggerAttached: 
         self.assertIn('guard self.startWineserver(for: nativeLaunch) else {', worker)
         self.assertIn('return', worker)
         code = '''import Foundation
+func L(_ text: String) -> String { text }
 final class LibraryModel: @unchecked Sendable {
     static let shared = LibraryModel()
     static var sessionsThisRun = 0
@@ -98,6 +100,8 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
     static let shared=IridiumMadeiraRuntime()
     func noteNativeInitialization() {}
 }
+enum ExternalDrives { static func mountAll() {} ; static let shared = ExternalDrivesInstance() }
+struct ExternalDrivesInstance { func mountAll() {} }
 var starts = 0
 var failServer = false
 func wineserver_start(_ path: String) -> Int32 {

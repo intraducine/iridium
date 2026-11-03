@@ -172,7 +172,7 @@ struct IridiumLibraryView: View {
                                             description: Text("Add favorites through Game Options."))
                                     } else {
                                         ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                            description: Text("Choose files, Steam, or a 3DS CIA from Add Game (+). Games appear together in this library."))
+                                            description: Text("Choose files, stores, or a 3DS CIA from Add Game (+). Games appear together in this library."))
                                     }
                                 }.frame(maxWidth: .infinity, minHeight: layout.freeSpace)
                             }
@@ -328,13 +328,14 @@ struct IridiumLibraryView: View {
                 completeOnboardingAction(); restoreKeyboardFocus()
             }) {
                 if features == 0 {
-                        IridiumSteamView(startDock: startDock) { entry in
+                        IridiumStoreBrowser(startDock: startDock) { entry in
                             pendingDetail = entry; features = nil
                         }
                     } else {
                         LibraryView(play: play, enableJIT: enableJIT, startDock: startDock, tab: 1)
                 }
             }
+            .modifier(GameSetupInboxPresenter())
             .sheet(isPresented: $showingImportFolder, onDismiss: restoreKeyboardFocus) {
                 IridiumImportFolderView()
             }
@@ -354,7 +355,7 @@ struct IridiumLibraryView: View {
             }
             .alert("Library", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
                 if let problem = JITCoordinator.shared.connectionProblem, library.error == problem.message {
-                    jitConnectionActions(problem, retry: enableJIT) { library.error = nil }
+                    jitConnectionActions(problem, retry: enableJIT, then: { library.error = nil })
                 }
                 if lastLaunchNeedsSupport { Button("JIT Settings") { library.error = nil; jit.showSetup = true } }
                 Button("OK", role: .cancel) { library.error = nil }

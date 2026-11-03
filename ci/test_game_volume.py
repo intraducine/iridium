@@ -128,7 +128,7 @@ for game in [a,b,c] { defaults.removeObject(forKey: "GameVolume.\(game)") }
             subprocess.run([str(executable)], check=True, timeout=10)
 
     def test_windows_overlay_scales_the_final_mix_and_rejects_changed_hooks(self):
-        source = 'static OSStatus ios_audio_render_cb(void) {\n    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}'
+        source = 'static OSStatus ios_audio_render_cb(void) {\n    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n    return noErr;\n}'
         result = madeira_audio_volume.apply(source)
         self.assertLess(result.index('ir_audio_volume_apply_float(out, total);'), result.index('atomic_fetch_add'))
         for changed in ('', source + source, source.replace('cb_epoch', 'changed')):
@@ -149,6 +149,8 @@ typedef struct { unsigned mNumberBuffers; AudioBuffer mBuffers[1]; } AudioBuffer
 enum { noErr=0, IOS_MAX_STREAMS=2 };
 struct ios_stream { float level; };
 static _Atomic(struct ios_stream *) g_mix[IOS_MAX_STREAMS];
+static _Atomic int g_ios_audio_paused, g_bg_mute, g_gain_permille=1000;
+static void ios_apply_gain(float*out,size_t count,int gain) { for(size_t i=0;i<count;i++) out[i]*=gain/1000.0f; }
 static struct { unsigned rate, channels; _Atomic(unsigned) cb_epoch, clamped; } g_dev;
 static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 frames, UInt32 channels, UInt32 rate) {
     assert(rate==48000); for (unsigned i=0; i<frames*channels; ++i) out[i]+=s->level;

@@ -15,8 +15,11 @@ import os
 import time
 import sys
 import tempfile
+import copy
 import madeira_audio_volume
 import madeira_threads
+import madeira_managed_patches
+import madeira_components
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / 'vendor/Madeira'
@@ -36,7 +39,7 @@ PSP_PRIVACY_DESCRIPTIONS = {
     'NSMotionUsageDescription': 'Wii, 3DS, and PSP controls use device motion while you play.',
     'NSLocationWhenInUseUsageDescription': 'A PSP game can use your location to emulate the Go!Explore GPS accessory while playing.',
     'NSPhotoLibraryUsageDescription': 'Choose a photo for the PPSSPP background when you request it.',
-    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for PSP and Dreamcast multiplayer and on-device JIT pairing.',
+    'NSLocalNetworkUsageDescription': 'Iridium uses the local network for Steam transfers, PSP and Dreamcast multiplayer, and on-device JIT pairing.',
 }
 def overlay(name, text):
     """Legacy test entry point: read maintained shipping source, never rewrite upstream UI."""
@@ -65,11 +68,16 @@ def verify_pin():
         repos.append(UPSTREAM / line.split()[1])
     for repo in repos:
         changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
+        patched = madeira_managed_patches.expected(UPSTREAM, repo.name) if repo in (UPSTREAM / 'FEX', UPSTREAM / 'dxmt', UPSTREAM / 'madeira-dock') else {}
+        for name, payload in patched.items():
+            if name in changes and (repo / name).read_bytes() == payload: changes.remove(name)
         if repo == UPSTREAM / 'FEX':
             for managed, adapt in [('FEXCore/Source/Utils/AllocWatch.cpp', madeira_threads.apply_fex),
                                    ('Source/Windows/ARM64EC/Module.cpp', madeira_threads.apply_fex_arm64ec)]:
                 if managed not in changes: continue
-                original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed], text=True)
+                original = patched.get(managed)
+                if original is None: original = subprocess.check_output(['git', '-C', str(repo), 'show', 'HEAD:' + managed])
+                original = original.decode()
                 if (repo / managed).read_text() == adapt(original): changes.remove(managed)
         if any(Path(name).suffix in {'.swift', '.c', '.h', '.m', '.mm', '.cpp', '.cc', '.js', '.pbxproj', '.y', '.l',
                                      '.sh', '.rs', '.metal', '.S', '.inc', '.in', '.cmake'}
@@ -85,11 +93,53 @@ def project(source, names):
     data = plistlib.loads(subprocess.check_output(['plutil', '-convert', 'xml1', '-o', '-', str(source)]))
     objects = data['objects']
     target = next(v for v in objects.values() if v.get('isa') == 'PBXNativeTarget' and v.get('name') == 'Madeira')
+    current = plistlib.loads(subprocess.check_output(['plutil', '-convert', 'xml1', '-o', '-',
+        str(UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj')]))
+    upstream_objects = current['objects']
+    upstream_target = next(v for v in upstream_objects.values()
+        if v.get('isa') == 'PBXNativeTarget' and v.get('name') == 'Madeira')
+    # Native sources follow the engine; Swift screens still come only from App.
+    for key, value in upstream_objects.items():
+        if key not in objects: objects[key] = copy.deepcopy(value)
+    main_group = next(v for v in objects.values() if v.get('isa') == 'PBXGroup' and v.get('path') == 'Madeira')
+    for kind in ('PBXSourcesBuildPhase', 'PBXFrameworksBuildPhase', 'PBXResourcesBuildPhase'):
+        old = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == kind)
+        new = next(upstream_objects[key] for key in upstream_target['buildPhases'] if upstream_objects[key]['isa'] == kind)
+        known = {objects[objects[key]['fileRef']].get('path') for key in old['files']}
+        for key in new['files']:
+            reference = upstream_objects[key]['fileRef']
+            path = upstream_objects[reference].get('path', '')
+            if path.endswith('.swift') or path in known: continue
+            old['files'].append(key)
+            if reference not in main_group['children']: main_group['children'].append(reference)
+    memory_key = next(key for key, value in upstream_objects.items()
+        if value.get('isa') == 'PBXNativeTarget' and value.get('name') == 'MadeiraMemoryHost')
+    root_project = objects[data['rootObject']]
+    if memory_key not in root_project['targets']: root_project['targets'].append(memory_key)
+    for key in upstream_target.get('dependencies', []):
+        if upstream_objects[key].get('target') == memory_key and key not in target['dependencies']:
+            target['dependencies'].append(key)
+    for key in upstream_target['buildPhases']:
+        phase = upstream_objects[key]
+        if phase['isa'] == 'PBXCopyFilesBuildPhase' and any(
+                upstream_objects[upstream_objects[file]['fileRef']].get('path') == 'MadeiraMemoryHost.appex'
+                for file in phase['files']):
+            if key not in target['buildPhases']: target['buildPhases'].append(key)
+    for key, value in upstream_objects.items():
+        if value.get('isa') == 'PBXGroup' and value.get('path') == 'MadeiraMemoryHost':
+            root = objects[root_project['mainGroup']]
+            if key not in root['children']: root['children'].append(key)
+    product = upstream_objects[memory_key]['productReference']
+    products = objects[root_project['productRefGroup']]
+    if product not in products['children']: products['children'].append(product)
     target['name'] = target['productName'] = 'Iridium'
     objects[target['productReference']]['path'] = 'Iridium.app'
     group = next(v for v in objects.values() if v.get('isa') == 'PBXGroup' and v.get('path') == 'Madeira')
     sources = next(objects[key] for key in target['buildPhases'] if objects[key]['isa'] == 'PBXSourcesBuildPhase')
+    existing_sources = {objects[objects[key]['fileRef']].get('path') for key in sources['files']}
     for index, name in enumerate(names):
+        if name in existing_sources: continue
+        existing_sources.add(name)
         reference, build = f'F000000000000000{index:08X}', f'F100000000000000{index:08X}'
         kind = 'sourcecode.c.c' if name.endswith('.c') else 'sourcecode.swift'
         objects[reference] = dict(isa='PBXFileReference', lastKnownFileType=kind, path=name, sourceTree='<group>')
@@ -331,6 +381,7 @@ def check_bundle(app):
         if not (app / name).is_file() or not (app / name).stat().st_size:
             raise ValueError('The WoW64 runtime is missing: ' + name)
 
+    madeira_components.verify(UPSTREAM, app, compiler_identity())
     import madeira_session
     madeira_session.verify(app / 'arm64ec-windows')
 
@@ -362,6 +413,7 @@ def compiler_identity():
 def windows():
     """Build the untracked i386 farm using Madeira's original recipe."""
     verify_pin()
+    madeira_components.build(UPSTREAM, compiler_identity())
     recipe = UPSTREAM / 'build/wine-i386/build.sh'
     stamp = UPSTREAM / '.build/iridium-i386.json'
     key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode()
@@ -504,11 +556,7 @@ def run_checked_recipe(name, env=None):
             patched = adapt(original)
             if original != patched: source.write_text(patched)
         patches = [('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"',
-                    'R=' + shlex.quote(str(UPSTREAM))),
-                   ('if [ ! -f "$B/CMakeCache.txt" ]; then', ''),
-                   ('\nfi\ncmake --build', '\ncmake --build'),
-                   ('-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF',
-                    '-DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DENABLE_ASSERTIONS=OFF -DCMAKE_DISABLE_FIND_PACKAGE_fmt=TRUE')]
+                    'R=' + shlex.quote(str(UPSTREAM)))]
     elif name == 'wine-i386':
         patches = [
             ('R="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"', 'R=' + shlex.quote(str(UPSTREAM))),
@@ -556,6 +604,8 @@ def bootstrap():
 def build_native():
     """Build the upstream archives, including the absent cold-build server base."""
     verify_pin()
+    subprocess.run(['bash', str(UPSTREAM / 'build/fex-patches/apply.sh')], check=True)
+    subprocess.run(['bash', str(UPSTREAM / 'build/dxmt-patches/apply.sh')], check=True)
     run_checked_recipe('fex-arm64ec')
     def run(*args): subprocess.run(args, cwd=UPSTREAM, check=True)
     for name in ('llvm-project/llvm', 'llvm-ios-build/lib', 'gnutls-ios/include'):
@@ -581,23 +631,6 @@ def build_native():
     subprocess.run(['../configure', '--enable-win64', '--enable-archs=aarch64,arm64ec',
                     '--without-x', '--without-freetype', '--disable-tests'], cwd=wine, check=True)
     subprocess.run(['make', '-j6', 'include/all', 'tools/winebuild/winebuild', 'tools/widl/widl'], cwd=wine, check=True)
-    server = UPSTREAM / 'build/wineserver'
-    if not (server / 'obj/libwineserver.a').exists():
-        text = (server / 'build.sh').read_text().split('# Patched files:')[0]
-        begin, end = text.index('# Copy the base library'), text.index('CC_FLAGS=')
-        text = text[:begin] + text[end:]
-        text = text.replace('BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"', 'BUILD_DIR=' + shlex.quote(str(server)))
-        # Compile the untouched members with the original compiler flags; the
-        # upstream script then supplies all its iOS-specific replacement members.
-        text += '''
-for src in "$WINE_SRC"/server/*.c; do
-    name=$(basename "$src" .c)
-    case "$name" in request|main|mach|unicode|fd|process|window|mapping|queue) continue ;; esac
-    compile_one "$src" "$name"
-done
-ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
-'''
-        subprocess.run(['bash'], input=text, text=True, cwd=UPSTREAM, check=True)
     for component in ('wineserver', 'ntdll-unix', 'win32u-unix'):
         run_checked_recipe(component)
     headers = UPSTREAM / 'build/dxmt-ios/shader-headers'
@@ -668,6 +701,7 @@ def native_source_inventory():
             raise ValueError('Missing or invalid native source inventory')
         return inventory
     files, revisions = {}, {}
+    modules = madeira_components.contract(UPSTREAM)
     def visit(repo, revision, required=False):
         label = repo.relative_to(ROOT).as_posix()
         revisions[label] = revision
@@ -690,7 +724,9 @@ def native_source_inventory():
                 visit(repo / name, blob, required_child)
             elif kind == 'blob':
                 relative = (repo / name).relative_to(UPSTREAM).as_posix()
-                if relative not in native_required_outputs(): files[label + '/' + name] = mode
+                if relative not in native_required_outputs() and not (relative.startswith('app/Madeira/') and any(
+                        modules.owns(component, relative.removeprefix('app/Madeira/')) for component in modules.CONTRACT)):
+                    files[label + '/' + name] = mode
     visit(UPSTREAM, REVISION, True)
     visit(UPSTREAM / 'research/freetype', FREETYPE_REVISION, True)
     return {'schema': 1, 'files': files, 'revisions': revisions}
@@ -698,6 +734,8 @@ def native_source_inventory():
 
 def native_source_identity():
     inventory = native_source_inventory()
+    patches = {str(UPSTREAM.relative_to(ROOT) / component / name): payload for component in ('FEX', 'dxmt', 'madeira-dock')
+               for name, payload in madeira_managed_patches.expected(UPSTREAM, component).items()} if (ROOT / '.git').exists() else {}
     digest = hashlib.sha256()
     for name, mode in sorted(inventory['files'].items()):
         relative = Path(name)
@@ -712,10 +750,10 @@ def native_source_identity():
             observed_mode = '120000'
         elif path.is_file():
             if name == 'vendor/Madeira/FEX/FEXCore/Source/Utils/AllocWatch.cpp':
-                value = hashlib.sha256(madeira_threads.apply_fex(path.read_text()).encode()).hexdigest()
+                value = hashlib.sha256(madeira_threads.apply_fex(patches.get(name, path.read_bytes()).decode()).encode()).hexdigest()
             elif name == 'vendor/Madeira/FEX/Source/Windows/ARM64EC/Module.cpp':
-                value = hashlib.sha256(madeira_threads.apply_fex_arm64ec(path.read_text()).encode()).hexdigest()
-            else: value = file_digest(path)
+                value = hashlib.sha256(madeira_threads.apply_fex_arm64ec(patches.get(name, path.read_bytes()).decode()).encode()).hexdigest()
+            else: value = hashlib.sha256(patches.get(name, path.read_bytes())).hexdigest()
             observed_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
         else:
             raise ValueError('Missing native source file: ' + name)
@@ -739,7 +777,7 @@ def native_inputs():
                 ('native_source_inventory', native_source_inventory), ('native_source_identity', native_source_identity),
                 ('run_checked_recipe', run_checked_recipe), ('stage_crypto_libraries', stage_crypto_libraries))},
             'files': {name: file_digest(ROOT / name) for name in (
-                'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
+                'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json', 'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/engine_pins.py', 'ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
                 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
                 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
                 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h')},
@@ -825,18 +863,32 @@ def validate_native_reuse(upstream=None, inputs=None):
     if issues: raise ValueError('Madeira native reuse rejected: ' + '; '.join(issues))
 
 
-def require_fresh_native_substages():
-    # A failed/expired receipt cannot authorize existence-only reuse inside these recipes.
-    paths = ('toolchains/llvm-host-build', 'toolchains/llvm-ios-build', 'toolchains/gnutls-ios',
+def native_substages():
+    return ('toolchains/llvm-host-build', 'toolchains/llvm-ios-build', 'toolchains/gnutls-ios',
              'toolchains/ffmpeg-ios', 'build/ffmpeg/obj', 'build/gnutls-ios/obj', 'build/wineserver/obj',
              'build/ntdll-unix/obj', 'build/win32u-unix/obj', 'build/dxmt-ios/obj',
              'build/dxmt-ios/shader-headers', 'build/dxmt-ios/libdxmt_combined.a',
              'build/dxmt-ios/libdxmt_unix.a', 'FEX/build-ios', 'FEX/build-arm64ec', 'build/freetype-ios/build',
              'wine/build-macos', 'build/rppairing-ios/target')
-    existing = [name for name in paths if (UPSTREAM / name).exists() or (UPSTREAM / name).is_symlink()]
+
+
+def native_partial_outputs():
+    outputs = {}
+    bases = [UPSTREAM / name for name in native_substages()]
+    bases += list((UPSTREAM / 'app/Madeira').glob('*.a'))
+    bases += [UPSTREAM / name for name in native_required_outputs()]
+    for base in bases:
+        for path in base.rglob('*') if base.is_dir() else (base,):
+            if path.is_file():
+                if not path.resolve().is_relative_to(UPSTREAM.resolve()): raise ValueError('Native partial output escapes its tree')
+                outputs[str(path.relative_to(UPSTREAM))] = file_digest(path)
+    return outputs
+
+
+def require_fresh_native_substages():
+    existing = [name for name in native_substages() if (UPSTREAM / name).exists() or (UPSTREAM / name).is_symlink()]
     if existing:
-        raise ValueError('Unverified native substages exist; use an independent fresh checkout, without deleting or '
-                         'resealing these outputs: ' + ', '.join(existing))
+        raise ValueError('Unverified native substages exist: ' + ', '.join(existing))
 
 
 def native(reuse_only=False):
@@ -847,9 +899,23 @@ def native(reuse_only=False):
         return
     except ValueError:
         if reuse_only: raise
-    require_fresh_native_substages()
-    bootstrap()
-    build_native()
+    progress = UPSTREAM / '.build/iridium-native-in-progress.json'
+    try:
+        if progress.is_symlink(): raise ValueError('Native progress record is a link')
+        saved_progress = json.loads(progress.read_text())
+    except (OSError, ValueError): saved_progress = {}
+    expected_progress = {'schema': 1, 'state': 'failed', 'key': native_key(inputs), 'workspace': str(ROOT.resolve())}
+    valid = all(saved_progress.get(key) == value for key, value in expected_progress.items())
+    if not valid or not saved_progress.get('outputs') or saved_progress['outputs'] != native_partial_outputs():
+        require_fresh_native_substages()
+    progress.parent.mkdir(parents=True, exist_ok=True)
+    progress.write_text(json.dumps(dict(expected_progress, state='building')) + '\n')
+    try:
+        bootstrap()
+        build_native()
+    except BaseException:
+        progress.write_text(json.dumps(dict(expected_progress, outputs=native_partial_outputs()), sort_keys=True) + '\n')
+        raise
     crypto = stage_crypto_libraries()
     outputs = sorted((UPSTREAM / 'app/Madeira').glob('*.a')) + sorted((UPSTREAM / 'FEX/build-ios').rglob('*.a'))
     outputs += crypto
@@ -872,6 +938,7 @@ def native(reuse_only=False):
         temporary.replace(stamp)
     finally:
         temporary.unlink(missing_ok=True)
+    progress.unlink(missing_ok=True)
     print('Saved the completed native build before app compilation and packaging.')
 
 

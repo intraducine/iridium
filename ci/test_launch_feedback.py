@@ -30,6 +30,7 @@ class LaunchFeedbackTests(unittest.TestCase):
 struct LibraryEntry { let id = UUID() }
 @MainActor enum TouchControlsHost { static var attachments = 0; static func attach() { attachments += 1 } }
 @MainActor final class LibraryModel {
+ var preparationID = UUID()
  var current: UUID?, preparing: LibraryEntry?, preparingSince = Date(), launching = false
 ''' + prepare + '''
 }
@@ -55,6 +56,10 @@ struct LibraryEntry { let id = UUID() }
   host.play(entry); host.library.preparing = LibraryEntry()
   try await Task.sleep(for: .milliseconds(250))
   precondition(host.launches == 1)
+  host.library.preparing = nil
+  host.play(entry); host.library.preparing = nil; host.play(entry)
+  try await Task.sleep(for: .milliseconds(250))
+  precondition(host.launches == 2, "a cancelled request must not start the same game again")
   host.library.preparing = nil; host.library.current = UUID()
   host.play(entry); precondition(host.library.preparing == nil)
  }

@@ -30,7 +30,7 @@ import SwiftUI
     private var attempted = Set<String>()
     private var automaticPairingNeedsChoice = false
     private var mayWork: Bool {
-        active && !transferringLibrary && !syncingCloud && LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
+        active && !transferringLibrary && !syncingCloud && LibraryModel.shared.current == nil && LibraryModel.shared.preparing == nil && !LibraryModel.shared.launching &&
             !IridiumConsoleSession.shared.isActive && !IridiumConsoleSession.shared.dolphinMaintenance &&
             !IridiumConsoleLibrary.shared.working && !JITCoordinator.shared.busy && !OnDevicePairing.shared.active &&
             !SteamOwnedLibrary.shared.downloads.values.contains { $0.state == .active }
@@ -44,7 +44,7 @@ import SwiftUI
         task = Task {
             defer {
                 isWorking = false; task = nil
-                if !incoming.isEmpty { receivePending() } else { SteamOwnedLibrary.shared.resumeDownloadsAfterImport() }
+                if !incoming.isEmpty { receivePending() } else { resumeStoreDownloads() }
             }
             do {
                 let library = LibraryModel.shared
@@ -89,6 +89,13 @@ import SwiftUI
         }
     }
 
+    private func resumeStoreDownloads() {
+        SteamOwnedLibrary.shared.resumeDownloadsAfterImport()
+        EpicLibrary.shared.resumeDownloadsAfterImport()
+        EALibrary.shared.resumeDownloadsAfterImport()
+        ItchLibrary.shared.resumeDownloadsAfterImport()
+    }
+
     func beginLibraryTransfer() throws {
         guard !blocksLaunch, task == nil, mayWork else { throw LibraryError.message(launchMessage) }
         transferringLibrary = true
@@ -111,7 +118,7 @@ import SwiftUI
     }
     func endCloudTransfer() {
         syncingCloud = false
-        SteamOwnedLibrary.shared.resumeDownloadsAfterImport()
+        resumeStoreDownloads()
     }
     func storageDidChange() { preparedKey = nil; scan() }
 

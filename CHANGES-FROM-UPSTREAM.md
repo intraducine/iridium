@@ -393,3 +393,26 @@ Original vendor checkouts are retained. See [LICENSING.md](LICENSING.md).
 - The owned Windows launch entry shows its starting screen before launch checks and blocks repeated requests while it prepares. The screen stays until a launch result is known.
 - Windows and console starting screens show live app RAM use and available app memory, using the existing shared memory sampler.
 - Setup completion migrates from existing preferences into a separate device-local Keychain record. Replacement installs can restore completion when the same signing identity can read that record. Getting Started remains available in Settings. Keychain retention after app deletion is not guaranteed by iOS.
+
+## Madeira main integration (2026-11-02)
+
+Madeira is pinned at `2927f0edbecaed8d463c5ca40bb1700826941763`. Its selected
+Wine, FEX, DXMT and Dock revisions remain in `UPSTREAM-SOURCES.json`. The owned
+app adds Epic Games, EA and itch.io, Steam DLC/branches/local transfers, Workshop,
+achievements, external drives, verified game moves, shared setups and INI editing.
+Gyro/turbo controls, GPU card choices, x87 modes, background controls, memory
+helper support and bounded log summaries follow the pinned runtime. Store files,
+cloud transfers, imports and game moves use Iridium's shared storage admission.
+Cancelled launch preparation cannot commit EA licences or start its local service.
+
+The early loading screen, live RAM bar, shared JIT, per-game volume, menu audio,
+saved setup marker and independent console components remain in place. The
+optional memory helper does not replace the owned JIT helper. The Windows host
+still requires restart for startup-only settings or uncertain cleanup. Optional
+graphics routes have separate receipts and source collection; DXMT stays default.
+Code and package checks do not establish device performance or store account
+compatibility. No Apple account/signing refresh UI or generated art was added.
+The editor also carries the size-slider stability and lock checks from
+Madeira `effa2ff15d99bfc8082e91f42e170dbe8c7e652f`. Iridium retains its existing
+per-control size/opacity sliders and outside-tap dismissal. This UI-only change
+does not change the pinned native runtime or rebuild its components.

@@ -33,7 +33,7 @@ class ImportFolderTests(unittest.TestCase):
         admission = service[service.index('    static let programExtensions:'):service.index('    static func inspect(')]
         fixture = cls.root / 'ImportFolderChecks.swift'
         fixture.write_text((IOS / 'LibrarySupportTests/ImportFolderChecks.swift').read_text().replace('// PRODUCTION_EXECUTABLE', admission))
-        sources += [IOS / 'App/Steam/SteamKeyValues.swift', IOS / 'App/Steam/SteamInstall.swift', fixture]
+        sources += [IOS / 'App/Storage/ExternalStorage.swift', IOS / 'App/Steam/SteamKeyValues.swift', IOS / 'App/Steam/SteamInstall.swift', fixture]
         cls.sources = sources
         build = subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors',
             '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',

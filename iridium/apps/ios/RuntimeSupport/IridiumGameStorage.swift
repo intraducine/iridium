@@ -66,7 +66,7 @@ struct IridiumGameStorage: Sendable {
             let parts = entry.relative.split(separator: "/").map(String.init)
             guard !parts.contains(".."), !parts.contains("."), !entry.relative.hasPrefix("/"),
                   !entry.relative.contains("\\"), !entry.relative.contains("\0") else { throw Failure.unsafePath }
-            if parts.first == "iridium-games" { continue }
+            if parts.first == "iridium-games" || parts.first == "External" { continue }
             if parts.count > 1, parts[1].lowercased() == "steam", !parts.contains("common") { continue }
             let original: String
             var filename: String?

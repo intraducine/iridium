@@ -35,7 +35,9 @@ class SteamCloudQuitTests(unittest.TestCase):
 MODELS
 struct SteamCloudPaths: Sendable {
     func location(cloudPath: String) -> (base: URL, parts: [String])? { (URL(fileURLWithPath: "/fixture"), [cloudPath]) }
-    static func resolve(base: URL, parts: [String]) -> URL { base.appendingPathComponent(parts.joined(separator: "/")) }
+    var installFolder: URL { URL(fileURLWithPath: "/fixture") }
+    func validateInstallURL(_ url: URL) throws -> URL { url }
+    func resolve(base: URL, parts: [String]) throws -> URL { base.appendingPathComponent(parts.joined(separator: "/")) }
     static func split(_ path: String) -> (root: String?, rest: String) { (nil, path) }
 }
 struct SaveFile: Sendable { var root = "remote" }
@@ -46,9 +48,10 @@ struct SteamCloudAudit: Equatable, Sendable {
     var entries: [SteamCloudEntry] = []
     var summary: String { "fixture" }
     func count(_ kind: SteamCloudEntry.Kind) -> Int { entries.filter { $0.kind == kind }.count }
-    static func run(listing: Listing, saveFiles: [SaveFile], paths: SteamCloudPaths) -> Self { listing.audit }
+    static func run(listing: Listing, saveFiles: [SaveFile], paths: SteamCloudPaths) throws -> Self { listing.audit }
     static func findElsewhere(cloudPath: String, drive: URL) -> String? { nil }
 }
+@MainActor final class GameMover { static let shared=GameMover(); var moving: UUID? }
 enum FixtureError: Error { case network }
 enum SteamFileError: Error { case invalid(String) }
 enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic connection failure" } }
@@ -84,6 +87,7 @@ enum SteamSignIn { static func message(_ error: Error) -> String { "Synthetic co
     static func reason(_ error: Error) -> String { "fixture" }
     static func cloudBackup(_ appID: Int) -> URL { drive }
     let gate = Gate()
+    var deleting: Set<Int> = []
     var signedIn = true, inSession = true, cloudTakeover = false, remoteCacheOffLogged = false
     var cloudBlocked: Bool { inSession && !cloudTakeover }
     var cloud: [Int: SteamCloudState] = [:], cloudBusy: Set<Int> = []

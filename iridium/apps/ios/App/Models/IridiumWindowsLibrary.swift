@@ -33,9 +33,27 @@ struct LibraryEntry: Codable, Identifiable {
     var display: String?
     /// FPS limit: 1 = 60, 3 = 30, 4 = 40, 0 = display maximum, 2 = uncapped (madeira_set_vsync_locked).
     var fpsMode = 1
-    /// FEX's X87ReducedPrecision for this game. Off by default, as in FEX; only
-    /// an explicit choice exports FEX_X87REDUCEDPRECISION=1.
+    /// FEX's X87ReducedPrecision for this game: true exports 1 (reduced, fast).
+    /// false leaves the engine's default unless `fullX87` asks for full precision:
+    /// the 32-bit (WOW64) module runs reduced by default (ml950: full precision
+    /// cost Fallout: New Vegas 20-50 % of its CPU and about half its frame rate),
+    /// the 64-bit one full. Saved entries all carry false, so "false" has to mean
+    /// the engine's default, not "full": exporting 0 for it (upstream #461) put
+    /// every 32-bit game on the slow path.
     var reducedX87 = false
+    /// Full 80-bit x87 for this game (exports 0), chosen on the Compatibility page;
+    /// nil = the engine's default. Ignored when reducedX87 is on.
+    var fullX87: Bool?
+
+    /// The Compatibility page's x87 choice over reducedX87 and fullX87.
+    enum X87Precision: String, CaseIterable { case automatic, reduced, full }
+    var x87Precision: X87Precision {
+        get { reducedX87 ? .reduced : (fullX87 == true ? .full : .automatic) }
+        set {
+            reducedX87 = newValue == .reduced
+            fullX87 = newValue == .full ? true : nil
+        }
+    }
     var liveLogs = false
     var performance = false
     var touchControls = false
@@ -54,6 +72,9 @@ struct LibraryEntry: Codable, Identifiable {
     var overlayFields: [String]?
     /// The Wine desktop (explorer and services in a virtual desktop).
     var desktop: Bool?
+    /// ml2021: Valve's client in Big Picture, inside the Wine desktop (the library's
+    /// Big Picture button; C:\big-picture.bat, written at every launch).
+    var bigPicture: Bool?
     /// Touch controls' opacity (0.15...1, nil = 0.7) and overall size (0.5...2,
     /// nil = 1) in this game's sessions.
     var controlOpacity: Double?
@@ -88,6 +109,9 @@ struct LibraryEntry: Codable, Identifiable {
     /// Keyboard-and-mouse mode: vertical speed of the right-stick mouse relative
     /// to horizontal (PadBindings.mouseVertical); nil = 1.
     var padMouseVertical: Double?
+    /// Gyro aim and turbo for player 1 (PadAssist.swift); nil = both off.
+    /// Optional, so older files decode.
+    var padAssist: PadAssistSettings?
     /// Processors reported to Windows code in this game's sessions
     /// (MADEIRA_CPU_COUNT, ntdll); nil = automatic.
     var cpuCount: Int?
@@ -120,6 +144,29 @@ struct LibraryEntry: Codable, Identifiable {
     /// `graphicsAPI` were read for, and whether Steam's launch configuration was
     /// cached (LibraryModel.refreshSteamMetadata); any change reads them again.
     var steamMetadataInstall: String?
+    /// An itch.io game (ItchLibrary.swift): its game id. `relativePath` is then its
+    /// program inside C:\itch.
+    var itchGameID: Int?
+    /// An Epic Games game (EpicLibrary.swift): its app name. `relativePath` is then
+    /// its program inside C:\Program Files\Epic Games, and each start adds Epic's
+    /// sign-in arguments (EpicLibrary.launchArguments) for that launch only.
+    var epicAppName: String?
+    /// An EA app game (EALibrary.swift): its offer id. `relativePath` is then its
+    /// program inside C:\Program Files\EA Games, and each start first gets the game's
+    /// licence, the EA app's environment and Madeira's stand-in for the EA app's
+    /// local service (EALibrary.prepareLaunch).
+    var eaOfferID: String?
+    /// An Epic game with an official way to start without anti-cheat
+    /// (epicAntiCheatOffProgram): nil or true starts that program.
+    /// The anti-cheat cannot run in Wine on iOS, so on is the default.
+    var epicAntiCheatOff: Bool?
+    /// Games with an official way to start without Easy Anti-Cheat (offline modes
+    /// only), as the program to start instead of the one Epic names. Rocket League:
+    /// its Launcher.exe with -noeac ("No Easy Anti Cheat") starts RocketLeague.exe
+    /// with Epic's arguments and nothing else. Madeira starts that program itself,
+    /// which leaves out the launcher's .NET runtime: it crashed in Wine Mono once
+    /// the game had quit, so the session never ended cleanly.
+    static let epicAntiCheatOffProgram: [String: String] = ["Sugar": "RocketLeague.exe"]
     /// Fastsync's per-game switches, used only while Settings › Sync engine is
     /// Fastsync: "Fast synchronization" (nil = on; off gives this game Wine's
     /// standard sync) and "Fast semaphore waits" (nil = off). Optional, so older
@@ -140,12 +187,17 @@ struct LibraryEntry: Codable, Identifiable {
     /// MetalFX spatial upscaling factor (Display › MetalFX upscaling: 1.5 or 2;
     /// nil = off), passed on as this game's `metalfx-upscale` line.
     var metalFXUpscale: Double?
+    /// ml1298: a reservation of 64 GB or more that the address space cannot hold
+    /// is served with a real 16 GB part (ntdll's ios_oversize_reserve), passed on
+    /// as this game's `oversize-reserve` line; nil = off, such a reservation fails.
+    var largeReservations: Bool?
 
     /// What MadeiraConfig.applyGame writes for this game: the lines its pickers
     /// stand for, then its own config, which wins where both set a key.
     var gameConfigText: String? {
         var lines: [String] = []
         if let metalFXUpscale { lines.append("metalfx-upscale = \(metalFXUpscale)") }
+        if largeReservations == true { lines.append("oversize-reserve = 1") }
         if let config, !config.isEmpty { lines.append(config) }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
@@ -170,8 +222,26 @@ struct LibraryEntry: Codable, Identifiable {
     /// ml1163: a game (not the Desktop entry) started inside the Wine desktop.
     var runsInDesktop: Bool { usesLaunchOptions && launchMode == "desktop" }
     /// The program's own arguments: Steam's launch configuration for "The game",
-    /// else the entry's Launch arguments.
-    var programArguments: String { startsSteamGameDirectly ? (steamProgramArguments ?? "") : arguments }
+    /// else the entry's Launch arguments; an Epic game's sign-in arguments come first
+    /// while its launch is being prepared.
+    var programArguments: String {
+        let own = startsSteamGameDirectly ? (steamProgramArguments ?? "") : arguments
+        guard epicAppName != nil, let transient = Self.transientArguments(for: id), !transient.isEmpty else { return own }
+        return own.isEmpty ? transient : transient + " " + own
+    }
+    /// Arguments for the launch being prepared only (an Epic game's one-use sign-in
+    /// code): never part of the saved entry. ContentView sets them before the launch;
+    /// applyEnvironment clears them once the bridge's command is exported.
+    private static let transientLock = NSLock()
+    private static var transient: [UUID: String] = [:]
+    static func setTransientArguments(_ arguments: String?, for id: UUID) {
+        transientLock.lock(); defer { transientLock.unlock() }
+        transient[id] = arguments
+    }
+    static func transientArguments(for id: UUID) -> String? {
+        transientLock.lock(); defer { transientLock.unlock() }
+        return transient[id]
+    }
     /// ml1163: the directory the program starts in (MADEIRA_WORKDIR): the chosen
     /// working folder, else Steam's for "The game", else the program's own folder.
     /// A desktop-mode game inherits explorer's directory and a .bat runs as
@@ -243,19 +313,44 @@ struct LibraryEntry: Codable, Identifiable {
     /// With startServices the target is the services batch, which carries the
     /// arguments itself. The exe is launchWindowsPath: "The game"'s program for
     /// a Steam game started as its own program.
-    // Shared with the native launch-profile adapter; not persisted.
-    var launchCommand: (exe: String, args: String) {
+    var launchCommand: (exe: String, args: String) { launchCommand(parent: nil) }
+    func launchCommand(parent: String?) -> (exe: String, args: String) {
         func quoted(_ s: String) -> String { "\"\(s)\"" }
         var path = launchWindowsPath
         var extra = programArguments.trimmingCharacters(in: .whitespaces)
         var batch = isBatch
         if servicesScript != nil { path = servicesScriptPath; extra = ""; batch = true }
         func withExtra(_ s: String) -> String { extra.isEmpty ? s : s + " " + extra }
+        let parent = batch ? nil : parent
         if runsInDesktop {
-            return ("explorer.exe", "/desktop=shell,\(resolution) " + withExtra(batch ? "cmd /c \(quoted(path))" : quoted(path)))
+            let program = parent.map { quoted($0) + " " + quoted(path) } ?? quoted(path)
+            return ("explorer.exe", "/desktop=shell,\(resolution) " + withExtra(batch ? "cmd /c \(quoted(path))" : program))
         }
         if batch { return ("C:\\windows\\system32\\cmd.exe", withExtra("/c \(quoted(path))")) }
+        if let parent { return (parent, withExtra(quoted(path))) }
         return (path, programArguments)   // upstream's direct launch, arguments verbatim
+    }
+    /// ml2320: an Epic game's x64 program starts as the child of a process with the Epic client's
+    /// name (build/epic-parent), as it does under the Epic client on Windows. A publisher's launcher
+    /// that did not find that process treated the Epic copy as not owned and offered it for sale.
+    /// nil for any other entry, a batch, a 32-bit program, a build without the program, or with
+    /// env.MADEIRA_EPIC_LAUNCHER_PARENT=0.
+    var epicParent: String? {
+        guard epicAppName != nil, !isBatch, servicesScript == nil,
+              MadeiraConfig.get("env.MADEIRA_EPIC_LAUNCHER_PARENT") != "0",
+              Bundle.main.url(forResource: "EpicGamesLauncher", withExtension: "exe", subdirectory: "arm64ec-windows") != nil,
+              let url = Self.hostURL(ofWindowsPath: launchWindowsPath), Self.peMachine(url) == 0x8664 else { return nil }
+        return "C:\\windows\\system32\\EpicGamesLauncher.exe"
+    }
+    /// The PE machine of an executable (0x14c: 32-bit x86, 0x8664: x64), nil when unreadable.
+    static func peMachine(_ url: URL) -> Int? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        guard let dos = try? h.read(upToCount: 64), dos.count == 64, dos[0] == 0x4d, dos[1] == 0x5a else { return nil }
+        let offset = (0..<4).reduce(UInt64(0)) { $0 | (UInt64(dos[60 + $1]) << ($1 * 8)) }
+        guard offset >= 64, offset < 16 * 1024 * 1024, (try? h.seek(toOffset: offset)) != nil,
+              let pe = try? h.read(upToCount: 6), pe.count == 6, Array(pe.prefix(4)) == [0x50, 0x45, 0, 0] else { return nil }
+        return Int(pe[4]) | Int(pe[5]) << 8
     }
     /// The details page's "command that runs" line: the program's file name and
     /// its arguments, as upstream shows a direct start; ml1163: what starts it
@@ -275,6 +370,11 @@ struct LibraryEntry: Codable, Identifiable {
     /// What a launch starts, relative to drive_c: "The game"'s program inside the
     /// install folder, else `relativePath`.
     var launchRelativePath: String {
+        if let app = epicAppName, epicAntiCheatOff != false, let program = Self.epicAntiCheatOffProgram[app] {
+            // The program next to the one Epic names (Rocket League: Launcher.exe -> RocketLeague.exe).
+            let folder = relativePath.split(separator: "/").dropLast().joined(separator: "/")
+            return folder.isEmpty ? program : folder + "/" + program
+        }
         guard startsSteamGameDirectly, let program = steamProgram, !program.isEmpty else { return relativePath }
         return relativePath + "/" + program
     }
@@ -292,6 +392,158 @@ struct LibraryEntry: Codable, Identifiable {
         return entry
     }
 
+    // MARK: ml2021 Big Picture
+
+    static let bigPictureID = UUID(uuidString: "5A0B2C44-9C1E-4D0F-8F2A-7B3E6D1C9A10")!
+    /// Valve's client in Big Picture (its gamepad UI) inside the Wine desktop, as a
+    /// desktop-mode batch: C:\big-picture.bat starts services.exe and then steam.exe
+    /// -bigpicture with the Chromium switches the Steam test launch proved
+    /// (ContentView.prepareSteamLaunch). Its recommended list (GameRecommendations
+    /// .steamBigPicture) carries the launcher-chain memory lines a 64-bit Chromium
+    /// host needs and the swap tier with the donor pool.
+    static var bigPictureEntry: LibraryEntry {
+        var entry = LibraryEntry(title: "Big Picture", relativePath: "big-picture.bat", bits: 64)
+        entry.id = bigPictureID; entry.bigPicture = true; entry.graphicsAPI = "Steam"; entry.launchMode = "desktop"
+        return entry
+    }
+    /// Madeira Dock's Steam folder inside the prefix (Windows path, Unix path), when its
+    /// steam.exe is there. Its component set is PINNED (SteamRuntime: steamclient64.dll must be
+    /// the build the Dock host supports), so the client UI must never run from it: steam.exe
+    /// would complete the install from Valve's CDN and replace the pinned build.
+    static var dockSteamFolder: (windows: String, unix: String)? {
+        let fm = FileManager.default
+        guard let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let prefix = documents.appendingPathComponent("wine").path
+        let candidates = [
+            ("C:\\Program Files (x86)\\Steam", "\(prefix)/drive_c/Program Files (x86)/Steam"),
+            ("C:\\Program Files\\Steam", "\(prefix)/drive_c/Program Files/Steam"),
+        ]
+        return candidates.first { fm.fileExists(atPath: "\($0.1)/steam.exe") }
+    }
+    /// Big Picture's own Steam folder: Valve's client completes itself there on the first
+    /// run (steam.exe is Valve's bootstrapper: it fetches the client's packages, the web
+    /// helper included, from Valve's CDN into its own folder), leaving the Dock's pinned
+    /// install alone.
+    static var bigPictureFolder: (windows: String, unix: String)? {
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let prefix = documents.appendingPathComponent("wine").path
+        return ("C:\\Program Files\\Steam Big Picture", "\(prefix)/drive_c/Program Files/Steam Big Picture")
+    }
+    /// Big Picture is unfinished: the button beside Desktop and a Big Picture card in the library
+    /// exist only in a build compiled with the Swift condition MADEIRA_BIG_PICTURE_UI (for example
+    /// xcodebuild SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) MADEIRA_BIG_PICTURE_UI').
+    /// No IPA build sets it, so release IPAs have neither; the launch code is compiled either way.
+#if MADEIRA_BIG_PICTURE_UI
+    static let bigPictureShown = true
+#else
+    static let bigPictureShown = false
+#endif
+    /// Whether the library lists this entry: a Big Picture entry only while Big Picture is shown.
+    var listedInLibrary: Bool { bigPicture != true || Self.bigPictureShown }
+    /// The button is offered when Big Picture's folder has a client, or the Dock's steam.exe
+    /// can seed one.
+    static var steamClientInstalled: Bool {
+        let fm = FileManager.default
+        if let bp = bigPictureFolder, fm.fileExists(atPath: "\(bp.unix)/steam.exe") { return true }
+        return dockSteamFolder != nil
+    }
+    /// Writes C:\big-picture.bat for this launch, seeding Big Picture's folder with the
+    /// Dock's steam.exe when it has none yet. False, having logged why, when there is no client.
+    @discardableResult
+    static func writeBigPictureBatch() -> Bool {
+        let fm = FileManager.default
+        guard let folder = bigPictureFolder,
+              let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return false }
+        if !fm.fileExists(atPath: "\(folder.unix)/steam.exe") {
+            guard let dock = dockSteamFolder else {
+                LogStore.shared.log("[big-picture] no Steam client to start from: prepare Madeira Dock's Steam components first", level: .error)
+                return false
+            }
+            do {
+                try fm.createDirectory(atPath: folder.unix, withIntermediateDirectories: true)
+                try fm.copyItem(atPath: "\(dock.unix)/steam.exe", toPath: "\(folder.unix)/steam.exe")
+                LogStore.shared.log("[big-picture] seeded \(folder.windows) with the Dock's steam.exe; Valve's client completes itself there on this first run (a download from Valve's CDN)")
+            } catch {
+                LogStore.shared.log("[big-picture] could not seed \(folder.windows): \(error.localizedDescription)", level: .error)
+                return false
+            }
+        }
+        // ml2210: once the 32-bit client and its web helper (bin/cef/cef.win7) are in place,
+        // the bootstrapper neither updates itself nor the client, so a later run cannot move
+        // it to the 64-bit client, whose CEF pools do not fit the address space.
+        // env.MADEIRA_BIG_PICTURE_PIN = 0 lets it update as before.
+        let pinned = MadeiraConfig.flag("MADEIRA_BIG_PICTURE_PIN", fallback: true)
+            && fm.fileExists(atPath: "\(folder.unix)/bin/cef/cef.win7/steamwebhelper.exe")
+        if pinned { LogStore.shared.log("[big-picture] ml2210 the installed 32-bit client is kept: no bootstrap update this run") }
+        // ml2230: env.MADEIRA_BIG_PICTURE_GPU = 1 lets the web helper draw with the GPU (Chromium's
+        // ANGLE on the 32-bit D3D11); off by default, software drawing as before.
+        let gpu = MadeiraConfig.flag("MADEIRA_BIG_PICTURE_GPU", fallback: false)
+        if gpu { LogStore.shared.log("[big-picture] ml2230 the web helper may use the GPU (env.MADEIRA_BIG_PICTURE_GPU = 1)") }
+        listMadeiraLibraries(in: folder)
+        let bat = [
+            "@echo off",
+            "rem Generated by Madeira (ml2021) for Big Picture; rewritten at every launch.",
+            "start \"\" \"C:\\windows\\system32\\services.exe\"",
+            "cd /d \"\(folder.windows)\"",
+            "\"\(folder.windows)\\steam.exe\" -bigpicture -no-cef-sandbox" + (gpu ? "" : " -cef-disable-gpu") + " -console -nocrashmonitor"
+                + (pinned ? " -nobootstrapperupdate -skipinitialbootstrap" : "")
+                + " -cef-disable-features=SegmentationPlatform,OptimizationTargetPrediction,OptimizationHints",
+        ].joined(separator: "\r\n") + "\r\n"
+        let path = documents.appendingPathComponent("wine/drive_c/big-picture.bat").path
+        do {
+            try bat.write(toFile: path, atomically: true, encoding: .utf8)
+        } catch {
+            LogStore.shared.log("[big-picture] could not write big-picture.bat: \(error.localizedDescription)", level: .error)
+            return false
+        }
+        LogStore.shared.log("[big-picture] steam.exe -bigpicture from \(folder.windows) in the Wine desktop")
+        return true
+    }
+
+    /// ml2230: Big Picture's client lists the games Madeira installed. Its libraryfolders.vdf
+    /// (config/, the one Valve's client reads, and its steamapps/ copy) gets Madeira's Steam
+    /// library (the Dock client's folder, where downloads go) and the libraries on connected
+    /// drives, added beside the client's own entries, never replacing one. The records there
+    /// are the client's own format (AppManifestWriter). env.MADEIRA_BIG_PICTURE_LIBRARIES = 0
+    /// leaves the files alone.
+    private static func listMadeiraLibraries(in folder: (windows: String, unix: String)) {
+        guard MadeiraConfig.flag("MADEIRA_BIG_PICTURE_LIBRARIES", fallback: true) else { return }   // 0: Big Picture's client lists only its own library
+        let fm = FileManager.default
+        let own = "Program Files/Steam Big Picture"
+        // ml2240: every library Madeira's Steam list reads (MadeiraDock.steamLibraries), not
+        // only the client's own folder and the external drives: the other C: libraries its
+        // libraryfolders.vdf names were left out. MADEIRA_BIG_PICTURE_DOCK_LIBRARIES=0 restores.
+        let found = MadeiraConfig.flag("MADEIRA_BIG_PICTURE_DOCK_LIBRARIES", fallback: true)
+            ? MadeiraDock.steamLibraries(drive: MadeiraDock.drive)
+            : [SteamRuntimeFiles.relativeRoot + "/steamapps"] + ExternalDrives.steamLibraries
+        var libraries = [own]
+        for library in found.prefix(32) where library.hasSuffix("/steamapps") {
+            let root = String(library.dropLast("/steamapps".count))
+            guard !libraries.contains(where: { $0.caseInsensitiveCompare(root) == .orderedSame }) else { continue }
+            libraries.append(root)
+            let manifests = ((try? fm.contentsOfDirectory(atPath: MadeiraDock.drive.appendingPathComponent(library).path)) ?? [])
+                .filter { $0.hasPrefix("appmanifest_") && $0.hasSuffix(".acf") }
+            LogStore.shared.log("[big-picture] ml2240 library C:\\\(root.replacingOccurrences(of: "/", with: "\\")): \(manifests.count) install record(s)")
+        }
+        var added = 0
+        for sub in ["config", "steamapps"] {
+            let vdf = URL(fileURLWithPath: "\(folder.unix)/\(sub)/libraryfolders.vdf")
+            do {
+                let existing: Data?
+                do { existing = try Data(contentsOf: vdf) }
+                catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError { existing = nil }
+                let data = try ExternalSteamLibraries.add(paths: libraries, to: existing)
+                guard data != existing else { continue }
+                try fm.createDirectory(at: vdf.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: vdf, options: .atomic)
+                added += 1
+            } catch {
+                LogStore.shared.log("[big-picture] \(sub)/libraryfolders.vdf was kept: \(error.localizedDescription)")
+            }
+        }
+        LogStore.shared.log("[big-picture] ml2230 Madeira's Steam libraries listed for Big Picture: \(libraries.count - 1) (\(added) file(s) updated)")
+    }
+
     var windowsPath: String { "C:\\" + relativePath.replacingOccurrences(of: "/", with: "\\") }
 
     /// The vsync mode to apply: a saved 30 or 40 FPS limit runs as 60 when it is
@@ -306,15 +558,9 @@ struct LibraryEntry: Codable, Identifiable {
               launchWindowsPath.utf8.count < 1024, (steamWorkingWindowsPath?.utf8.count ?? 0) < 512 else {
             throw LibraryError.message("The saved launch profile contains invalid display or argument values.")
         }
-        var quoted = false, inToken = false, tokens = 0
-        for character in launchArguments {
-            if character == "\"" { quoted.toggle() }
-            if !quoted && (character == " " || character == "\t") { inToken = false }
-            else if !inToken { tokens += 1; inToken = true }
+        guard LaunchArgumentText.valid(launchArguments) else {
+            throw LibraryError.message("Use balanced double quotes, no control characters, and at most 64 launch arguments in 4 KB.")
         }
-        // WineProcessBridge takes at most 64 arguments in 4 KB.
-        guard launchArguments.utf8.count < 4096 else { throw LibraryError.message("The complete launch command is too long.") }
-        guard !quoted, tokens <= 64 else { throw LibraryError.message("Use balanced double quotes and at most 64 launch arguments in total.") }
         // build/madeira_cfg.h reads at most 64 KB of a file.
         guard (config?.utf8.count ?? 0) < 60_000, config?.contains("\0") != true else {
             throw LibraryError.message("This game's config is too long.")

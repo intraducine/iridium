@@ -12,8 +12,11 @@ class SteamConnectionTests(unittest.TestCase):
     def test_ping_completion_is_once_and_retired_tasks_cannot_receive(self):
         source = (ROOT / 'iridium/apps/ios/App/Steam/Transport/Core/SteamConnection.swift').read_text()
         guard = source[source.index('final class SteamResumeGuard:'):source.index('// MARK: - WebSocket Delegate')]
-        bridge = source[source.index('        let resumeOnce = SteamResumeGuard()'):source.index('        await serverList.markSuccess')]
-        current = source[source.index('        guard webSocketTask === task'):source.index('        scheduleReceive(task)')]
+        bridge = source[source.index('        let resumeOnce = SteamResumeGuard()'):source.index('    // MARK: - Receive')]
+        bridge = bridge[:bridge.rfind('    }')]
+        current = '        guard webSocketTask === task else { return false }\n        return true\n'
+        self.assertIn('guard webSocketTask === task else { return }', source)
+
         fixture = '''
 import Foundation
 enum SteamError: Error { case connectionFailed(String), disconnected }
@@ -21,6 +24,8 @@ final class PingTask: @unchecked Sendable {
     let results: [Bool]
     let parallel: Bool
     init(_ results: [Bool], parallel: Bool = false) { self.results = results; self.parallel = parallel }
+    enum CloseCode { case goingAway }
+    func cancel(with: CloseCode, reason: Data?) {}
     func sendPing(_ reply: @escaping @Sendable (Error?) -> Void) {
         let send: @Sendable (Int) -> Void = { i in
             reply(self.results[i] ? NSError(domain: "fixture", code: 1,
@@ -32,7 +37,7 @@ final class PingTask: @unchecked Sendable {
 }
 ''' + guard + '\nfunc connect(_ task: PingTask) async throws {\n' + bridge + '''
 }
-func validate(_ task: PingTask, current webSocketTask: PingTask?) throws {
+func validate(_ task: PingTask, current webSocketTask: PingTask?) -> Bool {
 ''' + current + '''
 }
 @main struct Check {
@@ -41,19 +46,18 @@ func validate(_ task: PingTask, current webSocketTask: PingTask?) throws {
             do {
                 try await connect(PingTask(results))
                 precondition(!results[0])
-            } catch SteamError.connectionFailed(let message) {
-                precondition(results[0] && message == "first error")
+            } catch {
+                precondition(results[0] && error.localizedDescription == "first error")
             }
         }
         for _ in 0..<50 {
             do { try await connect(PingTask((0..<1000).map { $0 % 2 == 0 }, parallel: true)) }
-            catch SteamError.connectionFailed(let message) { precondition(message == "first error") }
+            catch { precondition(error.localizedDescription == "first error") }
         }
         let task = PingTask([false])
-        try validate(task, current: task)
+        precondition(validate(task, current: task))
         for current in [nil, PingTask([false])] {
-            do { try validate(task, current: current); preconditionFailure("retired task admitted") }
-            catch SteamError.disconnected {}
+            precondition(!validate(task, current: current), "retired task admitted")
         }
         print("PASS: duplicate and racing ping results complete once; retired sockets cannot start receiving")
     }

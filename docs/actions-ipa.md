@@ -54,7 +54,7 @@ compiler or SDK requires new matching checks and components.
 
 ## Reuse
 
-Madeira native/i386 and each console component have separate saved outputs,
+Madeira native/Windows and each console component have separate saved outputs,
 retained for 14 days before app packaging. Reuse checks source pins, recipes,
 toolchain, platform, workspace paths, receipts, and output hashes. App-only edits
 can reuse matching engine builds. Set `reuse_assets=false` for a fresh hosted run.
@@ -69,8 +69,8 @@ python3 -B ci/madeira-frontend.py native --reuse-only
 
 Native schema-2 receipts record completed inputs and outputs. Old, partial,
 expired, or changed receipts fail validation. Restores reject symlinks and verify
-source inventories before copying. Do not reseal partial outputs; use a fresh
-checkout for a full rebuild when required.
+source inventories before copying. A failed native command can resume only in the same workspace when its inputs
+and every retained partial file still match. Unverified partial outputs are refused.
 
 ## Signing and output
 
@@ -91,7 +91,9 @@ bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-rebuilt"
 
 The archive includes dependency trees, locked source downloads, patches,
 generators, notices, and revision/component manifests. It supports builds without
-Git metadata. Xcode, Apple SDKs, and host toolchains remain external prerequisites.
+pre-existing Git metadata. The Windows recipes fetch pinned public Git metadata
+when needed and retain the supplied source files. Xcode, Apple SDKs, network
+access for that metadata, and host toolchains remain external prerequisites.
 Pairing Cargo dependencies use a relative vendored-source configuration.
 
 ## Replace native libraries
@@ -159,3 +161,13 @@ See [the atlas recipe](../ci/psp-atlas-host/README.md).
 Preserve notices and deliver matching source with redistributed binaries.
 [LICENSING.md](../LICENSING.md) records unresolved combined-app terms. Replacement
 libraries may have different hashes; release hashes identify shipped files.
+
+## Madeira graphics modules
+
+The Madeira pin selects its own `tools/build/runtime-components.json` contract.
+Windows, MoltenVK, Mesa Zink, Mesa D3D12, Vulkan DLLs and KosmicKrisp each have an
+input key and output checksums. The app checks all six receipts during packaging.
+A signature change is allowed only when the underlying dynamic library bytes
+still match after signature removal. Each renderer remains an optional route;
+DXMT remains the default. Source collection includes the renderer source trees,
+patches, pinned archives, notices and `MADEIRA-RUNTIME-RECEIPTS.json`.

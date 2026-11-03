@@ -52,11 +52,14 @@ def source_fixture():
             subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                             'commit', '-qm', 'fixture'], check=True)
             return subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        contract = upstream / 'tools/build'; contract.mkdir(parents=True)
+        for name in ('runtime-components.py', 'runtime-components.json'):
+            shutil.copy2(build.UPSTREAM / 'tools/build' / name, contract / name)
         revision = commit(upstream, ['native.c', 'parser.y', 'scanner.l', 'Makefile', 'config.data'])
         freetype = upstream / 'research/freetype'; freetype.mkdir(parents=True)
         freetype_revision = commit(freetype, ['freetype.c'])
         (root / 'ci').mkdir()
-        for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
+        for name in ('madeira_components.py', 'madeira_managed_patches.py', 'runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
         for name in ('ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
                      'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
@@ -200,13 +203,16 @@ class NativeReuseTests(unittest.TestCase):
             root = Path(folder)
             def failure():
                 path = root / 'toolchains/llvm-ios-build/lib/libLLVMPasses.a'
-                path.parent.mkdir(parents=True); path.write_bytes(b'partial output')
+                path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'partial output')
                 raise RuntimeError('Wine configure failed')
             with patch.object(build, 'UPSTREAM', root), patch.object(build, 'verify_pin'), \
                  patch.object(build, 'native_inputs', return_value=fixture_inputs()), patch.object(build, 'bootstrap'), \
                  patch.object(build, 'build_native', side_effect=failure):
                 with self.assertRaisesRegex(RuntimeError, 'Wine configure'): build.native()
                 self.assertFalse((root / '.build/iridium-native.json').exists())
+                # Resume the same failed command, but never bless modified partial outputs.
+                with self.assertRaisesRegex(RuntimeError, 'Wine configure'): build.native()
+                (root / 'toolchains/llvm-ios-build/lib/libLLVMPasses.a').write_bytes(b'changed output')
                 with self.assertRaisesRegex(ValueError, 'Unverified native substages'): build.native()
 
     def test_old_bison_fails_before_bootstrap(self):

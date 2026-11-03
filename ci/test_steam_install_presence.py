@@ -20,6 +20,10 @@ class SteamInstallPresenceTests(unittest.TestCase):
             root = Path(directory)
             (root / 'Dock.swift').write_text(source)
             (root / 'Check.swift').write_text(r'''import Foundation
+enum ExternalDrives {
+    static var steamLibraries: [String] { [] }
+    static func nativeURL(_ path: String, write: Bool) throws -> URL { URL(fileURLWithPath: path) }
+}
 enum SteamSignIn { static func flag(_ key: String, default value: Bool) -> Bool { value } }
 enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
 @main struct Check {
@@ -118,7 +122,7 @@ enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
             binary = root / 'check'
             built = subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors',
                 '-module-cache-path', module_cache('macosx'), str(STEAM.parent.parent / 'RuntimeSupport/IridiumRuntime.swift'),
-                str(STEAM.parent.parent / 'RuntimeSupport/IridiumGameStorage.swift'), str(STEAM / 'SteamInstall.swift'), str(STEAM / 'SteamKeyValues.swift'),
+                str(STEAM.parent.parent / 'RuntimeSupport/IridiumGameStorage.swift'), str(STEAM / 'SteamInstall.swift'), str(STEAM.parent / 'Storage/ExternalStorage.swift'), str(STEAM / 'SteamKeyValues.swift'),
                 str(root / 'Dock.swift'), str(root / 'Check.swift'), '-o', str(binary)],
                 capture_output=True, text=True, timeout=60)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
@@ -127,19 +131,21 @@ enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
 
     def test_library_removal_survives_refresh_and_restart_and_can_be_reversed(self):
         service = (STEAM.parent / 'Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
-        methods = service[service.index('    func save(_ entry:'):service.index('    /// Install size and graphics API')]
+        methods = service[service.index('    @discardableResult\n    func save(_ entry:'):service.index("    /// A store's cover art")] + service[service.index('    /// Publishes `next`'):service.index('    /// Install size and graphics API')]
         document = next(line.strip().replace('private struct', 'struct') for line in service.splitlines() if 'private struct Document:' in line)
         detail = (STEAM.parent / 'Library/IridiumWindowsScreens.swift').read_text().split('struct LibraryDetail: View {', 1)[1]
         navigation = detail[detail.index('    private func iridiumNavigate('):detail.index('    var play:')].replace('private func', 'func')
         dock = (STEAM / 'MadeiraDock.swift').read_text().split('    // MARK: Sign-in transfer')[0] + '}\n'
         fixture = r'''import Foundation
 struct LibraryEntry: Codable {
-    var id = UUID(), steamAppID: Int? = nil
+    var id = UUID(), steamAppID: Int? = nil, itchGameID: Int? = nil
+    var epicAppName: String? = nil, eaOfferID: String? = nil
     var title: String, relativePath: String, bits: Int
     var folderBytes: Int64? = nil, graphicsAPI: String? = nil, steamMetadataInstall: String? = nil
     var metadataChecked: Date? = nil, metadataRevision: Int? = nil
     var desktop: Bool? = nil
 }
+enum ExternalDrives { static var steamLibraries: [String] { [] }; static func nativeURL(_ path: String, write: Bool) throws -> URL { URL(fileURLWithPath: path) } }
 enum GameRecommendations { static func prepare(_ entry: inout LibraryEntry, new: Bool) {} }
 enum SteamSignIn { static func flag(_ key: String, default value: Bool) -> Bool { value } }
 enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
@@ -275,6 +281,7 @@ enum DockInstallers { static func setRunsNext(_ id: Int, _ value: Bool, prefix: 
     }
     func endLibraryTransfer() { blocksLaunch = false }
 }
+@MainActor enum ExternalDrives { nonisolated static var steamLibraries: [String] { [] }; static func nativeURL(_ path: String, write: Bool) throws -> URL { Host.steamApps } }
 @MainActor final class Host {
     struct Download { enum State { case paused, active }; var state: State }
     static var steamApps = URL(fileURLWithPath: "/unused")
@@ -324,7 +331,7 @@ enum DockInstallers { static func setRunsNext(_ id: Int, _ value: Bool, prefix: 
             ios = STEAM.parent.parent
             built = subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors',
                 '-module-cache-path', module_cache('macosx'), str(STEAM / 'SteamKeyValues.swift'),
-                str(STEAM / 'SteamInstall.swift'), str(ios / 'RuntimeSupport/IridiumRuntime.swift'),
+                str(STEAM / 'SteamInstall.swift'), str(STEAM.parent / 'Storage/ExternalStorage.swift'), str(ios / 'RuntimeSupport/IridiumRuntime.swift'),
                 str(ios / 'RuntimeSupport/IridiumGameStorage.swift'), str(root / 'Dock.swift'),
                 str(root / 'Check.swift'), '-o', str(root / 'check')], capture_output=True, text=True, timeout=60)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)

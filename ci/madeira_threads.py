@@ -165,7 +165,7 @@ def verify_futex_layout(native, pe):
 
 
 def apply_image_pool(text, header):
-    marker = 'static size_t ios_pool_alloc_range_ex( size_t alloc_size, size_t pool_limit,\n                                       size_t anchor_off, size_t max_dist )'
+    marker = 'static size_t ios_pool_alloc_range_ex( size_t alloc_size, size_t pool_limit,\n                                       size_t anchor_off, size_t max_dist, uint64_t tag )'
     if text.count(marker) != 1: raise ValueError('Madeira pool allocator changed')
     native = '''
 static bool ir_windows_image_accessible(size_t offset, size_t size, bool writable)
@@ -203,12 +203,17 @@ static bool ir_windows_image_live(size_t offset, size_t size)
 '''
     text = text.replace(marker, '#include "' + str(header) + '"\n' + native + marker[:-2]
                         + ', const struct ir_windows_image_request *image_request )')
-    old = '    size_t off = ios_pool_alloc_range_ex( alloc_size, pool_limit, (size_t)-1, 0 );'
+    old = '        off = ios_pool_alloc_range_ex( alloc_size, pool_limit, (size_t)-1, 0, tag );'
     if text.count(old) != 1: raise ValueError('Madeira pool range entry changed')
-    text = text.replace(old, old.replace('0 );', '0, NULL );'))
-    old = '    size_t off = ios_pool_alloc_range_ex( alloc_size, 0, (size_t)-1, 0 );'
+    text = text.replace(old, old.replace('tag );', 'tag, image_request );'))
+    old = '    size_t off = ios_pool_alloc_range_ex( alloc_size, 0, (size_t)-1, 0, 0 );'
     if text.count(old) != 1: raise ValueError('Madeira pool tail entry changed')
     text = text.replace(old, old.replace('0 );', '0, NULL );'))
+    wrapper = 'static size_t ios_pool_alloc_range_tagged( size_t alloc_size, size_t pool_limit, uint64_t tag )'
+    if text.count(wrapper) != 1: raise ValueError('Madeira tagged pool wrapper changed')
+    text = text.replace(wrapper, wrapper[:-2] + ', const struct ir_windows_image_request *image_request )')
+    text = text.replace('ios_pool_alloc_range_tagged( alloc_size, pool_limit, 0 )',
+                        'ios_pool_alloc_range_tagged( alloc_size, pool_limit, 0, NULL )')
     start = text.index('static size_t ios_pool_alloc_range_ex(')
     end = text.index('\n/* ml239:', start)
     allocator = text[start:end]
@@ -222,6 +227,7 @@ static bool ir_windows_image_live(size_t offset, size_t size)
         if (off != (size_t)-1)
         {
             ios_pool_last_alloc_reused = 1;
+            ios_pool_last_same_image = 1;
             dprintf(2, "[session-reclaim] reused whole image allocation off=0x%lx size=0x%lx\\n",
                     (unsigned long)off, (unsigned long)alloc_size);
             goto record_allocation;
@@ -242,14 +248,17 @@ static bool ir_windows_image_live(size_t offset, size_t size)
                                    size_t limit, size_t delta, size_t trampolines)
 {
     const struct ir_windows_image_request request = {base, image_size, delta, trampolines};
-    return ios_pool_alloc_range_ex(alloc_size, limit, (size_t)-1, 0, &request);
+    return ios_pool_alloc_range_tagged(alloc_size, limit, ios_pool_image_tag(base, image_size, alloc_size), &request);
 }
 
 ''' + marker)
+    child = 'ios_pool_image_tag( m->pe_base, m->size, alloc_size ));'
+    if text.count(child) != 1: raise ValueError('Madeira child image pool request changed')
+    text = text.replace(child, child[:-2] + ', NULL);')
     start = text.index('            /* ios_image_reload_mode:')
     end = text.index('            /* Copy ENTIRE PE image', start)
     image = text[start:end]
-    old = 'ios_pool_alloc_range(alloc_size, jit_pool_size - ios_jit_tail_reserved)'
+    old = 'ios_pool_alloc_range_tagged(alloc_size, jit_pool_size - ios_jit_tail_reserved, image_tag)'
     if image.count(old) != 2: raise ValueError('Madeira image allocation calls changed')
     image = image.replace(old, 'ios_pool_alloc_image(image_base, image_size, alloc_size, jit_pool_size - ios_jit_tail_reserved, data_delta, tramp_prealloc)')
     text = text[:start] + image + text[end:]
@@ -497,7 +506,7 @@ void ir_windows_reclaim_completed( void )
     end = text.index('                /* ml210:', start)
     text = text[:start] + '''                if (!sst) ios_steer_record( *ret, want, stid );
 ''' + text[end:]
-    marker = '                NTSTATUS sst = !steer_top ? STATUS_NO_MEMORY :'
+    marker = '                NTSTATUS sst = !steer_ok ? STATUS_NO_MEMORY :'
     if text.count(marker) != 1: raise ValueError('Madeira reservation admission changed')
     text = text.replace(marker, '                ios_steer_reclaim_dead();\n' + marker)
     changes = {

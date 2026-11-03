@@ -21,13 +21,15 @@ struct MadeiraApp: App {
             ContentView()
                 .modifier(ClaimGamepadEvents())
                 .onAppear {
+                    BackgroundRun.shared.start()
+                    ExternalDrives.shared.mountAll()
                     GamepadInput.shared.start()
                     HardwareInput.shared.start()
                     JITNetworkShortcut.shared.restoreLeftover()   // also starts its network path monitor
                 }
                 // madeira://jit-network/... (the Madeira JIT shortcut returning, JITNetwork.swift),
                 // else madeira://play?exe=... (Home Screen shortcuts, SavesAndShortcuts.swift).
-                .onOpenURL { url in if !JITNetworkShortcut.shared.handle(url) { ShortcutRouter.shared.handle(url) } }
+                .onOpenURL { url in if !JITNetworkShortcut.shared.handle(url), !GameSetupInbox.shared.handle(url) { ShortcutRouter.shared.handle(url) } }
         }
     }
 }

@@ -16,7 +16,7 @@ struct IridiumAddGameView: View {
                 Section {
                     source(.files, title: "Choose Files", subtitle: "Add games, folders, archives, or a pairing file.", symbol: "folder")
                     source(.importFolder, title: "Import Folder", subtitle: "Check files in Import and finish pending imports.", symbol: "tray.and.arrow.down")
-                    source(.steam, title: "Steam", subtitle: "Browse and download your Steam games.", symbol: "network")
+                    source(.steam, title: "Stores", subtitle: "Steam, Epic Games, EA, and itch.io.", symbol: "network")
                     source(.cia, title: "Install 3DS CIA", subtitle: "Install a game, update, or DLC.", symbol: "square.and.arrow.down")
                 }
             }.iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)

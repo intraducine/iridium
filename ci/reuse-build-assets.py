@@ -36,14 +36,14 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
-    'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
+    'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json',
                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
                        'ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
                        'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
                        'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
-    'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
+    'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json',
                         'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
@@ -99,7 +99,7 @@ FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tre
 FRONTEND_APP_METADATA = frozenset(('PSP_PRIVACY_DESCRIPTIONS',))
 FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume', 'madeira_threads',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
-                              'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins'))
+                              'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins', 'copy', 'madeira_components', 'madeira_managed_patches'))
 # This reviewed route cannot run app preparation during a compiler action.
 # A new CLI shape uses whole-file comparison until its isolation is reviewed.
 FRONTEND_MAIN = """if __name__ == '__main__':

@@ -93,7 +93,7 @@ extension GameRecommendations {
     /// The line under Reset to Recommended. `desktop`: the Desktop entry's page.
     static func note(_ rec: GameRecommendation?, desktop: Bool = false) -> String {
         guard let rec else { return "Madeira has no recommended settings for this game yet; resetting empties this game's config." }
-        let lines = GameProfile.parse(rec.config).count
+        let lines = GameProfile.parse(rec.fileText).count
         if rec.id == standard.id {
             return (desktop ? "Madeira recommends its standard settings for the Desktop: "
                             : "Madeira has no list for this game yet, so it recommends its standard settings: ")
@@ -139,7 +139,7 @@ extension GameRecommendations {
     }
 
     /// The config file, and on first sight or a reset the switches LibraryPrefs keeps for
-    /// the game's path: AVX, NVIDIA and Wine's C++ runtime.
+    /// the game's path: AVX, NVIDIA, the older NVIDIA card and Wine's C++ runtime.
     @discardableResult
     private static func put(_ rec: GameRecommendation, to windowsPath: String, _ kind: Write, title: String,
                             switches: Bool = true) -> Bool {
@@ -152,6 +152,7 @@ extension GameRecommendations {
         if kind != .updated && switches {
             if let on = rec.avx { LibraryPrefs.setAVX(on, for: windowsPath) }
             if let on = rec.nvidia { LibraryPrefs.setNvidia(on, for: windowsPath) }
+            if let on = rec.olderNvidia { LibraryPrefs.setOlderNvidia(on, for: windowsPath) }
             if let on = rec.wineVCRT { LibraryPrefs.setWineVCRT(on, for: windowsPath) }
         }
         setMark(stamp(rec), windowsPath)
@@ -176,6 +177,8 @@ extension GameRecommendations {
             else if let lines720 = ResolutionChoices.screen720Value { entry.resolution = lines720 }
         }
         if let mode = rec.display { entry.display = mode == DisplayMode.fit.rawValue ? nil : mode }
+        if let mode = rec.launchMode { entry.launchMode = mode == "desktop" ? mode : nil }
+        if let on = rec.startServices { entry.startServices = on ? true : nil }
     }
 
     private static var marks: [String: String] {

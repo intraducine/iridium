@@ -57,6 +57,7 @@ struct Tracker {
 };
 static Tracker tracker;
 static Tracker *InvalidationTracker=&tracker;
+static std::atomic<bool> ProcessTerminating{false};
 static int image_unmaps;
 static void HandleImageUnmap(uint64_t,size_t){image_unmaps++;}
 static std::recursive_mutex ThreadCreationMutex;
@@ -496,6 +497,7 @@ typedef void *HANDLE;
 #define WINAPI
 #define TRACE(...) ((void)0)
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+static int ios_sync_lean;
 static LONG InterlockedCompareExchange(LONG*p,LONG value,LONG expected){return __sync_val_compare_and_swap(p,expected,value);}
 static void InterlockedExchange(LONG*p,LONG value){__sync_lock_test_and_set(p,value);}
 static void InterlockedIncrement64(long long*p){++*p;}
@@ -1121,6 +1123,8 @@ static void *worker(void *value){
  assert(teb==(uintptr_t)value && tramp==value);mach_port_deallocate(mach_task_self(),port);return 0;
 }
 int main(void){
+ assert(pthread_mutex_trylock(&ios_thread_registry_lock)==0);
+ assert(pthread_mutex_unlock(&ios_thread_registry_lock)==0);
  assert(ir_windows_thread_slot()==0);
  register_thread(pthread_mach_thread_np(pthread_self()),1,(void*)1);
  for(uintptr_t i=2;i<1602;i++){
@@ -1362,7 +1366,7 @@ int main(void){
 #define IMAGE_FLAGS_ComPlusNativeReady 1
 #define ERR(...) ((void)0)
 static int native_machine;
-static _Thread_local int ios_child_main_machine,wine_ios_exit_initialized,wine_ios_exit_code;
+static _Thread_local int ios_child_main_machine,wine_ios_exit_initialized,wine_ios_exit_code,ios_child_slot_current;
 static _Thread_local pthread_t wine_ios_main_thread;
 static _Thread_local jmp_buf wine_ios_exit_jmpbuf;
 static _Thread_local const char *ios_child_boot_stage="running";

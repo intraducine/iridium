@@ -28,10 +28,10 @@ class WindowsChromeSourceTests(unittest.TestCase):
         for name, relative in [('GamepadInput.swift', 'GamepadInput.swift'),
                                ('TouchGamepad.swift', 'TouchGamepad.swift'),
                                ('WiniosGamepad.c', 'Winios/WiniosGamepad.c')]:
-            base = ROOT/'ci/fixtures/madeira-build43/app/Madeira' if name.endswith('.swift') else frontend.UPSTREAM/'app/Madeira'
+            base = frontend.UPSTREAM/'app/Madeira' if name.endswith('.swift') else frontend.UPSTREAM/'app/Madeira'
             original = (base/relative).read_text()
             self.assertEqual(frontend.overlay(name, original), original)
-        original = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
+        original = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         actual = frontend.overlay('ContentView.swift', original)
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
@@ -54,14 +54,15 @@ class WindowsChromeSourceTests(unittest.TestCase):
         self.assertIn(ready_guard, admission)
         admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
         self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, ''),
-                         original[original.index(start):original.index(end)])
+                         original[original.index(start):original.index(end)].replace(
+                             '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', ''))
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
         spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, start, end in [('ContentView.swift', 'enum TouchControlsHost {', 'struct TouchControlsOverlay: View {'),
                                  ('Library.swift', '    func showGameView(reason:', '    /// The hotkey')]:
-            before = (ROOT/'ci/fixtures/madeira-build43/app/Madeira'/name).read_text()
+            before = (frontend.UPSTREAM/'app/Madeira'/name).read_text()
             after = frontend.overlay(name, before)
             # The next Library comment is pin-specific; compare the method alone.
             if name == 'Library.swift':
@@ -80,7 +81,7 @@ class WindowsChromeLifecycleTests(unittest.TestCase):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
         spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
-        upstream = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
+        upstream = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         current = frontend.overlay('ContentView.swift', upstream)
         menu = (frontend.FRONTEND/'IridiumPlayerMenu.swift').read_text()
         menu = menu[menu.index('struct IridiumPlayerMenuButton:'):menu.index('struct IridiumPlayerMenuHeader:')]

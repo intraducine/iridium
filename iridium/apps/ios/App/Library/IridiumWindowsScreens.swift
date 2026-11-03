@@ -33,7 +33,7 @@ struct LibraryTitleText: View {
                 .foregroundStyle(jit ? Color.accentColor : Color.primary)
                 .contentTransition(.symbolEffect(.replace))
                 .alignmentGuide(.firstTextBaseline) { d in d.height / 2 + LibraryHeaderAlignment.titleFont().capHeight / 2 }
-                .accessibilityLabel(jit ? "JIT enabled" : "JIT not enabled")
+                .accessibilityLabel(jit ? L("JIT enabled") : L("JIT not enabled"))
         }
         .font(.largeTitle.bold())
         .fixedSize()
@@ -767,12 +767,19 @@ struct LibraryStatus: View {
     @State private var memory = false
     let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     var body: some View {
-        HStack(spacing: 8) {
-            badge("JIT", jit)
-            badge("Memory+", memory)
-            if jit && memory {
-                Text("Ready to play").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                    .padding(.leading, 4)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                badge("JIT", jit)
+                badge("Memory+", memory)
+                if jit && memory {
+                    Text("Ready to play").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                }
+            }
+            if !memory {
+                Text("Memory+ requires the Increased Memory Limit entitlement in this signed copy of Madeira. Enabling JIT does not grant it. Check that your signing tool enables this capability for Madeira, then sign and install the updated app without deleting your existing installation.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onAppear { update() }.onReceive(ticks) { _ in update() }
@@ -922,9 +929,9 @@ enum LibraryGrouping {
             let today = calendar.startOfDay(for: now)
             let week = calendar.date(byAdding: .day, value: -6, to: today) ?? today
             let month = calendar.date(byAdding: .day, value: -29, to: today) ?? today
-            groups = [Group(id: "today", title: "Today", games: []), Group(id: "week", title: "Past 7 days", games: []),
-                      Group(id: "month", title: "Past 30 days", games: []), Group(id: "earlier", title: "Earlier", games: []),
-                      Group(id: "never", title: "Never played", games: [])]
+            groups = [Group(id: "today", title: L("Today"), games: []), Group(id: "week", title: L("Past 7 days"), games: []),
+                      Group(id: "month", title: L("Past 30 days"), games: []), Group(id: "earlier", title: L("Earlier"), games: []),
+                      Group(id: "never", title: L("Never played"), games: [])]
             for game in games {
                 let index: Int
                 if let played = game.lastPlayed {
@@ -995,7 +1002,7 @@ struct LibraryGroupedGames<LocalCell: View>: View {
         var result = Sources()
         let query = search.trimmingCharacters(in: .whitespaces)
         var steamEntries: [Int: (position: Int, entry: LibraryEntry)] = [:]
-        for (position, entry) in library.entries.enumerated() where entry.desktop != true {
+        for (position, entry) in library.entries.enumerated() where entry.desktop != true && entry.listedInLibrary {
             if let appID = entry.steamAppID { steamEntries[appID] = (position, entry) }
             else if query.isEmpty || entry.title.localizedCaseInsensitiveContains(query) {
                 result.entries[entry.id] = entry
@@ -1157,7 +1164,7 @@ struct LibraryView: View {
     @ObservedObject private var steamLibrary = SteamOwnedLibrary.shared
     private var entries: [LibraryEntry] {
         // Steam games are listed in their own section (SteamGames.swift).
-        let visible = model.entries.filter { $0.desktop != true && $0.steamAppID == nil && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
+        let visible = model.entries.filter { $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.itchGameID == nil && $0.eaOfferID == nil && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
         if sort == "added" { return visible.reversed() }
         return visible.sorted {
             if sort == "played", $0.lastPlayed != $1.lastPlayed { return ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
@@ -1211,19 +1218,19 @@ case "Saves & Backups": Form { Group { SavesSection() }.iridiumRowSurface() }.ir
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Steam": Form { Group { SteamSettingsSection(open: { settingsSheet = $0 }) }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Steam")
+case "Stores & Drives": Form { Group { SteamSettingsSection(open: { settingsSheet = $0 }); EpicSettingsSection(open: { settingsSheet = $0 }); EASettingsSection(open: { settingsSheet = $0 }); ItchSettingsSection(); ExternalDrivesSection() }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Stores & Drives")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Windows Components": Form { Group { WineMonoSettingsSection() }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Windows Components")
+case "Windows Components": Form { Group { WineMonoSettingsSection(); VCRedistSettingsSection(); WineGeckoSettingsSection() }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Windows Components")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Advanced Compatibility": Form { Group { if MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh) }
+case "Advanced Compatibility": Form { Group { if MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") { RuntimeMemorySyncSettings(open: { settingsSheet = $0 }, refresh: settingsRefresh); GraphicsSettings(refresh: settingsRefresh) }
 Section("Diagnostics") { Toggle("Detailed logging", isOn: $input.diagnostics) }
 Section { Toggle("Desktop reflections", isOn: $liquidMetal.on) } header: { Text("Appearance") } footer: { Text("Adds moving reflections to Windows desktop controls.") } }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Advanced Compatibility")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
@@ -1243,8 +1250,8 @@ Section("Preferences") { NavigationLink("Display", value: "Display").id("Display
                     .listRowBackground(iridiumGuided && iridiumFocus == "Display" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("Saves & Backups", value: "Saves & Backups").id("Saves & Backups")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Saves & Backups" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
-NavigationLink("Steam", value: "Steam").id("Steam")
-                    .listRowBackground(iridiumGuided && iridiumFocus == "Steam" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }
+NavigationLink("Stores & Drives", value: "Stores & Drives").id("Stores & Drives")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Stores & Drives" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }
 Section("Compatibility") { NavigationLink("Windows Components", value: "Windows Components").id("Windows Components")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Windows Components" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("Advanced Compatibility", value: "Advanced Compatibility").id("Advanced Compatibility")
@@ -1322,9 +1329,9 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         // On the tab view, not inside one tab's page: an alert attached to the Library
         // page cannot present while Settings is showing, so an error raised there (its
         // Enable JIT, for one) waited until the Library tab came back.
-        .alert(jitProblem == nil ? "Library" : "Couldn't Enable JIT",
+        .alert(jitProblem == nil ? L("Library") : L("Couldn't Enable JIT"),
                isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
-            if let jitProblem { jitConnectionActions(jitProblem, retry: enableJIT) { model.error = nil } }
+            if let jitProblem { jitConnectionActions(jitProblem, retry: enableJIT, then: { model.error = nil }) }
             Button("OK", role: .cancel) { model.error = nil }
         } message: { Text(model.error ?? "") }
         .sheet(item: $iridiumDetailSelection) { route in
@@ -1398,7 +1405,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
         case nil: return ["Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
-        case "Madeira · Windows": return ["Display", "Saves & Backups", "Steam", "Windows Components", "Advanced Compatibility"]
+        case "Madeira · Windows": return ["Display", "Saves & Backups", "Stores & Drives", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
             return IridiumSystemGameSettings.routes(for: system.primaryPlatform)
@@ -1452,6 +1459,9 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         let q = settingsSearch.trimmingCharacters(in: .whitespaces)
         return q.isEmpty || words.contains { $0.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0) }
     }
+    /// The Display and Memory and sync settings, on the long page and as pages.
+    static var runtimeSettingsShown: Bool { MadeiraConfig.flag("MADEIRA_RUNTIME_SETTINGS") }
+    private var settingsTab: some View { settings }
     private var settings: some View {
         Form {
             Group {
@@ -1474,10 +1484,10 @@ ForEach(IridiumConsoleSystem.all) { system in
                     .listRowBackground(iridiumGuided && iridiumFocus == "About" ? Color.white.opacity(0.2) : Color.white.opacity(0.07)) }.iridiumRowSurface()
             }.iridiumRowSurface()
         }
-        .alert("Restart Madeira", isPresented: $restartNotice) {
+        .alert("Restart Iridium", isPresented: $restartNotice) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Close Madeira from the app switcher and open it again to switch interfaces.")
+            Text("Close Iridium from the app switcher and open it again to switch interfaces.")
         }
         // The Settings sheets hang off the Form, never off one of its rows: a Form
         // may rebuild its rows while a sheet slides up over it, and a sheet whose
@@ -1486,6 +1496,8 @@ ForEach(IridiumConsoleSystem.all) { system in
             switch sheet {
             case .allSettings: AllSettingsView()
             case .steamSignIn: SteamSignInView()
+            case .epicSignIn: EpicSignInView()
+            case .eaSignIn: EASignInView()
             case .dock: MadeiraDockView(start: startDock)
             }
         }
@@ -1520,14 +1532,14 @@ ForEach(IridiumConsoleSystem.all) { system in
                 if SteamGamesSection.shown {
                     VStack(alignment: .leading, spacing: 14) {
                         // Games are added with the + in the navigation bar.
-                        LibrarySectionHeader(title: "Other games", count: entries.count,
+                        LibrarySectionHeader(title: L("Other games"), count: entries.count,
                                              collapsed: SteamGamesSection.collapsible ? $hideOthers : nil) { EmptyView() }
                         if hideOthers && SteamGamesSection.collapsible {
                             EmptyView()
                         } else if entries.isEmpty {
                             Text(search.isEmpty
                                  ? "Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."
-                                 : "No other games match your search.")
+                                 : L("No other games match your search."))
                                 .foregroundStyle(.secondary)
                         } else {
                             cells(entries, width: viewport.size.width)
@@ -1537,10 +1549,25 @@ ForEach(IridiumConsoleSystem.all) { system in
                         SteamGamesSection(search: search, layout: layout, sort: sort, width: viewport.size.width,
                                           part: steamFirst ? .notInstalled : .all, open: { selected = $0 })
                     }
-                } else if model.entries.filter({ $0.desktop != true && $0.steamAppID == nil }).isEmpty {
-                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                } else if model.entries.filter({ $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.itchGameID == nil && $0.eaOfferID == nil }).isEmpty {
+                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
                 } else {
                     cells(entries, width: viewport.size.width)
+                }
+                // The account's itch.io games (ItchGames.swift): installed ones open their
+                // Game details page, the others their download sheet.
+                if ItchLibrary.enabled {
+                    ItchGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
+                }
+                // The account's Epic Games games (EpicGames.swift): installed ones open their
+                // Game details page, the others their download sheet.
+                if EpicLibrary.enabled {
+                    EpicGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
+                }
+                // The account's EA app games (EAGames.swift): installed ones open their
+                // Game details page, the others their download sheet.
+                if EALibrary.enabled {
+                    EAGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
                 }
                 }
             }
@@ -1606,6 +1633,30 @@ ForEach(IridiumConsoleSystem.all) { system in
                 .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.4), value: liquidMetal.on)
                 .id(LibraryEntry.desktopID)
                 .overlay(RoundedRectangle(cornerRadius: 22).stroke(focused == LibraryEntry.desktopID && controller.connected ? Color.cyan : .clear, lineWidth: 3))
+            // ml2021: Valve's client in Big Picture, beside the Desktop, once Steam is installed in the prefix;
+            // only in builds with MADEIRA_BIG_PICTURE_UI (LibraryEntry.bigPictureShown).
+#if MADEIRA_BIG_PICTURE_UI
+            if LibraryEntry.steamClientInstalled {
+                Button { selected = model.entries.first(where: { $0.bigPicture == true }) ?? .bigPictureEntry } label: {
+                    if liquidMetal.on {
+                        let light = colorScheme == .light
+                        Label("Big Picture", systemImage: "gamecontroller")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(light ? .black : .white)
+                            .shadow(color: (light ? Color.white : .black).opacity(0.75), radius: 2.5)
+                            .padding(.horizontal, 14).frame(minHeight: 44)
+                            .background(LiquidMetalFill())
+                            .contentShape(Capsule())
+                    } else {
+                        Label("Big Picture", systemImage: "gamecontroller")
+                            .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
+                            .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                    }
+                }.buttonStyle(.plain)
+                    .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.4), value: liquidMetal.on)
+                    .id(LibraryEntry.bigPictureID)
+                    .accessibilityHint("Steam's gamepad interface in the Wine desktop")
+            }
+#endif
         }
     }
     private func cells(_ items: [LibraryEntry], width viewportWidth: CGFloat) -> some View {
@@ -1677,12 +1728,12 @@ struct ExecutableBrowser: View {
             do {
                 // ml1163: .bat and .cmd files are listed too (they run through cmd.exe).
                 files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
+                    // External drives are linked in as symlinks: list them as folders.
                     .map { url in
-                        var directory: ObjCBool = false
-                        _ = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
-                        return URL(fileURLWithPath: url.path, isDirectory: directory.boolValue)
+                        let isDir = (try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                        return URL(fileURLWithPath: url.path, isDirectory: isDir == true)
                     }
-                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && IridiumGameStorage.windowsRelative($0, drive: LibraryModel.drive) != nil }
+                    .filter { ($0.hasDirectoryPath || LibraryModel.programExtensions.contains($0.pathExtension.lowercased())) && LibraryModel.relativeToDrive($0) != nil }
                     .sorted { if $0.hasDirectoryPath != $1.hasDirectoryPath { return $0.hasDirectoryPath }; return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             } catch { self.error = error.localizedDescription }
         }
@@ -1756,6 +1807,12 @@ struct LibraryDetail: View {
     @State private var leaving = false
     @State private var error: String?
     @State private var copiedLink = false
+    /// Share Setup and Apply Shared Setup (GameSetupShare.swift).
+    @State private var shareSetup = false
+    @State private var askSetupSource = false
+    @State private var importSetup = false
+    @State private var setupToApply: GameSetupInbox.Pending?
+    @State private var setupError: String?
     /// Where Play is on screen: the starting screen grows out of it (LaunchCurtain).
     @State private var playFrame: CGRect = .zero
     /// Settings › Sync engine, read when the details open: the fastsync switches
@@ -1767,7 +1824,10 @@ struct LibraryDetail: View {
     /// the game's config lines in its GameProfiles.swift file. This page's
     /// controls read and write them; the entry fields upstream keeps for the
     /// same options (avx, reportNVIDIA, config) are moved into them once.
-    private func reloadBCD() { bcd = BCDGameValues(windowsPath: entry.windowsPath) }
+    private func reloadBCD() {
+        bcd = BCDGameValues(windowsPath: entry.windowsPath)
+        bcd.unityIL2CPP = BCDLaunch.isUnityIL2CPP(entry)
+    }
     private func migrateEntryOptions() {
         let path = entry.windowsPath
         let file = GameProfile(windowsPath: path)
@@ -1799,6 +1859,11 @@ struct LibraryDetail: View {
         model.save(entry)
         reloadBCD()
     }
+    /// Apply Shared Setup: reads the setup, then shows what it holds before applying.
+    private func readSetup(_ read: () throws -> GameSetup) {
+        do { setupToApply = GameSetupInbox.Pending(setup: try read()) }
+        catch { setupError = error.localizedDescription }
+    }
     /// "None", or how many keys this game's own config sets.
     static func configSummary(_ config: String?) -> String {
         let count = MadeiraConfig.parse(config ?? "").count
@@ -1809,9 +1874,40 @@ struct LibraryDetail: View {
         // A Steam game starts through Madeira Dock (ContentView.launchLibraryEntry)
         // once its files are complete and Dock can sign in; "The game" once its
         // program is chosen (no client or sign-in involved).
+        // An itch.io game starts once its files are complete (ItchLibrary).
+        if let game = entry.itchGameID {
+            if ItchLibrary.shared.downloads[game] != nil {
+                error = L("This game's download has not finished. Resume it and wait for it to complete before playing."); return
+            }
+            if ItchLibrary.shared.installed[game] == nil {
+                error = L("This itch.io game is no longer installed. Install it again from the itch.io section."); return
+            }
+        }
+        // An EA game starts once its files are complete and the account is signed in
+        // (EALibrary.prepareLaunch gets its licence and the EA app's environment).
+        if let offer = entry.eaOfferID {
+            if EALibrary.shared.downloads[offer] != nil {
+                error = "This game's download has not finished. Resume it and wait for it to complete before playing."; return
+            }
+            if EALibrary.shared.installed[offer] == nil {
+                error = "This EA game is no longer installed. Install it again from the EA app section."; return
+            }
+            if !EALibrary.shared.signedIn {
+                error = "Sign in to EA in Settings › EA app first. An EA game needs the sign-in to get its licence and start."; return
+            }
+        }
+        // An Epic game starts once its files are complete (EpicLibrary).
+        if let app = entry.epicAppName {
+            if EpicLibrary.shared.downloads[app] != nil {
+                error = L("This game's download has not finished. Resume it and wait for it to complete before playing."); return
+            }
+            if EpicLibrary.shared.installed[app] == nil {
+                error = L("Epic Games no longer lists this game as installed. Install it again from the Epic Games section."); return
+            }
+        }
         if let appID = entry.steamAppID {
             if SteamOwnedLibrary.shared.downloads[appID] != nil {
-                error = "This game's update has not finished. Resume it and wait for it to complete before playing."; return
+                error = L("This game's update has not finished. Resume it and wait for it to complete before playing."); return
             }
             let installed = SteamGamesModel.shared.games.first { $0.id == appID }?.installed ?? false
             if entry.startsSteamGameDirectly {
@@ -1835,10 +1931,389 @@ struct LibraryDetail: View {
     @ViewBuilder private func artwork(backdrop: Bool) -> some View {
         LibraryArtwork(entry: entry, backdrop: backdrop)
     }
-    var body: some View {
-      ScrollViewReader { proxy in
-        NavigationStack(path: $iridiumPages) {
-            Form {
+    /// The pages the details page links to (iOS Settings style), each with its own Form.
+    enum Page: Hashable {
+        case display, controls, launch, compatibility, steam, cloud, achievements, itch, library, iniFiles, advanced
+        var title: String {
+            switch self {
+            case .display: return "Display"
+            case .controls: return "Controls"
+            case .launch: return "Launch"
+            case .compatibility: return "Compatibility"
+            case .steam: return "Steam"
+            case .cloud: return "Steam Cloud"
+            case .workshop: return "Steam Workshop"
+            case .itch: return "itch.io"
+            case .achievements: return "Achievements"
+            case .library: return "Library details"
+            case .iniFiles: return "Settings files"
+            case .advanced: return "Advanced"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .display: return "display"
+            case .controls: return "gamecontroller"
+            case .launch: return "terminal"
+            case .compatibility: return "cpu"
+            case .steam: return "shippingbox"
+            case .cloud: return "icloud"
+            case .workshop: return "square.stack.3d.up"
+            case .itch: return "bag"
+            case .achievements: return "trophy"
+            case .library: return "info.circle"
+            case .iniFiles: return "doc.text"
+            case .advanced: return "wrench.and.screwdriver"
+            }
+        }
+        /// A Steam game's Steam Workshop items (SteamWorkshop.swift).
+        case workshop
+    }
+    @State private var path: [Page] = []
+    /// The rows of the details page, in groups. The Desktop entry has no launch options
+    /// or library details; a Steam game has its Steam pages.
+    private var pageGroups: [[Page]] {
+        let launch = entry.usesLaunchOptions || entry.desktop != true
+        let steam: [Page] = entry.steamAppID == nil ? (entry.itchGameID != nil ? [.itch] : [])
+            : (SteamOwnedLibrary.cloudEnabled ? [.steam, .cloud, .achievements] : [.steam, .achievements])
+                + (SteamOwnedLibrary.workshopEnabled && Self.showsWorkshop(entry.steamAppID) ? [.workshop] : [])
+        let tuning: [Page] = launch ? [.display, .controls, .launch, .compatibility] : [.display, .controls, .compatibility]
+        let more: [Page] = entry.desktop == true ? [.advanced] : [.library, .iniFiles, .advanced]
+        return [tuning, steam, more].filter { !$0.isEmpty }
+    }
+    /// Steam Workshop is offered unless Steam says the game has none
+    /// (SteamOwnedGame.workshop; unknown in older caches).
+    @MainActor private static func showsWorkshop(_ appID: Int?) -> Bool {
+        guard let appID else { return false }
+        return SteamOwnedLibrary.shared.game(appID)?.workshop != false
+    }
+    /// The value a page's row shows, when one setting sums it up.
+    private func summary(_ page: Page) -> String? {
+        switch page {
+        case .display: return entry.metalFXUpscale.map { "\(entry.resolution) · MetalFX \($0 == 2 ? "2" : "1.5")×" } ?? entry.resolution
+        case .controls: return entry.controllerMode == "keys" ? "Keyboard and mouse" : entry.controllerMode == "dinput" ? "XInput and DirectInput" : nil
+        case .launch: return entry.usesLaunchOptions ? (entry.runsInDesktop ? L("Wine desktop") : L("Directly")) : nil
+        case .steam: return entry.startsSteamGameDirectly ? "The game" : "Madeira Dock"
+        case .advanced: return Self.configSummary(bcd.configText)   // madeira-bcd: the game's own config file
+        case .iniFiles:
+            let count = GameIniFiles.files(entry.windowsPath).count
+            return count == 0 ? nil : count == 1 ? "1 file" : "\(count) files"
+        default: return nil
+        }
+    }
+
+    @ViewBuilder private func page(_ page: Page) -> some View {
+        Form {
+            switch page {
+            case .display: displayPage
+            case .controls: controlsPage
+            case .launch: launchPage
+            case .compatibility: compatibilityPage
+            case .steam: steamPage
+            case .cloud: if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }
+            case .workshop:
+                if let appID = entry.steamAppID, appID > 0, appID <= Int(UInt32.max) {
+                    SteamWorkshopSections(appID: UInt32(appID), title: entry.title)
+                }
+            case .itch: ItchEntrySection(entry: $entry) { leaving = true; dismiss() }
+            case .achievements: if let appID = entry.steamAppID { SteamAchievementsSection(appID: appID) }
+            case .library: libraryPage
+            case .iniFiles: GameIniFilesSection(windowsPath: entry.windowsPath, gameFolder: iniGameFolder)
+            case .advanced: advancedPage
+            }
+        }
+        .navigationTitle(page.title).navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder private var displayPage: some View {
+        Section {
+            // The Windows screen the game renders for (and the Desktop's size).
+            // ml1172: this device's choices (ResolutionChoices), grouped.
+            let groups = ResolutionChoices.groups()
+            let metalFX = ResolutionChoices.metalFX(in: groups)
+            Picker("Resolution", selection: $entry.resolution) {
+                ForEach(groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.choices, id: \.value) { Text($0.label).tag($0.value) }
+                    }
+                }
+                // The screen's shape at 480 lines, which MetalFX 1.5× brings to 720.
+                if let shape = metalFX, entry.metalFXUpscale == 1.5 || entry.resolution == shape.value {
+                    Text(shape.label).tag(shape.value)
+                }
+                // A size none of them has, so the picker never shows a blank choice.
+                if entry.resolution != metalFX?.value, let saved = ResolutionChoices.extra(entry.resolution, in: groups, note: "saved") {
+                    Text(saved.label).tag(entry.resolution)
+                }
+            }
+            Picker("Aspect & scaling", selection: Binding(get: { entry.displayMode.rawValue }, set: { entry.display = $0 })) {
+                ForEach(DisplayMode.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+            }
+            // Every setting here is the Desktop's too: its programs present through
+            // the same path, and its launch applies them like a game's
+            // (applyEnvironment, gameConfigText). check-frontend holds the parity.
+            Picker("MetalFX upscaling", selection: $entry.metalFXUpscale) {
+                Text("Off").tag(Double?.none)
+                Text("1.5×").tag(Double?.some(1.5))
+                Text("2×").tag(Double?.some(2))
+            }
+            Toggle("Frame generation (experimental)", isOn: Binding(get: { entry.frameGeneration ?? false }, set: { entry.frameGeneration = $0 ? true : nil }))
+            if entry.frameGeneration == true {
+                Text("Adds a generated frame between real ones. More latency; the FPS limit is ignored.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: { Text("Display") } footer: {
+            Text("MetalFX renders at the resolution above and upscales it (Direct3D 11 and 12).")
+        }
+    }
+
+    @ViewBuilder private var controlsPage: some View {
+        Section("On screen") {
+            if GamepadInput.keyboardMouseAvailable {
+                ControllerModeChoice(mode: $entry.controllerMode)
+                if entry.controllerMode == "dinput" {
+                    Text("For older games that read the pad through DirectInput.").font(.caption).foregroundStyle(.secondary)
+                }
+                if entry.controllerMode == "keys" {
+                    Text("The pad acts as keyboard and mouse. Change keys in Controller binds.").font(.caption).foregroundStyle(.secondary)
+                    NavigationLink("Controller binds") {
+                        Form { ControllerBindsPage(binds: $entry.controllerBinds, mouseVertical: $entry.padMouseVertical) }
+                            .navigationTitle("Controller binds")
+                            .toolbar {
+                                Button("Reset") { entry.controllerBinds = nil; entry.padMouseVertical = nil }
+                                    .disabled(entry.controllerBinds == nil && entry.padMouseVertical == nil)
+                            }
+                    }
+                }
+            }
+            if GamepadInput.enabled {
+                NavigationLink("Gyro aim & turbo") {
+                    Form { PadAssistPage(settings: $entry.padAssist) }
+                        .navigationTitle("Gyro aim & turbo")
+                        .toolbar { Button("Reset") { entry.padAssist = nil }.disabled(entry.padAssist == nil) }
+                }
+            }
+            LabeledContent("Control opacity") {
+                Slider(value: Binding(get: { entry.controlOpacity ?? 0.7 }, set: { entry.controlOpacity = $0 }), in: 0.15...1)
+            }
+            LabeledContent("Control size") {
+                Slider(value: Binding(get: { entry.controlSize ?? 1 }, set: { entry.controlSize = $0 }), in: 0.5...2)
+            }
+            Text("Edit buttons from the in-game menu.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var launchPage: some View {
+        // ml1163: how the program starts. Not for the Desktop entry, nor for a Steam
+        // game started through Madeira Dock, whose desktop and command are Dock's:
+        // there these choices would do nothing.
+        if entry.usesLaunchOptions {
+            Section {
+                Picker("Start", selection: Binding(get: { entry.runsInDesktop ? "desktop" : "direct" }, set: {
+                    entry.launchMode = $0 == "desktop" ? "desktop" : nil
+                })) {
+                    Text("Directly").tag("direct")
+                    Text("In the Wine desktop").tag("desktop")
+                }
+                TextField("Working folder (default: the program's folder)", text: Binding(get: { entry.workingDirectory ?? "" }, set: {
+                    entry.workingDirectory = $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0
+                })).autocorrectionDisabled().textInputAutocapitalization(.never).font(.body.monospaced())
+                Toggle("Start Windows services first", isOn: Binding(get: { entry.startServices == true }, set: {
+                    entry.startServices = $0 ? true : nil
+                }))
+            } header: { Text("Launch") } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("The working folder is a C:\\ path. Services are for launchers that need them.")
+                    if !entry.runsInDesktop && (entry.isBatch || entry.startServices == true) {
+                        // Wine stops with its first process (the ml1163 open risk).
+                        Text("A batch file that exits closes the game. Start it in the Wine desktop.")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+        // A Steam game starts with Steam's own launch option through Madeira Dock.
+        if entry.desktop != true {
+            Section {
+                TextField("Launch arguments", text: $entry.arguments.plainLaunchArguments, axis: .vertical)
+                    .font(.body.monospaced()).lineLimit(1...4)
+                    .autocorrectionDisabled().textInputAutocapitalization(.never).smartPunctuationOff()
+                LaunchFlagChips(arguments: $entry.arguments)
+                // What the next start runs (ml1163: in the Wine desktop, a batch file or
+                // the services batch, what starts the program).
+                Text(entry.commandPreview)
+                    .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            } header: { Text("Launch arguments") } footer: {
+                Text(entry.steamAppID == nil ? L("Passed on every start. Above: the full command.") : L("Steam adds these to the selected launch option on every start."))
+            }
+        }
+    }
+
+    @ViewBuilder private var compatibilityPage: some View {
+        Section {
+            Picker(selection: $entry.x87Precision) {
+                Text("Automatic").tag(LibraryEntry.X87Precision.automatic)
+                Text("Reduced (faster)").tag(LibraryEntry.X87Precision.reduced)
+                Text("Full (accurate)").tag(LibraryEntry.X87Precision.full)
+            } label: {
+                compatLabel(L("x87 precision"), L("Automatic is fast for 32-bit games and accurate for 64-bit ones. Full can halve a 32-bit game's frame rate."))
+            }
+            Toggle(isOn: Binding(get: { entry.largeReservations ?? false }, set: { entry.largeReservations = $0 ? true : nil })) {
+                compatLabel(L("Large memory reservations"), L("For requests of 64 GB or more. Backs up to 16 GB by default."))
+            }
+            // madeira-bcd: AVX, NVIDIA and Wine's C++ runtime are LibraryPrefs, which
+            // BCDLaunch exports at every launch (reloadBCD / migrateEntryOptions).
+            Toggle(isOn: Binding(get: { bcd.avx }, set: { on in bcd.avx = on; LibraryPrefs.setAVX(on, for: entry.windowsPath) })) {
+                compatLabel(L("AVX and AVX2"), L("For games that quit with c000001d"))
+            }
+            // Exported for this game only when chosen (applyEnvironment).
+            Picker("CPU cores reported", selection: Binding(get: { entry.cpuCount ?? 0 }, set: { entry.cpuCount = $0 == 0 ? nil : $0 })) {
+                Text("Automatic").tag(0)
+                ForEach([1, 2, 4, 6], id: \.self) { Text("\($0)").tag($0) }
+            }
+            // Hidden: an old build's switch the D3D9 path no longer needs. A game that has a limit still exports it, and
+            // keeps the picker so it can go back to Application default.
+            if entry.anisotropyLimit != nil {
+                Picker("D3D9 anisotropic filtering", selection: Binding(get: { entry.anisotropyLimit ?? 0 }, set: { entry.anisotropyLimit = $0 == 0 ? nil : $0 })) {
+                    Text("Application default").tag(0)
+                    ForEach([1, 2, 4, 8], id: \.self) { Text("Up to \($0)×").tag($0) }
+                }
+            }
+            // GPUCards.swift: a chosen card replaces the two NVIDIA switches below.
+            Picker(selection: Binding(get: { bcd.gpuCard }, set: { id in bcd.gpuCard = id; LibraryPrefs.setGPUCard(id, for: entry.windowsPath) })) {
+                Text("Automatic").tag("")
+                ForEach(GPUCards.all, id: \.id) { Text($0.title).tag($0.id) }
+            } label: {
+                compatLabel("Graphics card the game sees", "For games that refuse this GPU or only run on cards they know")
+            }
+            Group {
+                Toggle(isOn: Binding(get: { bcd.nvidia }, set: { on in bcd.nvidia = on; LibraryPrefs.setNvidia(on, for: entry.windowsPath) })) {
+                    compatLabel("Report an NVIDIA GPU", "For \"no graphics card\" errors")
+                }
+                Toggle(isOn: Binding(get: { bcd.olderNvidia }, set: { on in bcd.olderNvidia = on; LibraryPrefs.setOlderNvidia(on, for: entry.windowsPath) })) {
+                    compatLabel("Older NVIDIA card (Direct3D 9)", "For older games that crash with this GPU, like Fallout 3 and New Vegas")
+                }
+            }
+            .disabled(GPUCards.card(bcd.gpuCard) != nil)
+            Toggle(isOn: Binding(get: { bcd.wineVCRT }, set: { on in bcd.wineVCRT = on; LibraryPrefs.setWineVCRT(on, for: entry.windowsPath) })) {
+                compatLabel(L("Wine's C++ runtime"), L("Instead of the game's msvcp/vcruntime"))
+            }
+            // madeira-bcd: MADEIRA_REAL_SUSPEND for this game (BCDLaunch.realSuspend).
+            Picker(selection: Binding(get: { bcd.realSuspend.map { $0 ? 1 : 2 } ?? 0 },
+                                      set: { v in bcd.realSuspend = v == 0 ? nil : v == 1; LibraryPrefs.setRealSuspend(bcd.realSuspend, for: entry.windowsPath) })) {
+                Text("Automatic").tag(0)
+                Text("On").tag(1)
+                Text("Off").tag(2)
+            } label: {
+                compatLabel(L("Pause threads fully"), L("For Unity games that crash while loading, like Megabonk. Can make other games freeze"))
+            }
+            // Fastsync-only switches: shown for every game, usable only while
+            // Settings › Sync engine is Fastsync.
+            Group {
+                Toggle("Fast synchronization", isOn: Binding(get: { entry.fastSync ?? true }, set: { entry.fastSync = $0 }))
+                Toggle("Fast semaphore waits (experimental)",
+                       isOn: Binding(get: { entry.semaphoreFastPath ?? false }, set: { entry.semaphoreFastPath = $0 }))
+            }
+            .disabled(syncEngine != .fastsync)
+            if syncEngine != .fastsync {
+                Text("Choose Fastsync in Settings › Memory & sync to use these.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } header: { Text("Compatibility & performance") } footer: {
+            Text("Applies at the next launch.")
+        }
+    }
+    private func compatLabel(_ title: String, _ note: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(note).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var steamPage: some View {
+        // A Steam game's start, update, repair and Uninstall (SteamGames.swift).
+        if entry.steamAppID != nil {
+            SteamEntrySection(entry: $entry) { leaving = true; dismiss() }
+            Section {
+                Text(entry.launchWindowsPath).font(.caption.monospaced()).textSelection(.enabled)
+                if entry.startsSteamGameDirectly, !entry.launchArguments.isEmpty {
+                    Text(entry.launchArguments).font(.caption.monospaced()).textSelection(.enabled)
+                }
+            } header: { Text("Executable") }
+            if model.entries.contains(where: { $0.id == entry.id }) { GameMoveSection(entry: $entry) }
+        }
+    }
+
+    @ViewBuilder private var libraryPage: some View {
+        if entry.desktop != true { Section("Library details") {
+            TextField("Title", text: $entry.title)
+            Button("Find on Steam", systemImage: "magnifyingglass") { findCover = true }
+            Button("Choose cover image", systemImage: "photo") { importCover = true }
+            if entry.coverFile != nil { Button((entry.steamAppID ?? entry.steamID) != nil ? L("Use Steam artwork") : L("Remove cover image")) { entry.coverFile = nil } }
+        } }
+        // A link that starts this game from a Home Screen icon (SavesAndShortcuts.swift).
+        if entry.desktop != true {
+            Section {
+                Button {
+                    UIPasteboard.general.string = ShortcutRouter.link(for: entry.windowsPath)
+                    copiedLink = true
+                } label: {
+                    Label(copiedLink ? L("Link copied") : L("Copy Home Screen shortcut link"),
+                          systemImage: copiedLink ? "checkmark" : "link")
+                }
+            } header: { Text("Home Screen") } footer: {
+                Text("Shortcuts › Open URLs › paste › Add to Home Screen.")
+            }
+        }
+        if entry.steamAppID == nil && entry.desktop != true {
+            Section("Executable") { Text(entry.windowsPath).font(.caption.monospaced()).textSelection(.enabled) }
+            if model.entries.contains(where: { $0.id == entry.id }) { GameMoveSection(entry: $entry) }
+            Section { Button("Remove from library", role: .destructive) { remove = true } }
+        }
+        if let error { Section { Text(error).foregroundStyle(.red) } }
+    }
+
+    /// The game's folder under drive_c, where Settings files looks for .ini files.
+    private var iniGameFolder: String {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: LibraryModel.drive.appendingPathComponent(entry.relativePath).path, isDirectory: &isDirectory)
+        return GameIniFiles.gameFolder(relativePath: entry.relativePath, isDirectory: exists && isDirectory.boolValue)
+    }
+
+    @ViewBuilder private var advancedPage: some View {
+        Section {
+            Toggle("Live logs", isOn: $entry.liveLogs)
+            // madeira-bcd: this game's config is its own GameProfiles.swift file
+            // (Application Support/GameConfigs/<hash>.cfg), the file every launch of
+            // the game exports as MADEIRA_CFG_GAME. Lines an entry saved in upstream's
+            // `config` field are moved into it when the page opens (migrateEntryOptions).
+            NavigationLink {
+                LibraryGameConfigEditor(text: Binding(get: { bcd.configText }, set: { text in
+                    bcd.configText = text
+                    GameProfile(windowsPath: entry.windowsPath).text = text
+                }))
+                .onDisappear { reloadBCD() }
+            } label: {
+                LabeledContent("This game's config", value: Self.configSummary(bcd.configText))
+            }
+        } header: { Text("Advanced") } footer: {
+            Text("Per-game madeira.cfg lines; they override the global file.")
+        }
+    }
+
+    @ViewBuilder private func iridiumDetailPage(_ page: String) -> some View {
+                switch page {
+                case "Rename & Artwork": iridiumArtworkPage
+                case "Controls": iridiumControlsPage
+                case "Display": iridiumDisplayPage
+                case "Files & Saves": iridiumFilesPage
+                case "Advanced": iridiumAdvancedPage
+                default: EmptyView()
+                }
+    }
+
+    private var iridiumDetailForm: some View {
+Form {
                 Group {
                 Section {
                     IridiumGameOptionsHeader(game: IridiumGame(windows: entry))
@@ -1895,60 +2370,25 @@ struct LibraryDetail: View {
                 if let error { Section { Text(error).foregroundStyle(.red) } }
                 }.iridiumRowSurface()
             }
-.navigationDestination(for: String.self) { page in
-                switch page {
-case "Rename & Artwork":
-                    IridiumArtworkEditor(game: IridiumGame(windows: entry), embedded: true,
+    }
+
+    private var iridiumArtworkPage: some View {
+IridiumArtworkEditor(game: IridiumGame(windows: entry), embedded: true,
                                          onBack: {
                                              if iridiumPages.last == "Rename & Artwork" { iridiumNavigate("back") }
                                          })
                         .navigationBarBackButtonHidden()
-                    case "Controls": Form { Group {
-                Section {
-                    IridiumGameControlsButton(target: .init(platform: .windows, title: IridiumArtworkModel.shared.title(IridiumGame(windows: entry)), gameID: entry.id,
-                        windowsLayout: entry.controls.map { IridiumControlLayoutState(controls: $0, visible: entry.touchControls,
-                            size: entry.controlSize ?? 1, opacity: entry.controlOpacity ?? 0.7, zones: entry.zones) }))
-                }
-                 Section("On screen") {
-                    Toggle("Performance overlay", isOn: $entry.performance)
-                    Toggle("Live logs", isOn: $entry.liveLogs)
-                    Toggle("Touch controls", isOn: $entry.touchControls)
-                    if GamepadInput.keyboardMouseAvailable {
-                        ControllerModeChoice(mode: $entry.controllerMode)
-                        if entry.controllerMode == "keys" {
-                            NavigationLink("Controller binds") {
-                                Form { ControllerBindsPage(binds: $entry.controllerBinds, mouseVertical: $entry.padMouseVertical) }
-                                    .iridiumPageSurface().navigationTitle("Controller binds")
-                                    .toolbar {
-                                        Button("Reset") { entry.controllerBinds = nil; entry.padMouseVertical = nil }
-                                            .disabled(entry.controllerBinds == nil && entry.padMouseVertical == nil)
-                                    }
-                            }
-                        }
-                    }
-                    LabeledContent("Control opacity") {
-                        Slider(value: Binding(get: { entry.controlOpacity ?? 0.7 }, set: { entry.controlOpacity = $0 }), in: 0.15...1)
-                    }
-                    LabeledContent("Control size") {
-                        Slider(value: Binding(get: { entry.controlSize ?? 1 }, set: { entry.controlSize = $0 }), in: 0.5...2)
-                    }
-                    Text("Edit layouts and reusable profiles above.").font(.caption).foregroundStyle(.secondary)
-                    if GamepadInput.keyboardMouseAvailable {
-                        Text("DirectInput supports older games. Changes apply next launch.").font(.caption).foregroundStyle(.secondary)
-                        Text("Map the controller to keys and pointer movement under Controller Binds.").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                // madeira-bcd: this game's config is its own GameProfiles.swift file
-                // (Application Support/GameConfigs/<hash>.cfg), the file every launch of
-                // the game exports as MADEIRA_CFG_GAME. Lines an entry saved in upstream's
-                // `config` field are moved into it when the page opens (migrateEntryOptions).
- }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Controls")
-                    .navigationBarBackButtonHidden()
-                    .toolbar { ToolbarItem(placement: .topBarLeading) {
-                        Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
-                            .keyboardShortcut(.cancelAction)
-                    } }
-case "Display": Form { Group {                 Section("Resolution & Scaling") {
+    }
+
+    private var iridiumControlsPage: some View {
+        Form {
+            Section { IridiumGameControlsButton(target: .init(platform: .windows, title: entry.title, gameID: entry.id)) }
+            controlsPage
+        }.iridiumPageSurface().navigationTitle("Controls")
+    }
+
+    private var iridiumDisplayPage: some View {
+Form { Group {                 Section("Resolution & Scaling") {
                     // The Windows screen the game renders for (and the Desktop's size).
                     // ml1172: this device's choices (ResolutionChoices), grouped.
                     let groups = ResolutionChoices.groups()
@@ -1997,7 +2437,24 @@ case "Display": Form { Group {                 Section("Resolution & Scaling") {
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Files & Saves": Form { Group { if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }
+    }
+
+    private var iridiumFilesPage: some View {
+Form { Group {
+                if let app = entry.epicAppName { EpicCloudSection(appName: app) }
+                if let id = entry.steamAppID {
+                    NavigationLink("Achievements") { Form { SteamAchievementsSection(appID: id) } }
+                    if id > 0, id <= Int(UInt32.max), Self.showsWorkshop(id) {
+                        NavigationLink("Steam Workshop") { Form { SteamWorkshopSections(appID: UInt32(id), title: entry.title) } }
+                    }
+                }
+                NavigationLink("Settings files") { Form { GameIniFilesSection(windowsPath: entry.windowsPath, gameFolder: iniGameFolder) } }
+                if entry.desktop != true { GameMoveSection(entry: $entry) }
+                Section("Game setup") {
+                    Button("Share Setup") { shareSetup = true }
+                    Button("Apply Shared Setup") { importSetup = true }
+                }
+ if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }
                 // A link that starts this game from a Home Screen icon (SavesAndShortcuts.swift).
                 if entry.desktop != true {
                     Section {
@@ -2032,108 +2489,33 @@ case "Files & Saves": Form { Group { if let appID = entry.steamAppID { SteamClou
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
-case "Advanced": Form { Group {                 // ml1163: how the program starts. Not for the Desktop entry, nor for a Steam
-                // game started through Madeira Dock, whose desktop and command are Dock's:
-                // there these choices would do nothing.
-                if entry.usesLaunchOptions {
-                    Section {
-                        Picker("Start", selection: Binding(get: { entry.runsInDesktop ? "desktop" : "direct" }, set: {
-                            entry.launchMode = $0 == "desktop" ? "desktop" : nil
-                        })) {
-                            Text("Directly").tag("direct")
-                            Text("In the Wine desktop").tag("desktop")
-                        }
-                        TextField("Working folder (default: the program's folder)", text: Binding(get: { entry.workingDirectory ?? "" }, set: {
-                            entry.workingDirectory = $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0
-                        })).autocorrectionDisabled().textInputAutocapitalization(.never).font(.body.monospaced())
-                        Toggle("Start Windows services first", isOn: Binding(get: { entry.startServices == true }, set: {
-                            entry.startServices = $0 ? true : nil
-                        }))
-                    } header: { Text("Launch") } footer: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Start the game on its own, or use the Wine desktop for launchers and desktop windows.")
-                            Text("Use a Windows path for the working folder. Enable Windows services only if your launcher needs them.")
-                            if !entry.runsInDesktop && (entry.isBatch || entry.startServices == true) {
-                                // Wine stops with its first process (the ml1163 open risk).
-                                Text("Started directly, Wine stops when its first program exits, so a batch file that starts the game and exits closes the game too. Start it in the Wine desktop instead.")
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                }
-                // A Steam game starts with Steam's own launch option through Madeira Dock.
-                if entry.desktop != true && entry.steamAppID == nil {
-                    Section {
-                        TextField("Launch arguments", text: $entry.arguments, axis: .vertical)
-                            .font(.body.monospaced()).lineLimit(1...4)
-                            .autocorrectionDisabled().textInputAutocapitalization(.never)
-                        LaunchFlagChips(arguments: $entry.arguments)
-                        // What the next start runs (ml1163: in the Wine desktop, a batch file or
-                        // the services batch, what starts the program).
-                        Text(entry.commandPreview)
-                            .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                    } header: { Text("Launch arguments") } footer: {
-                        Text("Applied when this game starts. The command above includes your selected flags.")
-                    }
-                }
-                Section {
-                    Toggle("Reduced-precision x87", isOn: $entry.reducedX87)
-                    // Exported for this game only when chosen (applyEnvironment).
-                    // madeira-bcd: AVX, NVIDIA and Wine's C++ runtime are LibraryPrefs, which
-                    // BCDLaunch exports.
-                    Toggle("AVX and AVX2", isOn: Binding(get: { bcd.avx }, set: { on in
-                        bcd.avx = on; LibraryPrefs.setAVX(on, for: entry.windowsPath)
-                    }))
-                    // Exported for this game only when chosen (applyEnvironment).
-                    Picker("CPU cores reported", selection: Binding(get: { entry.cpuCount ?? 0 }, set: { entry.cpuCount = $0 == 0 ? nil : $0 })) {
-                        Text("Automatic").tag(0)
-                        ForEach([1, 2, 4, 6], id: \.self) { Text("\($0)").tag($0) }
-                    }
-                    Toggle("Report an NVIDIA GPU", isOn: Binding(get: { bcd.nvidia }, set: { on in
-                        bcd.nvidia = on; LibraryPrefs.setNvidia(on, for: entry.windowsPath)
-                    }))
-                    Toggle("Wine's C++ runtime", isOn: Binding(get: { bcd.wineVCRT }, set: { on in
-                        bcd.wineVCRT = on; LibraryPrefs.setWineVCRT(on, for: entry.windowsPath)
-                    }))
-                    // Fastsync-only switches: shown for every game, usable only while
-                    // Settings › Sync engine is Fastsync.
-                    Group {
-                        Toggle("Fast synchronization", isOn: Binding(get: { entry.fastSync ?? true }, set: { entry.fastSync = $0 }))
-                        Toggle("Fast semaphore waits (experimental)",
-                               isOn: Binding(get: { entry.semaphoreFastPath ?? false }, set: { entry.semaphoreFastPath = $0 }))
-                    }
-                    .disabled(syncEngine != .fastsync)
-                    if syncEngine != .fastsync {
-                        Text("Fast synchronization and fast semaphore waits are Fastsync options. Choose Fastsync in Settings → Madeira → Advanced Compatibility to use them.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                } header: { Text("Compatibility & performance") } footer: {
-                    Text("Use compatibility options when a game needs them. Changes apply next launch; precision changes may require restarting Iridium.")
-                }
-                Section {
-                    NavigationLink {
-                        LibraryGameConfigEditor(text: Binding(get: { bcd.configText }, set: { text in
-                            bcd.configText = text
-                            GameProfile(windowsPath: entry.windowsPath).text = text
-                        }))
-                        .onDisappear { reloadBCD() }
-                    } label: {
-                        LabeledContent("This game's config", value: Self.configSummary(bcd.configText))
-                    }
-                } header: { Text("Advanced") } footer: {
-                    Text("Keys here override shared settings for this game. Changes apply next launch.")
-                }
+    }
 
-if entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; dismiss() } } }.iridiumRowSurface() }.iridiumPageSurface().navigationTitle("Advanced")
-                    .navigationBarBackButtonHidden()
-                    .toolbar { ToolbarItem(placement: .topBarLeading) {
-                        Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
-                            .keyboardShortcut(.cancelAction)
-                    } }
-                default: EmptyView()
+    private var iridiumAdvancedPage: some View {
+        Form { launchPage; compatibilityPage; advancedPage }
+            .iridiumPageSurface().navigationTitle("Advanced")
+    }
+
+    var body: some View {
+      ScrollViewReader { proxy in
+        NavigationStack(path: $iridiumPages) {
+            iridiumDetailForm
+.navigationDestination(for: String.self) { page in
+                iridiumDetailPage(page)
+                .fileImporter(isPresented: $importSetup,
+                              allowedContentTypes: [GameSetup.contentType, .json, .plainText, .data]) { result in
+                    readSetup { try GameSetup.read(file: try result.get()) }
                 }
             }
 
+            .sheet(isPresented: $shareSetup) { GameSetupShareSheet(entry: entry) }
+            .sheet(item: $setupToApply) { pending in
+                GameSetupApplySheet(setup: pending.setup, gameTitle: entry.title,
+                                    otherGame: pending.setup.match(steamAppID: entry.steamAppID, program: GameSetup.programName(entry)) == 0) { controls, iniFiles in
+                    do { try pending.setup.apply(to: &entry, controls: controls, iniFiles: iniFiles); model.save(entry); reloadBCD() }
+                    catch { setupError = error.localizedDescription }
+                }
+            }
             .iridiumPageSurface().navigationTitle("Game Options").navigationBarTitleDisplayMode(.inline)
             .focusable().focusEffectDisabled().focused($iridiumKeyboard)
             .onAppear { iridiumKeyboard = true }
@@ -2195,13 +2577,18 @@ if entry.steamAppID != nil { SteamEntrySection(entry: $entry) { leaving = true; 
 /// madeira-bcd: a game's own options as the fork stores them (LibraryDetail):
 /// LibraryPrefs' switches and the GameProfiles.swift file's lines.
 struct BCDGameValues {
-    var avx = false, nvidia = false, wineVCRT = false
+    var avx = false, nvidia = false, olderNvidia = false, wineVCRT = false
+    var gpuCard = ""
+    var realSuspend: Bool? = nil, unityIL2CPP = false
     var configText = ""
     init() {}
     init(windowsPath: String) {
         avx = LibraryPrefs.avx(windowsPath)
         nvidia = LibraryPrefs.nvidia(windowsPath)
+        olderNvidia = LibraryPrefs.olderNvidia(windowsPath)
+        gpuCard = LibraryPrefs.gpuCard(windowsPath) ?? ""
         wineVCRT = LibraryPrefs.wineVCRT(windowsPath)
+        realSuspend = LibraryPrefs.realSuspend(windowsPath)
         configText = GameProfile(windowsPath: windowsPath).text
     }
 }
@@ -2262,7 +2649,7 @@ struct SteamSearchView: View {
             .task(id: submitted) {
                 guard !submitted.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                 loading = true; error = nil
-                do { let found = try await SteamCatalog.search(submitted); try Task.checkCancellation(); results = found; if found.isEmpty { error = "No matches. Try a different title." } }
+                do { let found = try await SteamCatalog.search(submitted); try Task.checkCancellation(); results = found; if found.isEmpty { error = L("No matches. Try a different title.") } }
                 catch is CancellationError { return }
                 catch { self.error = error.localizedDescription }
                 loading = false
@@ -2499,15 +2886,15 @@ struct DockOfflineMark: View {
         }
         .buttonStyle(.plain)
         .task { preparedOnline = MadeiraDock.games(drive: MadeiraDock.drive).first { $0.id == appID }?.customExecutables ?? false }
-        .alert(ready ? "Can be played offline" : "Not ready for offline play yet", isPresented: $explain) {
+        .alert(ready ? L("Can be played offline") : L("Not ready for offline play yet"), isPresented: $explain) {
             Button("OK", role: .cancel) {}
         } message: { Text(Self.explanation(mark)) }
     }
     static func line(_ mark: DockOffline.Mark) -> String {
         switch mark {
-        case .ready: return "Can be played offline"
-        case .needsFirstStart: return "Start once online to play offline"
-        case .needsOnline: return "Start a game online to play offline"
+        case .ready: return L("Can be played offline")
+        case .needsFirstStart: return L("Start once online to play offline")
+        case .needsOnline: return L("Start a game online to play offline")
         }
     }
     static func explanation(_ mark: DockOffline.Mark) -> String {
@@ -2593,7 +2980,7 @@ struct LaunchFlagChips: View {
                     Button(flag) { arguments = Self.toggled(arguments, flag) }
                         .buttonStyle(.bordered).tint(on ? Color.accentColor : Color.gray)
                         .font(.caption.monospaced())
-                        .accessibilityValue(on ? "On" : "Off")
+                        .accessibilityValue(on ? L("On") : L("Off"))
                 }
             }
         }
@@ -2660,7 +3047,7 @@ struct MadeiraCredit: View {
 /// MADEIRA_RUNTIME_SETTINGS=0 hides this section.
 /// A sheet opened from Settings; LibraryView presents it from the Form itself.
 enum SettingsSheet: String, Identifiable {
-    case allSettings, steamSignIn, dock
+    case allSettings, steamSignIn, epicSignIn, eaSignIn, dock
     var id: String { rawValue }
 }
 
@@ -2676,8 +3063,8 @@ enum SyncEngine: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .madsync: return "Madsync"
-        case .fastsync: return "Fastsync (default)"
-        case .wine: return "Wine standard sync"
+        case .fastsync: return L("Fastsync (default)")
+        case .wine: return L("Wine standard sync")
         }
     }
     /// The MADEIRA_FASTSYNC values Wine treats as "fastsync on" (sync.c, event.c).
@@ -2697,6 +3084,32 @@ enum SyncEngine: String, CaseIterable, Identifiable {
     }
 }
 
+/// Runs the extension memory experiment (MemoryHostTest.m): whether memory
+/// created by the MadeiraMemoryHost extension stays off Madeira's footprint.
+/// Results in Documents/memhost-test.txt and the log.
+struct MemoryHostTestRow: View {
+    @State private var running = false
+    @State private var last = ""
+    var body: some View {
+        Button {
+            running = true
+            last = "Starting…"
+            MadeiraMemoryHostTest({ line in
+                LogStore.shared.log("[memhost] \(line)")
+                DispatchQueue.main.async { last = line }
+            }, {
+                DispatchQueue.main.async { running = false }
+            })
+        } label: {
+            Label(running ? "Testing extension memory…" : "Test extension memory", systemImage: "memorychip")
+        }
+        .disabled(running)
+        if !last.isEmpty {
+            Text(last).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct RuntimeMemorySyncSettings: View {
     /// Opens a Settings sheet (LibraryView owns the presentation).
     var open: (SettingsSheet) -> Void = { _ in }
@@ -2704,23 +3117,29 @@ struct RuntimeMemorySyncSettings: View {
     var refresh = 0
     /// The keys this section and Settings › Graphics own; All settings and the Settings
     /// search leave them out.
-    static let featuredKeys: Set<String> = Set(["pool", "vram-mb", "swap-mb", "env.MADEIRA_SWAP_COVERAGE", "inproc-sync",
-                                                "env.MADEIRA_FASTSYNC", "eco"])
+    static let featuredKeys: Set<String> = Set(["pool", "vram-mb", "swap-mb", "env.MADEIRA_SWAP_COVERAGE", "donor-pool-mb", "swap-wow64",
+                                                "inproc-sync", "env.MADEIRA_FASTSYNC", "eco"]).union(GraphicsSettings.featuredKeys)
     // ml1241: 256 (the launch's lower bound) for the pool, 512 and 1024 for video memory
     // (winemetal accepts vram-mb >= 256), at the user's request.
     static let poolChoices = [0, 256, 512, 640, 768, 1024, 1152]          // 0 = the standard 896 MB
     static let vramChoices = [0, 512, 1024, 1536, 2048, 3072, 4096, 4352, 4608, 5120, 6144]   // 0 = automatic
     static let swapChoices = [0, 1024, 2048, 3072, 4096]
+    static let donorPoolChoices = [0, 2048, 4096, 6144]   // ml1150: the donor pool, 512 MB regions
     /// The stored value "" (no key) and "classic" are the same rules, unless
     /// madeira.cfg has swap-mode = 2 (then no key means broad, ml1257).
     static let coverageChoices: [(String, String)] = [
-        ("", "Large allocations (8 MB+)"), ("blocks", "All allocations of 1 MB+"), ("wide", "1 MB+ and overflow"),
-        ("broad", "Whole reservations 4 MB+ (broad)"),
+        ("", L("Large allocations (8 MB+)")), ("blocks", L("All allocations of 1 MB+")), ("wide", L("1 MB+ and overflow")),
+        ("broad", L("Whole reservations 4 MB+ (broad)")),
     ]
     @State private var poolMB = Self.intKey("pool")
     @State private var vramMB = Self.intKey("vram-mb")
     @State private var swapMB = Self.intKey("swap-mb")
+    @State private var donorPoolMB = Self.intKey("donor-pool-mb")
     @State private var coverage = Self.currentCoverage()
+    @State private var wow64 = MadeiraConfig.get("swap-wow64") ?? ""
+    static let wow64Choices: [(String, String)] = [
+        ("", "Donor RAM only"), ("1", "Donor RAM, then the swap file"), ("2", "Never tiered (RAM only)"),
+    ]
     @State private var engine = SyncEngine.current
     @State private var eco = MadeiraConfig.bool("eco", default: false)
     @State private var changed = false
@@ -2757,6 +3176,11 @@ struct RuntimeMemorySyncSettings: View {
                      zero: "Default (896 MB)", label: { "\($0) MB" })
             mbPicker("Video memory", key: "vram-mb", value: $vramMB, choices: Self.vramChoices,
                      zero: "Automatic", label: Self.gb)
+            mbPicker("Extra RAM from memory helper", key: "donor-pool-mb", value: $donorPoolMB, choices: Self.donorPoolChoices,
+                     zero: "Off", label: Self.gb)
+            Picker("32-bit memory fallback", selection: Binding(get: { wow64 }, set: { value in
+                wow64 = value; changed = true; MadeiraConfig.set("swap-wow64", value.isEmpty ? nil : value)
+            })) { ForEach(Self.wow64Choices, id: \.0) { Text($0.1).tag($0.0) } }
             mbPicker("Extra storage for memory", key: "swap-mb", value: $swapMB, choices: Self.swapChoices,
                      zero: "Off", label: Self.gb)
             Picker("Memory fallback coverage", selection: Binding(get: { coverage }, set: { mode in
@@ -2789,14 +3213,15 @@ struct RuntimeMemorySyncSettings: View {
                 Text("Code translation memory is reserved when a game starts. Low values can prevent large games from running.")
                 Text("Video memory is reported to the game. Automatic is recommended; high values can cause memory-related exits.")
                 Text("Memory fallback uses storage when RAM runs short. It can slow games down.")
+                Text("The optional memory helper must be signed with the app. It is separate from the shared JIT helper.")
                 Text("Change synchronization only if a game needs it.")
                 Text("Lower power priority reduces speed and power use.")
                 if changed { Text("Close and reopen Iridium to apply these changes.").foregroundStyle(.orange) }
             }
         }
         .onChange(of: refresh) { _, _ in
-            poolMB = Self.intKey("pool"); vramMB = Self.intKey("vram-mb"); swapMB = Self.intKey("swap-mb")
-            coverage = Self.currentCoverage(); engine = SyncEngine.current
+            poolMB = Self.intKey("pool"); vramMB = Self.intKey("vram-mb"); swapMB = Self.intKey("swap-mb"); donorPoolMB = Self.intKey("donor-pool-mb")
+            coverage = Self.currentCoverage(); wow64 = MadeiraConfig.get("swap-wow64") ?? ""; engine = SyncEngine.current
             eco = MadeiraConfig.bool("eco", default: false)
         }
     }
@@ -2841,6 +3266,171 @@ struct LibraryPointerSettings: View {
     }
 }
 
+/// Settings › Graphics: the Direct3D 9, 11 and 12 routes and the Vulkan driver as plain
+/// controls for madeira.cfg d3d9, d3d11, d3d12 and vulkan (read at each session start by
+/// ContentView.swift and WineProcessBridge.m; docs/BUILDING.md 6b, 6c and 6d). Default
+/// removes the key. The rows show the global file only: a game's own config lines
+/// still win for that game. While the section is shown All settings leaves these
+/// keys out (RuntimeMemorySyncSettings.featuredKeys); MADEIRA_GRAPHICS_SETTINGS=0
+/// hides the section and puts them back in All settings.
+struct GraphicsSettings: View {
+    static let shown = MadeiraConfig.flag("MADEIRA_GRAPHICS_SETTINGS")   // 0: no Settings › Graphics section; d3d9, d3d11, d3d12 and vulkan are back in All settings
+    static let keys: Set<String> = ["d3d9", "d3d11", "d3d12", "vulkan"]
+    static let glBackendKey = "gl-backend"
+    /// The keys All settings and the Settings search leave to this section.
+    static var featuredKeys: Set<String> { shown ? keys : [] }
+    /// Bumped when a Settings sheet closes, so the rows re-read madeira.cfg.
+    var refresh = 0
+
+    static let d3d9Choices: [(String, String)] = [
+        ("", L("DXMT (default)")), ("native", L("DXMT native frontend (32-bit)")), ("wined3d", L("Wine wined3d on OpenGL (Zink)")),
+    ]
+    static let d3d11Choices: [(String, String)] = [("", L("DXMT (default)")), ("dxvk", L("DXVK on Vulkan (experimental)"))]
+    static let d3d12Choices: [(String, String)] = [("", L("madeira-d3d12 (default)")), ("vkd3d", "vkd3d-proton on Vulkan")]
+    static let vulkanChoices: [(String, String)] = [("", L("Automatic")), ("moltenvk", "MoltenVK"), ("kosmickrisp", "KosmicKrisp")]
+
+    static func bundled(_ path: String) -> Bool {
+        FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent(path).path)
+    }
+    /// gl/libvulkan_kosmickrisp.dylib (docs/KOSMICKRISP.md); without it vulkan = kosmickrisp keeps Vulkan off.
+    static let hasKosmicKrisp = bundled("gl/libvulkan_kosmickrisp.dylib")
+    /// vkd3d-proton's DLLs are git-ignored build products (build/vkd3d-proton/build.sh).
+    static let hasVkd3d = bundled("vulkan/arm64ec-windows/d3d12.dll") && bundled("vulkan/arm64ec-windows/d3d12core.dll")
+    /// DXVK's DLLs are git-ignored build products too (build/dxvk/build.sh, docs/DXVK.md).
+    static let hasDxvk = ["d3d11", "d3d10core", "dxgi"].allSatisfy { bundled("vulkan/arm64ec-windows/dxvk-\($0).dll") }
+    /// The Zink OpenGL backend's library; without it the default backend is OpenGL ES, where wined3d finds no context.
+    static let hasZink = bundled("gl/libOSMesa.dylib")
+    /// KosmicKrisp takes the first Metal 4 device: iOS 26 with an A14 or newer.
+    static let metal4: Bool = {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        if #available(iOS 26.0, *) { return MTLCreateSystemDefaultDevice()?.supportsFamily(.metal4) ?? false }
+        return false
+        #endif
+    }()
+
+    /// The stored value, trimmed and lowercased, "" when unset; d3d9 "emulated" is the default.
+    static func current(_ key: String) -> String {
+        let v = (MadeiraConfig.get(key) ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        return key == "d3d9" && v == "emulated" ? "" : v
+    }
+    static var anySet: Bool { keys.contains { MadeiraConfig.get($0) != nil } }
+
+    @State private var d3d9 = Self.current("d3d9")
+    @State private var d3d11 = Self.current("d3d11")
+    @State private var d3d12 = Self.current("d3d12")
+    @State private var vulkan = Self.current("vulkan")
+    @State private var anySet = Self.anySet
+
+    private func reload() {
+        d3d9 = Self.current("d3d9"); d3d11 = Self.current("d3d11"); d3d12 = Self.current("d3d12")
+        vulkan = Self.current("vulkan")
+        anySet = Self.anySet
+    }
+
+    private func write(_ key: String, _ value: String?) {
+        MadeiraConfig.set(key, value)
+        anySet = Self.anySet
+        LogStore.shared.log("[graphics-settings] \(key)=\(value ?? "(default)")")
+    }
+
+    /// A menu picker over `choices`; a stored value that is not one of them stays selectable as itself.
+    private func choicePicker(_ title: String, key: String, value: Binding<String>, choices: [(String, String)],
+                              other: (String) -> String = { "Other (\($0))" }) -> some View {
+        Picker(title, selection: Binding(get: { value.wrappedValue }, set: { choice in
+            value.wrappedValue = choice
+            write(key, choice.isEmpty ? nil : choice)
+        })) {
+            ForEach(choices, id: \.0) { Text($0.1).tag($0.0) }
+            if !choices.contains(where: { $0.0 == value.wrappedValue }) { Text(other(value.wrappedValue)).tag(value.wrappedValue) }
+        }
+    }
+
+    private func note(_ text: String, warning: Bool = false) -> some View {
+        Text(text).font(.caption).foregroundStyle(warning ? Color.orange : Color.secondary)
+    }
+
+    private var d3d9Note: String {
+        switch d3d9 {
+        case "": return L("DXMT draws Direct3D 9 on Metal; 32-bit games run its frontend through the x86 translator.")
+        case "native": return L("32-bit games run DXMT's Direct3D 9 frontend as native ARM64 code; 64-bit games are unchanged.")
+        case "wined3d": return L("Experimental: 32- and 64-bit games use Wine's own Direct3D 9 on OpenGL, which needs the Zink OpenGL backend.")
+        default: return L("A value Madeira does not know; Direct3D 9 games use DXMT.")
+        }
+    }
+    private var d3d11Note: String {
+        switch d3d11 {
+        case "": return L("DXMT draws Direct3D 10 and 11 on Metal.")
+        case "dxvk": return L("Experimental, 64-bit games only: Direct3D 10/11 and DXGI run through DXVK on Vulkan (MoltenVK unless a Vulkan driver is chosen below). Direct3D 12 then uses vkd3d-proton.")
+        default: return L("A value Madeira does not know; Direct3D 10/11 games use DXMT.")
+        }
+    }
+    private var d3d12Note: String {
+        switch d3d12 {
+        case "" where d3d11 == "dxvk": return L("With DXVK chosen above, Direct3D 12 games use vkd3d-proton on Vulkan: DXVK's DXGI shows only Vulkan devices.")
+        case "": return L("Direct3D 12 games run on madeira-d3d12, Madeira's own Direct3D 12 on Metal.")
+        case "vkd3d": return L("Experimental, 64-bit games only: Direct3D 12 runs through vkd3d-proton on Vulkan (MoltenVK unless a Vulkan driver is chosen below).")
+        default: return L("A developer value; Direct3D 12 games run on madeira-d3d12.")
+        }
+    }
+    private var vulkanNote: String {
+        switch vulkan {
+        case "": return L("Off, so games find no Vulkan, unless DXVK or vkd3d-proton is chosen above, which turns on MoltenVK.")
+        case "moltenvk": return L("64-bit games get Vulkan through MoltenVK, the driver the Zink OpenGL backend also uses.")
+        case "kosmickrisp": return L("Experimental: 64-bit games get Vulkan through Mesa's KosmicKrisp driver. Needs iOS 26 and an A14 chip or newer.")
+        case "off", "0": return L("Off: games find no Vulkan, and DXVK and vkd3d-proton are not used even when chosen above.")
+        default: return L("A Vulkan library named by path in madeira.cfg.")
+        }
+    }
+
+    var body: some View {
+        Section {
+            choicePicker(L("Direct3D 9"), key: "d3d9", value: $d3d9, choices: Self.d3d9Choices)
+            note(d3d9Note)
+            if d3d9 == "wined3d" {
+                let backend = (MadeiraConfig.get(Self.glBackendKey) ?? "").lowercased()
+                if !Self.hasZink || (!backend.isEmpty && backend != "zink") {
+                    note(Self.hasZink ? "madeira.cfg sets gl-backend = \(backend); wined3d needs gl-backend = zink."
+                                      : L("This build has no Zink OpenGL backend (gl/ folder), so wined3d cannot start."), warning: true)
+                }
+            }
+
+            choicePicker(L("Direct3D 10/11"), key: "d3d11", value: $d3d11,
+                         choices: Self.hasDxvk || d3d11 == "dxvk" ? Self.d3d11Choices : Array(Self.d3d11Choices.prefix(1)))
+            note(d3d11Note)
+            if !Self.hasDxvk { note(L("DXVK is not in this build."), warning: d3d11 == "dxvk") }
+            if d3d11 == "dxvk" && !d3d12.isEmpty && d3d12 != "vkd3d" {
+                note("Direct3D 12 is set to \(d3d12); with DXVK only vkd3d-proton can show Direct3D 12 games.", warning: true)
+            }
+
+            choicePicker(L("Direct3D 12"), key: "d3d12", value: $d3d12,
+                         choices: Self.hasVkd3d || d3d12 == "vkd3d" ? Self.d3d12Choices : Array(Self.d3d12Choices.prefix(1)))
+            note(d3d12Note)
+            if !Self.hasVkd3d { note(L("vkd3d-proton is not in this build."), warning: d3d12 == "vkd3d") }
+
+            choicePicker(L("Vulkan driver"), key: "vulkan", value: $vulkan,
+                         choices: Self.hasKosmicKrisp || vulkan == "kosmickrisp" ? Self.vulkanChoices : Array(Self.vulkanChoices.prefix(2)),
+                         other: { $0 == "off" || $0 == "0" ? L("Off") : L("Custom library") })
+            note(vulkanNote)
+            if !Self.hasKosmicKrisp {
+                note(L("KosmicKrisp is not in this build (no gl/libvulkan_kosmickrisp.dylib)."), warning: vulkan == "kosmickrisp")
+            } else if !Self.metal4 {
+                note(L("This device has no Metal 4 GPU, so KosmicKrisp cannot start on it."), warning: vulkan == "kosmickrisp")
+            }
+
+            Button("Reset to defaults") {
+                for key in Self.keys.sorted() { MadeiraConfig.set(key, nil) }
+                LogStore.shared.log("[graphics-settings] reset: d3d9, d3d11, d3d12 and vulkan removed")
+                reload()
+            }
+            .disabled(!anySet)
+        } header: { Text("Graphics") } footer: {
+            Text("These write d3d9 / d3d11 / d3d12 / vulkan into madeira.cfg; changes apply at the next session start. Per-game overrides go in the game's custom config lines (Advanced › This game's config).")
+        }
+        .onChange(of: refresh) { _, _ in reload() }
+    }
+}
 
 struct LibraryPillGlass: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -2848,6 +3438,63 @@ struct LibraryPillGlass: ViewModifier {
         if reduceTransparency { content.background(Color(uiColor: .secondarySystemBackground), in: Capsule()) }
         else if #available(iOS 26, *) { content.glassEffect(.regular.interactive(), in: Capsule()) }
         else { content.background(.regularMaterial, in: Capsule()) }
+    }
+}
+
+/// The in-game menu's panel: the system material, so the game shows through it
+/// blurred (owner, 2026-10-28: the solid panel). The solid panel as before with
+/// Reduce Transparency, or MADEIRA_MENU_BLUR=0.
+struct SessionMenuBackground: ViewModifier {
+    static let blur = MadeiraConfig.flag("MADEIRA_MENU_BLUR")   // 0: the in-game menu's solid panel, as before 2026-10-28
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 28)
+        if Self.blur && !reduceTransparency { content.background(.regularMaterial, in: shape) }
+        else { content.background(Color(uiColor: .secondarySystemBackground), in: shape) }
+    }
+}
+
+/// The performance overlay's look (OverlayStyle), under its figures in the in-game menu.
+struct OverlayStyleSettings: View {
+    @AppStorage(OverlayStyle.layoutKey) private var layout = "grid"
+    @AppStorage(OverlayStyle.scaleKey) private var scale = 1.0
+    @AppStorage(OverlayStyle.backgroundKey) private var background = "glass"
+    @AppStorage(OverlayStyle.opacityKey) private var opacity = 1.0
+    @AppStorage(OverlayStyle.labelsKey) private var labels = true
+    @AppStorage(OverlayStyle.coloursKey) private var colours = false
+    @AppStorage(OverlayStyle.refreshKey) private var refresh = 1.0
+    @AppStorage(OverlayStyle.graphSecondsKey) private var graphSeconds = 4.0
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Overlay style").font(.subheadline.weight(.semibold)).padding(.top, 4)
+            Picker("Layout", selection: $layout) {
+                ForEach(OverlayStyle.layouts, id: \.id) { Text($0.name).tag($0.id) }
+            }.pickerStyle(.segmented)
+            LabeledContent("Size") { Slider(value: $scale, in: 0.6...1.8, step: 0.05) }
+            LabeledContent("Opacity") { Slider(value: $opacity, in: 0.3...1) }
+            LabeledContent("Background") {
+                Picker("Background", selection: $background) {
+                    ForEach(OverlayStyle.backgrounds, id: \.id) { Text($0.name).tag($0.id) }
+                }.pickerStyle(.segmented).frame(maxWidth: 220)
+            }
+            Toggle("Labels", isOn: $labels)
+            Toggle("Colour by frame rate", isOn: $colours)
+            LabeledContent("Updates") {
+                Picker("Updates", selection: $refresh) {
+                    Text("0.5 s").tag(0.5); Text("1 s").tag(1.0); Text("2 s").tag(2.0)
+                }.pickerStyle(.segmented).frame(maxWidth: 220)
+            }
+            LabeledContent("Graph span") {
+                Picker("Graph span", selection: $graphSeconds) {
+                    Text("2 s").tag(2.0); Text("4 s").tag(4.0); Text("8 s").tag(8.0)
+                }.pickerStyle(.segmented).frame(maxWidth: 220)
+            }
+            Text("1% lows: the frame rate of the slowest 1% of frames in the last ten seconds; 1% highs, the fastest. The graph shows each frame's time, newest on the right; a stall is a plateau as long as the stall.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Reset overlay style") {
+                layout = "grid"; scale = 1; background = "glass"; opacity = 1; labels = true; colours = false; refresh = 1; graphSeconds = 4
+            }.font(.subheadline)
+        }.font(.subheadline)
     }
 }
 
@@ -2958,6 +3605,7 @@ struct LibraryHUD: View {
     @State private var closeConfirmation = IridiumCloseConfirmation()
     @State private var menuContentHeight: CGFloat = 650
     @FocusState private var menuKeyboard: Bool
+    @State private var assistPage = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         GeometryReader { geo in
@@ -3092,14 +3740,14 @@ struct LibraryHUD: View {
                 // holds the desktop back, Show desktop reveals it.
                 HStack(spacing: 14) {
                     if dockStart.failure != nil {
-                        launchGlyph("Close session", "stop.circle") { model.requestQuit() }
+                        launchGlyph(L("Close session"), "stop.circle") { model.requestQuit() }
                     }
-                    launchGlyph(showLogs ? "Hide live log" : "Show live log", "text.alignleft", on: showLogs) {
+                    launchGlyph(showLogs ? L("Hide live log") : L("Show live log"), "text.alignleft", on: showLogs) {
                         model.toggleLaunchLogs()
                     }
                     if dockStart.holding {
-                        launchGlyph("Show desktop", "macwindow") { dockStart.showDesktop(model) }
-                            .accessibilityHint("Shows the Windows desktop")
+                        launchGlyph(L("Show desktop"), "macwindow") { dockStart.showDesktop(model) }
+                            .accessibilityHint(L("Shows the Windows desktop"))
                     }
                 }.modifier(LaunchEntrance(visible: launchVisible, step: 3, still: curtained))
                 if model.launchSlow && !dockStart.holding {
@@ -3144,14 +3792,14 @@ struct LibraryHUD: View {
                 IridiumLaunchMemoryView().frame(maxWidth: 440)
                 HStack(spacing: 12) {
                     if dockStart.failure != nil {
-                        launchGlyph("Close session", "stop.circle") { model.requestQuit() }
+                        launchGlyph(L("Close session"), "stop.circle") { model.requestQuit() }
                     }
-                    launchGlyph(showLogs ? "Hide live log" : "Show live log", "text.alignleft", on: showLogs) {
+                    launchGlyph(showLogs ? L("Hide live log") : L("Show live log"), "text.alignleft", on: showLogs) {
                         model.toggleLaunchLogs()
                     }
                     if dockStart.holding {
-                        launchGlyph("Show desktop", "macwindow") { dockStart.showDesktop(model) }
-                            .accessibilityHint("Shows the Windows desktop")
+                        launchGlyph(L("Show desktop"), "macwindow") { dockStart.showDesktop(model) }
+                            .accessibilityHint(L("Shows the Windows desktop"))
                     }
                     if model.launchSlow && !dockStart.holding {
                         Button("Show game view") { model.showGameView(reason: "button") }
@@ -3236,8 +3884,8 @@ struct LibraryHUD: View {
     }
     /// What the start is doing before the Dock reports (or for a game without Dock).
     private var launchIdleStatus: String {
-        if let entry = model.preparing { return model.startingJIT == entry.id ? "Enabling JIT…" : "Getting ready…" }
-        return model.launchSlow ? "Still starting…" : "Starting your game…"
+        if let entry = model.preparing { return model.startingJIT == entry.id ? L("Enabling JIT…") : L("Getting ready…") }
+        return model.launchSlow ? L("Still starting…") : L("Starting your game…")
     }
 
     /// What the Dock start is doing (DockStartStatus), read once a second.
@@ -3250,6 +3898,25 @@ struct LibraryHUD: View {
                                         installerProgress: progress, installsFinished: DockInstallers.finishedAt != nil,
                                         waited: Date().timeIntervalSince(hostDue),
                                         restartHint: DockInstallers.installsOnly ? DockInstallers.closingWords : nil)
+        }
+    }
+
+    /// Gyro aim and turbo, as a page of the Session menu; each change reaches the
+    /// pad at once (model.padAssist) and is saved to the game.
+    private var assistMenu: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Session", systemImage: "chevron.left") { assistPage = false }.buttonStyle(.borderless)
+                Spacer()
+                Text("Gyro aim & turbo").font(.headline)
+                Spacer()
+                Button("Reset") { model.padAssist = nil; model.saveCurrentProfile() }
+                    .buttonStyle(.borderless).disabled(model.padAssist == nil)
+                Button("Done") { model.menu = false }.buttonStyle(.bordered)
+            }.padding(.horizontal, 22).padding(.top, 22).padding(.bottom, 8)
+            Form {
+                PadAssistPage(settings: Binding(get: { model.padAssist }, set: { model.padAssist = $0; model.saveCurrentProfile() }))
+            }.scrollContentBackground(.hidden)
         }
     }
 
@@ -3355,11 +4022,12 @@ struct LibraryHUD: View {
                 if menuPage == "Performance" {
                 Toggle("Performance overlay", isOn: $model.performance)
                 if model.performance {
-                    ForEach(["FPS", "Frame time", "CPU", "GPU", "RAM", "Battery", "Thermal"], id: \.self) { field in
+                    ForEach(OverlayStyle.fields, id: \.self) { field in
                         Toggle(field, isOn: Binding(get: { model.overlayFields.contains(field) }, set: { on in
                             model.overlayFields.removeAll { $0 == field }; if on { model.overlayFields.append(field) }
                         })).font(.subheadline)
                     }
+                    OverlayStyleSettings()
                 }
                 // The developer overlay's CAP and F pills (FPSOverlay), for library
                 // sessions: only with MADEIRA_SESSION_DIAGNOSTICS=1 (and not with
@@ -3489,15 +4157,145 @@ struct LibraryLiveLogs: View {
                 .frame(maxWidth: .infinity, minHeight: max(0, geo.size.height - 16), alignment: .topLeading)
             }.defaultScrollAnchor(.bottom).padding(8)
         }.background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 10)).foregroundStyle(.white)
-            .accessibilityLabel("Live diagnostic log")
+            .accessibilityLabel(L("Live diagnostic log"))
+    }
+}
+
+/// The performance overlay's look, the same in every game (owner, 2026-10-28): its
+/// layout, size, background, opacity, labels, colours and how often the figures
+/// change. Which figures it shows stays per game (LibraryEntry.overlayFields).
+enum OverlayStyle {
+    static let layoutKey = "madeiraOverlayLayout", scaleKey = "madeiraOverlayScale"
+    static let backgroundKey = "madeiraOverlayBackground", opacityKey = "madeiraOverlayOpacity"
+    static let labelsKey = "madeiraOverlayLabels", coloursKey = "madeiraOverlayColours"
+    static let refreshKey = "madeiraOverlayRefresh", graphSecondsKey = "madeiraOverlayGraphSeconds"
+    /// "grid": up to five cells a row (as first made); "row": one long row; "column": one figure a line.
+    static let layouts: [(id: String, name: String)] = [("grid", "Grid"), ("row", "One row"), ("column", "Column")]
+    static let backgrounds: [(id: String, name: String)] = [("glass", "Glass"), ("dark", "Dark"), ("clear", "None")]
+    /// The figures the overlay can show, in the order of the menu's switches.
+    static let fields = ["FPS", "Frame time", "1% lows", "0.1% lows", "Frame graph", "CPU", "GPU", "RAM", "JIT memory", "Swap & donor", "Battery", "Thermal"]
+}
+
+/// Frame times from the present path (madeira_frame_times_us, Winios.m) and the
+/// figures made from them: the 1% low is the frame rate of the slowest 1% of
+/// frames (their mean frame time), the 1% high that of the fastest 1%.
+enum FrameTimes {
+    static func read(windowMs: UInt32, max: Int = 2048) -> (intervals: [Double], sinceLast: Double) {
+        var buffer = [UInt32](repeating: 0, count: max)
+        var since: UInt32 = 0
+        let n = Int(madeira_frame_times_us(&buffer, Int32(max), windowMs, &since))
+        return (buffer.prefix(n).map { Double($0) / 1000 }, Double(since) / 1000)
+    }
+    /// (1% low, 1% high) in frames a second, nil without enough frames.
+    static func onePercent(_ ms: [Double]) -> (low: Double, high: Double)? {
+        guard ms.count >= 10 else { return nil }
+        let sorted = ms.sorted(), k = max(1, sorted.count / 100)
+        let slow = sorted.suffix(k).reduce(0, +) / Double(k), fast = sorted.prefix(k).reduce(0, +) / Double(k)
+        guard slow > 0, fast > 0 else { return nil }
+        return (1000 / slow, 1000 / fast)
+    }
+    /// The 0.1% low in frames a second: the slowest 0.1% of frames (at least the
+    /// slowest one), nil without enough frames.
+    static func pointOnePercentLow(_ ms: [Double]) -> Double? {
+        guard ms.count >= 10 else { return nil }
+        let k = max(1, ms.count / 1000), slow = ms.sorted().suffix(k).reduce(0, +) / Double(k)
+        return slow > 0 ? 1000 / slow : nil
+    }
+    /// The frame time to show: the mean of the frames presented in the last
+    /// `windowMs`, or the time since the last present when that is longer (a stall
+    /// still going on). nil when nothing has presented.
+    static func current(windowMs: UInt32) -> Double? {
+        let (ms, since) = read(windowMs: windowMs, max: 512)
+        let mean = ms.isEmpty ? 0 : ms.reduce(0, +) / Double(ms.count)
+        let value = max(mean, since > mean ? since : 0)
+        return value > 0 ? value : nil
+    }
+}
+
+/// The frame-time graph: each frame a step as wide as it lasted and as high as its
+/// time, newest on the right, so a stall is a plateau as long as the stall; the
+/// frame still being made grows at the right edge. Drawn ten times a second.
+struct FrameTimeGraph: View {
+    let width: CGFloat
+    let height: CGFloat
+    let scale: CGFloat
+    let seconds: Double
+    let colours: Bool
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+            let (ms, since) = FrameTimes.read(windowMs: UInt32(seconds * 1000), max: 1024)
+            let sorted = ms.sorted()
+            let median = sorted.isEmpty ? 16.7 : sorted[sorted.count / 2]
+            let p99 = sorted.isEmpty ? 16.7 : sorted[min(sorted.count - 1, sorted.count * 99 / 100)]
+            // The frame still being made, once it is clearly late.
+            let pending = since > max(50, median * 2) ? since : 0
+            let top = [33.3, 50, 66.7, 100, 200, 500, 1000, 2000, 5000].first(where: { $0 >= max(p99, pending) * 1.15 }) ?? 5000
+            ZStack(alignment: .topTrailing) {
+                Canvas { context, size in
+                    let w = size.width, h = size.height
+                    func y(_ v: Double) -> CGFloat { h - CGFloat(min(v, top) / top) * (h - 1) }
+                    for guide in [16.7, 33.3] where guide < top {
+                        var line = Path(); line.move(to: CGPoint(x: 0, y: y(guide))); line.addLine(to: CGPoint(x: w, y: y(guide)))
+                        context.stroke(line, with: .color(.primary.opacity(0.18)), style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                    }
+                    // Right edge = now; walk back from the newest frame.
+                    var steps: [(x0: CGFloat, x1: CGFloat, v: Double)] = []
+                    var end = since
+                    if pending > 0 { steps.append((w - CGFloat(pending / 1000 / seconds) * w, w, pending)) }
+                    for v in ms.reversed() {
+                        let x1 = w - CGFloat(end / 1000 / seconds) * w, x0 = w - CGFloat((end + v) / 1000 / seconds) * w
+                        if x1 < 0 { break }
+                        steps.append((max(0, x0), x1, v)); end += v
+                    }
+                    guard !steps.isEmpty else { return }
+                    var outline = Path(), fill = Path()
+                    let ordered = steps.reversed()
+                    fill.move(to: CGPoint(x: ordered.first!.x0, y: h))
+                    for (i, s) in ordered.enumerated() {
+                        if i == 0 { outline.move(to: CGPoint(x: s.x0, y: y(s.v))) } else { outline.addLine(to: CGPoint(x: s.x0, y: y(s.v))) }
+                        outline.addLine(to: CGPoint(x: s.x1, y: y(s.v)))
+                        fill.addLine(to: CGPoint(x: s.x0, y: y(s.v))); fill.addLine(to: CGPoint(x: s.x1, y: y(s.v)))
+                    }
+                    fill.addLine(to: CGPoint(x: ordered.last!.x1, y: h)); fill.closeSubpath()
+                    context.fill(fill, with: .color(.primary.opacity(0.12)))
+                    context.stroke(outline, with: .color(.primary.opacity(0.85)), lineWidth: max(1, scale))
+                    // Spikes: frames over twice the median, marked in orange (red over 100 ms) with colours on.
+                    if colours {
+                        for s in steps where s.v > max(median * 2, 25) {
+                            var spike = Path(); spike.move(to: CGPoint(x: s.x0, y: y(s.v))); spike.addLine(to: CGPoint(x: s.x1, y: y(s.v)))
+                            spike.move(to: CGPoint(x: s.x0, y: y(s.v))); spike.addLine(to: CGPoint(x: s.x0, y: h))
+                            context.stroke(spike, with: .color(s.v > 100 ? .red : .orange), lineWidth: max(1.5, scale * 1.5))
+                        }
+                    }
+                }
+                Text(top >= 1000 ? String(format: "%.0f s", top / 1000) : String(format: "%.0f ms", top))
+                    .font(.system(size: 8 * scale, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.secondary).padding(.trailing, 2)
+            }
+            .frame(width: width, height: height)
+        }
+        .accessibilityHidden(true)
     }
 }
 
 struct LibraryMetrics: View {
     @ObservedObject private var model = LibraryModel.shared
+    @AppStorage(OverlayStyle.layoutKey) private var layout = "grid"
+    @AppStorage(OverlayStyle.scaleKey) private var scale = 1.0
+    @AppStorage(OverlayStyle.backgroundKey) private var background = "glass"
+    @AppStorage(OverlayStyle.opacityKey) private var opacity = 1.0
+    @AppStorage(OverlayStyle.labelsKey) private var labels = true
+    @AppStorage(OverlayStyle.coloursKey) private var colours = false
+    @AppStorage(OverlayStyle.refreshKey) private var refresh = 1.0
+    @AppStorage(OverlayStyle.graphSecondsKey) private var graphSeconds = 4.0
     @State private var lastCount: UInt64 = 0
     @State private var lastTime = Date()
+    @State private var tick = 0
     @State private var fps = 0.0
+    @State private var onePercent: (low: Double, high: Double)?
+    @State private var pointOneLow: Double?
+    /// Measured from the present path, like the graph (1000 / FPS hid the slow frames).
+    @State private var frameMs: Double?
     @State private var memory = 0
     @State private var battery = -1
     /// iOS lowers clocks from .serious on, so a frame rate that sags after a few
@@ -3509,21 +4307,184 @@ struct LibraryMetrics: View {
     @State private var lastGPUBuffers: UInt64 = 0
     @State private var gpu = -1.0
     @State private var gpuFrameMs = 0.0
-    private let ticks = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    /// ml2021: the swap tier's figures (madeira_swap_overlay_stats): MB backed by the
+    /// swap file, MB served from the donor pool, the pool's registered size, and the
+    /// takes its free-RAM guard refused.
+    @State private var swapFileMB = 0
+    @State private var donatedMB = 0
+    @State private var donorPoolMB = 0
+    @State private var donorGuarded = 0
+    /// Half-second ticks; the figures change every `refresh` seconds (0.5, 1 or 2).
+    private let ticks = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+    /// ml2021: one cell per figure. A fixed width per cell (the widest value it can show)
+    /// keeps the pill from shifting as digits change; monospaced digits keep the value
+    /// still within the cell. Label above, value below, hairlines between cells, the
+    /// system material behind: no gradients, no custom colours beyond the thermal dot
+    /// (and, with Colours on, the frame-rate figures).
+    struct Cell: Identifiable {
+        let id: String
+        let label: String
+        let value: String
+        let width: CGFloat
+        var dot: Color? = nil
+        var tint: Color? = nil
+    }
+    private var s: CGFloat { CGFloat(min(max(scale, 0.5), 2)) }
+    private func speed(_ rate: Double) -> Color? {
+        guard colours, rate > 0 else { return nil }
+        return rate >= 45 ? .green : rate >= 25 ? .yellow : .red
+    }
+    private var cells: [Cell] {
+        var result: [Cell] = []
+        if model.overlayFields.contains("FPS") {
+            result.append(Cell(id: "fps", label: "FPS", value: String(format: "%.0f", fps), width: 44, tint: speed(fps)))
+        }
+        if model.overlayFields.contains("Frame time") {
+            result.append(Cell(id: "ms", label: "MS", value: frameMs.map { String(format: $0 >= 100 ? "%.0f" : "%.1f", $0) } ?? "–", width: 52))
+        }
+        if model.overlayFields.contains("1% lows") {
+            result.append(Cell(id: "low", label: "1% LOW", value: onePercent.map { String(format: "%.0f", $0.low) } ?? "–", width: 52,
+                               tint: onePercent.flatMap { speed($0.low) }))
+            result.append(Cell(id: "high", label: "1% HIGH", value: onePercent.map { String(format: "%.0f", $0.high) } ?? "–", width: 54))
+        }
+        if model.overlayFields.contains("0.1% lows") {
+            result.append(Cell(id: "low01", label: "0.1% LOW", value: pointOneLow.map { String(format: "%.0f", $0) } ?? "–", width: 60,
+                               tint: pointOneLow.flatMap { speed($0) }))
+        }
+        if model.overlayFields.contains("CPU") {
+            result.append(Cell(id: "cpu", label: "CPU", value: cpu.map { String(format: "%.0f%%", $0.total) } ?? "–", width: 50))
+            result.append(Cell(id: "top", label: "TOP", value: cpu.map { String(format: "%.0f%%", $0.top) } ?? "–", width: 50))
+        }
+        if model.overlayFields.contains("GPU") {
+            result.append(Cell(id: "gpu", label: "GPU", value: gpu < 0 ? "–" : String(format: "%.0f%%", gpu), width: 50))
+            result.append(Cell(id: "gpums", label: "GPU MS", value: gpu < 0 || gpuFrameMs <= 0 ? "–" : String(format: "%.1f", gpuFrameMs), width: 56))
+        }
+        if model.overlayFields.contains("RAM") { result.append(Cell(id: "ram", label: "MB", value: "\(memory)", width: 54)) }
+        if model.overlayFields.contains("Swap & donor") {
+            if donorPoolMB > 0 { result.append(Cell(id: "donor", label: "DONOR", value: "\(donatedMB)", width: 54)) }
+            result.append(Cell(id: "swap", label: "SWAP", value: "\(swapFileMB)", width: 54))
+        }
+        if model.overlayFields.contains("Battery"), battery >= 0 { result.append(Cell(id: "bat", label: "BAT", value: "\(battery)%", width: 50)) }
+        if model.overlayFields.contains("Thermal") {
+            let (word, dot): (String, Color) = {
+                switch thermal {
+                case .nominal: return ("Cool", .green)
+                case .fair: return ("Warm", .yellow)
+                case .serious: return ("Hot", .orange)
+                case .critical: return ("Critical", .red)
+                @unknown default: return ("–", .gray)
+                }
+            }()
+            result.append(Cell(id: "temp", label: "TEMP", value: word, width: 62, dot: dot))
+        }
+        return result
+    }
+    private func value(_ c: Cell) -> some View {
+        HStack(spacing: 4 * s) {
+            if let dot = c.dot { Circle().fill(dot).frame(width: 6 * s, height: 6 * s) }
+            Text(c.value).font(.system(size: 13 * s, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(c.tint ?? .primary)
+        }
+    }
+    private func label(_ c: Cell) -> some View {
+        Text(c.label).font(.system(size: 9 * s, weight: .medium, design: .rounded)).tracking(0.6 * s).foregroundStyle(.secondary)
+    }
+    private func cell(_ c: Cell) -> some View {
+        VStack(spacing: 1 * s) {
+            if labels { label(c) }
+            value(c)
+        }
+        .frame(width: c.width * s)
+    }
+    private func row(_ cells: [Cell]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.element.id) { index, c in
+                if index > 0 { Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: (labels ? 20 : 14) * s) }
+                cell(c)
+            }
+        }
+    }
+    /// The width a row of these cells takes (cells and hairlines).
+    private func width(_ cells: [Cell]) -> CGFloat {
+        cells.reduce(0) { $0 + $1.width * s } + CGFloat(max(0, cells.count - 1))
+    }
+    private func graph(width: CGFloat, height: CGFloat) -> some View {
+        FrameTimeGraph(width: width, height: height, scale: s, seconds: min(max(graphSeconds, 1), 10), colours: colours)
+    }
+    @ViewBuilder private var content: some View {
+        let all = cells
+        let showGraph = model.overlayFields.contains("Frame graph")
+        switch layout {
+        case "row":
+            HStack(spacing: 0) {
+                row(all)
+                if showGraph {
+                    if !all.isEmpty { Rectangle().fill(.primary.opacity(0.12)).frame(width: 1, height: (labels ? 20 : 14) * s).padding(.trailing, 4 * s) }
+                    graph(width: 120 * s, height: (labels ? 26 : 18) * s)
+                }
+            }
+        case "column":
+            VStack(alignment: .leading, spacing: 3 * s) {
+                ForEach(all) { c in
+                    HStack(spacing: 8 * s) {
+                        if labels { label(c) }
+                        Spacer(minLength: 0)
+                        value(c)
+                    }
+                    .frame(width: 112 * s)
+                }
+                if showGraph { graph(width: 112 * s, height: 34 * s) }
+            }
+            .padding(.horizontal, 2 * s)
+        default:
+            // Up to five cells on a row; more wrap onto a second row so the pill stays under the
+            // viewport's width instead of truncating.
+            let split = all.count > 5 ? (all.count + 1) / 2 : all.count
+            let first = Array(all.prefix(split)), second = Array(all.suffix(from: split))
+            VStack(spacing: 6 * s) {
+                if !first.isEmpty { row(first) }
+                if !second.isEmpty { row(second) }
+                if showGraph { graph(width: max(width(first), width(second), 150 * s), height: 34 * s) }
+            }
+        }
+    }
+    @ViewBuilder private func backdrop<V: View>(_ v: V) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12 * s, style: .continuous)
+        switch background {
+        case "dark":
+            v.background(Color.black.opacity(0.55), in: shape)
+                .overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                .environment(\.colorScheme, .dark)
+        case "clear":
+            v.shadow(color: .black.opacity(0.9), radius: 1.5).environment(\.colorScheme, .dark)
+        default:
+            v.background(.ultraThinMaterial, in: shape)
+                .overlay(shape.strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        }
+    }
     var body: some View {
-        Text(parts.joined(separator: "  ·  "))
-            .font(.caption.monospacedDigit().weight(.medium)).padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.black.opacity(0.8), in: Capsule()).foregroundStyle(.white)
+        backdrop(content.padding(.horizontal, 6 * s).padding(.vertical, 6 * s))
+        .opacity(min(max(opacity, 0.2), 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(parts.joined(separator: ", "))
             .onAppear {
-                lastCount = madeira_get_present_count(); lastTime = Date(); UIDevice.current.isBatteryMonitoringEnabled = true
+                lastCount = madeira_shown_frame_count(); lastTime = Date(); UIDevice.current.isBatteryMonitoringEnabled = true
                 applyGPUMeter()
             }
             .onDisappear { UIDevice.current.isBatteryMonitoringEnabled = false; madeira_gpu_meter_enable(0) }
             .onChange(of: model.overlayFields) { _, _ in applyGPUMeter() }
             .onReceive(ticks) { now in
-                let count = madeira_get_present_count(); let dt = now.timeIntervalSince(lastTime)
+                tick += 1
+                guard tick % max(1, Int((refresh / 0.5).rounded())) == 0 else { return }
+                let count = madeira_shown_frame_count(); let dt = now.timeIntervalSince(lastTime)
                 let frames = count >= lastCount ? count - lastCount : 0
                 fps = Double(frames) / max(0.001, dt); lastCount = count; lastTime = now
+                // Over the last ten seconds, so a stall stays in the figure for a while.
+                if model.overlayFields.contains("1% lows") { onePercent = FrameTimes.onePercent(FrameTimes.read(windowMs: 10_000).intervals) }
+                // 0.1% needs more frames: thirty seconds (the ring holds 2048).
+                if model.overlayFields.contains("0.1% lows") { pointOneLow = FrameTimes.pointOnePercentLow(FrameTimes.read(windowMs: 30_000).intervals) }
+                if model.overlayFields.contains("Frame time") { frameMs = FrameTimes.current(windowMs: UInt32(max(0.5, refresh) * 1000)) }
                 var info = task_vm_info_data_t(); var size = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
                 let result = withUnsafeMutablePointer(to: &info) { $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &size) } }
                 if result == KERN_SUCCESS { memory = Int(info.phys_footprint / 1048576) }
@@ -3534,6 +4495,11 @@ struct LibraryMetrics: View {
                     thermal = state
                 }
                 if model.overlayFields.contains("CPU") { cpu = cpuMeter.sample() }
+                if model.overlayFields.contains("Swap & donor") {
+                    var file: UInt64 = 0, donated: UInt64 = 0, pool: UInt64 = 0, guarded: UInt64 = 0
+                    madeira_swap_overlay_stats(&file, &donated, &pool, &guarded)
+                    swapFileMB = Int(file); donatedMB = Int(donated); donorPoolMB = Int(pool); donorGuarded = Int(guarded)
+                }
                 if model.overlayFields.contains("GPU") {
                     let busy = madeira_gpu_meter_busy_seconds(), buffers = madeira_gpu_meter_cmdbufs()
                     let used = max(0, busy - lastGPUBusy)
@@ -3551,7 +4517,11 @@ struct LibraryMetrics: View {
     private var parts: [String] {
         var result: [String] = []
         if model.overlayFields.contains("FPS") { result.append(String(format: "%.0f FPS", fps)) }
-        if model.overlayFields.contains("Frame time") { result.append(fps > 0 ? String(format: "%.1f ms avg", 1000 / fps) : "— ms") }
+        if model.overlayFields.contains("Frame time") { result.append(frameMs.map { String(format: "%.1f ms", $0) } ?? "— ms") }
+        if model.overlayFields.contains("1% lows") {
+            result.append(onePercent.map { String(format: "1%% low %.0f, 1%% high %.0f FPS", $0.low, $0.high) } ?? "1% lows —")
+        }
+        if model.overlayFields.contains("0.1% lows") { result.append(pointOneLow.map { String(format: "0.1%% low %.0f FPS", $0) } ?? "0.1% low —") }
         if model.overlayFields.contains("CPU") {
             result.append(cpu.map { String(format: "CPU %.0f%% (top %.0f%%)", $0.total, $0.top) } ?? "CPU —")
         }
@@ -3561,6 +4531,17 @@ struct LibraryMetrics: View {
             else { result.append(String(format: "GPU %.0f%%", gpu)) }
         }
         if model.overlayFields.contains("RAM") { result.append("\(memory) MB") }
+        // The memory games' code runs from; "FULL" once a DLL did not fit (JITPoolMeter).
+        if model.overlayFields.contains("JIT memory") { result.append(JITPoolMeter.text(JITPoolMeter.current) ?? "JIT —") }
+        if model.overlayFields.contains("Swap & donor") {
+            // RAM above is the app's own footprint; donated memory is billed to the
+            // extension's ledger, so it is shown beside it rather than added to it.
+            if donorPoolMB > 0 {
+                result.append(donorGuarded > 0 ? "Donated \(donatedMB)/\(donorPoolMB) MB (\(donorGuarded) guarded)"
+                                               : "Donated \(donatedMB)/\(donorPoolMB) MB")
+            }
+            result.append("Swap \(swapFileMB) MB")
+        }
         if model.overlayFields.contains("Battery"), battery >= 0 { result.append("\(battery)%") }
         if model.overlayFields.contains("Thermal") {
             switch thermal {
@@ -3767,5 +4748,80 @@ enum EndedSessionSurface {
 struct IridiumCreditsSections: View {
     var body: some View {
 IridiumSoftwareCreditsSections()
+    }
+}
+
+// MARK: - Launch arguments are command lines, not prose
+
+/// iOS Smart Punctuation turns `--` into an em dash and straight quotes into
+/// curly ones, which breaks flags such as `--rendering-driver opengl3` and
+/// quoted paths.
+enum LaunchArgumentText {
+    static func valid(_ text: String) -> Bool {
+        guard text.utf8.count < 4096 else { return false }
+        var quoted = false, inToken = false, tokens = 0, slashes = 0
+        for byte in text.utf8 {
+            if (byte < 32 && byte != 9) || byte == 127 { return false }
+            if byte == 34 && slashes % 2 == 0 { quoted.toggle() }
+            if !quoted && (byte == 32 || byte == 9) { inToken = false }
+            else if !inToken { tokens += 1; inToken = true }
+            slashes = byte == 92 ? slashes + 1 : 0
+        }
+        return !quoted && tokens <= 64
+    }
+
+    static func plain(_ s: String) -> String {
+        var out = s
+        for (from, to) in [("\u{2014}", "--"), ("\u{2013}", "--"), ("\u{2212}", "-"),
+                           ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""),
+                           ("\u{2018}", "'"), ("\u{2019}", "'")] {
+            out = out.replacingOccurrences(of: from, with: to)
+        }
+        return out
+    }
+}
+
+extension Binding where Value == String {
+    var plainLaunchArguments: Binding<String> {
+        Binding(get: { LaunchArgumentText.plain(wrappedValue) },
+                set: { wrappedValue = LaunchArgumentText.plain($0) })
+    }
+}
+
+/// Finds the UIKit text view behind a SwiftUI TextField and turns off smart
+/// dashes and quotes on it (SwiftUI has no modifier for these traits).
+private struct SmartPunctuationOff: UIViewRepresentable {
+    final class Probe: UIView {
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+        func apply() {
+            var node: UIView? = superview
+            for _ in 0..<4 {
+                guard let n = node else { break }
+                if Self.disable(in: n) { return }
+                node = n.superview
+            }
+        }
+        static func disable(in view: UIView) -> Bool {
+            if let t = view as? UITextView {
+                t.smartDashesType = .no; t.smartQuotesType = .no; t.smartInsertDeleteType = .no
+                return true
+            }
+            if let t = view as? UITextField {
+                t.smartDashesType = .no; t.smartQuotesType = .no; t.smartInsertDeleteType = .no
+                return true
+            }
+            return view.subviews.contains { disable(in: $0) }
+        }
+    }
+    func makeUIView(context: Context) -> Probe { let p = Probe(); p.isUserInteractionEnabled = false; return p }
+    func updateUIView(_ uiView: Probe, context: Context) { DispatchQueue.main.async { uiView.apply() } }
+}
+
+extension View {
+    func smartPunctuationOff() -> some View {
+        background(SmartPunctuationOff().frame(width: 0, height: 0))
     }
 }

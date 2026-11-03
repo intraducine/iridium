@@ -115,6 +115,7 @@ def prepare():
     (destination / 'IridiumApp.swift').write_text('''import SwiftUI
 @main struct MadeiraApp: App {
     init() {
+        UserDefaults.standard.set(false, forKey: IridiumMenuSounds.settingsKey)
         UserDefaults.standard.set("new", forKey: FrontendChoice.key)
         UserDefaults.standard.set(OnboardingRules.revision, forKey: OnboardingRules.revisionKey)
     }
@@ -126,7 +127,7 @@ def prepare():
     for signature in ['func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {',
                       'func enableBuiltIn(completion: @escaping (Result<Void, Error>) -> Void = { _ in }) {']:
         assert text.count(signature) == 1
-        text = text.replace(signature, signature + '\n        error = "JIT is only available on an iPhone or iPad."\n        completion(.failure(NSError(domain: "IridiumPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "JIT is only available on an iPhone or iPad."])))\n        return\n')
+        text = text.replace(signature, signature + '\n        error = "JIT is only available on an iPhone or iPad."\n        completion(.failure(NSError(domain: "IridiumPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "JIT is only available on an iPhone or iPad."])))\n        return ()\n')
     jit.write_text(text)
     prepare_catalog_preview(destination)
     # Generated from the real bridging declarations, so C ABI signatures stay exact.
@@ -147,14 +148,20 @@ def prepare():
         if declaration['kind'] != 'FunctionDecl': continue
         if declaration.get('storageClass') == 'static' or declaration.get('inline'): continue
         name = declaration['name']
-        if not name.startswith(('jit_', 'jit26_', 'fex_', 'wine', 'winios_', 'madeira_', 'ir_')) or name in seen: continue
+        if name in {'zstd_safe_decompress', 'lzma_shim_decode', 'winios_mouse_routing_enabled'}: continue
+        if not name.startswith(('jit_', 'jit26_', 'fex_', 'wine', 'winios_', 'madeira_', 'Madeira', 'itch_', 'i7z_', 'zip_', 'lzma_', 'zstd_', 'ir_')) or name in seen: continue
         seen.add(name)
         result = declaration['type']['qualType'].split('(')[0].rstrip()
         parameters = []
         for i, parameter in enumerate(x for x in declaration.get('inner', []) if x['kind'] == 'ParmVarDecl'):
             kind = parameter['type']['qualType']
-            parameters.append(kind.replace('(*)', f'(*p{i})') if '(*)' in kind else kind + f' p{i}')
+            if '(^' in kind:
+                parameters.append(re.sub(r'\(\^\s*(_Nonnull|_Nullable)?\s*\)',
+                    lambda m: '(^' + (m.group(1) or '') + f' p{i})', kind))
+            else:
+                parameters.append(kind.replace('(*)', f'(*p{i})') if '(*)' in kind else kind + f' p{i}')
         value = '' if result == 'void' else 'return "";' if result == 'const char *' else f'return ({result}){{0}};'
+        if name == 'MadeiraMemoryHostTest': value = 'if(p0) p0(@"Device runtime unavailable in this preview."); if(p1) p1();'
         lines.append(f'{result} {name}({", ".join(parameters) or "void"}) {{ {value} }}')
     (destination / 'PreviewNative.m').write_text('\n'.join(lines))
     return project_dir

@@ -258,7 +258,8 @@ class FrontendImportTests(unittest.TestCase):
             (session.parent / 'iridium-session.json').write_text(json.dumps({
                 'protocol': 1, 'enginePin': madeira_session.engine_pins.selected('madeira-native'),
                 'sources': madeira_session.inputs(), 'toolchainSHA256': madeira_session.toolchain()['sha256'], 'sha256': madeira_session.digest(session)}))
-            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output):
+            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output), \
+                 patch.object(BUILD.madeira_components, 'verify'):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
                 names = ('arm64ec-windows/xtajit64.dll', 'd3d12/libmetalirconverter.dylib',
@@ -297,7 +298,7 @@ class FrontendImportTests(unittest.TestCase):
         objects = {
             'target': {'isa': 'PBXNativeTarget', 'name': 'Madeira', 'productName': 'Madeira',
                        'productReference': 'product', 'buildPhases': ['sources', 'resources', 'frameworks'],
-                       'buildConfigurationList': 'configurations'},
+                       'buildConfigurationList': 'configurations', 'dependencies': []},
             'product': {'isa': 'PBXFileReference', 'path': 'Madeira.app'},
             'group': {'isa': 'PBXGroup', 'path': 'Madeira', 'children': ['existing-reference']},
             'sources': {'isa': 'PBXSourcesBuildPhase', 'files': ['existing-source']},
@@ -314,9 +315,17 @@ class FrontendImportTests(unittest.TestCase):
             'helper-release': {'isa': 'XCBuildConfiguration', 'buildSettings': {
                 'MARKETING_VERSION': '0.1.3', 'CURRENT_PROJECT_VERSION': '99'}},
         }
-        with patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+        for build_id, reference, path in [('existing-source', 'existing-reference', 'Existing.swift'),
+                ('existing-resource', 'existing-resource-ref', 'Existing.dat'), ('existing-link', 'existing-link-ref', 'libExisting.a')]:
+            objects[build_id] = {'isa': 'PBXBuildFile', 'fileRef': reference}
+            objects[reference] = {'isa': 'PBXFileReference', 'path': path}
+        objects['root'] = {'isa': 'PBXProject', 'mainGroup': 'root-group', 'productRefGroup': 'products', 'targets': ['target']}
+        objects['root-group'] = {'isa': 'PBXGroup', 'children': ['group', 'products']}
+        objects['products'] = {'isa': 'PBXGroup', 'children': ['product']}
+        native = subprocess.check_output(['plutil', '-convert', 'xml1', '-o', '-', str(BUILD.UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj')])
+        with patch.object(BUILD.subprocess, 'check_output', side_effect=[plistlib.dumps({'objects': objects, 'rootObject': 'root'}), native]):
             result = BUILD.project(pathlib.Path('/fixture/project.pbxproj'),
-                                   ['IRPSPBridge.c', 'IridiumConsoleSession.swift'])['objects']
+                                   ['IRPSPBridge.c', 'IridiumConsoleSession.swift', 'Existing.swift'])['objects']
         target = result['target']
         self.assertEqual(target['name'], 'Iridium')
         self.assertEqual(result['product']['path'], 'Iridium.app')
@@ -325,8 +334,9 @@ class FrontendImportTests(unittest.TestCase):
             self.assertEqual(result[configuration]['buildSettings']['CURRENT_PROJECT_VERSION'], '1')
         embeds = [result[key] for key in target['buildPhases']
                   if result[key]['isa'] == 'PBXCopyFilesBuildPhase']
-        self.assertEqual(len(embeds), 1)
-        embed = embeds[0]
+        self.assertEqual(len(embeds), 2)
+        self.assertTrue(any(p.get('name') == 'MadeiraMemoryHost' for p in result.values()))
+        embed = next(p for p in embeds if p.get('name') == 'Embed PSP component')
         self.assertEqual(embed['dstSubfolderSpec'], 10)  # App's Frameworks directory.
         self.assertEqual(embed['dstPath'], '')
         self.assertEqual(embed['runOnlyForDeploymentPostprocessing'], 0)
@@ -339,18 +349,20 @@ class FrontendImportTests(unittest.TestCase):
         for sdk in ('iphoneos', 'iphonesimulator'):
             resolved = (BUILD.OUTPUT / 'app' / component['path'].replace('$(PLATFORM_NAME)', sdk)).resolve()
             self.assertEqual(resolved, (BUILD.ROOT / '.build/ppsspp' / sdk / 'libIridiumPPSSPPNative.dylib').resolve())
-        self.assertEqual(result['frameworks']['files'], ['existing-link'])
+        self.assertIn('existing-link', result['frameworks']['files'])
+        self.assertGreater(len(result['frameworks']['files']), 1)
+        self.assertNotIn(component_ref, [result[k].get('fileRef') for k in result['frameworks']['files'] if k != 'existing-link'])
         self.assertIn(component_ref, result['group']['children'])
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
                          if key != 'existing-resource']
-        self.assertEqual(resource_refs, [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+        self.assertEqual([r for r in resource_refs if r.get('path') in {'PSP', 'MenuAudio'}], [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
                                          'path': 'PSP', 'sourceTree': '<group>'},
                                         {'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
                                          'path': 'MenuAudio', 'sourceTree': '<group>'}])
         self.assertIn('existing-resource', result['resources']['files'])
         source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
                        if key != 'existing-source']
-        self.assertEqual({item['path']: item['lastKnownFileType'] for item in source_refs},
+        self.assertEqual({item['path']: item['lastKnownFileType'] for item in source_refs if item['path'].endswith('.swift') or item['path'] == 'IRPSPBridge.c'},
                          {'IRPSPBridge.c': 'sourcecode.c.c', 'IridiumConsoleSession.swift': 'sourcecode.swift'})
         for configuration in ('debug', 'release'):
             settings = result[configuration]['buildSettings']
@@ -364,13 +376,14 @@ class FrontendImportTests(unittest.TestCase):
         self.assertIn('-lexisting', result['debug']['buildSettings']['OTHER_LDFLAGS'])
         self.assertIn('CodeSignOnCopy', result[embed['files'][0]]['settings']['ATTRIBUTES'])
         with patch.dict(BUILD.os.environ, {'IRIDIUM_PHASE3': '1'}), \
-             patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+             patch.object(BUILD.subprocess, 'check_output', side_effect=[plistlib.dumps({'objects': objects, 'rootObject': 'root'}), native]):
             signed = BUILD.project(pathlib.Path('/fixture/project.pbxproj'), [])['objects']
         embedded = signed['F20000000000000000000003']['files']
         self.assertEqual(len(embedded), 6)
         for item in embedded:
             self.assertIn('CodeSignOnCopy', signed[item]['settings']['ATTRIBUTES'])
-        self.assertEqual(signed['frameworks']['files'], ['existing-link'])
+        self.assertIn('existing-link', signed['frameworks']['files'])
+        self.assertEqual(signed['frameworks']['files'], result['frameworks']['files'])
 
     def test_generated_tree_refresh_is_repeatable_and_removes_only_stale_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -427,7 +440,7 @@ class FrontendImportTests(unittest.TestCase):
                 dll = upstream / 'app/Madeira/i386-windows/ntdll.dll'
                 dll.parent.mkdir(parents=True, exist_ok=True)
                 dll.write_bytes(b'built')
-            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), \
+            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), patch.object(BUILD.madeira_components, 'build'), \
                  patch.object(BUILD, 'compiler_tools', return_value={
                      'fixture compiler': {'executable': '/fixture/compiler', 'version': 'fixed version'}}), \
                  patch.object(BUILD.subprocess, 'check_output', side_effect=lambda args, **kw: '/tool/Metal.xctoolchain/usr/bin/metal\n' if kw.get('text') else b'tool version'), \
@@ -510,11 +523,11 @@ class FrontendImportTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler is required')
     def test_updated_library_preserves_per_game_storage_and_reset(self):
-        folder = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
+        folder = BUILD.UPSTREAM / 'app/Madeira'
         if not (folder / 'Library.swift').is_file(): self.skipTest('Pinned Madeira source required')
         original = (folder / 'Library.swift').read_text()
         rendered = BUILD.overlay('Library.swift', original)
-        for start, end in [('    private func reloadBCD()', '    private func start()'),
+        for start, end in [('    private func reloadBCD()', '    /// Apply Shared Setup:'),
                            ('struct BCDGameValues {', '/// Game details')]:
             self.assertEqual(madeira_presentation.between(original, start, end),
                              madeira_presentation.between(rendered, start, end))

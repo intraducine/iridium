@@ -23,6 +23,7 @@ enum LibraryError: LocalizedError {
     // PRODUCTION_EXECUTABLE
     var entries: [LibraryEntry] = []
     var current: UUID?
+    var preparing: LibraryEntry?
     var launching = false
     var refuseSave = false
     func save(_ entry: LibraryEntry) { if !refuseSave { entries.append(entry) } }
@@ -56,10 +57,17 @@ enum LibraryError: LocalizedError {
     var downloads: [Int: Download] = [:]
     func resumeDownloadsAfterImport() { }
 }
+@MainActor final class EpicLibrary { static let shared = EpicLibrary(); func resumeDownloadsAfterImport() {} }
+@MainActor final class EALibrary { static let shared = EALibrary(); func resumeDownloadsAfterImport() {} }
+@MainActor final class ItchLibrary { static let shared = ItchLibrary(); func resumeDownloadsAfterImport() {} }
 @MainActor final class SteamGamesModel {
     static let shared = SteamGamesModel()
     func refresh() { }
 }
+@MainActor final class ExternalDrives {
+    static let shared = ExternalDrives()
+    var roots: [(name: String, path: String)] { [] }
+    static func nativeURL(_ path: String, write: Bool) throws -> URL { LibraryModel.drive.appendingPathComponent(path) } }
 enum JITPairingSource { case imported }
 @MainActor enum JITPairingFileStore {
     static var saved: [Data] = []
@@ -468,6 +476,9 @@ enum JITPairingSource { case imported }
                 try put("Import/One.gb", rom()); IridiumConsoleSession.shared.isActive = true
                 c.scan(); require(!c.isWorking && !c.ready, "No migration or import during gameplay")
                 IridiumConsoleSession.shared.isActive = false
+                model.preparing = LibraryEntry(id: UUID(), title: "Preparing", relativePath: "game.exe", bits: 64)
+                c.scan(); require(!c.isWorking && !c.ready, "No migration or import during launch preparation")
+                model.preparing = nil
             }
             c.scan(); require(c.blocksLaunch, "Launch blocked before import reservation yields")
             try await settle(c)

@@ -4,6 +4,7 @@ import engine_pins
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -35,6 +36,7 @@ def binary_component(name):
     if name.startswith('PlugIns/MadeiraJITHelper.appex/') and p.name in {
             'MadeiraJITHelper', 'MadeiraJITHelper.debug.dylib', '__preview.dylib'}:
         return 'Madeira JIT helper'
+    if name.startswith('PlugIns/MadeiraMemoryHost.appex/') and p.name in {'MadeiraMemoryHost', 'MadeiraMemoryHost.debug.dylib'}: return 'Madeira memory helper'
     if name == 'Frameworks/StikJIT.framework/StikJIT': return 'StikJIT and idevice'
     if name == 'd3d12/libmetalirconverter.dylib': return 'Apple Metal Shader Converter'
     if name == 'Frameworks/libIridiumPPSSPPNative.dylib': return 'PPSSPP and its selected native dependencies'
@@ -44,12 +46,21 @@ def binary_component(name):
                 'play_libretro_ios.dylib': 'Play! and selected dependencies',
                 'flycast_libretro.dylib': 'Flycast and selected dependencies'}
     if p.parent.as_posix() == 'Frameworks' and p.name in advanced: return advanced[p.name]
+    graphics = {'gl/libMoltenVK.dylib': 'MoltenVK and its selected dependencies',
+                'gl/libOSMesa.dylib': 'Mesa Zink', 'gl/libvulkan_kosmickrisp.dylib': 'Mesa KosmicKrisp',
+                'compat/love/lua51.dll': 'LuaJIT', 'x86_64-opengl/dxil.dll': 'Microsoft DirectX Shader Compiler'}
+    if name in graphics: return graphics[name]
+    if p.parent.as_posix() == 'x86_64-opengl' and p.suffix == '.dll': return 'Mesa D3D12 OpenGL'
+    if p.parent.as_posix() == 'vulkan/arm64ec-windows':
+        if p.name.startswith('dxvk-'): return 'DXVK'
+        if p.name in {'d3d12.dll', 'd3d12core.dll'}: return 'vkd3d-proton'
+        if p.name in {'winevulkan.dll', 'vulkan-1.dll'}: return 'Wine Vulkan'
     if name == 'arm64ec-windows/faultrep.dll': return 'Madeira fault-reporting shim'
     if name == 'arm64ec-windows/vulkan-1.dll': return 'Madeira Vulkan stand-in generated from Wine exports'
     if p.parent.as_posix() in {'arm64ec-windows', 'aarch64-windows', 'i386-windows'}:
         if p.name in {'xtajit.dll', 'xtajit64.dll'}: return 'FEX'
         if p.name == 'dockhost.exe': return 'Madeira Dock and LLVM-MinGW runtime'
-        if p.name in {'d3d12.dll', 'madeira_d3d12.dll'}: return 'Madeira D3D12'
+        if p.name in {'d3d12.dll', 'd3d12core.dll', 'madeira_d3d12.dll'}: return 'Madeira D3D12'
         if p.name in {'d3d9.dll', 'd3d9-emulated.dll', 'd3d10core.dll', 'd3d11.dll', 'dxgi.dll',
                       'winemetal.dll', 'nvapi64.dll'}: return 'DXMT'
         if p.suffix.lower() in {'.dll', '.exe', '.drv', '.cpl', '.acm', '.ax', '.ocx', '.sys', '.com', '.tlb'}:
@@ -69,6 +80,8 @@ def snapshot(repo, destination, revisions, *, source_root=None):
         changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).splitlines()
         if changed == ['deps/zlib-1.3.1/zconf.h']:
             phase3.source_state(repo) # Verify CMake's byte-identical zconf.h.included rename.
+        elif repo in (build.UPSTREAM / 'FEX', build.UPSTREAM / 'dxmt', build.UPSTREAM / 'madeira-dock'):
+            build.verify_pin()
         elif any(Path(name).suffix != '.a' and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt' for name in changed):
             raise ValueError('Commit source changes before collection: ' + str(repo.relative_to(ROOT)))
     with tempfile.TemporaryFile() as stream:
@@ -79,6 +92,12 @@ def snapshot(repo, destination, revisions, *, source_root=None):
             # Submodules may link to siblings in the complete source tree.
             # Prefix paths before filtering so the full stage is the boundary.
             archive.extractall(source_root, filter='data')
+    if repo in (build.UPSTREAM / 'FEX', build.UPSTREAM / 'dxmt', build.UPSTREAM / 'madeira-dock'):
+        changes = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', 'HEAD'], text=True).splitlines()
+        for name in changes:
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo / name, target)
     revisions[repo.relative_to(ROOT).as_posix()] = revision
     records = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '--stage', '-z'], text=True).split('\0')
     for record in records:
@@ -100,6 +119,80 @@ def snapshot_freetype(destination, revisions, *, source_root=None):
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != FREETYPE_REVISION: raise ValueError('Unexpected FreeType revision')
     snapshot(repo, destination, revisions, source_root=source_root)
+
+
+def collect_graphics_sources(stage, revisions):
+    toolchains = build.UPSTREAM / 'toolchains'
+    repos = [toolchains / name for name in ('MoltenVK-db66022459ffb663aa2b50f6b018bc2e124f5edf',
+        'luajit-a4c064539ea931274d407e1249b4bb575424a0f4', 'dxvk-src', 'vkd3d-proton',
+        'SPIRV-LLVM-Translator-29758b55816c14abb3e4142d42aca7a95bf46710')]
+    repos[0] = toolchains / 'graphics' / repos[0].name
+    repos[-1] = toolchains / 'graphics' / repos[-1].name
+    git_sources = []
+    urls = ['https://github.com/KhronosGroup/MoltenVK.git', 'https://github.com/LuaJIT/LuaJIT.git',
+            'https://github.com/doitsujin/dxvk.git', 'https://github.com/HansKristian-Work/vkd3d-proton.git',
+            'https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git']
+    def variable(recipe, name):
+        match = re.search(r'^' + name + r'=["\']?([^\s"\']+)', recipe, re.M)
+        if not match: raise ValueError('Missing pinned graphics input: ' + name)
+        return match.group(1)
+    def checkout(repo, url, revision, *, children=False):
+        if not (repo / '.git').exists():
+            if repo.exists() and any(repo.iterdir()): raise ValueError('Preserve existing graphics source: ' + str(repo))
+            if shutil.disk_usage(ROOT).free < 22 * 1024**3: raise ValueError('Graphics source needs 20 GiB reserve plus 2 GiB temporary space')
+            repo.mkdir(parents=True, exist_ok=True)
+            subprocess.run(['git', '-C', str(repo), 'init', '-q'], check=True)
+            subprocess.run(['git', '-C', str(repo), 'fetch', '--depth', '1', url, revision], check=True)
+            subprocess.run(['git', '-C', str(repo), 'checkout', '-q', 'FETCH_HEAD'], check=True)
+        actual = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        if actual != revision: raise ValueError('Graphics source revision differs: ' + str(repo))
+        if children: subprocess.run(['git', '-C', str(repo), 'submodule', 'update', '--init', '--recursive', '--depth', '1'], check=True)
+    dxvk_recipe = (build.UPSTREAM / 'build/dxvk/build.sh').read_text()
+    vkd3d_recipe = (build.UPSTREAM / 'build/vkd3d-proton/build.sh').read_text()
+    pins = [repos[0].name.rsplit('-', 1)[1], repos[1].name.rsplit('-', 1)[1], variable(dxvk_recipe, 'DXVK_COMMIT'),
+            variable(vkd3d_recipe, 'VKD3D_COMMIT'), repos[-1].name.rsplit('-', 1)[1]]
+    for index, (repo, url, revision) in enumerate(zip(repos, urls, pins)):
+        checkout(repo, url, revision, children=index in (2, 3))
+        if index == 0 and not (repo / 'External/SPIRV-Tools/.git').exists():
+            subprocess.run(['bash', str(repo / 'fetchDependencies'), '--none'], cwd=repo, check=True)
+        snapshot(repo, stage / repo.relative_to(ROOT), revisions, source_root=stage)
+        git_sources.append({'path': repo.relative_to(ROOT).as_posix(), 'url': url})
+    # fetchDependencies pins MoltenVK's sibling source trees and its versions file.
+    external = repos[0] / 'External'
+    for repo in sorted(external.iterdir()):
+        if (repo / '.git').exists():
+            snapshot(repo, stage / repo.relative_to(ROOT), revisions, source_root=stage)
+            url = subprocess.check_output(['git', '-C', str(repo), 'remote', 'get-url', 'origin'], text=True).strip()
+            git_sources.append({'path': repo.relative_to(ROOT).as_posix(), 'url': url})
+    cache = toolchains / 'mesa-d3d12'
+    graphics = toolchains / 'graphics'
+    archives = [graphics / 'mesa-25.0.7.tar.xz', graphics / 'mesa-26.2.4.tar.xz', cache / 'mesa-26.2.4.tar.xz',
+        cache / 'dxc_2026_09_29.zip', cache / 'zlib-1.3.1.tar.gz', cache / 'zlib_1.3.1-1_patch.zip']
+    headers = build.UPSTREAM / 'build/mesa-d3d12/work/mesa-26.2.4/subprojects/DirectX-Headers-1.0'
+    mesa_recipe = (build.UPSTREAM / 'build/mesa-d3d12/build.sh').read_text()
+    checkout(headers, variable(mesa_recipe, 'DXHEADERS_URL'), variable(mesa_recipe, 'DXHEADERS_COMMIT'))
+    snapshot(headers, stage / headers.relative_to(ROOT), revisions, source_root=stage)
+    git_sources.append({'path': headers.relative_to(ROOT).as_posix(), 'url': 'https://github.com/microsoft/DirectX-Headers.git'})
+    sources = [
+        ('https://archive.mesa3d.org/mesa-25.0.7.tar.xz', '592272df3cf01e85e7db300c449df5061092574d099da275d19e97ef0510f8a6'),
+        ('https://archive.mesa3d.org/mesa-26.2.4.tar.xz', variable(mesa_recipe, 'MESA_SHA256')),
+        ('https://archive.mesa3d.org/mesa-26.2.4.tar.xz', variable(mesa_recipe, 'MESA_SHA256')),
+        (variable(mesa_recipe, 'DXC_URL'), variable(mesa_recipe, 'DXC_SHA256')),
+        (variable(mesa_recipe, 'ZLIB_URL'), variable(mesa_recipe, 'ZLIB_SHA256')),
+        (variable(mesa_recipe, 'ZLIB_PATCH_URL'), variable(mesa_recipe, 'ZLIB_PATCH_SHA256'))]
+    for archive, (url, sha) in zip(archives, sources):
+        if not archive.exists():
+            cache_file = ROOT / '.build/runtime-downloads' / (sha + '.tar')
+            existed = cache_file.exists()
+            fetch.fetch(ROOT, {'name': archive.name, 'destination': archive.relative_to(ROOT).as_posix(), 'url': url, 'sha256': sha})
+            if not existed: cache_file.unlink()  # Only this call's redundant transfer copy.
+        if archive.is_symlink() or not archive.is_file() or fetch.digest(archive) != sha:
+            raise ValueError('Pinned graphics archive differs: ' + archive.name)
+        destination = stage / archive.relative_to(ROOT)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(archive, destination)
+    for item in git_sources: item['revision'] = revisions[item['path']]
+    return git_sources
 
 
 def exclude_signing_fixtures(stage):
@@ -172,6 +265,10 @@ def collect(app, output, maps):
             dest = stage / '.build/runtime-downloads' / archive.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, dest)
+        graphics_sources = collect_graphics_sources(stage, revisions)
+        component_sources = build.madeira_components.source_inventory(build.UPSTREAM)
+        component_sources['gitSources'] = graphics_sources
+        (stage / 'vendor/Madeira/iridium-runtime-sources.json').write_text(json.dumps(component_sources, indent=2) + '\n')
         psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
         psp_atlases = atlas.collect_inputs(stage, psp_receipt, ROOT)
         psp_external = json.loads((ROOT / engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs']).read_text())
@@ -221,14 +318,16 @@ def collect(app, output, maps):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(archive, destination)
             (stage / 'PHASE3-BUILD-RECEIPTS.json').write_text(json.dumps(phase3_receipts, indent=2) + '\n')
-        manifest = {'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
+        runtime_receipts = build.madeira_components.verify(build.UPSTREAM, app, build.compiler_identity())
+        (stage / 'MADEIRA-RUNTIME-RECEIPTS.json').write_text(json.dumps(runtime_receipts, indent=2) + '\n')
+        manifest = {'madeira_runtime_receipts': 'MADEIRA-RUNTIME-RECEIPTS.json', 'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
                     'phase3_build_receipts': 'PHASE3-BUILD-RECEIPTS.json' if phase3_receipts else None,
                     'source_exclusions': exclude_signing_fixtures(stage) + exclude_unused_archives(stage) + psp_atlases['exclusions'],
                     'revisions': revisions, 'inputs': inputs, 'psp_external_source_inputs': psp_external,
                     'psp_atlas_font_inputs': psp_atlases['inputs'], 'binaries': records, 'static_archives': static,
                     'generated_frontend_components': {
                         'arm64ec-windows/faultrep.dll': {'source': 'vendor/Madeira/build/faultrep/faultrep.c', 'build': 'vendor/Madeira/build/faultrep/build.sh'},
-                        'arm64ec-windows/vulkan-1.dll': {'generator': 'vendor/Madeira/tools/build-stub-dlls.py', 'exports': 'vendor/Madeira/wine/dlls/vulkan-1/vulkan-1.spec'}},
+                        'vulkan/arm64ec-windows/vulkan-1.dll': {'source': 'vendor/Madeira/wine/dlls/vulkan-1', 'build': 'vendor/Madeira/build/windows-runtime/build.sh'}},
                     'licenses': 'LICENSING.md and vendor/Madeira/THIRD-PARTY-NOTICES.md',
                     'build_and_replacement': 'docs/actions-ipa.md',
                     'toolchain': subprocess.check_output(['xcodebuild', '-version'], text=True).strip()}

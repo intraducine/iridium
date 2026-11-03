@@ -50,7 +50,7 @@ class CheckedBuildTests(unittest.TestCase):
             recipe.write_text(text)
             (recipe.parent / 'audio_null_ios.c').write_text(
                 'static OSStatus ios_audio_render_cb(void) {\n'
-                '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n}')
+                '    atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);\n    return noErr;\n}')
             for name in ('process_ios.c', 'thread_ios.c', 'server_ios.c', 'loader_ios.c', 'virtual_ios.c', 'signal_arm64_ios.c'):
                 (recipe.parent / name).write_text((ROOT / 'vendor/Madeira/build/ntdll-unix' / name).read_text())
             obj = recipe.parent / 'obj'; obj.mkdir()
@@ -92,16 +92,16 @@ class CheckedBuildTests(unittest.TestCase):
             env = dict(os.environ, SKIP_DXMT='1', JOBS='1')
             stamp = root / '.build/iridium-i386.json'; stamp.parent.mkdir(); stamp.write_text('{}')
             with patch.object(build, 'UPSTREAM', root), patch.dict(os.environ, env), \
-                 patch.object(build, 'verify_pin'), patch.object(build, 'compiler_identity', return_value='fixture compiler'), \
+                 patch.object(build, 'verify_pin'), patch.object(build.madeira_components, 'build'), patch.object(build, 'compiler_identity', return_value='fixture compiler'), \
                  patch.object(build.subprocess, 'check_output', side_effect=lambda args, **kwargs:
                     '/tool/Metal.xctoolchain/usr/bin/metal\n' if kwargs.get('text') else b'fixture compiler'):
                 with self.assertRaises(subprocess.CalledProcessError):
                     build.windows()
                 self.assertEqual(installed.read_bytes(), b'previous installed DLL')
                 self.assertEqual(stamp.read_text(), '{}')
-                self.assertEqual((wine / 'madeira-i386-build.log').read_text().count('intentional make failure'), 2)
+                self.assertEqual((wine / 'madeira-i386-build.log').read_text().count('intentional make failure'), 3)
                 # Bulk failure may recover only after a successful per-target make.
-                executable(tc / 'make', 'case "$1" in -k) exit 1;; esac\nprintf fresh > "$2"')
+                executable(tc / 'make', 'case "$1" in -k) exit 1;; esac\nmkdir -p "$(dirname "$2")"\nprintf fresh > "$2"')
                 build.windows()
                 self.assertEqual(installed.read_bytes(), b'fresh')
                 completed = stamp.read_bytes()
@@ -127,7 +127,7 @@ class CheckedBuildTests(unittest.TestCase):
                 for name in build.native_required_outputs():
                     p = root / name; p.parent.mkdir(parents=True, exist_ok=True)
                     if not p.exists(): p.write_bytes(b'fresh output')
-            with patch.object(build, 'UPSTREAM', root), patch.object(build, 'verify_pin'), \
+            with patch.object(build, 'UPSTREAM', root), patch.object(build, 'verify_pin'), patch.object(build.madeira_components, 'build'), \
                  patch.object(build, 'native_inputs', return_value=fixture_inputs()), \
                  patch.object(build.inspect, 'getsource', return_value='fixed fixture compiler recipe'), \
                  patch.object(build, 'bootstrap', side_effect=bootstrap), patch.object(build, 'build_native', side_effect=compile_outputs) as compile:
