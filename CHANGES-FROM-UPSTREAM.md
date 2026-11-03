@@ -45,7 +45,11 @@ The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
 operation. Existing sources/notices are retained with these build recipes.
 ARM64EC callbacks tolerate missing CPU areas on native startup threads, before
-the emulator initializes their thread state.
+the emulator initializes their thread state. Native ARM64 children in an x64
+session load their own native ntdll instead of inheriting the ARM64EC loader.
+Read-only system32 opens in those children select the native copy when the
+shared prefix resolves to a bundled ARM64EC DLL. User files and the parent
+process retain their existing file view.
 Installed 3DS content retains its shared storage owner and save path when raw
 ROMs move into named Games folders. Import and CIA installation routes coexist.
 The early launch screen and RAM display remain active for resident Windows jobs;
