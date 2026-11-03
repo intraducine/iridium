@@ -449,6 +449,7 @@ struct SteamGamesSection: View {
     var part: Part = .all
     /// Opens a game's Game details page (LibraryView's details sheet).
     let open: (LibraryEntry) -> Void
+    var standalone = false
     @ObservedObject private var model = SteamGamesModel.shared
     @ObservedObject private var steam = SteamOwnedLibrary.shared
     @ObservedObject private var library = LibraryModel.shared
@@ -523,7 +524,7 @@ struct SteamGamesSection: View {
         let items = SteamGamesRules.items(installed: model.games, owned: owned, search: search)
         let groups = SteamGamesRules.groups(items, downloading: Set(steam.downloads.keys))
         let installed = SteamGamesRules.sorted(groups.installed, by: sort, recorded: recorded)
-        let collapsible = Self.collapsible
+        let collapsible = !standalone && Self.collapsible
         Group {
             if Self.shown {
                 VStack(alignment: .leading, spacing: 14) {
@@ -1213,7 +1214,7 @@ struct SteamGameSheet: View {
                         } header: {
                             Text("DLC")
                         } footer: {
-                            Text("DLC you own downloads with the game, as in Steam. Turn one off to leave its files out; a change applies when the download next starts or resumes. The sizes above are the game's alone.")
+                            Text("Selected DLC downloads with the game.")
                         }
                     }
                     Section {
@@ -1243,7 +1244,7 @@ struct SteamGameSheet: View {
         }
     }
 
-    static let downloadNote = "Games download directly from Steam with your account, to this iPhone or to the drive picked under Install on. You can leave Madeira while it downloads: on iOS 26 and later iOS shows the download's progress and keeps it going; on earlier versions it pauses after a short while and continues when you return. A download pauses while a game is running and continues afterwards."
+    static let downloadNote = "Downloads pause during gameplay. iOS 26 or later can continue them in the background."
 
     @ViewBuilder private func primaryAction(_ item: SteamGamesRules.Item) -> some View {
         if let installed = item.installed {
@@ -1374,7 +1375,7 @@ struct SteamCloudSection: View {
             } header: {
                 Text("Steam Cloud")
             } footer: {
-                Text("Saves sync when Iridium opens or when you open this page. After playing, use Upload Saves & Close Iridium in the game menu. Conflicts need your choice; replaced saves are kept in Files › Iridium › Steam Cloud Backups.")
+                Text("After playing, use Upload Saves & Close Iridium. Replaced saves are backed up.")
             }
         }
     }
@@ -1544,10 +1545,10 @@ struct SteamEntrySection: View {
                     ForEach(dockPrograms, id: \.self) { Text($0).tag($0) }
                 }.pickerStyle(.navigationLink)
                 if dockProgram != nil {
-                    Text("Madeira puts a copy of this program in place of the one Steam starts (the launcher is kept, and goes back with Steam's choice). Steam still starts the game and checks ownership.")
+                    Text("Replaces Steam’s launcher. The original launcher is kept.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("For a game whose launcher closes Madeira when it starts the game (Fallout: New Vegas): pick the game's own program.")
+                    Text("Choose the game’s program if its launcher closes Iridium.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Smaller JIT pool (512 MB) for this launch", isOn: $dock.compactPool)
@@ -1592,7 +1593,7 @@ struct SteamEntrySection: View {
                         Label(chosen == SteamAppInfo.publicBranch ? "Download the public build" : "Download \(chosen)",
                               systemImage: "arrow.triangle.branch")
                     }.disabled(!steam.signedIn)
-                    Text("Files that match are kept; only what differs is downloaded. Steam then starts the game on this version.")
+                    Text("Downloads changed files only.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -1601,7 +1602,7 @@ struct SteamEntrySection: View {
                 let installedDLC = games.installedDLC[appID] ?? [:]
                 DisclosureGroup("Owned DLC (\(owned.count))") {
                     SteamDLCRows(appID: appID, installedDepots: installedDepots, installedDLC: installedDLC)
-                    Text("A DLC turned off is left out of the next update or repair; its files stay until you uninstall the game.")
+                    Text("Disabled DLC stays on disk until uninstall.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if download == nil, let missing = steam.game(appID)?.dlcToDownload(installedDepots: installedDepots, installedDLC: Set(installedDLC.keys)),
@@ -1610,7 +1611,7 @@ struct SteamEntrySection: View {
                         Label(missing.count == 1 ? "Download DLC: \(missing[0].name)" : "Download \(missing.count) DLC",
                               systemImage: "puzzlepiece.extension")
                     }.disabled(!steam.signedIn)
-                    Text("Adds the DLC's files to the game. The game's own files are checked and kept, so this takes a little longer than the DLC alone.")
+                    Text("Adds DLC and checks the installed game files.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

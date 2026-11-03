@@ -19,7 +19,7 @@ struct IridiumCoreFiles: View {
             if game.runtimeID == "azahar" {
                 Section("3DS Content") {
                     Button("Install CIA Game, Update, or DLC", systemImage: "square.and.arrow.down") { importingCIA = true }
-                    Text("Choose an unencrypted CIA. Base games join the library and share this game's 3DS storage. Updates and DLC use this storage. Existing files are backed up before replacement.")
+                    Text("Use an unencrypted CIA. Existing content is backed up.")
                         .font(.footnote)
                 }
             }
@@ -40,7 +40,7 @@ struct IridiumCoreFiles: View {
                 }
             }
             Section {
-                Text("Close the game before importing. Existing files are backed up before replacement. Reopen the game to apply changes. For a texture pack, choose the folder that contains its texture files and settings.")
+                Text("Close the game first. Existing content is backed up.")
                 if game.runtimeID == "dolphin" {
                     Text("Game patches use Dolphin Game INI files. Keep the original game ID as the file name. Enable patches in the INI before importing.")
                 }
@@ -109,61 +109,4 @@ struct IridiumCoreExport: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController { UIDocumentPickerViewController(forExporting: [url], asCopy: true) }
     func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
-}
-
-struct IridiumCIAImport: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var session = IridiumConsoleSession.shared
-    @ObservedObject private var library = IridiumConsoleLibrary.shared
-    @State private var selected: UUID?
-    @State private var importing = false
-    @State private var started = false
-    @State private var message: String?
-    private var targets: [IridiumConsoleGame] {
-        var owners = Set<UUID>()
-        return library.games.filter { $0.runtimeID == "azahar" && owners.insert($0.storageOwnerID ?? $0.id).inserted }
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-    }
-    var body: some View {
-        NavigationStack {
-            Form {
-                Group {
-                    Section("3DS Storage") {
-                        Picker("Install into", selection: $selected) {
-                            Text("New 3DS Storage").tag(nil as UUID?)
-                            ForEach(targets) { game in Text(game.title).tag(Optional(game.id)) }
-                        }
-                        Text("Use new storage for a base game. For updates and DLC, choose the game's existing storage.")
-                            .font(.footnote)
-                    }
-                    Section {
-                        Button("Choose CIA File", systemImage: "square.and.arrow.down") { importing = true }
-                        Text("Choose an unencrypted CIA. Installed games join the library. Existing storage is backed up before replacement.")
-                            .font(.footnote)
-                    }
-                    if session.dolphinMaintenance { ProgressView("Installing 3DS content…") }
-                    if started, let status = session.dolphinSystemStatus { Text(status).font(.footnote) }
-                    if let message { Text(message).font(.footnote) }
-                }.iridiumRowSurface()
-            }.iridiumPageSurface()
-                .navigationTitle("Install 3DS CIA").navigationBarTitleDisplayMode(.inline)
-                .disabled(session.isActive || session.dolphinMaintenance)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { dismiss() }.disabled(session.dolphinMaintenance)
-                    }
-                }
-        }
-        .interactiveDismissDisabled(session.dolphinMaintenance)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "cia") ?? .data]) { result in
-            switch result {
-            case .success(let url):
-                let game = targets.first { $0.id == selected }
-                guard selected == nil || game != nil else { message = "Choose the game's storage again."; return }
-                message = nil; started = true
-                session.install3DSCIA(url, game: game)
-            case .failure(let error): message = error.localizedDescription
-            }
-        }
-    }
 }

@@ -322,7 +322,7 @@ struct PadAssistPage: View {
                 Toggle("Invert left and right", isOn: bind(\.invertX))
             }
         } header: { Text("Gyro aim") } footer: {
-            Text("Moving the controller (or this device) aims. Automatic gyro uses the controller's (DualSense, DualShock 4, Switch Pro) and this device's otherwise. Automatic moves the right stick when the game sees a controller and the mouse otherwise. Without a controller, only Always works. Raise the anti-dead zone if slow stick aim does nothing.")
+            Text("Gyro uses a controller sensor when available, then this device.")
         }
         Section {
             ForEach(PadAssistSettings.turboChoices, id: \.self) { name in

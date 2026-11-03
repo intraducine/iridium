@@ -31,6 +31,15 @@ enum LibraryError: LocalizedError {
 @MainActor final class IridiumConsoleSession {
     static let shared = IridiumConsoleSession()
     var isActive = false, dolphinMaintenance = false
+    var failCIA = true, ciaCalls = 0
+    var ciaOwners: [UUID] = [], ciaTargets: [UUID?] = []
+    func install3DSCIA(_ source: URL, game: IridiumConsoleGame?, importOwner: UUID?,
+                       completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
+        precondition(importOwner.map { IridiumImportCoordinator.shared.ownsContentImport($0) } == true)
+        precondition(IridiumImportCoordinator.shared.blocksLaunch)
+        ciaCalls += 1; ciaOwners.append(importOwner!); ciaTargets.append(game?.id)
+        completion(failCIA ? .failure(CocoaError(.fileWriteUnknown)) : .success(()))
+    }
 }
 @MainActor final class IridiumConsoleLibrary: ObservableObject {
     static let shared = IridiumConsoleLibrary()
@@ -117,6 +126,32 @@ enum JITPairingSource { case imported }
         let worker = IridiumImportFiles(documents: docs)
         let old = docs.appendingPathComponent("IridiumRuntimes")
         switch CommandLine.arguments[1] {
+        case "cia":
+            let c = IridiumImportCoordinator.shared, session = IridiumConsoleSession.shared
+            let source = try put("Import/content.cia")
+            c.scan(); try await settle(c)
+            require(c.choices.count == 1 && session.ciaCalls == 0, "CIA needs a storage choice")
+            let choice = c.choices.values.first!
+            require(!c.ownsContentImport(choice.id), "A queued choice must not own maintenance")
+            c.choose(choice, value: "cia:new"); try await settle(c)
+            require(session.ciaCalls == 1 && fm.fileExists(atPath: source.path) && c.imported == 0,
+                    "Failed installation retains the source")
+            require(!c.ownsContentImport(choice.id), "Failure releases the import admission")
+            session.failCIA = false
+            c.scan(retry: true); try await settle(c)
+            require(session.ciaCalls == 2 && session.ciaOwners == [choice.id, choice.id], "Retry keeps the storage identity")
+            require(!fm.fileExists(atPath: source.path) && c.imported == 1 && c.failures.isEmpty && c.choices.isEmpty,
+                    "Only successful publication consumes the CIA")
+            let existing = IridiumConsoleGame(id: UUID(), title: "Existing 3DS", platform: .nintendo3DS,
+                runtimeID: "azahar", fileExtension: "3ds", importedAt: Date())
+            IridiumConsoleLibrary.shared.games = [existing]
+            let update = try put("Import/update.cia")
+            c.scan(); try await settle(c)
+            let updateChoice = c.choices.values.first!
+            c.choose(updateChoice, value: "cia:" + UUID().uuidString); try await settle(c)
+            require(session.ciaCalls == 2 && fm.fileExists(atPath: update.path), "A foreign choice is refused")
+            c.choose(updateChoice, value: "cia:" + existing.id.uuidString); try await settle(c)
+            require(session.ciaTargets.last! == existing.id && !fm.fileExists(atPath: update.path), "Updates use the chosen storage")
         case "migration":
             let a = UUID(), b = UUID(), console = UUID()
             let original = "Program Files (x86)/Steam/steamapps/common/Shared Game"

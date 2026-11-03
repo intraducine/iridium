@@ -140,7 +140,7 @@ struct IridiumPreviewRoot: View {
                             }
                     }
                 case "steam-preview":
-                    IridiumSteamView(startDock: { _, _ in unavailableWindows() }, open: { _ in })
+                    IridiumStoreBrowser(startDock: { _, _ in unavailableWindows() }, open: { _ in })
                         .disabled(true)
                         .safeAreaInset(edge: .bottom, spacing: 0) { previewNotice("Preview account · Sample games · Actions disabled") }
                 default: IridiumLibraryView(services: .init(

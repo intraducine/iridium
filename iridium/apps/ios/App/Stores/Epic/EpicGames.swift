@@ -61,6 +61,7 @@ struct EpicGamesSection: View {
     var width: CGFloat = 390
     /// Opens a game's Game details page (LibraryView's details sheet).
     let open: (LibraryEntry) -> Void
+    var standalone = false
     @ObservedObject private var epic = EpicLibrary.shared
     @ObservedObject private var library = LibraryModel.shared
     @AppStorage("madeiraLibraryHideEpic") private var hidden = false
@@ -73,7 +74,7 @@ struct EpicGamesSection: View {
         let items = EpicGamesRules.items(epic, search: search)
         let mine = items.filter { $0.installed != nil || epic.downloads[$0.id] != nil }
         let others = items.filter { $0.installed == nil && epic.downloads[$0.id] == nil }
-        let collapsible = SteamGamesSection.collapsible
+        let collapsible = !standalone && SteamGamesSection.collapsible
         VStack(alignment: .leading, spacing: 14) {
             LibrarySectionHeader(title: "Epic Games", count: mine.count, collapsed: collapsible ? $hidden : nil) {
                 if epic.refreshing { ProgressView().accessibilityLabel("Refreshing Epic Games library") }
@@ -163,7 +164,7 @@ struct EpicSignInCard: View {
                 Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 30)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Sign in to Epic Games").font(.headline)
-                    Text("See your Epic Games games here and install them without leaving Iridium.")
+                    Text("View and install your Epic games.")
                         .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
@@ -360,7 +361,7 @@ struct EpicGameSheet: View {
                     }
                     Section {
                         if let freeSpace { LabeledContent("Free space on this device", value: ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)) }
-                        Text("Games download directly from Epic with your account into C:\\Program Files\\Epic Games. On iOS 26 and later the download continues in the background, with its progress shown by iOS. On earlier iOS, keep Iridium open while it downloads: in the background iOS allows only a short time, then the download pauses and continues when you return. A download also pauses while a game is running.")
+                        Text("Downloads continue in the background on iOS 26 or later.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
@@ -452,7 +453,7 @@ struct EpicEntrySection: View {
             if LibraryEntry.epicAntiCheatOffProgram[app] != nil {
                 Toggle("Start without Easy Anti-Cheat", isOn: Binding(get: { entry.epicAntiCheatOff != false },
                                                                        set: { entry.epicAntiCheatOff = $0 ? nil : false }))
-                Text("Easy Anti-Cheat cannot run in Wine on iOS. With this on, the game starts in its own offline mode without it: offline matches, training, LAN and replays work, online matches do not.")
+                Text("Disables anti-cheat for offline play. Online matches will not work.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             LabeledContent("App name", value: app)
@@ -463,7 +464,7 @@ struct EpicEntrySection: View {
         } header: {
             Text("Epic Games")
         } footer: {
-            Text("The game starts its own program in Wine. At every start Iridium asks Epic for a one-use sign-in code and passes it to the game, as Epic's launcher does, so the game signs in to Epic with your account. There is no Epic launcher in Iridium.")
+            Text("Starts the game directly with your Epic account.")
         }
         .confirmationDialog("Uninstall \(entry.title)? Its downloaded files are deleted from this device. Saves stored elsewhere are kept.",
                             isPresented: $confirmUninstall, titleVisibility: .visible) {
@@ -493,7 +494,7 @@ struct EpicSettingsSection: View {
         } header: {
             Text("Epic Games")
         } footer: {
-            Text("Iridium keeps an Epic Games sign-in token in this device's Keychain, for this device only. Signing out removes it; installed games stay.")
+            Text("Sign-out removes this device’s token. Installed games stay.")
         }
         .onAppear { epic.start() }
         .confirmationDialog("Sign out of Epic Games?", isPresented: $confirmSignOut, titleVisibility: .visible) {

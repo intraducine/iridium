@@ -777,7 +777,7 @@ struct LibraryStatus: View {
                 }
             }
             if !memory {
-                Text("Memory+ requires the Increased Memory Limit entitlement in this signed copy of Madeira. Enabling JIT does not grant it. Check that your signing tool enables this capability for Madeira, then sign and install the updated app without deleting your existing installation.")
+                Text("Memory+ needs the Increased Memory Limit capability. JIT does not grant it.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1035,7 +1035,7 @@ struct LibraryGroupedGames<LocalCell: View>: View {
         VStack(alignment: .leading, spacing: 24) {
             if groups.isEmpty {
                 if search.isEmpty {
-                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Windows Games", systemImage: "gamecontroller", description: Text("Use Add Game to import files or install from a store."))
                 } else {
                     Text("No games match your search.").foregroundStyle(.secondary)
                 }
@@ -1550,7 +1550,7 @@ ForEach(IridiumConsoleSystem.all) { system in
                                           part: steamFirst ? .notInstalled : .all, open: { selected = $0 })
                     }
                 } else if model.entries.filter({ $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.itchGameID == nil && $0.eaOfferID == nil }).isEmpty {
-                    ContentUnavailableView("Make yourself at home", systemImage: "gamecontroller", description: Text("Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."))
+                    ContentUnavailableView("No Games", systemImage: "gamecontroller", description: Text("Use Add Game to import files or install from a store."))
                 } else {
                     cells(entries, width: viewport.size.width)
                 }
@@ -1933,7 +1933,7 @@ struct LibraryDetail: View {
     }
     /// The pages the details page links to (iOS Settings style), each with its own Form.
     enum Page: Hashable {
-        case display, controls, launch, compatibility, steam, cloud, achievements, itch, library, iniFiles, advanced
+        case display, controls, launch, compatibility, steam, cloud, achievements, itch, epic, ea, library, iniFiles, advanced
         var title: String {
             switch self {
             case .display: return "Display"
@@ -1944,6 +1944,8 @@ struct LibraryDetail: View {
             case .cloud: return "Steam Cloud"
             case .workshop: return "Steam Workshop"
             case .itch: return "itch.io"
+            case .epic: return "Epic Games"
+            case .ea: return "EA"
             case .achievements: return "Achievements"
             case .library: return "Library details"
             case .iniFiles: return "Settings files"
@@ -1959,7 +1961,7 @@ struct LibraryDetail: View {
             case .steam: return "shippingbox"
             case .cloud: return "icloud"
             case .workshop: return "square.stack.3d.up"
-            case .itch: return "bag"
+            case .itch, .epic, .ea: return "bag"
             case .achievements: return "trophy"
             case .library: return "info.circle"
             case .iniFiles: return "doc.text"
@@ -1974,7 +1976,7 @@ struct LibraryDetail: View {
     /// or library details; a Steam game has its Steam pages.
     private var pageGroups: [[Page]] {
         let launch = entry.usesLaunchOptions || entry.desktop != true
-        let steam: [Page] = entry.steamAppID == nil ? (entry.itchGameID != nil ? [.itch] : [])
+        let steam: [Page] = entry.steamAppID == nil ? (entry.epicAppName != nil ? [.epic] : entry.eaOfferID != nil ? [.ea] : entry.itchGameID != nil ? [.itch] : [])
             : (SteamOwnedLibrary.cloudEnabled ? [.steam, .cloud, .achievements] : [.steam, .achievements])
                 + (SteamOwnedLibrary.workshopEnabled && Self.showsWorkshop(entry.steamAppID) ? [.workshop] : [])
         let tuning: [Page] = launch ? [.display, .controls, .launch, .compatibility] : [.display, .controls, .compatibility]
@@ -2016,6 +2018,8 @@ struct LibraryDetail: View {
                     SteamWorkshopSections(appID: UInt32(appID), title: entry.title)
                 }
             case .itch: ItchEntrySection(entry: $entry) { leaving = true; dismiss() }
+            case .epic: EpicEntrySection(entry: $entry) { leaving = true; dismiss() }
+            case .ea: EAEntrySection(entry: $entry) { leaving = true; dismiss() }
             case .achievements: if let appID = entry.steamAppID { SteamAchievementsSection(appID: appID) }
             case .library: libraryPage
             case .iniFiles: GameIniFilesSection(windowsPath: entry.windowsPath, gameFolder: iniGameFolder)
@@ -2268,8 +2272,8 @@ struct LibraryDetail: View {
         if entry.steamAppID == nil && entry.desktop != true {
             Section("Executable") { Text(entry.windowsPath).font(.caption.monospaced()).textSelection(.enabled) }
             if model.entries.contains(where: { $0.id == entry.id }) { GameMoveSection(entry: $entry) }
-            Section { Button("Remove from library", role: .destructive) { remove = true } }
         }
+        if entry.desktop != true { Section { Button("Remove from Library", role: .destructive) { remove = true } } }
         if let error { Section { Text(error).foregroundStyle(.red) } }
     }
 
@@ -2703,7 +2707,7 @@ struct ControllerBindsPage: View {
                 .id("controls.mapping.reset")
                 .setupControllerTarget("controls.mapping.reset", order: 1000, action: reset)
                 .disabled(!changed)
-            Text("Defaults: left stick WASD, right stick mouse, RT and LT click, D-pad arrows, A Space, B Ctrl, X E, Y R, LB Q, RB F, L3 Shift, R3 C, Start Esc, Select Tab. A touch control's own controller binding (control editor) applies when a row is at its default.")
+            Text("Change each gamepad input below.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -3426,7 +3430,7 @@ struct GraphicsSettings: View {
             }
             .disabled(!anySet)
         } header: { Text("Graphics") } footer: {
-            Text("These write d3d9 / d3d11 / d3d12 / vulkan into madeira.cfg; changes apply at the next session start. Per-game overrides go in the game's custom config lines (Advanced › This game's config).")
+            Text("Default graphics drivers. Per-game choices override these.")
         }
         .onChange(of: refresh) { _, _ in reload() }
     }
@@ -3489,7 +3493,7 @@ struct OverlayStyleSettings: View {
                     Text("2 s").tag(2.0); Text("4 s").tag(4.0); Text("8 s").tag(8.0)
                 }.pickerStyle(.segmented).frame(maxWidth: 220)
             }
-            Text("1% lows: the frame rate of the slowest 1% of frames in the last ten seconds; 1% highs, the fastest. The graph shows each frame's time, newest on the right; a stall is a plateau as long as the stall.")
+            Text("The graph shows recent frame times, with newest frames on the right.")
                 .font(.caption).foregroundStyle(.secondary)
             Button("Reset overlay style") {
                 layout = "grid"; scale = 1; background = "glass"; opacity = 1; labels = true; colours = false; refresh = 1; graphSeconds = 4
@@ -3988,7 +3992,7 @@ struct LibraryHUD: View {
                     iridiumMenuButton(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", symbol: "hand.tap")
                     if GamepadInput.enabled && iridiumController.isActive {
                         iridiumMenuButton(iridiumController.forceTouchVisible ? "Use Controller" : "Use Touch Controls", symbol: "gamecontroller")
-                        Text("Touch controls hide automatically with a controller. A temporary override lasts until it disconnects.")
+                        Text("Use Touch Controls to show them with a controller connected.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     iridiumMenuButton("Control Settings", symbol: "slider.horizontal.3")
@@ -4052,7 +4056,7 @@ struct LibraryHUD: View {
                             Text("F1").tag(1); Text("F6").tag(6); Text("F5").tag(5); Text("F0").tag(0)
                         }.pickerStyle(.segmented).frame(maxWidth: 220)
                     }
-                    Text("Both apply to Direct3D 12 games only. Capture writes the render passes of the next frame to Documents/capture and its draw list to the log. GPU sync: F1 makes every pass wait for the one before (the default), F6 waits only where the game's barriers ask, F5 makes render passes wait at the fragment stage, F0 has no sync at all (expect flicker; for tests).")
+                    Text("Direct3D 12 only. Captures go in Documents/capture.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let appID = model.activeEntry?.steamAppID, SteamOwnedLibrary.cloudQuitEnabled {

@@ -416,9 +416,9 @@ struct SteamWorkshopSections: View {
             if !installed {
                 Text("Install \(title) to download its Workshop items.").foregroundStyle(.secondary)
             } else if !steam.signedIn {
-                Text("Sign in to Steam (Settings › Steam) to see your Workshop items.").foregroundStyle(.secondary)
+                Text("Sign in to Steam to view Workshop items.").foregroundStyle(.secondary)
             } else if !steam.workshopReady {
-                Text("Not available while a game runs. Steam gives your account to the game until it ends.")
+                Text("Stop the game to use Workshop.")
                     .foregroundStyle(.secondary)
             }
             NavigationLink {
@@ -437,7 +437,7 @@ struct SteamWorkshopSections: View {
                 Link(destination: url) { Label("Open the Workshop in Safari", systemImage: "safari") }
             }
         } footer: {
-            Text("Items download from Steam with your account into Steam's Workshop folder beside the game, so the game finds them when it starts through Madeira Dock. Subscriptions are your Steam account's, the same as on a PC.")
+            Text("Workshop items install beside the game.")
         }
         .task(id: "\(appID) \(steam.workshopReady) \(installed)") { await model.refresh(appID) }
         .alert("Steam Workshop", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
@@ -621,6 +621,7 @@ struct SteamWorkshopHub: View {
     @ObservedObject private var steam = SteamOwnedLibrary.shared
     @ObservedObject private var model = SteamWorkshopModel.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var account = false
 
     var body: some View {
         let installed = games.games.filter(\.installed).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -629,11 +630,15 @@ struct SteamWorkshopHub: View {
         NavigationStack {
             List {
                 if !steam.workshopReady {
-                    Text(steam.signedIn ? "Not available while a game runs." : "Sign in to Steam (Settings › Steam) to use the Workshop.")
+                    Text(steam.signedIn ? "Stop the game to use Workshop." : "Sign in to Steam to use Workshop.")
                         .foregroundStyle(.secondary)
                 }
+                if !steam.signedIn { Button("Sign in to Steam") { account = true } }
                 if installed.isEmpty {
-                    Text("No Steam games are installed yet.").foregroundStyle(.secondary)
+                    ContentUnavailableView("No Steam Games Installed", systemImage: "gamecontroller")
+                } else if withWorkshop.isEmpty && others.isEmpty {
+                    ContentUnavailableView("No Workshop Games", systemImage: "square.stack.3d.up",
+                                           description: Text("Your installed games do not support Workshop."))
                 }
                 if !withWorkshop.isEmpty {
                     Section("Games with a Workshop") { ForEach(withWorkshop) { link($0) } }
@@ -644,12 +649,15 @@ struct SteamWorkshopHub: View {
                     } header: {
                         Text("Other installed games")
                     } footer: {
-                        Text("Steam has not said yet whether these games have a Workshop. Pull down on the library to refresh it.")
+                        Text("Workshop support is not known yet.")
                     }
                 }
             }
             .navigationTitle("Steam Workshop").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .onAppear { games.refresh() }
+            .refreshable { await SteamGamesSection.refresh() }
+            .sheet(isPresented: $account) { SteamSignInView() }
             .task(id: installed.map(\.id)) {
                 for game in installed.prefix(200) { await model.reloadRecord(UInt32(game.id)) }
             }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
 
-enum IridiumAddGameSource: Int, CaseIterable { case files, importFolder, steam, cia }
+enum IridiumAddGameSource: Int, CaseIterable { case files, importFolder, steam }
 
 struct IridiumAddGameView: View {
     @Environment(\.dismiss) private var dismiss
@@ -14,10 +14,9 @@ struct IridiumAddGameView: View {
         NavigationStack {
             List {
                 Section {
-                    source(.files, title: "Choose Files", subtitle: "Add games, folders, archives, or a pairing file.", symbol: "folder")
-                    source(.importFolder, title: "Import Folder", subtitle: "Check files in Import and finish pending imports.", symbol: "tray.and.arrow.down")
+                    source(.files, title: "Files and Folders", subtitle: "Games, archives, or pairing files.", symbol: "folder")
+                    source(.importFolder, title: "Import Folder", subtitle: "Finish pending imports.", symbol: "tray.and.arrow.down")
                     source(.steam, title: "Stores", subtitle: "Steam, Epic Games, EA, and itch.io.", symbol: "network")
-                    source(.cia, title: "Install 3DS CIA", subtitle: "Install a game, update, or DLC.", symbol: "square.and.arrow.down")
                 }
             }.iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }

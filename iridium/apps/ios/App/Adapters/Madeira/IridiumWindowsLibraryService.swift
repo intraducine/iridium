@@ -244,6 +244,13 @@ final class LibraryModel: ObservableObject {
         guard let appID = entry.steamAppID, MadeiraDock.validAppID(appID) else { return nil }
         guard !SteamGamesModel.shared.sharedOnlyApps.contains(appID) else { return nil }
         if let game = SteamGamesModel.shared.games.first(where: { $0.id == appID }) { return game }
+        let library = SteamOwnedLibrary.shared.library(for: appID)
+        if SteamInstallPaths.isManaged(library: library),
+           let apps = try? ExternalDrives.nativeURL(library, write: false),
+           let folder = SteamInstallFiles.installFolder(appID: appID, steamApps: apps), MadeiraDock.validFolderName(folder) {
+            return DockGame(id: appID, name: entry.title, installDir: folder, library: library,
+                            installed: false, customExecutables: false, filesMissing: true)
+        }
         let prefix = SteamInstallPaths.libraryRelative + "/common/"
         guard entry.relativePath.lowercased().hasPrefix(prefix.lowercased()) else { return nil }
         let folder = String(entry.relativePath.dropFirst(prefix.count))

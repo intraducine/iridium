@@ -40,6 +40,7 @@ enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
         "AppState" { "appid" "220" "name" "Half-Life 2" "StateFlags" "4" "installdir" "Half-Life 2" }
         """#.utf8)
         try manifest.write(to: record)
+        precondition(SteamInstallFiles.installFolder(appID: 220, steamApps: apps) == "Half-Life 2")
         func game() -> DockGame { MadeiraDock.games(drive: drive).first! }
         precondition(!game().installed && game().filesMissing == true)
         try fm.createDirectory(at: install, withIntermediateDirectories: true)
@@ -90,6 +91,7 @@ enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
         try Data("saved progress".utf8).write(to: save)
         precondition(SteamInstallFiles.delete(appID: 220, folderName: "Half-Life 2", steamApps: apps))
         precondition(!fm.fileExists(atPath: record.path) && !fm.fileExists(atPath: owner.path))
+        precondition(SteamInstallFiles.installFolder(appID: 220, steamApps: apps) == nil)
         let saved = try Data(contentsOf: save)
         precondition(saved == Data("saved progress".utf8))
         try fm.createDirectory(at: install, withIntermediateDirectories: true)
@@ -149,8 +151,15 @@ enum ExternalDrives { static var steamLibraries: [String] { [] }; static func na
 enum GameRecommendations { static func prepare(_ entry: inout LibraryEntry, new: Bool) {} }
 enum SteamSignIn { static func flag(_ key: String, default value: Bool) -> Bool { value } }
 enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
-enum SteamInstallPaths { static let libraryRelative = "Program Files (x86)/Steam/steamapps" }
-enum SteamInstallFiles { static func sizeOnDisk(appID: Int, steamApps: URL) -> Int64? { nil } }
+enum SteamInstallPaths { static let libraryRelative = "Program Files (x86)/Steam/steamapps"; static func isManaged(library: String) -> Bool { library == libraryRelative } }
+@MainActor final class SteamOwnedLibrary {
+ static let shared=SteamOwnedLibrary()
+ func library(for appID: Int) -> String { SteamInstallPaths.libraryRelative }
+}
+@MainActor enum SteamInstallFiles {
+ static var missingFolder: String?
+ static func installFolder(appID: Int, steamApps: URL) -> String? { missingFolder }
+ static func sizeOnDisk(appID: Int, steamApps: URL) -> Int64? { nil } }
 @MainActor final class SteamGamesModel {
     static let shared = SteamGamesModel()
     var games: [DockGame] = [], sharedOnlyApps: Set<Int> = []
@@ -198,6 +207,10 @@ enum IridiumFavoriteButton { static func toggle(_ entry: LibraryEntry) {} }
         precondition(reopened.hiddenSteamApps == [220] && reopened.entries.first?.graphicsAPI == "D3D9")
         let missing = reopened.steamInstall(entry)!
         precondition(missing.id == 220 && !missing.installed)
+        var movedEntry = entry; movedEntry.relativePath = "iridium-games/" + entry.id.uuidString
+        SteamInstallFiles.missingFolder = "Half-Life 2"
+        precondition(reopened.steamInstall(movedEntry)?.installDir == "Half-Life 2", "Moved/missing files retain managed uninstall identity")
+        SteamInstallFiles.missingFolder = nil
         reopened.upsertSteam(missing, title: entry.title)
         precondition(reopened.hiddenSteamApps.isEmpty && reopened.entries.first?.id == entry.id)
         let navigation = Navigation(entry, model: reopened)

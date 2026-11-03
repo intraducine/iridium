@@ -19,7 +19,7 @@ OUTPUT = ROOT / '.build/iridium-ui-preview'
 def prepare_catalog_preview(destination):
     """Isolate screenshot data in generated Simulator copies, before account IO.
 
-    IridiumSteamView/SteamGamesSection remain the production views. Only the
+    IridiumStoreBrowser/SteamGamesSection remain the production views. Only the
     --screen steam-preview route gets sample catalog state, with no credentials,
     downloads, persisted account cache, installed records or background session.
     """

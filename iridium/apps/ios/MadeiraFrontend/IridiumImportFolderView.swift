@@ -23,8 +23,8 @@ struct IridiumImportFolderView: View {
                 Section {
                     Button("Choose Files") { choosingFiles = true }.disabled(!automaticallyScan)
                         .listRowBackground(highlight(":files"))
-                    Text("Put game files, game folders, ZIP or 7z archives, and pairing files in Iridium’s Import folder in Files.")
-                    Text("Import runs while Iridium is open and no game is running. Each game gets a folder in Games. Pairing files go to secure device storage.")
+                    Text("Add files here or put them in Iridium’s Import folder.")
+                    Text("Games move to Games. Pairing files use secure storage.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.iridiumRowSurface()
                 Section {

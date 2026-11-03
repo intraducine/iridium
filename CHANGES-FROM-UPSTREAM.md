@@ -36,6 +36,14 @@ name; optional interpreter paths do not. The standalone Windows control overlay
 is hidden between library sessions. Startup diagnostics and Dock executable
 scans run off the UI thread.
 
+Stores share one visible selector, search field and Accounts page for Steam,
+Epic Games, EA and itch.io. Game Options links to each store's install controls.
+Workshop has an empty state for unsupported installed games. Journaled game
+aliases remain removable after the user deletes their target folder in Files.
+CIA installation uses the shared Import queue with an explicit storage choice;
+source files are consumed only after installation and library persistence finish.
+Option descriptions use short, task-specific copy.
+
 Adaptations include:
 
 - Shared player/input ownership, isolated console records, Favorites, artwork,

@@ -9,7 +9,7 @@ struct IridiumImportSource: Identifiable {
     init(url: URL) { urls = [url] }
     init(urls: [URL]) { self.urls = urls }
     static var contentTypes: [UTType] {
-        [.folder] + ["exe", "plist", "mobiledevicepairing", "zip", "7z"].compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
+        [.folder] + ["exe", "cia", "plist", "mobiledevicepairing", "zip", "7z"].compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
             + IridiumConsoleLibrary.importContentTypes + ["bin", "raw"].compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
     }
 }

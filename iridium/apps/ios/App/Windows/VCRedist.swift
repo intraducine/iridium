@@ -447,7 +447,7 @@ struct VCRedistSettingsSection: View {
         } header: {
             Text("Visual C++ runtimes")
         } footer: {
-            Text("Many Windows games need Microsoft's Visual C++ 2015-2022 runtime. Madeira downloads Microsoft's installers (about \(VCRedistPin.totalMegabytes) MB, version \(VCRedistPin.version)) and takes the runtime DLLs out of them on this device, as Microsoft shipped them, for 64-bit and 32-bit games. No Windows session runs and nothing restarts: the next game start uses them. Microsoft's licence terms for the redistributable apply to the files.")
+            Text("Installs Microsoft’s Visual C++ runtime for 32-bit and 64-bit games.")
         }
         .confirmationDialog("Remove the Visual C++ runtime?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { redist.remove() }

@@ -223,7 +223,7 @@ CONTINUATION
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for lifecycle checks')
     def test_console_launch_guards_execute_with_stopped_wine_flags(self):
         session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
-        admission = session[session.index('    func validateLaunchAdmission() throws {'):session.index('    func start(_ game:')]
+        admission = session[session.index('    func validateLaunchAdmission('):session.index('    func start(_ game:')]
         start = session.index('            try validateLaunchAdmission()')
         end = session.index('            lock.lock(); intent =', start)
         # Execute the shipping preflight/lease acquisition, with controlled
@@ -237,6 +237,8 @@ final class IridiumImportCoordinator {
     static let shared = IridiumImportCoordinator()
     var blocksLaunch = false
     var launchMessage = "Import in progress"
+    var contentOwner: UUID?
+    func ownsContentImport(_ owner: UUID) -> Bool { contentOwner == owner }
 }
 func wine_process_is_running() -> Int32 { wineRunning }
 func wineserver_is_running() -> Int32 { serverRunning }
@@ -279,6 +281,12 @@ precondition(preflight.ownership.lease == nil)
 IridiumImportCoordinator.shared.blocksLaunch = true
 do { try preflight.validateLaunchAdmission(); fatalError("Storage reservation must block launch") }
 catch LibraryError.message { }
+let owner = UUID()
+do { try preflight.validateLaunchAdmission(importOwner: owner); fatalError("Foreign import must not enter maintenance") }
+catch LibraryError.message { }
+IridiumImportCoordinator.shared.contentOwner = owner
+try preflight.validateLaunchAdmission(importOwner: owner)
+IridiumImportCoordinator.shared.contentOwner = nil
 IridiumImportCoordinator.shared.blocksLaunch = false
 
 func rejects(_ expected: IridiumRuntimeError) {

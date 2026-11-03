@@ -108,10 +108,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var jitDiagnostic: IridiumJITDiagnostic? // main-thread reference; workers retain their own owner
     private var displayedImageCount: UInt64 = 0 // protected by lock
 
-    func validateLaunchAdmission() throws {
+    func validateLaunchAdmission(importOwner: UUID? = nil) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         try MainActor.assumeIsolated {
-            guard !IridiumImportCoordinator.shared.blocksLaunch else { throw LibraryError.message(IridiumImportCoordinator.shared.launchMessage) }
+            let imports = IridiumImportCoordinator.shared
+            guard !imports.blocksLaunch || importOwner.map({ imports.ownsContentImport($0) }) == true else {
+                throw LibraryError.message(imports.launchMessage)
+            }
         }
         guard !dolphinMaintenance else { throw IridiumRuntimeError.busy }
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else { throw IridiumRuntimeError.busy }
@@ -576,12 +579,17 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @MainActor func install3DSCIA(_ source: URL, game existing: IridiumConsoleGame? = nil) {
-        let game = existing ?? IridiumConsoleGame(id: UUID(), title: "3DS Storage", platform: .nintendo3DS,
+    @MainActor func install3DSCIA(_ source: URL, game existing: IridiumConsoleGame? = nil, importOwner: UUID? = nil,
+                                 completion: @escaping @MainActor (Result<Void, Error>) -> Void = { _ in }) {
+        let game = existing ?? IridiumConsoleGame(id: importOwner ?? UUID(), title: "3DS Storage", platform: .nintendo3DS,
             runtimeID: "azahar", fileExtension: "3ds", importedAt: Date())
         guard game.runtimeID == "azahar",
-              source.pathExtension.lowercased() == "cia", let frameworks = Bundle.main.privateFrameworksURL else { return }
-        guard beginContentMaintenance() else { return }
+              source.pathExtension.lowercased() == "cia", let frameworks = Bundle.main.privateFrameworksURL else {
+            completion(.failure(IridiumRuntimeError.invalidGame)); return
+        }
+        guard beginContentMaintenance(importOwner: importOwner) else {
+            completion(.failure(LibraryError.message(dolphinSystemStatus ?? "Stop the game before installing 3DS content."))); return
+        }
         dolphinSystemStatus = "Installing 3DS content…"
         queue.async {
             let scoped = source.startAccessingSecurityScopedResource()
@@ -641,20 +649,25 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                     if let result {
                         IridiumConsoleLibrary.shared.registerInstalled(title: result.title, path: result.path, owner: game.storageOwnerID ?? game.id) { failure in
                             self.dolphinMaintenance = false
-                            self.dolphinSystemStatus = failure.map { "Content installed, but the library entry could not be saved. " + $0 } ?? "3DS content installed. Its game is in the library."
+                            self.dolphinSystemStatus = failure.map { "Content installed, but the library entry could not be saved. " + $0 } ?? "3DS content installed."
+                            if let failure { completion(.failure(LibraryError.message(failure))) }
+                            else { completion(.success(())) }
                         }
-                    } else { self.dolphinMaintenance = false; self.dolphinSystemStatus = "3DS update or DLC installed." }
+                    } else {
+                        self.dolphinMaintenance = false; self.dolphinSystemStatus = "3DS update or DLC installed."
+                        completion(.success(()))
+                    }
                 }
             } catch {
                 let message = error.localizedDescription
-                DispatchQueue.main.async { self.dolphinMaintenance = false; self.dolphinSystemStatus = message }
+                DispatchQueue.main.async { self.dolphinMaintenance = false; self.dolphinSystemStatus = message; completion(.failure(LibraryError.message(message))) }
             }
         }
     }
 
-    @MainActor func beginContentMaintenance() -> Bool {
+    @MainActor func beginContentMaintenance(importOwner: UUID? = nil) -> Bool {
         guard !isActive else { return false }
-        do { try validateLaunchAdmission() }
+        do { try validateLaunchAdmission(importOwner: importOwner) }
         catch { dolphinSystemStatus = error.localizedDescription; return false }
         dolphinMaintenance = true
         return true

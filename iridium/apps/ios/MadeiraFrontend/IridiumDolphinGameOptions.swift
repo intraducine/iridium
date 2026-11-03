@@ -66,7 +66,7 @@ private struct IridiumDolphinFiles: View {
             if game.platform == .wii {
                 Section("Wii System Content") {
                     Button("Install WAD from Files", systemImage: "square.and.arrow.down") { importing = true }
-                    Text("Choose Wii content that you own. Iridium makes a backup before installation. Dolphin checks and installs the content. The original files are restored if installation fails.")
+                    Text("Existing Wii content is backed up before installation.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }

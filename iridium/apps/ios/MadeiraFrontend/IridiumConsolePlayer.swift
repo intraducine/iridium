@@ -264,7 +264,7 @@ struct IridiumConsolePlayer: View {
                                 }
                                 menuRow("Players: \(session.dolphinSettings.players)", "person.2")
                                 menuRow(session.dolphinSettings.dualCore ? "Dual Core: On" : "Dual Core: Off", "cpu")
-                                Text("Player count and dual core apply after you close and reopen the game. Players follow controller connection order. Touch and keyboard control player 1.").font(.footnote).foregroundStyle(.secondary)
+                                Text("Player count and dual core apply on the next game launch.").font(.footnote).foregroundStyle(.secondary)
                             } else if menuPage == "Core Settings" {
                                 if let status = session.coreControls.captureStatus, !status.isEmpty { Text(status).font(.footnote) }
                                 Text("Settings apply to this game. Some changes need you to close and reopen the game.")
@@ -272,10 +272,10 @@ struct IridiumConsolePlayer: View {
                                 Text("Controllers: \(session.coreControls.players) player\(session.coreControls.players == 1 ? "" : "s"). Touch and keyboard control player 1. Other players follow controller connection order.")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 if isPSP {
-                                    Text("Multiplayer: enable Networking on both devices. For a local host, enable Host Ad Hoc Server and use 127.0.0.1 as its server address. Other devices use the host's local IP address. Use matching channel and port-offset values, then reopen the game and enter its multiplayer mode.")
+                                    Text("Enable Networking on both devices. Host: 127.0.0.1. Others: host IP. Match channel and port.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 } else if session.game?.runtimeID == "flycast" {
-                                    Text("Dreamcast network games use Broadband Adapter Emulation. Enable it before opening a supported game, then use that game's network setup. Arcade link games need compatible external server software; this menu does not create a server.")
+                                    Text("Dreamcast uses Broadband Adapter. Arcade links need an external server.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                                 ForEach(coreOptions) { option in

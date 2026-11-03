@@ -51,6 +51,7 @@ struct ItchGamesSection: View {
     var layout = "cards"
     var width: CGFloat = 390
     let open: (LibraryEntry) -> Void
+    var standalone = false
     @ObservedObject private var itch = ItchLibrary.shared
     @ObservedObject private var library = LibraryModel.shared
     @AppStorage("madeiraLibraryHideItch") private var hidden = false
@@ -63,7 +64,7 @@ struct ItchGamesSection: View {
         let items = ItchGamesRules.items(itch, search: search)
         let mine = items.filter { $0.installed != nil || itch.downloads[$0.id] != nil }
         let others = items.filter { $0.installed == nil && itch.downloads[$0.id] == nil }
-        let collapsible = SteamGamesSection.collapsible
+        let collapsible = !standalone && SteamGamesSection.collapsible
         VStack(alignment: .leading, spacing: 14) {
             LibrarySectionHeader(title: "itch.io", count: mine.count, collapsed: collapsible ? $hidden : nil) {
                 if itch.refreshing { ProgressView().accessibilityLabel("Refreshing itch.io library") }
@@ -75,7 +76,7 @@ struct ItchGamesSection: View {
                             Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 30)).foregroundStyle(.tint)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Sign in to itch.io").font(.headline)
-                                Text("See the games you bought or claimed on itch.io here and install them without leaving Iridium.")
+                                Text("View and install your itch.io games.")
                                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading)
                             }
                             Spacer(minLength: 0)
@@ -351,7 +352,7 @@ struct ItchGameSheet: View {
                     }
                     if let record = item.installed, record.setup != nil, itch.downloads[gameID] == nil {
                         Section("Installer") {
-                            Text("This game comes with an installer. Run installer starts it in the Wine desktop, where it installs into the game's folder on its own (some installers ask a question or two). When it closes, leave the session: Iridium finds the game it installed, and from then on Play starts the game.")
+                            Text("Run the installer, then close its session to find the game.")
                                 .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -369,12 +370,12 @@ struct ItchGameSheet: View {
                                 if upload.size > 0 { LabeledContent("Download size", value: ByteCountFormatter.string(fromByteCount: upload.size, countStyle: .file)) }
                                 if upload.demo { Text("itch.io only offers a demo of this game for Windows.").font(.caption).foregroundStyle(.secondary) }
                                 if [".exe", ".msi"].contains(where: { upload.filename.lowercased().hasSuffix($0) }) {
-                                    Text("If this file is an installer, Play runs it once in the Wine desktop, into C:\\itch; after that, Play starts the game.")
+                                    Text("Play runs the installer once, then starts the installed game.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                             case .unavailable(let reason):
                                 if let owned = item.owned, !owned.owned, (owned.minPrice ?? 0) > 0 {
-                                    Text("This game is not free and this itch.io account has not bought it. Buy it on its store page, then refresh the library.")
+                                    Text("Buy this game on itch.io, then refresh.")
                                         .font(.caption).foregroundStyle(.secondary)
                                 } else {
                                     Text(reason).font(.caption).foregroundStyle(.secondary)
@@ -388,7 +389,7 @@ struct ItchGameSheet: View {
                         if item.installed == nil, itch.downloads[gameID] == nil, itch.added.contains(where: { $0.id == gameID }) {
                             Button("Remove from this library", role: .destructive) { itch.removeAdded(gameID); dismiss() }
                         }
-                        Text("Games download directly from itch.io with your account into C:\\itch. Keep Iridium open while it downloads: in the background iOS allows only a short time, then the download pauses and continues when you return. A download also pauses while a game is running.")
+                        Text("Keep Iridium open while downloading. Games pause downloads.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
@@ -513,7 +514,7 @@ struct ItchFindView: View {
                         HStack { Label(ItchLibrary.isLink(text) ? "Open this link" : "Search itch.io", systemImage: "magnifyingglass"); if busy { Spacer(); ProgressView() } }
                     }.disabled(busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 } footer: {
-                    Text("Free games (and pay-what-you-want ones) install without buying. A paid game needs buying on itch.io first; it then shows in the library by itself, as do the games in your itch.io collections.")
+                    Text("Paid games must be in your itch.io library before installation.")
                 }
                 if let failure { Section { Text(failure).foregroundStyle(.red) } }
                 if searched && results.isEmpty && failure == nil && !busy {
@@ -590,7 +591,7 @@ struct ItchSettingsSection: View {
         } header: {
             Text("itch.io")
         } footer: {
-            Text("Iridium signs in with an API key you make on itch.io, kept in this device's Keychain for this device only. Signing out removes it; installed games stay and still play. You can also delete the key on itch.io at any time.")
+            Text("The API key stays on this device. Sign-out removes it.")
         }
         .onAppear { itch.start() }
         .sheet(isPresented: $showSignIn) { ItchSignInView() }

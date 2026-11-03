@@ -203,15 +203,19 @@ struct IridiumGameStorage: Sendable {
     static func movedWindowsFolder(_ link: URL, drive: URL) -> URL? {
         let documents = drive.deletingLastPathComponent().deletingLastPathComponent()
         let storage = Self(documents: documents)
-        guard (try? link.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true,
+        guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path),
               link.standardizedFileURL.path.hasPrefix(drive.standardizedFileURL.path + "/"),
               let journal = try? storage.checked(storage.journal),
               let size = try? journal.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 4 * 1024 * 1024,
               let data = try? Data(contentsOf: journal), let state = try? JSONDecoder().decode(Journal.self, from: data), state.version == 1 else { return nil }
         let original = String(link.standardizedFileURL.path.dropFirst(drive.standardizedFileURL.path.count + 1))
-        guard let move = state.moves.first(where: { $0.original == original && $0.filename == nil }),
-              let target = try? storage.gameFolder(move.gameID), link.resolvingSymlinksInPath().path == target.path else { return nil }
-        return target
+        guard let move = state.moves.first(where: { $0.original == original && $0.filename == nil }) else { return nil }
+        let target = (destination.hasPrefix("/") ? URL(fileURLWithPath: destination) :
+            link.deletingLastPathComponent().appendingPathComponent(destination)).standardizedFileURL
+        guard target.deletingLastPathComponent().path == storage.games.path,
+              IridiumGameFolder.identifier(target.lastPathComponent) == move.gameID,
+              (try? storage.checked(target)) != nil else { return nil }
+        return URL(fileURLWithPath: target.path, isDirectory: true)
     }
 
     static func windowsRelative(_ url: URL, drive: URL) -> String? {

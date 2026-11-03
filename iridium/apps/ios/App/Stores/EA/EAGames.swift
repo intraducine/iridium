@@ -58,6 +58,7 @@ struct EAGamesSection: View {
     var width: CGFloat = 390
     /// Opens a game's Game details page (LibraryView's details sheet).
     let open: (LibraryEntry) -> Void
+    var standalone = false
     @ObservedObject private var ea = EALibrary.shared
     @ObservedObject private var library = LibraryModel.shared
     @AppStorage("madeiraLibraryHideEA") private var hidden = false
@@ -70,7 +71,7 @@ struct EAGamesSection: View {
         let items = EAGamesRules.items(ea, search: search)
         let mine = items.filter { $0.installed != nil || ea.downloads[$0.id] != nil }
         let others = items.filter { $0.installed == nil && ea.downloads[$0.id] == nil }
-        let collapsible = SteamGamesSection.collapsible
+        let collapsible = !standalone && SteamGamesSection.collapsible
         VStack(alignment: .leading, spacing: 14) {
             LibrarySectionHeader(title: "EA app", count: mine.count, collapsed: collapsible ? $hidden : nil) {
                 if ea.refreshing { ProgressView().accessibilityLabel("Refreshing EA library") }
@@ -160,7 +161,7 @@ struct EASignInCard: View {
                 Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 30)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Sign in to EA").font(.headline)
-                    Text("See your EA app games here and install them without the EA app.")
+                    Text("View and install your EA games.")
                         .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 0)
@@ -371,7 +372,7 @@ struct EAGameSheet: View {
                             }
                         }
                         if let freeSpace { LabeledContent("Free space on this device", value: ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)) }
-                        Text("Games download directly from EA with your account into C:\\Program Files\\EA Games. Keep Iridium open while it downloads: in the background iOS allows only a short time, then the download pauses and continues when you return. A download also pauses while a game is running. Games with EA's anti-cheat (Battlefield 2042 and later, EA SPORTS FC) cannot run in Iridium.")
+                        Text("Keep Iridium open while downloading. Games pause downloads.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
@@ -434,7 +435,7 @@ struct EAEntrySection: View {
         let download = ea.downloads[id]
         Section {
             if !ea.signedIn {
-                Text("Sign in to EA in Settings › EA app to play or update this game. An EA game needs the sign-in to start.")
+                Text("Sign in to EA to play or update.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let download {
@@ -464,7 +465,7 @@ struct EAEntrySection: View {
         } header: {
             Text("EA app")
         } footer: {
-            Text("Iridium starts the game the way the EA app would: it fetches the game's licence for your account, and stands in for the EA app's local service while the game runs. There is no EA app in Iridium, so friends, the overlay and cloud saves are not available.")
+            Text("EA friends, overlays, and cloud saves are not supported.")
         }
         .task(id: id) { await ea.checkForUpdate(id) }
         .confirmationDialog("Uninstall \(entry.title)? Its downloaded files are deleted from this device. Saves stored elsewhere are kept.",
@@ -494,7 +495,7 @@ struct EASettingsSection: View {
         } header: {
             Text("EA app")
         } footer: {
-            Text("Iridium keeps an EA sign-in token in this device's Keychain, for this device only. Signing out removes it; installed games stay, but need the sign-in to start.")
+            Text("Installed EA games need a sign-in to play.")
         }
         .onAppear { ea.start() }
         .confirmationDialog("Sign out of EA?", isPresented: $confirmSignOut, titleVisibility: .visible) {
@@ -554,7 +555,7 @@ struct EASignInView: View {
                 Button("Sign in") { submit(pasted) }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("If the page shows an address that ends in login_successful.html with a code, copy that whole address and paste it here.")
+                Text("Paste the full login_successful.html address, including its code.")
             }
             .alert("EA app", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("OK", role: .cancel) { failure = nil; reload += 1 }

@@ -269,8 +269,10 @@ actor IridiumImportFiles {
     }
 
     func hasConsoleGame(_ folder: URL) throws -> Bool {
-        for source in try files(folder) where IridiumConsoleSystem.all.flatMap(\.extensions).contains(source.pathExtension.lowercased()) && source.pathExtension.lowercased() != "zip" {
+        for source in try files(folder) where source.pathExtension.lowercased() == "cia" ||
+            (IridiumConsoleSystem.all.flatMap(\.extensions).contains(source.pathExtension.lowercased()) && source.pathExtension.lowercased() != "zip") {
             try Task.checkCancellation()
+            if source.pathExtension.lowercased() == "cia" { return true }
             let siblings = try children(source.deletingLastPathComponent())
             if (try? detection(source, siblings: siblings)) != nil { return true }
         }

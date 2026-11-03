@@ -19,6 +19,7 @@ import SwiftUI
     private(set) var syncingCloud = false
     private var active = true
     private var incoming: [URL] = []
+    private var contentImportOwner: UUID?
     private var incomingScopes: [URL] = []
     @Published private(set) var ready = false
     @Published private(set) var remaining: [String] = []
@@ -35,6 +36,8 @@ import SwiftUI
             !IridiumConsoleLibrary.shared.working && !JITCoordinator.shared.busy && !OnDevicePairing.shared.active &&
             !SteamOwnedLibrary.shared.downloads.values.contains { $0.state == .active }
     }
+
+    func ownsContentImport(_ owner: UUID) -> Bool { isWorking && contentImportOwner == owner }
 
     func scan(retry: Bool = false) {
         guard task == nil, mayWork else { return }
@@ -133,10 +136,14 @@ import SwiftUI
     }
 
     func choose(_ choice: Choice, value: String) {
-        guard task == nil, mayWork else { return }
+        guard choice.options.contains(where: { $0.value == value }), task == nil, mayWork else { return }
         isWorking = true
         task = Task {
-            do { try await files.choose(value, receipt: choice.receipt) }
+            do {
+                try await files.choose(value, receipt: choice.receipt)
+                attempted.remove(choice.receipt.path + "#" + choice.receipt.fingerprint)
+                failures[choice.receipt.path] = nil
+            }
             catch { failures[choice.receipt.path] = error.localizedDescription }
             isWorking = false; task = nil; scan()
         }
@@ -178,7 +185,7 @@ import SwiftUI
         var record: IridiumImportFiles.Receipt?
         do {
             let directory = try await files.isDirectory(source)
-            let extensions = Set(IridiumConsoleLibrary.importExtensions + ["exe", "plist", "mobiledevicepairing", "zip", "7z"])
+            let extensions = Set(IridiumConsoleLibrary.importExtensions + ["exe", "cia", "plist", "mobiledevicepairing", "zip", "7z"])
             guard directory || extensions.contains(source.pathExtension.lowercased()) else { return }
             let receipt = try await files.receipt(source); record = receipt
             let key = receipt.path + "#" + receipt.fingerprint
@@ -238,6 +245,8 @@ import SwiftUI
                     attempted.insert(key)
                 }
                 return
+            } else if source.pathExtension.lowercased() == "cia" {
+                guard try await installCIA(source, receipt: receipt) else { return }
             } else if source.pathExtension.lowercased() == "exe" {
                 try await windows(source, folder: nil, receipt: receipt)
             } else if IridiumConsoleLibrary.importExtensions.contains(source.pathExtension.lowercased()) {
@@ -268,6 +277,33 @@ import SwiftUI
             failures[path] = error.localizedDescription
             if let record { attempted.insert(record.path + "#" + record.fingerprint) }
         }
+    }
+
+    private func installCIA(_ source: URL, receipt: IridiumImportFiles.Receipt) async throws -> Bool {
+        guard IridiumRuntimeRegistry.compatible(with: .nintendo3DS).contains(where: { $0.id == "azahar" }) else {
+            throw IridiumRuntimeError.unavailable
+        }
+        var owners = Set<UUID>()
+        let targets = IridiumConsoleLibrary.shared.games.filter {
+            $0.runtimeID == "azahar" && owners.insert($0.storageOwnerID ?? $0.id).inserted
+        }
+        guard let choice = receipt.choice else {
+            choices[receipt.path] = Choice(receipt: receipt, title: "Install 3DS content into",
+                options: [(value: "cia:new", title: "New game")] + targets.map { (value: "cia:" + $0.id.uuidString, title: $0.title) })
+            return false
+        }
+        let game = targets.first { "cia:" + $0.id.uuidString == choice }
+        guard choice == "cia:new" || game != nil else { throw IridiumRuntimeError.invalidGame }
+        isWorking = true; contentImportOwner = receipt.id
+        defer { contentImportOwner = nil }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            IridiumConsoleSession.shared.install3DSCIA(source, game: game, importOwner: receipt.id) { result in
+                continuation.resume(with: result)
+            }
+        }
+        try await files.consume(source, receipt: receipt)
+        imported += 1
+        return true
     }
 
     private func windows(_ executable: URL, folder: URL?, receipt: IridiumImportFiles.Receipt) async throws {

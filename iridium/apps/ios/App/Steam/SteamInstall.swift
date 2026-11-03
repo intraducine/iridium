@@ -33,6 +33,12 @@ enum SteamInstallPaths {
 }
 
 enum SteamInstallFiles {
+    static func installFolder(appID: Int, steamApps: URL) -> String? {
+        guard let folder = record(appID: appID, steamApps: steamApps)?["installdir"]?.string,
+              !folder.isEmpty, folder == safeFolderName(folder) else { return nil }
+        return folder
+    }
+
     /// The `buildid` the install record of an app states, or nil when there is
     /// no readable record.
     static func buildID(appID: Int, steamApps: URL) -> Int? {

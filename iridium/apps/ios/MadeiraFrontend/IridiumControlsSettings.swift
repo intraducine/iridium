@@ -81,7 +81,7 @@ struct IridiumControlsSettingsView: View {
                 List {
                 Group {
 
-                    if choices.isEmpty { ContentUnavailableView("No Games Yet", systemImage: "gamecontroller", description: Text("Add a game to customize its controls. System defaults are available now.")) }
+                    if choices.isEmpty { ContentUnavailableView("No Games Yet", systemImage: "gamecontroller", description: Text("Add a game to set its controls.")) }
                     ForEach(Array(choices.enumerated()), id: \.element.id) { index, choice in
                         Button { selectGame(choice.id) } label: {
                             VStack(alignment: .leading) { Text(choice.title); Text(choice.platform.title).font(.caption).foregroundStyle(.secondary) }
@@ -210,7 +210,7 @@ struct IridiumWindowsControllerSettings: View {
                 if library.entries.filter({ $0.desktop != true }).isEmpty {
                     Text("Add a Windows game to customize its controller mapping.").foregroundStyle(.secondary)
                 }
-            } header: { Text("Windows Games") } footer: { Text("Console games use their system's standard gamepad mapping. Windows games can use a gamepad or keyboard and mouse inputs.") }
+            } header: { Text("Windows Games") } footer: { Text("Windows games support gamepad and keyboard mappings.") }
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle("Controller Mapping")

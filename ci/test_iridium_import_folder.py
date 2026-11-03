@@ -80,6 +80,8 @@ class ImportFolderTests(unittest.TestCase):
             if scenario in ('archive', '7z'):
                 self.assertFalse(list((docs / 'Import').glob('*.zip')) + list((docs / 'Import').glob('*.7z')))
 
+    def test_cia_choices_failure_retry_and_durable_consumption(self): self.check('cia')
+
     def test_interrupted_console_copy_is_rebuilt_before_publication(self): self.check('console-stage')
     def test_future_and_changed_import_records_are_preserved(self): self.check('records')
     def test_windows_launch_paths_stay_inside_owned_storage(self): self.check('windows-paths')

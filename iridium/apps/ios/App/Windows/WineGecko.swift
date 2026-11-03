@@ -216,7 +216,7 @@ struct WineGeckoSettingsSection: View {
         } header: {
             Text("Web pages in programs")
         } footer: {
-            Text("Installers and launchers that show web pages use Wine Gecko, the Wine project's open-source HTML engine. Madeira gets it from WineHQ by itself on Wi-Fi, so Wine never stops to download it.")
+            Text("Wine Gecko displays web pages in Windows apps.")
         }
         .confirmationDialog("Remove Wine Gecko?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { gecko.remove() }
