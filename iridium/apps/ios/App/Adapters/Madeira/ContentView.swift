@@ -4357,6 +4357,8 @@ final class ControlsWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard !IridiumImportCoordinator.shared.blocksLaunch else { return nil }
         guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }
+        let library = LibraryModel.shared
+        guard !library.enabled || library.current != nil || library.preparing != nil else { return nil }
         let m = TouchControlsModel.shared
         // Edit mode owns the whole screen: drags and the scale pinch must not
         // leak through and swing the camera while you are arranging buttons.
@@ -4370,11 +4372,8 @@ final class ControlsWindow: UIWindow {
         // A library session (Library.swift), in either orientation: its in-game
         // menu and starting screen take every touch; otherwise only its menu
         // button, its performance overlay and the touch controls do.
-        let library = LibraryModel.shared
         // A Play getting ready: its starting screen takes every touch.
         if library.preparing != nil { return super.hitTest(point, with: event) }
-        // The library itself, between sessions (a start that did not happen): nothing here.
-        if library.enabled && library.current == nil { return nil }
         if library.current != nil {
             if library.menu || library.launching || library.menuButtonRect.contains(point) ||
                 (library.performance && library.performanceRect.contains(point)) {

@@ -4,7 +4,6 @@ import Foundation
 enum IridiumPlatform: String, Codable, CaseIterable, Sendable {
     case windows, gameBoy, gameBoyColor, psp, gameCube, wii, nintendo3DS, playStation2, dreamcast, arcade
     var isPhase3: Bool { ![Self.windows, .gameBoy, .gameBoyColor, .psp].contains(self) }
-    var libraryTitle: String { title + (IridiumRuntimeRegistry.compatible(with: self).first?.jitSuffix ?? "") }
     var title: String {
         switch self {
         case .windows: return "Windows"
@@ -80,6 +79,10 @@ enum IridiumRuntimeRegistry {
         guard let runtime = choices.first else { throw IridiumRuntimeError.unavailable }
         return runtime
     }
+}
+
+extension IridiumPlatform {
+    var libraryTitle: String { title + (IridiumRuntimeRegistry.compatible(with: self).first?.jitSuffix ?? "") }
 }
 
 enum IridiumRuntimeError: LocalizedError {

@@ -25,6 +25,9 @@ class LaunchFeedbackTests(unittest.TestCase):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
         start = source.index('struct TouchControlsOverlay: View')
         expression = source[source.index('                if (landscape || iridiumConsole)', start):].split(' {', 1)[0].strip()[3:]
+        window = source[source.index('final class ControlsWindow:'):source.index('enum TouchControlsHost')]
+        self.assertLess(window.index('guard !library.enabled || library.current != nil || library.preparing != nil'),
+                        window.index('if m.editing'))
         self.run_swift('import Foundation\n@main struct Check { static func main() {\n' +
             'func shown(_ enabled: Bool, _ session: Bool, _ landscape: Bool, _ iridiumConsole: Bool = false, _ iridiumSuspended: Bool = false) -> Bool {\n' +
             'let library = (enabled: enabled, unused: false)\nreturn ' + expression + '\n}\n' +
