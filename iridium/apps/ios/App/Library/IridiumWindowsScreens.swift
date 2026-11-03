@@ -1474,10 +1474,10 @@ Toggle("Menu sounds", isOn: $menuSounds).id("Menu sounds")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Menu sounds" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                     .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.invoke) } else { IridiumMenuSounds.stop() } }
             }.iridiumRowSurface()
-            Section("Systems") { NavigationLink("Madeira · Windows", value: "Madeira · Windows").id("Madeira · Windows")
+            Section("Systems") { NavigationLink("Madeira · Windows" + IridiumRuntimeRegistry.madeira.jitSuffix, value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 ForEach(IridiumConsoleSystem.all) { system in
-                NavigationLink(system.title, value: system.title).id(system.title)
+                NavigationLink(system.displayTitle, value: system.title).id(system.title)
                     .listRowBackground(iridiumGuided && iridiumFocus == system.title ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
             } }.iridiumRowSurface()
             Section { NavigationLink("About", value: "About").id("About")

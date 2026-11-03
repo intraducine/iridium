@@ -2824,7 +2824,6 @@ struct ContentView: View {
         }
 
         logStore.log("Running full Wine sequence...")
-        DeviceDiagnostics.logLaunch()
 
         // Start a main thread heartbeat to diagnose hang
         var heartbeatCount = 0
@@ -2842,6 +2841,7 @@ struct ContentView: View {
         ws_log_quiet = 1
 
         DispatchQueue.global(qos: .userInitiated).async {
+            DeviceDiagnostics.logLaunch()
             // A library entry's launch profile (executable, arguments, x87
             // precision, frame limit).
             if let profile {
@@ -3493,6 +3493,7 @@ struct ContentView: View {
         // (library, playtime, downloads) logs off and its socket closes before the sign-in
         // is handed to Valve's client, and it stays off until the Dock session has ended
         // (SteamOwnedLibrary.prepareDock / dockEnded, SteamConnectionGate).
+        let preparation = library.preparationID
         Task { @MainActor in
             // Resolve the original config.launch key before closing the native connection.
             // A filtered launch array can start at 1 (or have gaps); its offset is not the key.
@@ -3505,7 +3506,11 @@ struct ContentView: View {
             let chosen = steamEntry?.launchIndex
             // madeira-bcd exe-window-mb: measure the game's own fixed-base exe now, so the
             // JIT pool is placed above it (StikJITHelper.allocatePool reads this once).
-            if let need = StikJITHelper.fixedBaseWindowMB(in: installFolder) {
+            let need = await Task.detached(priority: .userInitiated) {
+                StikJITHelper.fixedBaseWindowMB(in: installFolder)
+            }.value
+            guard !inLibrary || (library.preparationID == preparation && library.current == nil) else { return }
+            if let need {
                 StikJITHelper.exeWindowAutoMB = need.mb
                 LogStore.shared.log("[exe-window] \(need.exe) is a fixed-base image ending \(need.mb)MB above 0x140000000: "
                     + "the executable window is widened to \(need.mb)MB for this session (exe-window-mb in the game's file overrides)")
@@ -4437,8 +4442,8 @@ struct TouchControlsOverlay: View {
             let session = library.current != nil || library.preparing != nil || iridiumConsole || iridiumSettings
             let landscape = geo.size.width > geo.size.height || session
             ZStack(alignment: .top) {
-                if m.editing { IridiumControlDeselectSurface() }
-                if (landscape || iridiumConsole) && !iridiumSuspended {
+                if m.editing && (!library.enabled || session) { IridiumControlDeselectSurface() }
+                if (landscape || iridiumConsole) && !iridiumSuspended && (!library.enabled || session) {
                     if (m.editing || (m.visible && !(GamepadInput.enabled && iridiumController.hidesTouchControls))) && !iridiumBlocked {
                         if GestureZonesModel.enabled && !iridiumConsole {
                             GestureZonesLayer(screen: geo.size, editing: m.editing)

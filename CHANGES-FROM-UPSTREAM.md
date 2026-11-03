@@ -28,6 +28,14 @@ keep ownership of the audio session during gameplay. Excess silence and very
 low tails are trimmed; short edge fades and lower levels retain the original
 pitch and timbre. Focus clips are 136-270 ms; other cues are 409-935 ms.
 
+The library uses lazy cover views and changes focus only at cover boundaries.
+Backdrop transitions retain an opaque outgoing image and at most two layers.
+Wide featured covers retain the complete image over an enlarged, dimmed copy
+when artwork needs fitting. Required runtimes show `* JIT` beside their system
+name; optional interpreter paths do not. The standalone Windows control overlay
+is hidden between library sessions. Startup diagnostics and Dock executable
+scans run off the UI thread.
+
 Adaptations include:
 
 - Shared player/input ownership, isolated console records, Favorites, artwork,

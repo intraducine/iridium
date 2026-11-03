@@ -21,6 +21,32 @@ class LaunchFeedbackTests(unittest.TestCase):
                             str(source), '-o', str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=15)
 
+    def test_controls_overlay_disappears_between_library_sessions(self):
+        source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
+        start = source.index('struct TouchControlsOverlay: View')
+        expression = source[source.index('                if (landscape || iridiumConsole)', start):].split(' {', 1)[0].strip()[3:]
+        self.run_swift('import Foundation\n@main struct Check { static func main() {\n' +
+            'func shown(_ enabled: Bool, _ session: Bool, _ landscape: Bool, _ iridiumConsole: Bool = false, _ iridiumSuspended: Bool = false) -> Bool {\n' +
+            'let library = (enabled: enabled, unused: false)\nreturn ' + expression + '\n}\n' +
+            'for landscape in [false, true] { precondition(!shown(true, false, landscape)); precondition(shown(true, true, true)) }\n' +
+            'precondition(shown(false, false, true)); precondition(!shown(false, false, false))\n' +
+            'precondition(shown(true, true, true, true)); precondition(!shown(true, true, true, false, true))\n}}')
+
+    def test_dock_executable_scan_does_not_run_on_main_thread(self):
+        source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
+        start = source.index('            let need = await Task.detached(')
+        scan = source[start:source.index('            guard ', start)]
+        self.run_swift('''import Foundation
+        enum StikJITHelper {
+            static func fixedBaseWindowMB(in folder: URL) -> Int {
+                precondition(!Thread.isMainThread)
+                return 192
+            }
+        }
+        @main struct Check { @MainActor static func main() async {
+            let installFolder = URL(fileURLWithPath: "/fixture")
+        ''' + scan + 'precondition(need == 192)\n}}')
+
     def test_loading_screen_precedes_launch_work_and_rejects_duplicate_or_stale_requests(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
         wrapper = source[source.index('    private func launchLibraryEntry('):source.index('    private func continueLibraryLaunch(')]

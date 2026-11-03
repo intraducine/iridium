@@ -274,7 +274,7 @@ class FrontendImportTests(unittest.TestCase):
                 'protocol': 1, 'enginePin': madeira_session.engine_pins.selected('madeira-native'),
                 'sources': madeira_session.inputs(), 'toolchainSHA256': madeira_session.toolchain()['sha256'], 'sha256': madeira_session.digest(session)}))
             with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output), \
-                 patch.object(BUILD.madeira_components, 'verify'):
+                 patch.object(BUILD.madeira_components, 'verify'), patch.object(BUILD, 'compiler_identity', return_value='fixture-compiler'):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
                 names = ('arm64ec-windows/xtajit64.dll', 'd3d12/libmetalirconverter.dylib',

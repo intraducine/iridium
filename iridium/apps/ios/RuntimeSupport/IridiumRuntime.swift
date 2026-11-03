@@ -4,6 +4,7 @@ import Foundation
 enum IridiumPlatform: String, Codable, CaseIterable, Sendable {
     case windows, gameBoy, gameBoyColor, psp, gameCube, wii, nintendo3DS, playStation2, dreamcast, arcade
     var isPhase3: Bool { ![Self.windows, .gameBoy, .gameBoyColor, .psp].contains(self) }
+    var libraryTitle: String { title + (IridiumRuntimeRegistry.compatible(with: self).first?.jitSuffix ?? "") }
     var title: String {
         switch self {
         case .windows: return "Windows"
@@ -30,6 +31,7 @@ struct IridiumRuntimeDescriptor: Identifiable, Equatable, Sendable {
     let jit: IridiumJITRequirement
     let supportsPause: Bool
     let restartAfterStop: Bool
+    var jitSuffix: String { jit == .required ? " * JIT" : "" }
 
     func executionMode(jitAvailable: Bool) throws -> IridiumExecutionMode {
         switch jit {
@@ -106,6 +108,7 @@ struct IridiumConsoleSystem: Identifiable {
     let extensions: [String]
     let guidance: String
     var id: String { runtime.id }
+    var displayTitle: String { title + runtime.jitSuffix }
     var platforms: [IridiumPlatform] { IridiumPlatform.allCases.filter { runtime.platforms.contains($0) } }
     var subtitle: String { platforms.map(\.title).joined(separator: " · ") }
     var importPlatforms: [IridiumPlatform] { platforms.filter { $0 != .gameBoyColor } }

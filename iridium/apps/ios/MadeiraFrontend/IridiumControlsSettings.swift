@@ -36,7 +36,7 @@ struct IridiumControlsSettingsView: View {
                 Section {
                     ForEach(Array(systems.enumerated()), id: \.element) { index, platform in
                         Button { target = .init(platform: platform, title: platform.title) } label: {
-                            HStack { Text(platform == .gameBoy ? "Game Boy / Color" : platform.title); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+                            HStack { Text(platform == .gameBoy ? "Game Boy / Color" : platform.libraryTitle); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
                         }.id("controls.layout.\(platform.rawValue)").setupControllerTarget("controls.layout.\(platform.rawValue)", order: index, action: {
                             target = .init(platform: platform, title: platform.title)
                         })
