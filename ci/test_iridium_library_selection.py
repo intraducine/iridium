@@ -40,7 +40,7 @@ struct Game { let id: UUID }
 final class Host {
     var selectionFeedback = UIImpactFeedbackGenerator()
     var selection = IridiumLibrarySelection(), carouselPosition = Position()
-    var selectedID: UUID?, settledCoverID: UUID?, selected: Game?, pageArtwork = ""
+    var selectedID: UUID?, selected: Game?, pageArtwork = ""
     var showFocus = false, showHints = false, reduceMotion = false
     let reorderSession = IridiumLibraryDragSession()
     let games: [Game]

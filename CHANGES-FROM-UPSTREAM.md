@@ -30,9 +30,15 @@ pitch and timbre. Focus clips are 136-270 ms; other cues are 409-935 ms.
 
 The library uses lazy cover views and changes focus only at cover boundaries.
 Backdrop transitions retain an opaque outgoing image and at most two layers.
-Wide featured covers retain the complete image over an enlarged, dimmed copy
-when artwork needs fitting. Required runtimes show `* JIT` beside their system
-name; optional interpreter paths do not. The standalone Windows control overlay
+Landscape portrait covers grow with their scroll position toward the left slot,
+up to 1.5 times their base size. Bottom anchoring and reserved space keep the
+larger art whole, with its lower edge slightly below the other covers. Adjacent
+covers keep their spacing throughout the movement. The large cover and Play
+button share the same left edge. Titles and console labels
+use short, interruptible fades with two reused labels, so fast changes cannot
+accumulate old titles. Reduced Motion keeps them static.
+Required runtimes and games with optional JIT enabled show `· JIT` beside their
+system name. The standalone Windows control overlay
 is hidden between library sessions. Startup diagnostics and Dock executable
 scans run off the UI thread.
 
