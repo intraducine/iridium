@@ -109,7 +109,7 @@ class HostedImageSpaceTests(unittest.TestCase):
                              [['xcrun', 'simctl', 'runtime', 'delete', key] for key in (identifier, second)])
             self.assertTrue(all(path.is_dir() for path in sdks.values()))
 
-    def test_insufficient_initial_peak_space_stops_before_compilation(self):
+    def test_idle_images_are_best_effort_and_the_stage_reserve_is_required(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             sdks={name:root/name for name in ('iphoneos','iphonesimulator')}
@@ -118,12 +118,15 @@ class HostedImageSpaceTests(unittest.TestCase):
                 if command[1]=='--sdk':return str(sdks[command[2]])
                 if 'devices' in command:return json.dumps({'devices':{}})
                 return '{}'
-            with patch.dict(os.environ,RUNNER_ENVIRONMENT='github-hosted',GITHUB_ACTIONS='true',GITHUB_WORKSPACE=str(root),IRIDIUM_CHROME_SIMULATOR=''), \
-                 patch.object(space.shutil,'disk_usage',return_value=shutil._ntuple_diskusage(200,100,105*1024**3)), \
-                 patch.object(space.subprocess,'check_output',side_effect=output), \
-                 patch.object(space.subprocess,'run') as remove,self.assertRaisesRegex(ValueError,'110 GiB'):
-                space.cleanup_ci_runtimes(root)
-            remove.assert_not_called()
+            for available in [39, 60]:
+                with patch.dict(os.environ,RUNNER_ENVIRONMENT='github-hosted',GITHUB_ACTIONS='true',GITHUB_WORKSPACE=str(root),IRIDIUM_CHROME_SIMULATOR=''), \
+                     patch.object(space.shutil,'disk_usage',return_value=shutil._ntuple_diskusage(200,100,available*1024**3)), \
+                     patch.object(space.subprocess,'check_output',side_effect=output), \
+                     patch.object(space.subprocess,'run') as remove:
+                    if available < 40:
+                        with self.assertRaisesRegex(ValueError,'reserve'):space.cleanup_ci_runtimes(root)
+                    else:space.cleanup_ci_runtimes(root)
+                remove.assert_not_called()
 
     def test_booted_simulator_blocks_removal(self):
         with tempfile.TemporaryDirectory() as folder:

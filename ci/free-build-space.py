@@ -91,8 +91,8 @@ def cleanup_ci_runtimes(root):
     after = shutil.disk_usage(root).free
     print(f'Hosted device build removed {removed} unused simulator images; '
           f'free before={before} after={after} measured_reclaimed={max(0, after - before)} bytes', flush=True)
-    if after < target:
-        raise ValueError(f'Hosted build needs 110 GiB before native/Windows phases; available={after / 1024**3:.2f} GiB')
+    if after < 40 * 1024**3:
+        raise ValueError(f'Hosted build needs 20 GiB reserve plus 20 GiB working space; available={after / 1024**3:.2f} GiB')
 
 
 def cleanup_native(root):
