@@ -56,6 +56,8 @@ class WindowsChromeSourceTests(unittest.TestCase):
         diagnostic = '            DeviceDiagnostics.logLaunch()\n'
         worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
         self.assertGreater(admission.index(diagnostic), worker)
+        self.assertIn('        GOGGalaxy.shared.registerService()\n', admission)
+        admission = admission.replace('        GOGGalaxy.shared.registerService()\n', '')
         self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, '').replace(diagnostic, ''),
                          original[original.index(start):original.index(end)].replace(
                              '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', '').replace('        DeviceDiagnostics.logLaunch()\n', ''))

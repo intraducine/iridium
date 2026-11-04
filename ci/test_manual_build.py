@@ -45,8 +45,8 @@ class ManualBuildTests(unittest.TestCase):
                                    RESTORED_NATIVE_RUN_ID=restored)
                         result = subprocess.run(['bash', '-eu', '-c', script], env=env,
                                                 capture_output=True, text=True, check=True)
-                        self.assertEqual(result.stdout.strip(), 'ci/madeira-frontend.py ' + component +
-                                         (' --reuse-only' if component == 'native' and restored else ''))
+                        expected = 'ci/build-madeira-windows.py' if component == 'windows' else 'ci/madeira-frontend.py native' + (' --reuse-only' if restored else '')
+                        self.assertEqual(result.stdout.strip(), expected)
 
     def test_static_input_inventory_preserves_members_and_rejects_missing_archive(self):
         import hashlib

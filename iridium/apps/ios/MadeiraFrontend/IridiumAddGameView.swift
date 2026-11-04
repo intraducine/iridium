@@ -16,7 +16,7 @@ struct IridiumAddGameView: View {
                 Section {
                     source(.files, title: "Files and Folders", subtitle: "Games, archives, or pairing files.", symbol: "folder")
                     source(.importFolder, title: "Import Folder", subtitle: "Finish pending imports.", symbol: "tray.and.arrow.down")
-                    source(.steam, title: "Stores", subtitle: "Steam, Epic Games, EA, and itch.io.", symbol: "network")
+                    source(.steam, title: "Stores", subtitle: "Steam, GOG, Epic Games, EA, and itch.io.", symbol: "network")
                 }
             }.iridiumPageSurface().navigationTitle("Add Game").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }

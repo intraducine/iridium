@@ -112,6 +112,29 @@ do { try disk.restoreSaves(); fatalError("bad battery size accepted") } catch Ir
 print("PASS no-RTC release upgrade ignores and preserves obsolete clock bytes; battery and real RTC validation retained")
 '''.replace('RESTORE', restore))
 
+    def test_output_device_latency_does_not_fill_the_producer_queue(self):
+        self.run_swift(r'''
+import Foundation
+func dropped(outputLatency: Int) -> Int {
+    var queue = IridiumAudioBuffering(), completions: [(Int, Int)] = []
+    for ms in 0..<2000 {
+        while let first = completions.first, first.0 <= ms {
+            _ = queue.consumed(first.1); completions.removeFirst()
+        }
+        if ms % 16 == 0, queue.enqueue(1536, rate: 96000) {
+            completions.append((ms + 16 + outputLatency, 1536))
+            _ = queue.beginPlayback(rate: 96000)
+        }
+    }
+    return queue.droppedFrames
+}
+// A Bluetooth output delay is downstream of rendering. Counting it as queued
+// source PCM drops valid new sound even though the renderer is keeping up.
+precondition(dropped(outputLatency: 250) > 0)
+precondition(dropped(outputLatency: 0) == 0)
+print("PASS rendered-PCM accounting is independent of downstream output delay")
+''', [IOS / 'RuntimeSupport/IridiumAudioBuffering.swift'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -141,7 +141,7 @@ enum SteamRuntimeFiles { static let relativeRoot = "SteamClient" }
         fixture = r'''import Foundation
 struct LibraryEntry: Codable {
     var id = UUID(), steamAppID: Int? = nil, itchGameID: Int? = nil
-    var epicAppName: String? = nil, eaOfferID: String? = nil
+    var epicAppName: String? = nil, eaOfferID: String? = nil, gogProductID: String? = nil
     var title: String, relativePath: String, bits: Int
     var folderBytes: Int64? = nil, graphicsAPI: String? = nil, steamMetadataInstall: String? = nil
     var metadataChecked: Date? = nil, metadataRevision: Int? = nil

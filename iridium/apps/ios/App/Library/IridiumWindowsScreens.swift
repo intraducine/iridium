@@ -834,6 +834,91 @@ struct LibrarySectionHeader<Trailing: View>: View {
     }
 }
 
+/// The library's store tabs: with Group by Platform, a segmented control at the top of the
+/// page shows one store's section at a time (Steam, the games you added, GOG, itch.io, Epic
+/// Games, EA app) or All of them. Only the sections the page would show get a tab, and with
+/// fewer than two there are none. env.MADEIRA_LIBRARY_TABS = 0: no tabs, every section on one page.
+enum LibraryStoreTab: String, CaseIterable, Identifiable {
+    case all, steam, other, gog, itch, epic, ea
+    var id: String { rawValue }
+    static let key = "madeiraLibraryStoreTab"
+    static var enabled: Bool { MadeiraConfig.flag("MADEIRA_LIBRARY_TABS") }
+
+    /// Short, so every segment fits across a phone.
+    var title: String {
+        switch self {
+        case .all: return L("All")
+        case .steam: return "Steam"
+        case .other: return L("Other")
+        case .gog: return "GOG"
+        case .itch: return "itch.io"
+        case .epic: return "Epic"
+        case .ea: return "EA"
+        }
+    }
+
+    /// All, then a tab for each section the page shows; none with fewer than two sections.
+    /// `steam` is whether the page has a Steam section.
+    @MainActor static func available(steam: Bool) -> [LibraryStoreTab] {
+        guard enabled else { return [] }
+        var tabs: [LibraryStoreTab] = []
+        if steam { tabs.append(.steam) }
+        tabs.append(.other)
+        if GOGLibrary.enabled { tabs.append(.gog) }
+        if ItchLibrary.enabled { tabs.append(.itch) }
+        if EpicLibrary.enabled { tabs.append(.epic) }
+        if EALibrary.enabled { tabs.append(.ea) }
+        return tabs.count < 2 ? [] : [.all] + tabs
+    }
+
+    /// The stored tab, or All when it is not offered (its store was turned off).
+    static func current(_ stored: String, in tabs: [LibraryStoreTab]) -> LibraryStoreTab {
+        guard let tab = LibraryStoreTab(rawValue: stored), tabs.contains(tab) else { return .all }
+        return tab
+    }
+
+    func shows(_ section: LibraryStoreTab) -> Bool { self == .all || self == section }
+}
+
+/// The store tabs' control: the system segmented control, or, when its segments do not fit
+/// across, a row of capsules that scrolls sideways.
+struct LibraryStoreTabBar: View {
+    let tabs: [LibraryStoreTab]
+    @Binding var selection: String
+
+    private var picked: Binding<LibraryStoreTab> {
+        Binding(get: { LibraryStoreTab.current(selection, in: tabs) },
+                set: { tab in withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.2)) { selection = tab.rawValue } })
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            Picker("Store", selection: picked) {
+                ForEach(tabs) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .frame(maxWidth: .infinity)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(tabs) { tab in
+                        let on = picked.wrappedValue == tab
+                        Button { picked.wrappedValue = tab } label: {
+                            Text(tab.title).font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14).padding(.vertical, 7)
+                                .foregroundStyle(on ? Color.white : Color.primary)
+                                .background(Capsule().fill(on ? Color.accentColor : Color(uiColor: .tertiarySystemFill)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+        }
+        .accessibilityLabel("Store")
+    }
+}
+
 /// A section's cards or rows in the library's layout ("cards", "compact",
 /// "list" or "compactList"): every section of the library page uses it.
 struct LibraryCells<Item: Identifiable, Cell: View>: View {
@@ -1159,12 +1244,18 @@ struct LibraryView: View {
     @AppStorage("madeiraLibraryCollapsedGroups") private var collapsedGroups = ""
     // Collapsed state of the Other games section (MADEIRA_LIBRARY_COLLAPSE=0: no collapsing).
     @AppStorage("madeiraLibraryHideOthers") private var hideOthers = false
+    // The store tab shown with Group by Platform (LibraryStoreTab).
+    @AppStorage(LibraryStoreTab.key) private var storeTab = LibraryStoreTab.all.rawValue
+    private var storeTabs: [LibraryStoreTab] {
+        group == "platform" ? LibraryStoreTab.available(steam: MadeiraDock.enabled && (SteamGamesSection.shown || SteamGamesSection.hasInstalled)) : []
+    }
+    private var currentTab: LibraryStoreTab { LibraryStoreTab.current(storeTab, in: storeTabs) }
     // The sections follow the Steam section's games and sign-in (SteamGames.swift).
     @ObservedObject private var steamGames = SteamGamesModel.shared
     @ObservedObject private var steamLibrary = SteamOwnedLibrary.shared
     private var entries: [LibraryEntry] {
         // Steam games are listed in their own section (SteamGames.swift).
-        let visible = model.entries.filter { $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.itchGameID == nil && $0.eaOfferID == nil && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
+        let visible = model.entries.filter { $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.gogProductID == nil && $0.itchGameID == nil && $0.eaOfferID == nil && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)) }
         if sort == "added" { return visible.reversed() }
         return visible.sorted {
             if sort == "played", $0.lastPlayed != $1.lastPlayed { return ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
@@ -1176,7 +1267,7 @@ struct LibraryView: View {
     /// and sorting go game by game, so their order among the Steam games is the
     /// order without them.
     private var focusOrder: [LibraryEntry] {
-        guard group != "platform" else { return entries }
+        guard group != "platform" else { return currentTab.shows(.other) ? entries : [] }
         // A library file edited by hand (or written by a fork) may repeat an id: keep the first.
         let positions = Dictionary(model.entries.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -1501,6 +1592,7 @@ ForEach(IridiumConsoleSystem.all) { system in
             case .importFolder: IridiumImportFolderView()
             case .allSettings: AllSettingsView()
             case .steamSignIn: SteamSignInView()
+            case .gogSignIn: GOGSignInView()
             case .epicSignIn: EpicSignInView()
             case .eaSignIn: EASignInView()
             case .dock: MadeiraDockView(start: startDock)
@@ -1512,6 +1604,7 @@ ForEach(IridiumConsoleSystem.all) { system in
         ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if !storeTabs.isEmpty { LibraryStoreTabBar(tabs: storeTabs, selection: $storeTab) }
                 desktopButton
                 // The library's sections, as in the fork: Steam (installed and downloading
                 // Steam games, then Not installed), then Other games, the games you added.
@@ -1529,49 +1622,59 @@ ForEach(IridiumConsoleSystem.all) { system in
                         libraryItem(entry, list: list, dense: dense)
                     }
                 } else {
+                // A store tab shows only its own section (LibraryStoreTab).
+                let tab = currentTab
                 let steamFirst = MadeiraDock.enabled && SteamGamesSection.hasInstalled
-                if steamFirst {
+                if steamFirst && tab.shows(.steam) {
                     SteamGamesSection(search: search, layout: layout, sort: sort, width: viewport.size.width,
                                       part: .installed, open: { selected = $0 })
                 }
                 if SteamGamesSection.shown {
-                    VStack(alignment: .leading, spacing: 14) {
-                        // Games are added with the + in the navigation bar.
-                        LibrarySectionHeader(title: L("Other games"), count: entries.count,
-                                             collapsed: SteamGamesSection.collapsible ? $hideOthers : nil) { EmptyView() }
-                        if hideOthers && SteamGamesSection.collapsible {
-                            EmptyView()
-                        } else if entries.isEmpty {
-                            Text(search.isEmpty
-                                 ? "Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."
-                                 : L("No other games match your search."))
-                                .foregroundStyle(.secondary)
-                        } else {
-                            cells(entries, width: viewport.size.width)
+                    if tab.shows(.other) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            // Games are added with the + in the navigation bar.
+                            LibrarySectionHeader(title: L("Other games"), count: entries.count,
+                                                 collapsed: SteamGamesSection.collapsible ? $hideOthers : nil) { EmptyView() }
+                            if hideOthers && SteamGamesSection.collapsible {
+                                EmptyView()
+                            } else if entries.isEmpty {
+                                Text(search.isEmpty
+                                     ? "Copy a game's folder into Madeira › wine › drive_c with the Files app, then tap + and choose its .exe."
+                                     : L("No other games match your search."))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                cells(entries, width: viewport.size.width)
+                            }
                         }
                     }
-                    if MadeiraDock.enabled {
+                    if MadeiraDock.enabled && tab.shows(.steam) {
                         SteamGamesSection(search: search, layout: layout, sort: sort, width: viewport.size.width,
                                           part: steamFirst ? .notInstalled : .all, open: { selected = $0 })
                     }
-                } else if model.entries.filter({ $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.itchGameID == nil && $0.eaOfferID == nil }).isEmpty {
+                } else if !tab.shows(.other) {
+                    EmptyView()
+                } else if model.entries.filter({ $0.desktop != true && $0.listedInLibrary && $0.steamAppID == nil && $0.epicAppName == nil && $0.gogProductID == nil && $0.itchGameID == nil && $0.eaOfferID == nil }).isEmpty {
                     ContentUnavailableView("No Games", systemImage: "gamecontroller", description: Text("Use Add Game to import files or install from a store."))
                 } else {
                     cells(entries, width: viewport.size.width)
                 }
-                // The account's itch.io games (ItchGames.swift): installed ones open their
+                // The account's GOG games (GOGGames.swift): installed ones open their
                 // Game details page, the others their download sheet.
-                if ItchLibrary.enabled {
+                if GOGLibrary.enabled && tab.shows(.gog) {
+                    GOGGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
+                }
+                // The account's itch.io games (ItchGames.swift), the same way.
+                if ItchLibrary.enabled && tab.shows(.itch) {
                     ItchGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
                 }
                 // The account's Epic Games games (EpicGames.swift): installed ones open their
                 // Game details page, the others their download sheet.
-                if EpicLibrary.enabled {
+                if EpicLibrary.enabled && tab.shows(.epic) {
                     EpicGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
                 }
                 // The account's EA app games (EAGames.swift): installed ones open their
                 // Game details page, the others their download sheet.
-                if EALibrary.enabled {
+                if EALibrary.enabled && tab.shows(.ea) {
                     EAGamesSection(search: search, layout: layout, width: viewport.size.width, open: { selected = $0 })
                 }
                 }
@@ -1778,7 +1881,7 @@ struct LibraryDetail: View {
             return
         }
         guard iridiumPages.isEmpty else { return }
-        let store = entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil
+        let store = entry.gogProductID != nil || entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil
         let order = (["Rename & Artwork", "Library Entry"] + (store ? ["Uninstall"] : []) + ["Controls", "Display", "Files & Saves", "Advanced", "Favorites"]).filter { entry.desktop != true || !["Rename & Artwork", "Library Entry", "Favorites"].contains($0) }
         let index = order.firstIndex(of: iridiumFocus) ?? 0
         if ["left", "right", "up", "down"].contains(command) {
@@ -1883,6 +1986,15 @@ struct LibraryDetail: View {
         // A Steam game starts through Madeira Dock (ContentView.launchLibraryEntry)
         // once its files are complete and Dock can sign in; "The game" once its
         // program is chosen (no client or sign-in involved).
+        // A GOG game starts once its files are complete (GOGLibrary).
+        if let product = entry.gogProductID {
+            if GOGLibrary.shared.downloads[product] != nil {
+                error = L("This game's download has not finished. Resume it and wait for it to complete before playing."); return
+            }
+            if GOGLibrary.shared.installed[product] == nil {
+                error = L("This GOG game is no longer installed. Install it again from the GOG section."); return
+            }
+        }
         // An itch.io game starts once its files are complete (ItchLibrary).
         if let game = entry.itchGameID {
             if ItchLibrary.shared.downloads[game] != nil {
@@ -1942,7 +2054,7 @@ struct LibraryDetail: View {
     }
     /// The pages the details page links to (iOS Settings style), each with its own Form.
     enum Page: Hashable {
-        case display, controls, launch, compatibility, steam, cloud, achievements, itch, epic, ea, library, iniFiles, advanced
+        case display, controls, launch, compatibility, steam, cloud, achievements, gog, itch, epic, ea, library, iniFiles, advanced
         var title: String {
             switch self {
             case .display: return "Display"
@@ -1952,6 +2064,7 @@ struct LibraryDetail: View {
             case .steam: return "Steam"
             case .cloud: return "Steam Cloud"
             case .workshop: return "Steam Workshop"
+            case .gog: return "GOG"
             case .itch: return "itch.io"
             case .epic: return "Epic Games"
             case .ea: return "EA"
@@ -1970,7 +2083,7 @@ struct LibraryDetail: View {
             case .steam: return "shippingbox"
             case .cloud: return "icloud"
             case .workshop: return "square.stack.3d.up"
-            case .itch, .epic, .ea: return "bag"
+            case .gog, .itch, .epic, .ea: return "bag"
             case .achievements: return "trophy"
             case .library: return "info.circle"
             case .iniFiles: return "doc.text"
@@ -1985,7 +2098,7 @@ struct LibraryDetail: View {
     /// or library details; a Steam game has its Steam pages.
     private var pageGroups: [[Page]] {
         let launch = entry.usesLaunchOptions || entry.desktop != true
-        let steam: [Page] = entry.steamAppID == nil ? (entry.epicAppName != nil ? [.epic] : entry.eaOfferID != nil ? [.ea] : entry.itchGameID != nil ? [.itch] : [])
+        let steam: [Page] = entry.steamAppID == nil ? (entry.gogProductID != nil ? [.gog] : entry.epicAppName != nil ? [.epic] : entry.eaOfferID != nil ? [.ea] : entry.itchGameID != nil ? [.itch] : [])
             : (SteamOwnedLibrary.cloudEnabled ? [.steam, .cloud, .achievements] : [.steam, .achievements])
                 + (SteamOwnedLibrary.workshopEnabled && Self.showsWorkshop(entry.steamAppID) ? [.workshop] : [])
         let tuning: [Page] = launch ? [.display, .controls, .launch, .compatibility] : [.display, .controls, .compatibility]
@@ -2026,6 +2139,7 @@ struct LibraryDetail: View {
                 if let appID = entry.steamAppID, appID > 0, appID <= Int(UInt32.max) {
                     SteamWorkshopSections(appID: UInt32(appID), title: entry.title)
                 }
+            case .gog: GOGEntrySection(entry: $entry) { leaving = true; dismiss() }
             case .itch: ItchEntrySection(entry: $entry) { leaving = true; dismiss() }
             case .epic: EpicEntrySection(entry: $entry) { leaving = true; dismiss() }
             case .ea: EAEntrySection(entry: $entry) { leaving = true; dismiss() }
@@ -3070,7 +3184,7 @@ struct MadeiraCredit: View {
 /// MADEIRA_RUNTIME_SETTINGS=0 hides this section.
 /// A sheet opened from Settings; LibraryView presents it from the Form itself.
 enum SettingsSheet: String, Identifiable {
-    case allSettings, steamSignIn, epicSignIn, eaSignIn, dock, stores, importFolder
+    case allSettings, steamSignIn, gogSignIn, epicSignIn, eaSignIn, dock, stores, importFolder
     var id: String { rawValue }
 }
 
@@ -3270,6 +3384,10 @@ struct LibraryPointerSettings: View {
             ? "Tap where you want to click. Hold and move to drag. Two fingers right-click or scroll."
             : "Drag anywhere between controls to move the pointer. Tap to click; hold to drag. Two fingers right-click or scroll.")
             .font(.caption).foregroundStyle(.secondary)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            Text("A mouse needs AssistiveTouch. Turn it on in Settings > Accessibility > Touch, then reopen Iridium.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
         if mode == IridiumTouchMouseMode.trackpad.rawValue {
             LabeledContent("Pointer speed") { Slider(value: $sensitivity, in: 0.25...4) }
                 .id("controls.mouse.speed")

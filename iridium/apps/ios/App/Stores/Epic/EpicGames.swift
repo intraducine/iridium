@@ -417,6 +417,8 @@ struct EpicEntrySection: View {
     @ObservedObject private var epic = EpicLibrary.shared
     @ObservedObject private var cloud = EpicCloud.shared
     @State private var confirmUninstall = false
+    @State private var uninstalling = false
+    @State private var uninstallFailure: String?
 
     var body: some View {
         let app = entry.epicAppName ?? ""
@@ -458,9 +460,10 @@ struct EpicEntrySection: View {
             }
             LabeledContent("App name", value: app)
             if record != nil, download == nil {
-                Button("Uninstall", role: .destructive) { confirmUninstall = true }
-                    .disabled(cloud.isBusy)
+                Button(uninstalling ? "Uninstalling…" : "Uninstall", role: .destructive) { confirmUninstall = true }
+                    .disabled(cloud.isBusy || uninstalling)
             }
+            if let uninstallFailure { Text(uninstallFailure).foregroundStyle(.red) }
         } header: {
             Text("Epic Games")
         } footer: {
@@ -469,7 +472,13 @@ struct EpicEntrySection: View {
         .confirmationDialog("Uninstall \(entry.title)? Its downloaded files are deleted from this device. Saves stored elsewhere are kept.",
                             isPresented: $confirmUninstall, titleVisibility: .visible) {
             Button("Uninstall", role: .destructive) {
-                Task { if await epic.uninstall(app) { uninstalled() } }
+                uninstalling = true; uninstallFailure = nil
+                Task {
+                    let removed = await epic.uninstall(app)
+                    uninstalling = false
+                    if removed { uninstalled() }
+                    else { uninstallFailure = epic.error ?? "The game could not be removed. Try again." }
+                }
             }
         }
     }

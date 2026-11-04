@@ -652,7 +652,17 @@ final class ItchTransfer: NSObject, URLSessionDownloadDelegate, @unchecked Senda
 
     /// Deletes the game's files and its library entry (its per-game settings).
     func uninstall(_ id: Int) async -> Bool {
-        guard let record = installed[id], !sessionRunning else { return false }
+        error = nil
+        guard let record = installed[id] else {
+            error = "The install record is missing. Refresh the store and try again."
+            ItchLog.event("[itch-uninstall] result=missing-record")
+            return false
+        }
+        guard !sessionRunning else {
+            error = "Close the running game before uninstalling. If its cleanup failed, restart Iridium first."
+            ItchLog.event("[itch-uninstall] result=session-busy")
+            return false
+        }
         let running = active?.id == id ? active?.task : nil
         pause(id)
         await running?.value
@@ -668,8 +678,9 @@ final class ItchTransfer: NSObject, URLSessionDownloadDelegate, @unchecked Senda
             guard LibraryModel.shared.removeItch(gameID: id) else {
                 throw LibraryError.message("The files were removed, but the library record could not be saved.")
             }
+            ItchLog.event("[itch-uninstall] result=removed")
             return true
-        } catch { self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
+        } catch { ItchLog.event("[itch-uninstall] result=failed code=\((error as NSError).code)"); self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
     }
 
     func reconcileDeletedFiles() async {

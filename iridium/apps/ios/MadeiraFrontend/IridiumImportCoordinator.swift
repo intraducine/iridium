@@ -94,6 +94,7 @@ import SwiftUI
 
     private func resumeStoreDownloads() {
         SteamOwnedLibrary.shared.resumeDownloadsAfterImport()
+        GOGLibrary.shared.resumeDownloadsAfterImport()
         EpicLibrary.shared.resumeDownloadsAfterImport()
         EALibrary.shared.resumeDownloadsAfterImport()
         ItchLibrary.shared.resumeDownloadsAfterImport()

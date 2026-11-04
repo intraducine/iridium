@@ -130,11 +130,11 @@ enum IridiumConsoleControlMapping {
         if platform == "dreamcast", let label = ["A": "B", "B": "A", "X": "Y", "Y": "X", "LT": "L", "RT": "R"][action] { return label }
         if platform == "playStation2", let label = ["A": "Circle", "B": "Cross", "X": "Triangle", "Y": "Square", "LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2"][action] { return label }
         if platform == "wii" {
-            let remote = ["Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
-            let classic = ["Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]
+            let remote = ["DPad": "D-pad", "LS": "Nunchuk Stick", "RS": "Pointer", "Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
+            let classic = ["DPad": "D-pad", "LS": "Left Stick", "RS": "Right Stick", "Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]
             return (wiiRemote == 2 ? classic : remote)[action] ?? action
         }
-        if platform == "gameCube", let label = ["LB": "L Click", "RB": "Z", "LT": "L", "RT": "R"][action] { return label }
+        if platform == "gameCube", let label = ["LS": "Stick", "RS": "C Stick", "LB": "L Click", "RB": "Z", "LT": "L", "RT": "R"][action] { return label }
         if action == "DPad" { return "D-pad" }; if action == "Menu" { return "Start" }; if action == "View" { return "Select" }
         if profile == .psp {
             return ["A": "Cross", "B": "Circle", "X": "Square", "Y": "Triangle", "LB": "L", "RB": "R"][action] ?? action
@@ -211,12 +211,13 @@ struct IridiumPlayerLayout {
             let shoulderY = landscape ? bounds.minY + 26 : bottom - 264
             add("L", bit: 1 << 10, x: left + 44, y: shoulderY, width: 60)
             add("R", bit: 1 << 11, x: right - 44, y: shoulderY, width: 60)
-            add("L2", bit: 1 << 12, x: left + 112, y: shoulderY, width: 60)
-            add("R2", bit: 1 << 13, x: right - 112, y: shoulderY, width: 60)
+            add("L2", bit: 1 << 12, x: left + 124, y: shoulderY, width: 60)
+            add("R2", bit: 1 << 13, x: right - 124, y: shoulderY, width: 60)
         }
-        let selectX = landscape ? bounds.midX - 84 : right - 116
-        let startX = landscape ? bounds.midX + 84 : right - 44
-        let systemY = landscape ? bounds.minY + 26 : bottom - 44
+        let dualStick = profile == .console || profile == .nintendo3DS
+        let selectX = landscape ? bounds.midX - 84 : dualStick ? bounds.midX - 40 : right - 116
+        let startX = landscape ? bounds.midX + 84 : dualStick ? bounds.midX + 40 : right - 44
+        let systemY = landscape || dualStick ? bounds.minY + 26 : bottom - 44
         add("Select", bit: 1 << 2, x: selectX, y: systemY, width: 64)
         add("Start", bit: 1 << 3, x: startX, y: systemY, width: 64)
         buttons = result

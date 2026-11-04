@@ -66,6 +66,7 @@ enum LibraryError: LocalizedError {
     var downloads: [Int: Download] = [:]
     func resumeDownloadsAfterImport() { }
 }
+@MainActor final class GOGLibrary { static let shared = GOGLibrary(); func resumeDownloadsAfterImport() {} }
 @MainActor final class EpicLibrary { static let shared = EpicLibrary(); func resumeDownloadsAfterImport() {} }
 @MainActor final class EALibrary { static let shared = EALibrary(); func resumeDownloadsAfterImport() {} }
 @MainActor final class ItchLibrary { static let shared = ItchLibrary(); func resumeDownloadsAfterImport() {} }

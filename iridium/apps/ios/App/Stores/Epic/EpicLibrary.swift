@@ -353,7 +353,17 @@ struct EpicInstalledGame: Codable, Sendable {
 
     /// Deletes the game's files and its library entry (its per-game settings).
     func uninstall(_ app: String) async -> Bool {
-        guard let record = installed[app], !sessionRunning else { return false }
+        error = nil
+        guard let record = installed[app] else {
+            error = "The install record is missing. Refresh the store and try again."
+            EpicLog.event("[epic-uninstall] result=missing-record")
+            return false
+        }
+        guard !sessionRunning else {
+            error = "Close the running game before uninstalling. If its cleanup failed, restart Iridium first."
+            EpicLog.event("[epic-uninstall] result=session-busy")
+            return false
+        }
         let running = active?.app == app ? active?.task : nil
         pause(app)
         await running?.value
@@ -369,8 +379,9 @@ struct EpicInstalledGame: Codable, Sendable {
             guard LibraryModel.shared.removeEpic(appName: app) else {
                 throw LibraryError.message("The files were removed, but the library record could not be saved.")
             }
+            EpicLog.event("[epic-uninstall] result=removed")
             return true
-        } catch { self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
+        } catch { EpicLog.event("[epic-uninstall] result=failed code=\((error as NSError).code)"); self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
     }
 
     func reconcileDeletedFiles() async {

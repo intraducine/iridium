@@ -11,6 +11,14 @@ enum IridiumStoreFiles {
         }
         let drive = LibraryModel.drive, link = drive.appendingPathComponent(folder)
         if let target = IridiumGameStorage.movedWindowsFolder(link, drive: drive) { return target }
+        // Older migrations moved a whole store root. Resolve only its journaled
+        // alias, then confine this game's descendants to that owned destination.
+        for count in 1..<parts.count {
+            let parent = drive.appendingPathComponent(parts.prefix(count).joined(separator: "/"))
+            if let target = IridiumGameStorage.movedWindowsFolder(parent, drive: drive) {
+                return try ExternalStoragePath.native(parts.dropFirst(count).joined(separator: "/"), root: target)
+            }
+        }
         return try ExternalStoragePath.native(folder, root: drive)
     }
 

@@ -902,7 +902,25 @@ def require_fresh_native_substages():
         raise ValueError('Unverified native substages exist: ' + ', '.join(existing))
 
 
-def native(reuse_only=False):
+def validate_incremental_native(inputs, upstream=UPSTREAM):
+    """Allow compiler work directories only from a checked, compatible prior build."""
+    saved = json.loads((upstream / '.build/iridium-native.json').read_text())
+    previous = saved.get('inputs', {})
+    issues = native_record_issues(saved, previous, upstream)
+    if issues: raise ValueError('Incremental native base rejected: ' + '; '.join(issues))
+    for name in ('tools', 'recipes', 'cryptoLibraries'):
+        if previous.get(name) != inputs.get(name):
+            raise ValueError('Incremental native configuration changed: ' + name)
+    def configuration(value):
+        return {key: item for key, item in value.get('enginePin', {}).items() if key != 'revision'}
+    if not configuration(previous) or configuration(previous) != configuration(inputs):
+        raise ValueError('Incremental native engine configuration changed')
+    subprocess.run(['git', '-C', str(upstream), 'merge-base', '--is-ancestor',
+                    previous['revision'], inputs['revision']], check=True)
+    print('Checked prior native outputs and compiler configuration; rebuilding every native recipe incrementally.', flush=True)
+
+
+def native(reuse_only=False, incremental=False):
     verify_pin()
     inputs = native_inputs()
     try:
@@ -918,7 +936,8 @@ def native(reuse_only=False):
     expected_progress = {'schema': 1, 'state': 'failed', 'key': native_key(inputs), 'workspace': str(ROOT.resolve())}
     valid = all(saved_progress.get(key) == value for key, value in expected_progress.items())
     if not valid or not saved_progress.get('outputs') or saved_progress['outputs'] != native_partial_outputs():
-        require_fresh_native_substages()
+        if incremental: validate_incremental_native(inputs)
+        else: require_fresh_native_substages()
     progress.parent.mkdir(parents=True, exist_ok=True)
     progress.write_text(json.dumps(dict(expected_progress, state='building')) + '\n')
     try:
@@ -981,13 +1000,15 @@ if __name__ == '__main__':
     parser.add_argument('app', nargs='?', type=Path)
     parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
     parser.add_argument('--reuse-only', action='store_true', help='Validate completed native outputs without building or writing')
+    parser.add_argument('--incremental-native', action='store_true', help='Rebuild native recipes from a verified compatible prior build')
     args = parser.parse_args()
     if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
     if args.reuse_only and args.action != 'native': parser.error('--reuse-only requires native')
+    if args.incremental_native and (args.action != 'native' or args.reuse_only): parser.error('--incremental-native requires native without --reuse-only')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only), 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native), 'windows': windows, 'toolchains': toolchains}[args.action]()

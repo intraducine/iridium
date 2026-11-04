@@ -75,7 +75,7 @@ def input_paths(engine):
     if engine == 'play': names += ['iridium/apps/ios/RuntimeBridge/IRDiscControl.h', 'iridium/apps/ios/RuntimeBridge/IRPlayState.h']
     if engine in ('host', 'azahar', 'dolphin'): names += ['iridium/apps/ios/RuntimeBridge/IRCheats.h']
     if engine in ('host', 'azahar'): names += ['iridium/apps/ios/RuntimeBridge/IRCameraSource.h']
-    if engine == 'host': names += ['iridium/apps/ios/RuntimeBridge/IRCoreCapture.h', 'iridium/apps/ios/RuntimeBridge/IRCoreCapture.mm']
+    if engine == 'host': names += ['iridium/apps/ios/RuntimeBridge/IRCoreCapture.h', 'iridium/apps/ios/RuntimeBridge/IRCoreCapture.mm', 'iridium/apps/ios/RuntimeBridge/IRRuntimeTiming.h']
     if engine == 'azahar': names += ['iridium/apps/ios/RuntimeBridge/IRAzaharCamera.cpp']
     if engine != 'host': names += ['ci/phase3_' + engine + '.py', 'ci/' + engine + '-targets.cmake']
     if engine in ('host', 'dolphin'):

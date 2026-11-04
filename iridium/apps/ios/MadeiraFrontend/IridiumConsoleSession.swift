@@ -170,6 +170,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                     let url = try store.validateROM(game)
                     let folder = try store.saveDirectory(game)
                     guard requested != .stop else { complete(owner); return }
+                    try startAudioSession()
                     switch backend {
                     case .sameBoy:
                         ir_core_reset_options()
@@ -1625,11 +1626,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func startAudio() throws {
+    private func startAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
         if oldAudio == nil { oldAudio = (session.category, session.mode, session.categoryOptions) }
         try session.setCategory(.playback, mode: .default)
         try session.setActive(true)
+    }
+    private func startAudio() throws {
+        try startAudioSession()
         let engine = AVAudioEngine(), player = AVAudioPlayerNode()
         guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2) else { throw IridiumRuntimeError.invalidGame }
         engine.attach(player)
@@ -1700,7 +1704,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             if backend == .sameBoy { _ = audioBuffering.consumed(audioFrames) }
             return
         }
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self, weak player] _ in
+        // Hardware/Bluetooth latency must not count as unrendered PCM in the bounded queue.
+        player.scheduleBuffer(buffer, completionCallbackType: .dataRendered) { [weak self, weak player] _ in
             guard let self else { return }
             // Never stop/pause AVAudioPlayerNode on its render callback.
             self.queue.async {

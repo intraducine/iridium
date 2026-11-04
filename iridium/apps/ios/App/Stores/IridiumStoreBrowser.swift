@@ -2,10 +2,11 @@
 import SwiftUI
 
 enum IridiumStorefront: String, CaseIterable, Identifiable {
-    case steam = "Steam", epic = "Epic Games", ea = "EA", itch = "itch.io"
+    case steam = "Steam", gog = "GOG", epic = "Epic Games", ea = "EA", itch = "itch.io"
     var id: Self { self }
     @MainActor var signedIn: Bool {
         switch self {
+        case .gog: GOGLibrary.shared.signedIn
         case .steam: SteamOwnedLibrary.shared.signedIn
         case .epic: EpicLibrary.shared.signedIn
         case .ea: EALibrary.shared.signedIn
@@ -24,6 +25,7 @@ struct IridiumStoreBrowser: View {
     @State private var dock = false
     @ObservedObject private var steam = SteamOwnedLibrary.shared
     @ObservedObject private var games = SteamGamesModel.shared
+    @ObservedObject private var gog = GOGLibrary.shared
     @ObservedObject private var epic = EpicLibrary.shared
     @ObservedObject private var ea = EALibrary.shared
     @ObservedObject private var itch = ItchLibrary.shared
@@ -33,6 +35,7 @@ struct IridiumStoreBrowser: View {
         guard !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         switch store {
         case .steam: return SteamGamesRules.items(installed: games.games, owned: steam.owned, search: search).isEmpty
+        case .gog: return GOGGamesRules.items(gog, search: search).isEmpty
         case .epic: return EpicGamesRules.items(epic, search: search).isEmpty
         case .ea: return EAGamesRules.items(ea, search: search).isEmpty
         case .itch: return ItchGamesRules.items(itch, search: search).isEmpty
@@ -69,6 +72,7 @@ struct IridiumStoreBrowser: View {
                                         Button("Accounts") { accounts = true }
                                     }
                                 }
+                            case .gog: GOGGamesSection(search: search, layout: "list", open: open, standalone: true)
                             case .epic: EpicGamesSection(search: search, layout: "list", open: open, standalone: true)
                             case .ea: EAGamesSection(search: search, layout: "list", open: open, standalone: true)
                             case .itch: ItchGamesSection(search: search, layout: "list", open: open, standalone: true)
@@ -101,6 +105,7 @@ struct IridiumStoreAccounts: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected: IridiumStorefront?
     @ObservedObject private var steam = SteamOwnedLibrary.shared
+    @ObservedObject private var gog = GOGLibrary.shared
     @ObservedObject private var epic = EpicLibrary.shared
     @ObservedObject private var ea = EALibrary.shared
     @ObservedObject private var itch = ItchLibrary.shared
@@ -115,6 +120,7 @@ struct IridiumStoreAccounts: View {
                 .sheet(item: $selected) { store in
                     switch store {
                     case .steam: SteamSignInView()
+                    case .gog: GOGSignInView()
                     case .epic: EpicSignInView()
                     case .ea: EASignInView()
                     case .itch: ItchSignInView()
@@ -132,7 +138,7 @@ struct IridiumStoreUninstallButton: View {
     @State private var busy = false
     @State private var failure: String?
     var body: some View {
-        if entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil {
+        if entry.gogProductID != nil || entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil {
             Button(busy ? "Uninstalling…" : "Uninstall Game", role: .destructive) { confirm = true }
                 .id("Uninstall")
                 .disabled(busy || library.current != nil || library.launching || IridiumImportCoordinator.shared.blocksLaunch)
@@ -144,6 +150,8 @@ struct IridiumStoreUninstallButton: View {
                             if entry.steamAppID != nil, let game = library.steamInstall(entry) {
                                 success = await SteamOwnedLibrary.shared.uninstall(game)
                                 failure = SteamOwnedLibrary.shared.error
+                            } else if let id = entry.gogProductID {
+                                success = await GOGLibrary.shared.uninstall(id); failure = GOGLibrary.shared.error
                             } else if let id = entry.epicAppName {
                                 success = await EpicLibrary.shared.uninstall(id); failure = EpicLibrary.shared.error
                             } else if let id = entry.eaOfferID {

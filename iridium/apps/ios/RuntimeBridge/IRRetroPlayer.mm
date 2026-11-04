@@ -21,6 +21,7 @@
 #include "libretro.h"
 #include "IRPhase3.h"
 #include "IRAudioVolume.h"
+#include "IRRuntimeTiming.h"
 #include "IRFlycastFaultRoute.h"
 #define IR_CORE_OPTIONS_IMPLEMENTATION
 #include "IRCoreOptions.h"
@@ -101,6 +102,8 @@ struct RetroAPI {
     std::atomic<bool> muted, imagePending, stopped;
     std::atomic<uint32_t> readAudio, writeAudio;
     std::vector<int16_t> samples;
+    IRAudioPrefill audioPrefill;
+    IRFramePacer framePacer;
     GLuint renderTarget, color, depth, displayTarget, displayColor;
     GLint width, height;
     unsigned maxWidth, maxHeight;
@@ -114,7 +117,7 @@ struct RetroAPI {
     CGFloat surfaceAspect;
     double currentFPS, initialAudioRate;
     double diagnosticTime;
-    uint64_t diagnosticFrames;
+    uint64_t diagnosticFrames, emulationSteps, diagnosticSteps;
     unsigned reportedJIT;
     std::atomic<bool> resizeQueued;
     bool needsContextReset, hardwareSelected, shutdownRequested;
@@ -506,7 +509,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
 }
 - (bool)updateTiming:(retro_system_timing)timing {
     if(!std::isfinite(timing.fps)||timing.fps<1||timing.fps>240||!std::isfinite(timing.sample_rate)||timing.sample_rate<8000||timing.sample_rate>192000)return false;
-    currentFPS=timing.fps;
+    currentFPS=timing.fps;framePacer.reset();
     if(clock)dispatch_source_set_timer(clock,dispatch_time(DISPATCH_TIME_NOW,0),(uint64_t)(NSEC_PER_SEC/currentFPS),NSEC_PER_MSEC);
     if(audioSpeed&&initialAudioRate>0) {
         double ratio=timing.sample_rate/initialAudioRate;
@@ -531,7 +534,8 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     }
     [EAGLContext setCurrentContext:nil];
     if(!accepted)return false;
-    paused=value;muted.store(value);
+    paused=value;muted.store(value);framePacer.reset();
+    if(!value) {diagnosticTime=CACurrentMediaTime();diagnosticFrames=frameCount.load();diagnosticSteps=emulationSteps;}
     [capture suspend:value];
     if(value)[motion stopDeviceMotionUpdates];
     else if(sensorDemand)[motion startDeviceMotionUpdates];
@@ -705,7 +709,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     audioSource = [[AVAudioSourceNode alloc] initWithFormat:format renderBlock:^OSStatus(BOOL *silent, const AudioTimeStamp *, AVAudioFrameCount count, AudioBufferList *buffers) {
         uint32_t read = p->readAudio.load(std::memory_order_relaxed), write = p->writeAudio.load(std::memory_order_acquire);
         bool mute = p->muted.load();
-        uint32_t available = mute ? 0 : std::min<uint32_t>(count, write - read);
+        uint32_t available = p->audioPrefill.frames(write - read, count, p->initialAudioRate, mute);
         for (UInt32 channel = 0; channel < buffers->mNumberBuffers; ++channel) {
             float *out = (float *)buffers->mBuffers[channel].mData;
             for (UInt32 i = 0; i < count; ++i) out[i] = i < available ? p->samples[((read + i) % audioCapacity) * 2 + std::min(channel, 1u)] / 32768.f : 0;
@@ -734,7 +738,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         });
     }];
     muted.store(paused);
-    diagnosticTime=CFAbsoluteTimeGetCurrent();diagnosticFrames=0;reportedJIT=0;
+    diagnosticTime=CACurrentMediaTime();diagnosticFrames=0;diagnosticSteps=emulationSteps=0;reportedJIT=0;
     clock = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, owner);
     dispatch_source_set_timer(clock, dispatch_time(DISPATCH_TIME_NOW, 0), (uint64_t)(NSEC_PER_SEC / fps), NSEC_PER_MSEC);
     dispatch_source_set_event_handler(clock, ^{
@@ -743,9 +747,13 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         if (self->shutdownRequested) { [self finish]; return; }
         if (self->paused) return;
         [EAGLContext setCurrentContext:self->context];
-        if (self->frameTime.callback) self->frameTime.callback((retro_usec_t)(1000000 / self->currentFPS));
         try {
-            self->api.run();
+            unsigned steps=self->framePacer.steps(CACurrentMediaTime(),self->currentFPS);
+            for(unsigned step=0;step<steps&&!self->shutdownRequested;++step) {
+                if(self->frameTime.callback)self->frameTime.callback((retro_usec_t)(1000000/self->currentFPS));
+                self->api.run();
+                ++self->emulationSteps;
+            }
             NSString *captureStatus=self->capture.status;
             if(captureStatus!=self->captureStatus&&![captureStatus isEqual:self->captureStatus]) {self->captureStatus=captureStatus;self->controlsDirty=true;}
             if(self->controlsDirty)[self controlsSnapshot];
@@ -754,14 +762,19 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
                 if((status&1)&&!(self->reportedJIT&1))report(0,"Azahar CPU JIT completed guest execution.");
                 if((status&2)&&!(self->reportedJIT&2))report(0,"Azahar shader JIT completed shader execution.");
                 self->reportedJIT=status;
-                double now=CFAbsoluteTimeGetCurrent();
-                if(now-self->diagnosticTime>=5) {
-                    uint64_t frames=self->frameCount.load();
-                    char message[160];
-                    std::snprintf(message,sizeof message,"Azahar fps=%.2f target=%.2f cpu_jit=%u shader_jit=%u",(frames-self->diagnosticFrames)/(now-self->diagnosticTime),self->currentFPS,status&1,(status>>1)&1);
-                    report(0,message);
-                    self->diagnosticTime=now;self->diagnosticFrames=frames;
-                }
+            }
+            double now=CACurrentMediaTime();
+            if(now-self->diagnosticTime>=5) {
+                uint64_t frames=self->frameCount.load();
+                char message[256];
+                std::snprintf(message,sizeof message,"%s fps=%.2f target=%.2f steps_per_s=%.2f late=%llu discarded=%llu queued_audio=%u underruns=%llu cpu_jit=%u shader_jit=%u",self->engine.c_str(),
+                    (frames-self->diagnosticFrames)/(now-self->diagnosticTime),self->currentFPS,
+                    (self->emulationSteps-self->diagnosticSteps)/(now-self->diagnosticTime),
+                    (unsigned long long)self->framePacer.late,(unsigned long long)self->framePacer.discarded,
+                    self->writeAudio.load()-self->readAudio.load(),(unsigned long long)self->audioPrefill.underruns.load(),
+                    self->reportedJIT&1,(self->reportedJIT>>1)&1);
+                report(0,message);
+                self->diagnosticTime=now;self->diagnosticFrames=frames;self->diagnosticSteps=self->emulationSteps;
             }
         }
         catch (const std::exception &failure) {

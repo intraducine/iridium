@@ -23,6 +23,11 @@ covers keep their spacing throughout the movement. The large cover and Play
 button share the same left edge. Titles and console labels
 use short, interruptible fades with two reused labels, so fast changes cannot
 accumulate old titles. Reduced Motion keeps them static.
+One shared white selection border slides between covers and follows their live
+scroll size, including the larger landscape art.
+The hosted review build validates each completed Windows/graphics module before
+removing only its loose compiler objects. Sources, libraries and module receipts
+remain available. The 20 GiB reserve and 40 GiB module admission remain unchanged.
 Required runtimes and games with optional JIT enabled show `· JIT` beside their
 system name. The standalone Windows control overlay
 is hidden between library sessions. Startup diagnostics and Dock executable
@@ -465,3 +470,56 @@ The library mutex is released during native cleanup, and resident requests use
 the full Windows system path for Explorer. Store removal handles whole deleted
 managed folders while retaining partial installs for repair and leaving absent
 external drives unchanged. App settings hold the default game volume and haptics.
+
+
+## Console audio, timing and store removal follow-up
+
+Console sessions activate their audio session on the existing worker queue before
+native boot. SameBoy releases its bounded PCM queue when audio is rendered,
+rather than after downstream device latency. The shared libretro host uses a
+monotonic frame deadline, bounded catch-up and 50 ms audio prefill. Pause/resume
+resets the deadline. Runtime logs report frame rate, timer debt and audio gaps.
+The Play embedding overlay queues complete producer blocks under its mutex until
+the frontend drains them. Native core CPU/GPU code remains pinned and unchanged.
+
+Built-in touch layouts follow console hardware. Sideways Wii uses no sticks;
+Nunchuk adds its stick and C/Z, and Classic retains both sticks. GameCube and
+Dreamcast omit unrelated controls. Controller-mode changes refresh automatic
+layouts, while saved custom layouts remain unchanged.
+
+Store deletion accepts descendants of a journaled parent alias from older
+migrations. Descendants stay confined to that recorded destination. New Epic,
+EA and itch.io migrations select each game folder instead of the whole store.
+Repeated migration keeps existing parent owners. Store removal reports blocked
+and failed requests and records credential-free outcomes for diagnosis.
+
+## Madeira 0.2.0 and main snapshot
+
+The Madeira engine is pinned to `5fda6a0e9543e5de1df010aff35748ab913fd0d9`,
+the `v0.2.0` release and reviewed main snapshot. The native API remains compatible.
+This brings the Social Club 2.4.0.296 renderer bridge and its host checks.
+The engine dependency revisions are unchanged.
+
+Iridium imports the GOG transport, downloader, install scripts, setup and Galaxy
+service with their Playport notices. GOG uses the shared Stores and Accounts
+sheets, game details, launch admission, download ownership and Games migration.
+Uninstall waits for writes, checks owned paths, saves records after deletion and
+reports failures. Deleting a whole game folder removes its install record;
+partial damage stays available for repair. The Galaxy Windows service is built
+from the pinned source and included in the Windows component receipt.
+
+Mouse focus follows upstream's iPhone AssistiveTouch fix. Recommended settings
+for The Escapists 2 and Garry's Mod are retained as upstream recommendations,
+not Iridium device results. The updated localization and settings catalog are
+imported. Store tabs are used in the retained Madeira library; the Iridium
+library keeps its console carousel and shared Stores sheet. Iridium's shared
+solid control faces already fade the full face, expose per-control size and
+opacity, and dismiss editor panels outside their controls. They replace the
+upstream Glass/Solid picker rather than adding a second control renderer.
+
+GOG token refresh updates the device-only Keychain item before attempting an
+insert, so a locked or failed save cannot delete the prior sign-in. Tests use
+substitute Keychain calls and never read real credentials. The Galaxy service
+registration is prepared before the first Windows host start. If a later GOG
+launch needs install-script registry changes while that host is resident,
+Iridium requests a restart instead of editing files owned by wineserver.

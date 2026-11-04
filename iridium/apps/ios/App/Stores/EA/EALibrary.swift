@@ -325,7 +325,17 @@ struct EAInstalledGame: Codable, Sendable {
 
     /// Deletes the game's files and records; its library entry goes with them.
     func uninstall(_ id: String) async -> Bool {
-        guard let record = installed[id], !sessionRunning else { return false }
+        error = nil
+        guard let record = installed[id] else {
+            error = "The install record is missing. Refresh the store and try again."
+            EALog.event("[ea-uninstall] result=missing-record")
+            return false
+        }
+        guard !sessionRunning else {
+            error = "Close the running game before uninstalling. If its cleanup failed, restart Iridium first."
+            EALog.event("[ea-uninstall] result=session-busy")
+            return false
+        }
         let running = active?.id == id ? active?.task : nil
         pause(id)
         await running?.value
@@ -341,8 +351,9 @@ struct EAInstalledGame: Codable, Sendable {
             guard LibraryModel.shared.removeEA(offerID: id) else {
                 throw LibraryError.message("The files were removed, but the library record could not be saved.")
             }
+            EALog.event("[ea-uninstall] result=removed")
             return true
-        } catch { self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
+        } catch { EALog.event("[ea-uninstall] result=failed code=\((error as NSError).code)"); self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
     }
 
     func reconcileDeletedFiles() async {
