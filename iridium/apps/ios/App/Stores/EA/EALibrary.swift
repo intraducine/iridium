@@ -345,6 +345,15 @@ struct EAInstalledGame: Codable, Sendable {
         } catch { self.error = "Could not finish removing the game: " + error.localizedDescription; return false }
     }
 
+    func reconcileDeletedFiles() async {
+        guard !sessionRunning, !IridiumImportCoordinator.shared.blocksLaunch else { return }
+        for (id, record) in installed where downloads[id] == nil {
+            if IridiumStoreFiles.isDeleted(folder: record.folder, installRoot: Self.installRoot) {
+                _ = await uninstall(id)
+            }
+        }
+    }
+
     private func pump() {
         guard active == nil, !inSession, !queue.isEmpty else { return }
         do { try IridiumImportCoordinator.shared.beginLibraryTransfer() } catch { return }

@@ -393,7 +393,8 @@ static void ios_views_owner_died( void *peb )
 static int ios_view_reclaimable( const struct file_view *view, uint64_t epoch )
 {
     size_t offset;
-    if (!view->ios_owner || !view->ios_retired || !view->ios_epoch || view->ios_epoch >= epoch || view->ios_flags)
+    /* The ARM64EC bitmap belongs to the host, even if a child first creates it. */
+    if (view == arm64ec_view || !view->ios_owner || !view->ios_retired || !view->ios_epoch || view->ios_epoch >= epoch || view->ios_flags)
         return 0;
     /* Original PE mappings are separate from the reusable executable pool copies. */
     if (view->protect & SEC_IMAGE)

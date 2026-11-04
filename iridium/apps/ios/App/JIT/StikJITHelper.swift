@@ -756,7 +756,7 @@ enum StikJITHelper {
         var rxPtrOpt: UnsafeMutableRawPointer? = nil
         var requestUnanswered = false
         for attempt in 0..<3 {
-            guard let p = jit26_prepare_region(nil, poolSize), p != UnsafeMutableRawPointer(bitPattern: 0) else {
+            guard let p = ir_jit_prepare_region(nil, poolSize), p != UnsafeMutableRawPointer(bitPattern: 0) else {
                 LogStore.shared.log("Debugger failed to allocate RX memory (attempt \(attempt))", level: .error)
                 requestUnanswered = true
                 break
@@ -816,7 +816,7 @@ enum StikJITHelper {
                         rxPtrOpt = nil
                     }
                     var replaced = false
-                    if let q = jit26_prepare_region(nil, pairSingle), q != UnsafeMutableRawPointer(bitPattern: 0) {
+                    if let q = ir_jit_prepare_region(nil, pairSingle), q != UnsafeMutableRawPointer(bitPattern: 0) {
                         let qa = Int(bitPattern: q)
                         let qGuest = qa + pairSingle > guestLo && qa < guestHi
                         if qa >= goodLow && !qGuest && !overlapsExeWindow(vm_address_t(qa), vm_address_t(pairSingle)) {
@@ -1400,7 +1400,7 @@ enum StikJITHelper {
                 if a == h.base { plugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
             }
         }
-        let got = jit26_prepare_region(nil, Int(size))
+        let got = ir_jit_prepare_region(nil, Int(size))
         for (a, sz) in plugs { vm_deallocate(mach_task_self_, a, sz) }
         guard let p = got, p != UnsafeMutableRawPointer(bitPattern: 0) else {
             LogStore.shared.log("[pool-split] the debugger did not allocate the second region (\(size >> 20)MB) — the pool "
@@ -1432,7 +1432,7 @@ enum StikJITHelper {
                         if a == h.base { mplugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
                     }
                 }
-                let mgot = jit26_prepare_region(nil, Int(msize))
+                let mgot = ir_jit_prepare_region(nil, Int(msize))
                 for (a, sz) in mplugs { vm_deallocate(mach_task_self_, a, sz) }
                 if let mp = mgot, mp != UnsafeMutableRawPointer(bitPattern: 0) {
                     let m = vm_address_t(bitPattern: mp)
@@ -1527,7 +1527,7 @@ enum StikJITHelper {
                 if a == h.base { plugs.append((a, vm_size_t(h.size))) } else { vm_deallocate(mach_task_self_, a, vm_size_t(h.size)) }
             }
         }
-        let got = jit26_prepare_region(nil, Int(size))
+        let got = ir_jit_prepare_region(nil, Int(size))
         for (a, sz) in plugs { vm_deallocate(mach_task_self_, a, sz) }
         guard let p = got, p != UnsafeMutableRawPointer(bitPattern: 0) else {
             LogStore.shared.log("[pool-low] the debugger did not allocate region C (\(size >> 20)MB) -- code buffers stay "

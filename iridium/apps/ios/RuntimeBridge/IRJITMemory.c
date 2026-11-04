@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRJITMemory.h"
+#include "IRJITPrepare.h"
 #include <mach/mach.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -16,6 +17,37 @@ static void *read_view, *write_view;
 static uint32_t leases[PAGE_COUNT];
 static bool reused[PAGE_COUNT];
 static bool preparing;
+
+// Each stop is bounded. The app runs between chunks, including its main run loop.
+static void *prepare_request(void *address, size_t bytes, unsigned command) {
+#if defined(__aarch64__)
+    register void *x0 __asm__("x0") = address;
+    register size_t x1 __asm__("x1") = bytes;
+    register unsigned long x16 __asm__("x16") = command;
+    __asm__ volatile("brk #0xf00d" : "+r"(x0) : "r"(x1), "r"(x16) : "memory");
+    return x0;
+#else
+    return NULL;
+#endif
+}
+void *ir_jit_prepare_region(void *address, size_t bytes) {
+    const size_t chunk = 2 * 1024 * 1024;
+    if (!bytes || bytes > POOL_BYTES || bytes % PAGE_BYTES) return NULL;
+    bool allocated = !address;
+    if (allocated) address = prepare_request(NULL, bytes, 4);
+    if (!address || address == MAP_FAILED || (uintptr_t)address % PAGE_BYTES || bytes > UINTPTR_MAX - (uintptr_t)address) return NULL;
+    for (size_t offset = 0; offset < bytes; offset += chunk) {
+        void *part = (char *)address + offset;
+        size_t length = bytes - offset < chunk ? bytes - offset : chunk;
+        if (prepare_request(part, length, 1) != part) {
+            if (allocated) munmap(address, bytes);
+            return NULL;
+        }
+        // Let resumed UI work run before the next debugger stop.
+        if (offset + length < bytes) usleep(4000);
+    }
+    return address;
+}
 
 bool ir_jit_memory_ready(void) {
     pthread_mutex_lock(&mutex);

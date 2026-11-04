@@ -255,7 +255,7 @@ final class JITCoordinator: ObservableObject {
                 // Both arenas are prepared during this one owned helper activation.
                 // Madeira's arena persists; console cores lease reusable pages separately.
                 let windows = IridiumMadeiraRuntime.prepareJITMemory()
-                let prepared = windows && ir_jit_memory_prepare(jit26_prepare_region)
+                let prepared = windows && ir_jit_memory_prepare(ir_jit_prepare_region)
                 DispatchQueue.main.async {
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
@@ -1077,7 +1077,7 @@ struct JITSetupContent: View {
             }
         }
         if coordinator.busy {
-            JITSetupGroup(inline: inline) { HStack { ProgressView(); Text(coordinator.status ?? "Working…") } }
+            JITSetupGroup(inline: inline) { IridiumJITProgress(status: coordinator.status) }
         } else if let error = coordinator.error {
             JITSetupGroup(inline: inline) {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
@@ -1243,6 +1243,23 @@ struct JITSetupView: View {
                     Button("Done") { coordinator.showSetup = false; dismiss() }
                 }
             }
+        }
+    }
+}
+
+struct IridiumJITProgress: View {
+    let status: String?
+    @State private var started = Date()
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 12) {
+                ProgressView()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(status ?? "Preparing JIT…")
+                    Text("\(max(0, Int(context.date.timeIntervalSince(started)))) seconds")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("jitProgress")
         }
     }
 }

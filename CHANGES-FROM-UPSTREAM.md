@@ -441,3 +441,21 @@ The editor also carries the size-slider stability and lock checks from
 Madeira `effa2ff15d99bfc8082e91f42e170dbe8c7e652f`. Iridium retains its existing
 per-control size/opacity sliders and outside-tap dismissal. This UI-only change
 does not change the pinned native runtime or rebuild its components.
+
+## Shared-session follow-up
+
+Iridium prepares debugger-owned JIT mappings in 2 MiB steps, with a run-loop
+interval between stops. The shared app and console arenas retain their existing
+sizes and leases. The bundled debugger script has an allocation-only command.
+The UI shows elapsed JIT time. These changes require device timing checks.
+
+PPSSPP's Darwin memory arena reserves a free host address band for its PSP RAM
+aliases. It replaces only its own reservation and retains it until shutdown.
+This avoids the low-address probe range occupied by other resident engines.
+The pinned upstream source and its notices remain unchanged.
+
+Windows cleanup retains the shared ARM64EC bitmap even when a child created it.
+The library mutex is released during native cleanup, and resident requests use
+the full Windows system path for Explorer. Store removal handles whole deleted
+managed folders while retaining partial installs for repair and leaving absent
+external drives unchanged. App settings hold the default game volume and haptics.

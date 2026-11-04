@@ -103,7 +103,10 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
     func submit(_ token: UUID, configuration: [String: String] = [:]) throws {
         lock.lock(); defer { lock.unlock() }
         guard owner == nil, !poisoned else { throw Failure.busy }
-        let executable = getenv("MADEIRA_EXE").map { String(cString: $0) } ?? "cube.exe"
+        var executable = getenv("MADEIRA_EXE").map { String(cString: $0) } ?? "cube.exe"
+        if executable.caseInsensitiveCompare("explorer.exe") == .orderedSame {
+            executable = "C:\\windows\\system32\\explorer.exe"
+        }
         let arguments = getenv("MADEIRA_ARGS").map { String(cString: $0) } ?? ""
         let directory = getenv("MADEIRA_WORKDIR").map { String(cString: $0) }
             ?? executable.lastIndex(of: "\\").map { String(executable[..<$0]) } ?? "C:\\windows\\system32"
@@ -146,7 +149,14 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
     }
     private func publishRequest() throws {
         if cancelled == owner { pending = nil; return }
-        guard let pending, !FileManager.default.fileExists(atPath: root.appendingPathComponent("request.bin").path), beginFence() else { throw Failure.busy }
+        guard let pending, !FileManager.default.fileExists(atPath: root.appendingPathComponent("request.bin").path) else { throw Failure.busy }
+        let token = owner
+        // Native cleanup can wait for the GPU. UI status reads must not wait on it.
+        lock.unlock()
+        let admitted = beginFence()
+        lock.lock()
+        guard admitted, owner == token else { throw Failure.busy }
+        if cancelled == owner { self.pending = nil; return }
         for (key, value) in nativePending {
             nativeOverrides.append((key, getenv(key).map { String(cString: $0) }))
             setenv(key, value, 1)

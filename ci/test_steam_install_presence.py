@@ -185,7 +185,7 @@ enum IridiumFavoriteButton { static func toggle(_ entry: LibraryEntry) {} }
 }
 @MainActor final class Navigation {
     var entry: LibraryEntry, model: LibraryModel
-    var iridiumPages: [String] = [], iridiumFocus = "Controls", iridiumGuided = false, remove = false
+    var iridiumPages: [String] = [], iridiumFocus = "Controls", iridiumGuided = false, remove = false, uninstallStore = false
     init(_ entry: LibraryEntry, model: LibraryModel) { self.entry = entry; self.model = model }
     func dismiss() {}
     NAVIGATION
@@ -214,6 +214,10 @@ enum IridiumFavoriteButton { static func toggle(_ entry: LibraryEntry) {} }
         reopened.upsertSteam(missing, title: entry.title)
         precondition(reopened.hiddenSteamApps.isEmpty && reopened.entries.first?.id == entry.id)
         let navigation = Navigation(entry, model: reopened)
+        navigation.iridiumNavigate("up")
+        precondition(navigation.iridiumFocus == "Uninstall")
+        navigation.iridiumNavigate("accept")
+        precondition(navigation.uninstallStore && navigation.iridiumPages.isEmpty)
         navigation.iridiumNavigate("up")
         precondition(navigation.iridiumFocus == "Library Entry")
         navigation.iridiumNavigate("accept")

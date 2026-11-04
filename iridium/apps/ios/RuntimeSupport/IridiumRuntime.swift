@@ -30,7 +30,7 @@ struct IridiumRuntimeDescriptor: Identifiable, Equatable, Sendable {
     let jit: IridiumJITRequirement
     let supportsPause: Bool
     let restartAfterStop: Bool
-    var jitSuffix: String { jit == .required ? " * JIT" : "" }
+    var jitSuffix: String { jit == .required ? " · JIT" : "" }
 
     func executionMode(jitAvailable: Bool) throws -> IridiumExecutionMode {
         switch jit {

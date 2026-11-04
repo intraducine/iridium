@@ -274,7 +274,7 @@ struct IridiumControlFeedbackSettings: View {
         }
         .id("controls.haptics")
         .setupControllerTarget("controls.haptics", order: 400, action: { changeFeedback(1) }, adjust: changeFeedback)
-        Text("A short tap when a control engages. Holding a button or moving a stick won’t repeatedly vibrate.")
+        Text("Applies to library selection and touch controls.")
             .font(.caption).foregroundStyle(.secondary)
     }
     private func changeFeedback(_ direction: Int) { feedback = SetupControllerPolicy.cycled(feedback, in: IridiumTouchHaptics.allCases.map(\.rawValue), direction: direction) }
