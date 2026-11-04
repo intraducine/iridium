@@ -92,8 +92,10 @@ host.showFocus = true
 host.focus(b)
 precondition(host.selectionFeedback.pulses == 3)
 let before = IridiumMenuSounds.moves
+let beforeHaptics = host.selectionFeedback.pulses
 for i in 0..<40 { host.focus(i % 2 == 0 ? a : b) }
 precondition(IridiumMenuSounds.moves == before + 40, "Every keyboard focus event must sound")
+precondition(host.selectionFeedback.pulses == beforeHaptics + 40, "Keyboard focus must retain haptics")
 let swipeBefore = IridiumMenuSounds.moves
 let hapticsBefore = host.selectionFeedback.pulses
 host.swipe(a); host.swipe(c)
