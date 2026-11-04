@@ -524,7 +524,8 @@ registration is prepared before the first Windows host start. If a later GOG
 launch needs install-script registry changes while that host is resident,
 Iridium requests a restart instead of editing files owned by wineserver.
 
-The hosted device build admits 110 GiB before compilation, including the observed
-native/Windows peaks and 32-bit working space. Completed graphics cleanup uses
+The hosted device build targets 110 GiB by reclaiming identified idle Simulator
+images. If the runner cannot reach that target, the unchanged 40 GiB stage
+admission applies; a verified native checkpoint avoids its compiler scratch. Completed graphics cleanup uses
 the recipes' runtime-v1 component directories. It keeps source, finished modules
 and receipts. The 20 GiB reserve and 40 GiB stage admission are unchanged.
