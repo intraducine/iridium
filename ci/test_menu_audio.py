@@ -44,6 +44,10 @@ enum IridiumSystemGameSettings { static func routes(for platform: String) -> [St
 @MainActor final class Settings {
     var iridiumPages: [String] = [], iridiumFocus = "JIT & Memory", iridiumGuided = false
     var menuSounds = true, dismissed = 0
+    var settingsSheet: SettingsSheet?
+    enum SettingsSheet { case stores, importFolder }
+    var onboarding = Onboarding()
+    struct Onboarding { func rerun() {} }
     func iridiumDismiss() { dismissed += 1 }
 METHODS
     func run() {
@@ -57,7 +61,10 @@ METHODS
         iridiumNavigate("back"); precondition(dismissed == 1)
         iridiumFocus = "Getting Started"
         let moves = IridiumMenuSounds.moves
-        iridiumNavigate("up"); precondition(IridiumMenuSounds.moves == moves)
+        iridiumNavigate("up"); precondition(iridiumFocus == "Import Folder" && IridiumMenuSounds.moves == moves + 1)
+        iridiumNavigate("accept"); precondition(settingsSheet == .importFolder && iridiumPages.isEmpty)
+        iridiumNavigate("up"); iridiumNavigate("accept"); precondition(settingsSheet == .stores && iridiumPages.isEmpty)
+        iridiumFocus = "Getting Started"
         TouchControlsModel.shared.iridiumSettingsContext = 1
         iridiumNavigate("down"); precondition(iridiumFocus == "Getting Started")
     }

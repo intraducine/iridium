@@ -492,7 +492,7 @@ check(try IridiumROMInspection.inspect(ambiguousELF, fileExtension: "elf", prefe
 print("Ambiguous containers and PlayStation generation detection passed")
 
 for runtime in IridiumRuntimeRegistry.all {
-    precondition(runtime.jitSuffix == (runtime.jit == .required ? " * JIT" : ""))
+    precondition(runtime.jitSuffix == (runtime.jit == .required ? " · JIT" : ""))
     for platform in runtime.platforms {
         precondition(platform.libraryTitle == platform.title + runtime.jitSuffix)
     }

@@ -413,6 +413,7 @@ int main(void){
 static const size_t page_size=4096;
 struct file_view {void *base;size_t size;unsigned protect,ios_flags;void *ios_owner;uint64_t ios_epoch;unsigned ios_retired;};
 static struct file_view views[320];
+static struct file_view *arm64ec_view;
 static unsigned view_count,deleted;
 static uintptr_t owner=1,executable;
 static uint64_t epoch=1;
@@ -448,12 +449,14 @@ int main(void){
  struct file_view*quarantined_image=make();quarantined_image->protect=image->protect;quarantined_image->ios_flags=4;
  owner=2;struct file_view*live_image=make();live_image->protect=image->protect;owner=1;
  epoch=0;struct file_view*resident=make();epoch=1;
+ arm64ec_view=make();
  owner=0;struct file_view*unknown=make();owner=1;
  ios_views_owner_died((void*)owner);assert(!live->ios_retired && code->ios_retired);
  assert(!ios_views_reclaim(1) && !deleted);
  epoch=2;struct file_view*current=make();ios_views_owner_died((void*)owner);
  assert(ios_views_reclaim(2)==301*8192 && deleted==301 && !image->base);
  assert(live->base && code->base && upgraded->base && file->base && system->base && placeholder->base && quarantined->base && resident->base && unknown->base && current->base);
+ assert(arm64ec_view->base);
  assert(system_image->base && shared_file->base && quarantined_image->base && live_image->base);
  struct file_view*reused=&views[0];reused->base=(void*)8192;owner=3;ios_view_created(reused);
  assert(reused->ios_owner==(void*)3 && reused->ios_epoch==2 && !reused->ios_retired);

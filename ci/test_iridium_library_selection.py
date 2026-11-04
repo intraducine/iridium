@@ -18,15 +18,18 @@ class LibrarySelectionTests(unittest.TestCase):
         start = view.index('.onChange(of: selection.highlightedID) { old, value in') + len('.onChange(of: selection.highlightedID) { old, value in')
         change = view[start:view.index('\n            }', start)]
         fixture = r'''import Foundation
-enum IridiumTouchHaptics { case off, medium; static var mode = Self.medium; static func current() -> Self { mode } }
+enum IridiumTouchHaptics { case off, light, medium; static var mode = Self.medium; static func current() -> Self { mode } }
 enum IridiumMenuSounds {
     enum Cue { case focus, invoke, show, hide, back, next, previous }
     static var moves = 0, invokes = 0
     static func play(_ cue: Cue, count: Int = 1) { if cue == .focus { moves += count }; if cue == .invoke { invokes += 1 } }
 }
-final class UISelectionFeedbackGenerator {
+final class UIImpactFeedbackGenerator {
+    enum Style { case medium }
+    init(style: Style = .medium) {}
     var valid = true, pulses = 0, preparations = 0
-    func selectionChanged() { if valid { pulses += 1 } }
+    var strength: Double = 0
+    func impactOccurred(intensity: Double) { strength = intensity; if valid { pulses += 1 } }
     func prepare() { preparations += 1 }
 }
 struct Animation { static func smooth(duration: Double) -> Self { Self() } }
@@ -35,9 +38,9 @@ enum Anchor { case leading }
 struct Position { mutating func scrollTo(id: UUID, anchor: Anchor) {} }
 struct Game { let id: UUID }
 final class Host {
-    var selectionFeedback = UISelectionFeedbackGenerator()
+    var selectionFeedback = UIImpactFeedbackGenerator()
     var selection = IridiumLibrarySelection(), carouselPosition = Position()
-    var selectedID: UUID?, selected: Game?, pageArtwork = ""
+    var selectedID: UUID?, settledCoverID: UUID?, selected: Game?, pageArtwork = ""
     var showFocus = false, showHints = false, reduceMotion = false
     let reorderSession = IridiumLibraryDragSession()
     let games: [Game]
@@ -92,8 +95,14 @@ let before = IridiumMenuSounds.moves
 for i in 0..<40 { host.focus(i % 2 == 0 ? a : b) }
 precondition(IridiumMenuSounds.moves == before + 40, "Every keyboard focus event must sound")
 let swipeBefore = IridiumMenuSounds.moves
+let hapticsBefore = host.selectionFeedback.pulses
 host.swipe(a); host.swipe(c)
 precondition(IridiumMenuSounds.moves == swipeBefore + 3, "Coalesced scrolls retain each crossed cover")
+precondition(host.selectionFeedback.pulses == hapticsBefore + 3, "Coalesced scrolls retain each crossed cover")
+precondition(host.selectionFeedback.strength == 1)
+IridiumTouchHaptics.mode = .light
+host.touch(b); host.touch(a)
+precondition(host.selectionFeedback.strength == 0.75)
 print("PASS shipping menu haptics: fresh feedback after game dismissal, touch/swipe/controller, no duplicate tap and Off retained")
 '''.replace('SELECT', select).replace('CHANGE', change).replace('DISMISS', dismiss)
         with tempfile.TemporaryDirectory() as folder:

@@ -1152,6 +1152,7 @@ struct LibraryView: View {
     @State private var developerUI = !FrontendChoice.preferNew
     @State private var restartNotice = false
     @State private var settingsSheet: SettingsSheet?
+    @State private var pendingStoreEntry: LibraryEntry?
     @State private var settingsRefresh = 0
     @AppStorage("madeiraLibraryLayout") private var layout = "cards"
     @AppStorage("madeiraLibrarySort") private var sort = "played"
@@ -1206,6 +1207,8 @@ case "JIT & Memory": IridiumCapabilitiesView().iridiumPageSurface().navigationTi
                         Button("Back", systemImage: "chevron.backward") { iridiumNavigate("back") }
                             .keyboardShortcut(.cancelAction)
                     } }
+case "Iridium": IridiumAppSettings(back: { iridiumNavigate("back") })
+                    .toolbar { settingsToolbar }
 case "Display": iridiumDisplaySettings.iridiumPageSurface().navigationTitle("Display")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
@@ -1375,7 +1378,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
         // on either tab (start() does nothing while liquid metal is off).
         .onAppear {}
         .onDisappear { GlassSkin.shared.stop() }
-        .onReceive(controller.commands) { [controlsOwnsCommands = iridiumPages.last == "Controls"] command in
+        .onReceive(controller.commands) { [controlsOwnsCommands = ["Controls", "Iridium"].contains(iridiumPages.last ?? "")] command in
             guard selected == nil, !browser, !onboarding.presented, settingsSheet == nil else { return }
             guard !controlsOwnsCommands else { return }
             iridiumNavigate(command)
@@ -1398,13 +1401,16 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             if next != iridiumFocus { IridiumMenuSounds.play(.focus); iridiumFocus = next }
         } else if command == "accept" {
             if iridiumFocus == "Menu sounds" { menuSounds.toggle() }
+            else if iridiumFocus == "Stores" { settingsSheet = .stores }
+            else if iridiumFocus == "Import Folder" { settingsSheet = .importFolder }
+            else if iridiumFocus == "Getting Started" { onboarding.rerun() }
             else { iridiumPages.append(iridiumFocus) }
         }
     }
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Iridium", "Stores", "Import Folder", "Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Stores & Drives", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1465,7 +1471,10 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
     private var settings: some View {
         Form {
             Group {
-            Section { if onboarding.available { Button("Getting Started", systemImage: "wand.and.stars") { onboarding.rerun() }.id("Getting Started") }
+            Section { NavigationLink("Iridium", value: "Iridium").id("Iridium")
+Button("Stores", systemImage: "network") { settingsSheet = .stores }.id("Stores")
+Button("Import Folder", systemImage: "tray.and.arrow.down") { settingsSheet = .importFolder }.id("Import Folder")
+if onboarding.available { Button("Getting Started", systemImage: "wand.and.stars") { onboarding.rerun() }.id("Getting Started") }
 NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
@@ -1492,8 +1501,10 @@ ForEach(IridiumConsoleSystem.all) { system in
         // The Settings sheets hang off the Form, never off one of its rows: a Form
         // may rebuild its rows while a sheet slides up over it, and a sheet whose
         // owning row is rebuilt closes again at once.
-        .sheet(item: $settingsSheet, onDismiss: { settingsRefresh += 1 }) { sheet in
+        .sheet(item: $settingsSheet, onDismiss: { settingsRefresh += 1; if let entry = pendingStoreEntry { pendingStoreEntry = nil; selected = entry } }) { sheet in
             switch sheet {
+            case .stores: IridiumStoreBrowser(startDock: startDock) { entry in pendingStoreEntry = entry; settingsSheet = nil }
+            case .importFolder: IridiumImportFolderView()
             case .allSettings: AllSettingsView()
             case .steamSignIn: SteamSignInView()
             case .epicSignIn: EpicSignInView()
@@ -1751,6 +1762,7 @@ private struct LibraryPlayStyle: ButtonStyle {
 }
 
 struct LibraryDetail: View {
+    @State private var uninstallStore = false
     var iridiumInitialPage: String? = nil
     @State private var iridiumInitialPageOpened = false
 
@@ -1772,7 +1784,8 @@ struct LibraryDetail: View {
             return
         }
         guard iridiumPages.isEmpty else { return }
-        let order = ["Rename & Artwork", "Library Entry", "Controls", "Display", "Files & Saves", "Advanced", "Favorites"].filter { entry.desktop != true || !["Rename & Artwork", "Library Entry", "Favorites"].contains($0) }
+        let store = entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil
+        let order = (["Rename & Artwork", "Library Entry"] + (store ? ["Uninstall"] : []) + ["Controls", "Display", "Files & Saves", "Advanced", "Favorites"]).filter { entry.desktop != true || !["Rename & Artwork", "Library Entry", "Favorites"].contains($0) }
         let index = order.firstIndex(of: iridiumFocus) ?? 0
         if ["left", "right", "up", "down"].contains(command) {
             iridiumGuided = true
@@ -1781,6 +1794,7 @@ struct LibraryDetail: View {
         } else if command == "accept" {
             if iridiumFocus == "Favorites" { IridiumFavoriteButton.toggle(entry) }
             else if iridiumFocus == "Library Entry" { iridiumLibraryAction() }
+            else if iridiumFocus == "Uninstall", model.current == nil, !model.launching, !IridiumImportCoordinator.shared.blocksLaunch { uninstallStore = true }
             else { iridiumPages.append(iridiumFocus) }
         }
     }
@@ -1795,6 +1809,7 @@ struct LibraryDetail: View {
     var play: (LibraryEntry) -> Void
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var model = LibraryModel.shared
+    @ObservedObject private var iridiumSteam = SteamOwnedLibrary.shared
     @State private var importCover = false
     /// madeira-bcd: this game's own switches as the fork stores them (reloadBCD).
     @State private var bcd = BCDGameValues()
@@ -2323,6 +2338,10 @@ Form {
                     IridiumGameOptionsHeader(game: IridiumGame(windows: entry))
                     if let played = entry.lastPlayed { LabeledContent("Last Played", value: played.formatted(.relative(presentation: .named))) }
                     if DockOffline.enabled, let appID = entry.steamAppID, !entry.startsSteamGameDirectly { DockOfflineMark(appID: appID) }
+                    if let appID = entry.steamAppID, model.steamInstall(entry)?.installed != true {
+                        Button(model.steamInstall(entry) == nil ? "Install Game" : "Repair Files") { iridiumSteam.install(appID) }
+                            .disabled(leaving || !iridiumSteam.signedIn || IridiumImportCoordinator.shared.blocksLaunch)
+                    } else {
                             Button(action: start) {
                                 HStack(spacing: 10) {
                                     // Enabling JIT can take seconds with nothing else on screen.
@@ -2335,10 +2354,12 @@ Form {
                                 }.frame(minWidth: 100, minHeight: 30)
                             }
                             .buttonStyle(LibraryPlayStyle(pending: leaving)).disabled(leaving)
+                    }
                 }.listRowBackground(Color.clear)
                 Section("Runtime") { LabeledContent("Emulator", value: "Madeira"); LibraryBadges(entry: entry) }
 
                 Section("Library") {
+                    IridiumStoreUninstallButton(entry: entry, confirm: $uninstallStore) { leaving = true; dismiss() }
                     if entry.desktop != true { NavigationLink("Rename & Artwork", value: "Rename & Artwork").id("Rename & Artwork")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Rename & Artwork" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                         if let appID = entry.steamAppID, model.hiddenSteamApps.contains(appID) {
@@ -2562,6 +2583,9 @@ Form { Group {
                 prepareRecommendation()
                 reloadBCD()
                 if !iridiumInitialPageOpened { iridiumInitialPageOpened = true; if let iridiumInitialPage { iridiumPages = [iridiumInitialPage] } }
+            }
+            .onChange(of: model.entries.contains(where: { $0.id == entry.id })) { wasPresent, present in
+                if wasPresent && !present { leaving = true; dismiss() }
             }
             .onDisappear { if !leaving { model.save(entry) } }
             .alert("Remove from Library?", isPresented: $remove) {
@@ -3052,7 +3076,7 @@ struct MadeiraCredit: View {
 /// MADEIRA_RUNTIME_SETTINGS=0 hides this section.
 /// A sheet opened from Settings; LibraryView presents it from the Form itself.
 enum SettingsSheet: String, Identifiable {
-    case allSettings, steamSignIn, epicSignIn, eaSignIn, dock
+    case allSettings, steamSignIn, epicSignIn, eaSignIn, dock, stores, importFolder
     var id: String { rawValue }
 }
 

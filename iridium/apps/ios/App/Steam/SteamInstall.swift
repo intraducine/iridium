@@ -105,6 +105,17 @@ enum SteamInstallFiles {
         do {
             let state = record(appID: appID, steamApps: steamApps)
             if let recordedFolder = state?["installdir"]?.string, recordedFolder.caseInsensitiveCompare(folderName) != .orderedSame { return false }
+            let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+            let link = common.appendingPathComponent(folderName)
+            let folder = link.resolvingSymlinksInPath().standardizedFileURL
+            let drive = steamApps.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            let managedTarget = IridiumGameStorage.movedWindowsFolder(link, drive: drive)
+            guard managedTarget != nil || folder.deletingLastPathComponent().path == common.path else { return false }
+            let target = managedTarget ?? folder
+            var folderMissing = false
+            do { _ = try fm.attributesOfItem(atPath: target.path) }
+            catch let error as NSError where error.domain == NSCocoaErrorDomain &&
+                [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { folderMissing = true }
             let held = Set((state?["InstalledDepots"]?.fields ?? [:]).keys)
             let owners = Set((state?["SharedDepots"]?.fields ?? [:]).values.compactMap { $0.string })
             let names = (try? fm.contentsOfDirectory(atPath: steamApps.path)) ?? []
@@ -114,17 +125,14 @@ enum SteamInstallFiles {
                       let other = record(appID: id, steamApps: steamApps) else { continue }
                 let lent = Set((other["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(appID) }.keys)
                 // A shared-only record belongs to the consuming game, not a separate install.
-                if !lent.isEmpty && held.isSubset(of: lent) { return false }
+                if !folderMissing && !lent.isEmpty && held.isSubset(of: lent) { return false }
                 if other["installdir"]?.string?.caseInsensitiveCompare(folderName) == .orderedSame {
                     let shared = Set((state?["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(id) }.keys)
                     let owned = Set((other["InstalledDepots"]?.fields ?? [:]).keys)
-                    guard owners.contains(String(id)), owned.isSubset(of: shared) else { return false }
+                    if folderMissing { try remove(steamApps.appendingPathComponent("appmanifest_\(id).acf")) }
+                    else { guard owners.contains(String(id)), owned.isSubset(of: shared) else { return false } }
                 }
             }
-            let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-            let link = common.appendingPathComponent(folderName)
-            let folder = link.resolvingSymlinksInPath().standardizedFileURL
-            let drive = steamApps.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             if let managed = IridiumGameStorage.movedWindowsFolder(link, drive: drive) {
                 try remove(managed); try remove(link)
             } else {

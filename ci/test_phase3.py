@@ -41,7 +41,7 @@ struct Game { var runtimeID: String }
 final class Queue { func async(execute: () -> Void) { execute() } }
 @MainActor var configurationAccepted = false
 @MainActor var stops = 0
-let jit26_prepare_region = 1
+let ir_jit_prepare_region = 1
 @MainActor func ir_phase3_configure_memory(_ prepare: Int) -> Bool { configurationAccepted }
 func ir_jit_memory_api() -> Int { 1 }
 @MainActor func ir_phase3_stop() { stops += 1 }

@@ -241,7 +241,12 @@ struct OnboardingView: View {
                     source = nil
                 }.environment(\.setupControllerFocus, nil)
             }
-            .sheet(isPresented: $steamSignIn) { SteamSignInView().environment(\.setupControllerFocus, nil) }
+            .sheet(isPresented: $steamSignIn) {
+                IridiumStoreBrowser(startDock: { _, _ in }, open: { entry in
+                    model.recordGame(id: entry.id.uuidString, title: entry.title, platform: "windows", requiredJIT: true, optionalJIT: false)
+                    steamSignIn = false
+                }, allowDesktop: false).environment(\.setupControllerFocus, nil)
+            }
             .onAppear {
                 signIn.refresh(); dock.refresh(); mono.refresh()
                 if let entry = game?.console, entry.platform == .psp { model.setPSPMode(entry.pspJITEnabled) }
@@ -409,7 +414,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             switch step {
             case .library:
-                Text("Import games from Files or connect your Steam account.")
+                Text("Import games from Files or open a store.")
                     .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let game {
                     IridiumGameOptionsHeader(game: game)
@@ -430,15 +435,11 @@ struct OnboardingView: View {
                     Text("Supported Systems").frame(maxWidth: .infinity, alignment: .leading)
                         .setupControllerToggle("games.systems", order: 20, value: $systemsExpanded, hidesFocusOnTouch: false)
                 }.font(.subheadline).multilineTextAlignment(.leading)
-                if SteamSignIn.isEnabled {
+                Group {
                     Divider()
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Steam (Optional)").font(.headline).accessibilityAddTraits(.isHeader)
-                        if let name = signIn.accountName {
-                            Label("Connected as \(name)", systemImage: "checkmark.circle.fill")
-                                .font(.subheadline).foregroundStyle(IridiumTheme.accent)
-                        }
-                        action(signIn.accountName == nil ? "Sign In to Steam" : "Manage Steam Account", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
+                        Text("Stores").font(.headline).accessibilityAddTraits(.isHeader)
+                        action("Open Stores", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
                             model.chooseSteam(); steamSignIn = true
                         }
                     }

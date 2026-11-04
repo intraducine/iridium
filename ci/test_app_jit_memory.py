@@ -176,7 +176,7 @@ func ir_jit_memory_prepare(_ callback: Int) -> Bool { Memory.shared.prepared() }
 enum IridiumMadeiraRuntime {
     static func prepareJITMemory() -> Bool { true }
 }
-let jit26_prepare_region = 1
+let ir_jit_prepare_region = 1
 func isDebuggerAttached() -> Bool { true }
 @MainActor final class Host {
     enum CoordinatorError: Error { case setupRequired(String) }

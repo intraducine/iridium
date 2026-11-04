@@ -2209,6 +2209,8 @@ struct ContentView: View {
         // button closed again whenever this often-redrawn screen rebuilt it.
         .sheet(item: $devSheet) { sheet in
             switch sheet {
+            case .stores: IridiumStoreBrowser(startDock: { startDock($0, compactPool: $1) }, open: { _ in devSheet = nil })
+            case .importFolder: IridiumImportFolderView()
             case .steamSignIn: SteamSignInView()
             case .epicSignIn: EpicSignInView()
             case .eaSignIn: EASignInView()

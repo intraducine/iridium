@@ -14,6 +14,16 @@ enum IridiumStoreFiles {
         return try ExternalStoragePath.native(folder, root: drive)
     }
 
+    /// Only a missing whole install counts as a Files uninstall. Partial damage stays repairable.
+    static func isDeleted(folder: String, installRoot: String) -> Bool {
+        guard let target = try? url(folder: folder, installRoot: installRoot),
+              !folder.hasPrefix("External/") else { return false }
+        do { _ = try FileManager.default.attributesOfItem(atPath: target.path); return false }
+        catch let error as NSError {
+            return error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code)
+        }
+    }
+
     static func settingsFile(_ relative: String) throws -> URL {
         let parts = try ExternalStoragePath.components(relative)
         guard parts.last?.lowercased().hasSuffix(".ini") == true else { throw ExternalStorageError.unsafePath }

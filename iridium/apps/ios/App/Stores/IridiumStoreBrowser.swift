@@ -17,6 +17,7 @@ enum IridiumStorefront: String, CaseIterable, Identifiable {
 struct IridiumStoreBrowser: View {
     let startDock: (DockGame, Bool) -> Void
     let open: (LibraryEntry) -> Void
+    var allowDesktop = true
     @State private var store = IridiumStorefront.steam
     @State private var search = ""
     @State private var accounts = false
@@ -82,7 +83,7 @@ struct IridiumStoreBrowser: View {
                     ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                     ToolbarItemGroup(placement: .primaryAction) {
                         Button { accounts = true } label: { Label("Accounts", systemImage: "person.crop.circle") }
-                        if store == .steam, MadeiraDock.enabled {
+                        if allowDesktop, store == .steam, MadeiraDock.enabled {
                             Button { dock = true } label: { Label("Steam Client", systemImage: "shippingbox") }
                         }
                         Button { Task { await SteamGamesSection.refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
@@ -119,6 +120,46 @@ struct IridiumStoreAccounts: View {
                     case .itch: ItchSignInView()
                     }
                 }
+        }
+    }
+}
+
+struct IridiumStoreUninstallButton: View {
+    let entry: LibraryEntry
+    @Binding var confirm: Bool
+    let removed: () -> Void
+    @ObservedObject private var library = LibraryModel.shared
+    @State private var busy = false
+    @State private var failure: String?
+    var body: some View {
+        if entry.steamAppID != nil || entry.epicAppName != nil || entry.eaOfferID != nil || entry.itchGameID != nil {
+            Button(busy ? "Uninstalling…" : "Uninstall Game", role: .destructive) { confirm = true }
+                .id("Uninstall")
+                .disabled(busy || library.current != nil || library.launching || IridiumImportCoordinator.shared.blocksLaunch)
+                .confirmationDialog("Uninstall \(entry.title)?", isPresented: $confirm, titleVisibility: .visible) {
+                    Button("Uninstall", role: .destructive) {
+                        busy = true
+                        Task { @MainActor in
+                            let success: Bool
+                            if entry.steamAppID != nil, let game = library.steamInstall(entry) {
+                                success = await SteamOwnedLibrary.shared.uninstall(game)
+                                failure = SteamOwnedLibrary.shared.error
+                            } else if let id = entry.epicAppName {
+                                success = await EpicLibrary.shared.uninstall(id); failure = EpicLibrary.shared.error
+                            } else if let id = entry.eaOfferID {
+                                success = await EALibrary.shared.uninstall(id); failure = EALibrary.shared.error
+                            } else if let id = entry.itchGameID {
+                                success = await ItchLibrary.shared.uninstall(id); failure = ItchLibrary.shared.error
+                            } else { success = false }
+                            busy = false
+                            if success { removed() } else if failure == nil { failure = "The install record could not be found." }
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { Text("Removes downloaded files and saves inside the game folder. Other saves stay.") }
+                .alert("Uninstall", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+                    Button("OK", role: .cancel) { failure = nil }
+                } message: { Text(failure ?? "") }
         }
     }
 }

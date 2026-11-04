@@ -18,6 +18,30 @@ def replace(text, old, new):
 
 
 def apply(name, text):
+    if name == 'Common/MemArena.h':
+        return replace(text, '\tsize_t vm_size;', '\tsize_t vm_size = 0;\n\tvm_address_t iridium_base = 0;\n\tsize_t iridium_extent = 0;')
+    if name == 'Common/MemArenaDarwin.cpp':
+        text = replace(text, 'void MemArena::ReleaseSpace() {', 'void MemArena::ReleaseSpace() {\n\tif (iridium_base) vm_deallocate(mach_task_self(), iridium_base, iridium_extent);\n\tiridium_base = iridium_extent = 0;')
+        text = replace(text, '\tbool anywhere = false;', '\tint anywhere = VM_FLAGS_FIXED;\n\tif (iridium_base && target >= iridium_base && target - iridium_base <= iridium_extent && size <= iridium_extent - (target - iridium_base))\n\t\tanywhere |= VM_FLAGS_OVERWRITE;\n\telse if (iridium_base) return nullptr;')
+        text = replace(text, 'void MemArena::ReleaseView(s64 offset, void* view, size_t size) {\n\tvm_address_t addr = (vm_address_t)view;\n\tvm_deallocate(mach_task_self(), addr, size);', 'void MemArena::ReleaseView(s64 offset, void* view, size_t size) {\n\t(void)offset;\n\tvm_address_t addr = (vm_address_t)view;\n\tif (iridium_base && addr >= iridium_base && addr - iridium_base <= iridium_extent && size <= iridium_extent - (addr - iridium_base)) {\n\t\tvm_allocate(mach_task_self(), &addr, size, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE);\n\t\tvm_protect(mach_task_self(), addr, size, false, VM_PROT_NONE);\n\t} else vm_deallocate(mach_task_self(), addr, size);')
+        start = text.index('bool MemArena::NeedsProbing() {')
+        text = text[:start] + '''bool MemArena::NeedsProbing() { return false; }
+
+u8* MemArena::Find4GBBase() {
+    // Iridium keeps other engines resident. Own a free band instead of probing their low mappings.
+    if (iridium_base) return (u8 *)iridium_base;
+    vm_address_t address = 0;
+    const size_t bytes = 0xE1000000ULL;
+    if (vm_allocate(mach_task_self(), &address, bytes, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return nullptr;
+    if (vm_protect(mach_task_self(), address, bytes, false, VM_PROT_NONE) != KERN_SUCCESS) {
+        vm_deallocate(mach_task_self(), address, bytes); return nullptr;
+    }
+    iridium_base = address; iridium_extent = bytes;
+    return (u8 *)address;
+}
+#endif  // __APPLE__
+'''
+        return text
     if name == 'Common/CodeBlock.h':
         text = replace(text, 'void BeginWrite(size_t sizeEstimate = 1)', 'bool BeginWrite(size_t sizeEstimate = 1)')
         text = replace(text, '''			ProtectMemoryPages(writeStart_, sizeEstimate, MEM_PROT_READ | MEM_PROT_WRITE);
@@ -250,7 +274,7 @@ def apply(name, text):
     return executable.apply(name, frontend.apply(name, callbacks.apply(name, text)))
 
 
-PATCHED = ('Common/CodeBlock.h', 'Common/Arm64Emitter.cpp', 'CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/iOSCoreAudio.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED, *executable.PATCHED)
+PATCHED = ('Common/MemArena.h', 'Common/MemArenaDarwin.cpp', 'Common/CodeBlock.h', 'Common/Arm64Emitter.cpp', 'CMakeLists.txt', 'UI/NativeApp.cpp', 'UI/GameSettingsScreen.cpp', 'UI/DeveloperToolsScreen.cpp', 'ios/main.mm', 'ios/iOSCoreAudio.mm', 'ios/ViewController.mm', 'ios/ViewControllerMetal.mm', 'ios/ViewControllerCommon.mm', 'ios/Controls.mm', *sensors.PATCHED, picker.NAME, *frontend.PATCHED, *gl_sync.PATCHED, *executable.PATCHED)
 
 
 def stage(source, destination):

@@ -20,7 +20,7 @@ struct IridiumCapabilitiesView: View {
                 if !state.enabled {
                     Button("Enable JIT", action: enableJIT).disabled(coordinator.busy)
                 }
-                if coordinator.busy { ProgressView(coordinator.status ?? "Connecting…") }
+                if coordinator.busy { IridiumJITProgress(status: coordinator.status) }
                 if let error = coordinator.error {
                     Text(error).foregroundStyle(.red).font(.footnote)
                     if let problem = coordinator.connectionProblem {

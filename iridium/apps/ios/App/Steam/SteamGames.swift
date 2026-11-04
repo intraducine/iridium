@@ -378,6 +378,22 @@ enum SteamDirectStart {
 
     private init() {}
 
+    func reconcileDeletedFiles() async {
+        guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
+              !IridiumImportCoordinator.shared.blocksLaunch else { return }
+        for game in games where game.filesMissing == true && SteamOwnedLibrary.shared.downloads[game.id] == nil {
+            guard SteamInstallPaths.isManaged(library: game.library), !game.library.hasPrefix("External/") else { continue }
+            let apps = MadeiraDock.drive.appendingPathComponent(game.library, isDirectory: true)
+            let link = apps.appendingPathComponent("common/" + game.installDir)
+            let target = IridiumGameStorage.movedWindowsFolder(link, drive: MadeiraDock.drive) ?? link
+            do { _ = try FileManager.default.attributesOfItem(atPath: target.path) }
+            catch let error as NSError where error.domain == NSCocoaErrorDomain &&
+                [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
+                _ = await SteamOwnedLibrary.shared.uninstall(game)
+            } catch { }
+        }
+    }
+
     func refresh() {
         guard MadeiraDock.enabled else { return }
         guard !scanning else { rescan = true; return }

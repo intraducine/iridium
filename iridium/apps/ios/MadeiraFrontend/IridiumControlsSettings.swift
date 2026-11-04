@@ -478,3 +478,29 @@ struct IridiumControlDeselectSurface: View {
             .accessibilityHidden(true)
     }
 }
+
+struct IridiumAppSettings: View {
+    var back: () -> Void = {}
+    @AppStorage(IridiumGameVolume.defaultKey) private var volume = 1.0
+    var body: some View {
+        ScrollViewReader { proxy in
+        Form {
+            Section("Haptics") { IridiumControlFeedbackSettings() }
+            Section {
+                LabeledContent("Game volume", value: "\(Int((volume * 100).rounded()))%")
+                Slider(value: $volume, in: 0...1, step: 0.05)
+                    .accessibilityLabel("Default game volume")
+                    .accessibilityValue("\(Int((volume * 100).rounded())) percent")
+                    .id("app.volume")
+                    .setupControllerTarget("app.volume", order: 410, hidesFocusOnTouch: false, action: {}, adjust: adjustVolume)
+            } header: { Text("Game Defaults") } footer: { Text("Games with saved volume keep their own setting.") }
+        }.iridiumPageSurface().navigationTitle("Iridium")
+            .modifier(IridiumControlsNavigation(page: "app", suspended: false, back: back, knownTargets: {
+                [IridiumControlFeedbackSettings().controllerTarget(page: "app", reveal: { proxy.scrollTo($0, anchor: .center) }),
+                 .init(id: "app.volume", page: "app", order: 410, frame: .zero, enabled: true, action: {},
+                       adjust: adjustVolume, reveal: { proxy.scrollTo("app.volume", anchor: .center) })]
+            }))
+        }
+    }
+    private func adjustVolume(_ direction: Int) { volume = IridiumGameVolume.clamp(volume + Double(direction) * 0.05) }
+}
