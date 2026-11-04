@@ -24,6 +24,11 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertIn('x: proxy.frame(in: .scrollView(axis: .horizontal)).minX,', source)
         self.assertIn('content.scaleEffect(geometry.scale, anchor: .bottomLeading)', source)
         self.assertIn('HStack(spacing: 20) { actions(game); title(game) }', source)
+        self.assertEqual(source.count('.accessibilityIdentifier("librarySelectionBorder")'), 1)
+        self.assertIn('.animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selection.highlightedID)', source)
+        self.assertNotIn('if selection.highlightedID == entry.id, !showFocus', source)
+        self.assertIn('private struct IridiumLibrarySelectionOutline: Shape', source)
+        self.assertIn('var animatableData: CGFloat', source)
         self.assertIn('.onPreferenceChange(IridiumLibraryChromeHeight.self)', source)
         self.assertIn('ScrollView(.vertical)', source)
         self.assertIn('.scrollBounceBehavior(.basedOnSize, axes: .vertical)', source)
@@ -43,6 +48,35 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertIn('.onChange(of: height) { _, _ in keepSelection() }', source)
         self.assertIn('.onChange(of: geometry.size.height) { _, _ in touchCoverHeight = nil }', source)
         self.assertNotIn('showHints ? 240 : 212', source)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for actual selection path checks')
+    def test_selection_path_stays_inside_current_row_during_resize_and_retarget(self):
+        source = SOURCE.read_text()
+        shape = source.split('private struct IridiumLibrarySelectionOutline: Shape {', 1)[1].split('// Kept independent', 1)[0]
+        geometry = 'struct IridiumLibraryCoverGeometry {' + source.split('struct IridiumLibraryCoverGeometry {', 1)[1]
+        checks = r"""
+for height: CGFloat in [96, 109.333333, 144, 224] {
+    let width = height / 1.5
+    for step in 0...300 {
+        var outline = IridiumLibrarySelectionOutline(x: 0, scrollX: -CGFloat(step) * 2,
+            width: width, height: height, expands: true)
+        // Retargeted travel must not interpolate a stale, larger viewport size.
+        outline.animatableData = CGFloat(step) * 2.1
+        let rect = outline.path(in: CGRect(x: 0, y: 0, width: 900, height: height)).boundingRect
+        precondition(rect.minY >= -height * 0.5)
+        precondition(rect.maxY <= height + 8)
+        precondition(rect.width <= width * 1.5)
+        precondition(rect.height <= height * 1.5)
+    }
+}
+print("Actual selection path resize and retarget passed")
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            main = Path(folder) / 'main.swift'
+            main.write_text('import SwiftUI\nstruct IridiumLibrarySelectionOutline: Shape {' + shape + geometry + checks)
+            executable = Path(folder) / 'check'
+            subprocess.run(['swiftc', str(main), '-o', str(executable)], check=True)
+            subprocess.run([str(executable)], check=True, timeout=30)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for executable library geometry checks')
     def test_actual_geometry_handles_scaled_text_search_and_hints(self):

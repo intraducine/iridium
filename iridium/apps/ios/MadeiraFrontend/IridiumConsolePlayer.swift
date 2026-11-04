@@ -110,12 +110,17 @@ struct IridiumConsolePlayer: View {
                 .onChange(of: geometry.size) { _, _ in
                     releaseInput()
                     session.updateDolphinOrientation()
-                    controls.iridiumResizeConsole(defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds))
+                    controls.iridiumResizeConsole(defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds, platform: session.game?.platform, wiiRemote: session.dolphinSettings.remote))
+                }
+                .onChange(of: session.dolphinSettings.remote) { _, _ in
+                    releaseInput()
+                    controls.iridiumResizeConsole(defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds, platform: session.game?.platform, wiiRemote: session.dolphinSettings.remote))
+                    inputGeneration += 1
                 }
                 .onAppear {
                     if let game = session.game {
                         controls.iridiumBeginConsole(game.id,
-                            defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds), visible: touchEnabled, platform: game.platform)
+                            defaults: IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds, platform: game.platform, wiiRemote: session.dolphinSettings.remote), visible: touchEnabled, platform: game.platform)
                         controls.iridiumConsoleSaveFailure = { LibraryModel.shared.error = $0 }
                     }
                 }
@@ -125,7 +130,6 @@ struct IridiumConsolePlayer: View {
         .statusBarHidden().persistentSystemOverlays(.hidden).defersSystemGestures(on: .all)
         .focusable().focusEffectDisabled().focused($keyboardFocus)
         .onAppear { keyboardFocus = true; controller.refresh() }
-        .onChange(of: session.dolphinSettings.remote) { _, _ in inputGeneration += 1 }
         .onKeyPress(phases: [.down, .up], action: handleKey)
         .onReceive(LibraryController.shared.commands, perform: command)
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in

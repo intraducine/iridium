@@ -188,6 +188,7 @@ final class LibraryModel: ObservableObject {
         // one (refreshSteamMetadata) updates that entry.
         if let i = next.firstIndex(where: { $0.id == entry.id }) ??
             next.firstIndex(where: { entry.steamAppID != nil && $0.steamAppID == entry.steamAppID }) ??
+            next.firstIndex(where: { entry.gogProductID != nil && $0.gogProductID == entry.gogProductID }) ??
             next.firstIndex(where: { entry.itchGameID != nil && $0.itchGameID == entry.itchGameID }) ??
             next.firstIndex(where: { entry.epicAppName != nil && $0.epicAppName == entry.epicAppName }) ??
             next.firstIndex(where: { entry.eaOfferID != nil && $0.eaOfferID == entry.eaOfferID }) {
@@ -268,6 +269,41 @@ final class LibraryModel: ObservableObject {
                                                                              kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
         else { return nil }
         return UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85)
+    }
+    /// A GOG download finished (GOGLibrary): the game gets its library entry, or an
+    /// existing one follows the new build's program and keeps its title, artwork and
+    /// settings. Arguments and working folder follow GOG's play task unless the player
+    /// changed them. A new entry gets GOG's cover art as its cover image.
+    @MainActor
+    func upsertGOG(_ game: GOGInstalledGame, previous: GOGInstalledGame?, cover: URL?) async {
+        guard !readOnly else { return }
+        let existing = entries.first { $0.gogProductID == game.productID }
+        var entry = existing ?? LibraryEntry(title: game.title, relativePath: game.programPath, bits: 0)
+        entry.gogProductID = game.productID
+        entry.relativePath = game.programPath
+        entry.folderBytes = game.installBytes
+        if existing == nil || entry.arguments == (previous?.arguments ?? "") { entry.arguments = game.arguments }
+        if existing == nil || entry.workingDirectory == previous?.workingWindowsPath { entry.workingDirectory = game.workingWindowsPath }
+        let program = Self.drive.appendingPathComponent(game.programPath)
+        if let inspected = await Task.detached(priority: .utility, operation: { try? LibraryModel.inspect(program) }).value {
+            entry.bits = inspected.bits
+            entry.graphicsAPI = inspected.graphicsAPI ?? entry.graphicsAPI
+        }
+        if entry.coverFile == nil, let cover, let jpeg = await Self.storeCover(cover) {
+            let dir = Self.documents.appendingPathComponent("madeira-art", isDirectory: true)
+            let name = entry.id.uuidString + ".jpg"
+            if (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+               (try? jpeg.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil {
+                entry.coverFile = name
+            }
+        }
+        entry.metadataChecked = nil
+        save(entry)
+    }
+    /// A GOG game was uninstalled: its entry goes with its files.
+    @discardableResult func removeGOG(productID: String) -> Bool {
+        guard entries.contains(where: { $0.gogProductID == productID }) else { return true }
+        return persist(entries.filter { $0.gogProductID != productID })
     }
     /// An itch.io download finished (ItchLibrary): the game gets its library entry, or an
     /// existing one follows the new program and keeps its title, artwork and settings.
@@ -913,6 +949,7 @@ final class LibraryModel: ObservableObject {
         GestureZonesModel.shared.selected = nil; GestureZonesModel.shared.zones = savedZones
         if ControlPresetsModel.enabled { controls.layoutID = savedLayout }
         iridiumWindowsControlsBaseline = nil
+        if let current { LibraryEntry.setGOGSetup(nil, for: current) }
         current = nil; activeEntry = nil; menu = false; sessionMessage = ""
         quitRequestedAt = nil; forceCloseOffered = false; dockGameEnded = false; dockGameEndedAt = nil
         displayMode = .fit
@@ -920,6 +957,8 @@ final class LibraryModel: ObservableObject {
         launching = false; launchLogs = false; LibraryKeyboard.hide()
         MainActor.assumeIsolated {
             SteamOwnedLibrary.shared.reconcileSession()
+            GOGLibrary.shared.sessionChanged(active: false)
+            GOGGalaxy.shared.stop()
             EpicLibrary.shared.sessionChanged(active: false)
             EALibrary.shared.sessionChanged(active: false)
             ItchLibrary.shared.sessionChanged(active: false)

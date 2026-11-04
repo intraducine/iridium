@@ -49,7 +49,7 @@ class CompiledComponentsTests(unittest.TestCase):
                          (revision, "REVISION = '0000000000000000000000000000000000000000'"),
                          ('import subprocess', 'import subprocess as another_process'),
                          ('import madeira_threads', 'import madeira_threads as another_module'),
-                         ("'native': lambda: native(reuse_only=args.reuse_only)", "'native': windows"),
+                         ("'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native)", "'native': windows"),
                          ('def prepare():', 'def prepare(*args):')):
             with self.subTest(input=old):
                 changed = source.replace(old, new)
@@ -82,8 +82,8 @@ class CompiledComponentsTests(unittest.TestCase):
             helper('    module.prepare()\n'),
             source.replace('import json', 'from builtins import globals as namespace\nimport json'),
             source.replace('import json', 'import inspect as inspection\nimport json'),
-            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    inspect.stack()\n'),
-            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    __builtins__["globals"]()["prepare"]()\n'),
+            source.replace('def native(reuse_only=False, incremental=False):\n', 'def native(reuse_only=False, incremental=False):\n    inspect.stack()\n'),
+            source.replace('def native(reuse_only=False, incremental=False):\n', 'def native(reuse_only=False, incremental=False):\n    __builtins__["globals"]()["prepare"]()\n'),
             source.replace('def prepare():', '@decorator\ndef prepare():'),
             source.replace('def prepare():', 'def prepare(value=bootstrap()):'),
             source.replace('def prepare():', 'def prepare() -> bootstrap():'),
@@ -99,12 +99,13 @@ class CompiledComponentsTests(unittest.TestCase):
                            '"}; OTHER_INPUT = 1\nUNREVIEWED_METADATA = {'),
             source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
             source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
-            source.replace("'native': lambda: native(reuse_only=args.reuse_only)", "'native': prepare"),
+            source.replace("'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native)", "'native': prepare"),
             source.replace("engine_pins.get('madeira')['revision']", "engine_pins.get(prepare())['revision']"),
             source + '\ninvalid python !\n',
         ]
         for index, changed in enumerate(variants):
             with self.subTest(variant=index):
+                self.assertNotEqual(source, changed, "The failure fixture must change real source")
                 self.assertEqual(reuse.frontend_compiler_source(changed), changed)
 
     def test_frontend_app_only_edit_reuses_existing_producer_both_components(self):
@@ -476,6 +477,6 @@ class CompiledComponentsTests(unittest.TestCase):
         for component, action in (('madeira-native', 'native'), ('madeira-windows', 'windows')):
             step = workflow.split('      - name: Compile ' + component + '\n')[1].split('      - name:')[0]
             self.assertNotIn('if:', step)
-            self.assertIn('ci/madeira-frontend.py ' + action, step)
+            self.assertIn('ci/build-madeira-windows.py' if action == 'windows' else 'ci/madeira-frontend.py native', step)
             self.assertLess(workflow.index('Compile ' + component), workflow.index('Check build prerequisites'))
         self.assertNotIn('build_controller_runtime.sh', workflow)

@@ -12,6 +12,115 @@ IOS = ROOT / 'iridium/apps/ios'
 
 @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
 class StoreFileTests(unittest.TestCase):
+    def test_actual_store_uninstall_outcomes_keep_errors_and_transfer_ownership(self):
+        from test_steam_cloud_quit import function
+        stores = [('Epic', 'String', '"game"'), ('EA', 'String', '"game"'),
+                  ('Itch', 'Int', '7'), ('GOG', 'String', '"game"')]
+        storage = (IOS / 'App/Storage/ExternalStorage.swift').read_text()
+        storage = storage[:storage.index('enum ExternalStorageIdentity')]
+        fixture = r'''import Foundation
+enum LibraryError: Error { case message(String) }
+@MainActor final class LibraryModel {
+ static let shared = LibraryModel()
+ static let documents = URL(fileURLWithPath: CommandLine.arguments[1])
+ static let drive = documents.appendingPathComponent("wine/drive_c")
+ var removeSucceeds = true
+ func removeEpic(appName: String) -> Bool { removeSucceeds }
+ func removeEA(offerID: String) -> Bool { removeSucceeds }
+ func removeItch(gameID: Int) -> Bool { removeSucceeds }
+ func removeGOG(productID: String) -> Bool { removeSucceeds }
+}
+enum ExternalDrives {
+ static func nativeURL(_ path: String, write: Bool) throws -> URL { throw ExternalStorageError.unavailable }
+}
+@MainActor final class IridiumImportCoordinator {
+ static let shared = IridiumImportCoordinator()
+ var held = false, blocked = false
+ func beginLibraryTransfer() throws {
+  guard !blocked && !held else { throw LibraryError.message("busy") }
+  held = true
+ }
+ func endLibraryTransfer() { precondition(held); held = false }
+}
+struct Record { var folder: String }
+'''
+        for store, key, _ in stores:
+            source = (IOS / f'App/Stores/{store}/{store}Library.swift').read_text()
+            fixture += f'enum {store}Log {{ static func event(_ text: String) {{}} }}\n'
+            fixture += f'''@MainActor final class {store}Library {{
+ static let installRoot = "Games"
+ static func filesURL(_ id: {key}) -> URL {{ LibraryModel.documents.appendingPathComponent("{store}-files") }}
+ static func journalURL(_ id: {key}) -> URL {{ LibraryModel.documents.appendingPathComponent("{store}-journal") }}
+ static func manifestURL(_ id: {key}) -> URL {{ filesURL(id) }}
+ struct Active {{ var id: {key}; var app: {key}; var task: Task<Void, Never> }}
+ var active: Active?, error: String?, sessionRunning = false, failWrite = false
+ var installed: [{key}: Record] = [:], downloads: [{key}: Int] = [:]
+ func pause(_ id: {key}) {{ active?.task.cancel() }}
+ func setInstalled(_ record: Record?, for id: {key}) throws {{
+  guard !failWrite else {{ throw LibraryError.message("record write failed") }}
+  installed[id] = record
+ }}
+{function(source, 'uninstall')}
+}}
+'''
+        fixture += '@main struct Check { @MainActor static func main() async throws {\n'
+        fixture += 'let fm = FileManager.default, coordinator = IridiumImportCoordinator.shared\n'
+        for store, _, key in stores:
+            fixture += f'''do {{
+ let library = {store}Library(), id = {key}
+ let absent = await library.uninstall(id)
+ precondition(!absent && library.error != nil)
+ let relative = "Games/{store}", folder = LibraryModel.drive.appendingPathComponent(relative)
+ try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+ let payload = folder.appendingPathComponent("game.exe")
+ try Data("game".utf8).write(to: payload)
+ library.installed[id] = Record(folder: relative)
+ library.sessionRunning = true
+ let busy = await library.uninstall(id)
+ precondition(!busy && library.installed[id] != nil && fm.fileExists(atPath: payload.path))
+ library.sessionRunning = false; coordinator.blocked = true
+ let transfer = await library.uninstall(id)
+ precondition(!transfer && library.installed[id] != nil && !coordinator.held)
+ coordinator.blocked = false
+ library.installed[id] = Record(folder: "../outside")
+ let unsafe = await library.uninstall(id)
+ precondition(!unsafe && library.installed[id] != nil && fm.fileExists(atPath: payload.path) && !coordinator.held)
+ library.installed[id] = Record(folder: relative)
+ let running = Task {{ @MainActor in
+  try? await Task.sleep(for: .milliseconds(20))
+  try! Data("last writer".utf8).write(to: payload)
+ }}
+ library.active = .init(id: id, app: id, task: running)
+ let removed = await library.uninstall(id)
+ precondition(removed && library.installed[id] == nil && library.error == nil && !fm.fileExists(atPath: folder.path))
+ precondition(!coordinator.held)
+ library.active = nil
+ try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+ library.installed[id] = Record(folder: relative); library.failWrite = true
+ let saveFailed = await library.uninstall(id)
+ precondition(!saveFailed && library.installed[id] != nil && library.error != nil && !coordinator.held)
+ library.failWrite = false
+ let retry = await library.uninstall(id)
+ precondition(retry && library.installed[id] == nil && library.error == nil)
+}}
+'''
+        fixture += 'print("PASS actual store uninstall outcomes and writer drain")\n}}\n'
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            files = [IOS / 'App/Stores/IridiumStoreFiles.swift', IOS / 'RuntimeSupport/IridiumGameStorage.swift',
+                     IOS / 'RuntimeSupport/IridiumRuntime.swift']
+            for name, value in [('Storage.swift', storage), ('Check.swift', fixture)]:
+                path = root / name
+                path.write_text(value)
+                files.append(path)
+            result = subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library',
+                '-module-cache-path', module_cache('macosx'), *map(str, files), '-o', str(root / 'check')],
+                capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stderr[-5000:])
+            result = subprocess.run([str(root / 'check'), str(root / 'Documents')],
+                capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_game_move_copy_preserves_originals_on_conflict_or_changes(self):
         source = (IOS / 'App/Storage/ExternalDrives.swift').read_text()
         methods = []
@@ -205,6 +314,41 @@ precondition(!fm.fileExists(atPath:metadata.path))
 precondition((try? fm.destinationOfSymbolicLink(atPath:original.path)) == nil)
 let kept2 = try Data(contentsOf:keep); precondition(kept2 == Data("user data".utf8))
 print("PASS store traversal, foreign links, missing drives and journaled game deletion")
+// An older build migrated the whole store parent. Removing one child must
+// neither reject that owned alias nor delete its sibling or parent link.
+for store in ["Epic Games", "EA Games"] {
+    let root = "Program Files/" + store, first = root + "/First", second = root + "/Second"
+    for name in ["First", "Second"] {
+        let url = drive.appendingPathComponent(root + "/" + name)
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try Data("game".utf8).write(to:url.appendingPathComponent("game.exe"))
+    }
+    try Data("bootstrap".utf8).write(to:drive.appendingPathComponent(root + "/bootstrap.exe"))
+    try storage.migrateWindows([(UUID(),root + "/bootstrap.exe",false)])
+    let secondURL = try IridiumStoreFiles.url(folder:second,installRoot:root)
+    try IridiumStoreFiles.remove(folder:first,installRoot:root,metadata:[])
+    precondition(IridiumStoreFiles.isDeleted(folder:first,installRoot:root))
+    precondition(fm.fileExists(atPath:secondURL.appendingPathComponent("game.exe").path))
+    precondition((try? fm.destinationOfSymbolicLink(atPath:drive.appendingPathComponent(root).path)) != nil)
+    let foreign = secondURL.appendingPathComponent("foreign")
+    try fm.createSymbolicLink(at:foreign,withDestinationURL:keep)
+    rejects { try IridiumStoreFiles.remove(folder:second + "/foreign",installRoot:root,metadata:[]) }
+    // Repeated migration must keep the recorded parent rather than move a child twice.
+    try storage.migrateWindows([(UUID(),second + "/game.exe",false)])
+}
+// Fresh store migrations move individual installations, including itch.io.
+let fresh = IridiumGameStorage(documents:docs.appendingPathComponent("fresh"))
+try fresh.prepare()
+for root in ["Program Files/Epic Games", "Program Files/EA Games", "itch"] {
+    for name in ["One", "Two"] {
+        let relative = root + "/" + name + "/game.exe", file = fresh.drive.appendingPathComponent(relative)
+        try fm.createDirectory(at:file.deletingLastPathComponent(),withIntermediateDirectories:true)
+        try Data("new game".utf8).write(to:file)
+        try fresh.migrateWindows([(UUID(),relative,false)])
+        precondition((try? fm.destinationOfSymbolicLink(atPath:file.deletingLastPathComponent().path)) != nil)
+    }
+    precondition((try? fm.destinationOfSymbolicLink(atPath:fresh.drive.appendingPathComponent(root).path)) == nil)
+}
 '''
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch)
@@ -219,6 +363,7 @@ print("PASS store traversal, foreign links, missing drives and journaled game de
     def test_install_records_publish_only_after_a_successful_atomic_write(self):
         from test_steam_cloud_quit import function
         types = [('Epic', 'String', '"game"', 'EpicInstalledGame'),
+                 ('GOG', 'String', '"game"', 'GOGInstalledGame'),
                  ('EA', 'String', '"game"', 'EAInstalledGame'), ('Itch', 'Int', '7', 'ItchInstalledGame')]
         fixture = 'import Foundation\n'
         for store, key, _, record in types:

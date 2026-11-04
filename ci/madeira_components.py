@@ -17,6 +17,8 @@ def contract(upstream):
     spec = importlib.util.spec_from_file_location('madeira_component_contract', upstream / 'tools/build/runtime-components.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if 'windows' in module.CONTRACT:
+        module.CONTRACT['windows']['inputs'].append('build/gog-galaxy-service/**')
     if not (upstream / '.git').exists():
         inventory = json.loads((upstream / 'iridium-runtime-sources.json').read_text())
         if inventory.get('schema') != 1 or not isinstance(inventory.get('files'), list) or not isinstance(inventory.get('pins'), dict):
@@ -106,6 +108,8 @@ def build_recipe(upstream, name, env):
     for old, new in replacements.items():
         if script.count(old) != 1: raise ValueError('Madeira component bootstrap changed: ' + old)
         script = script.replace(old, new)
+    if name == 'windows':
+        script += '\nGOG_CC="$ROOT/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang" bash "$ROOT/build/gog-galaxy-service/build.sh"\n'
     # Installers may read stdin; keep it separate from the remaining shell program.
     subprocess.run(['bash', '-c', script, '--', name], stdin=subprocess.DEVNULL, text=True,
                    cwd=upstream, env=env, check=True)

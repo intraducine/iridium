@@ -9,6 +9,8 @@ import UIKit
 @MainActor final class LibraryStoreSheets: ObservableObject {
     static let shared = LibraryStoreSheets()
     struct Game<ID: Hashable>: Identifiable { let id: ID }
+    @Published var gogGame: Game<String>?
+    @Published var gogSignIn = false
     @Published var itchGame: Game<Int>?
     @Published var itchSignIn = false
     @Published var itchFind = false

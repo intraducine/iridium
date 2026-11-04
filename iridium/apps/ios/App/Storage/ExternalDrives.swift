@@ -586,6 +586,7 @@ struct ExternalDrivesSection: View {
         }
         if let originalFolder, let destinationFolder {
             if entry.epicAppName != nil { try EpicLibrary.shared.moveInstall(from: originalFolder, to: destinationFolder) }
+                if entry.gogProductID != nil { try GOGLibrary.shared.moveInstall(from: originalFolder, to: destinationFolder) }
             if entry.eaOfferID != nil { try EALibrary.shared.moveInstall(from: originalFolder, to: destinationFolder) }
             if entry.itchGameID != nil { try ItchLibrary.shared.moveInstall(from: originalFolder, to: destinationFolder) }
         }
@@ -593,6 +594,7 @@ struct ExternalDrivesSection: View {
         catch {
             if let originalFolder, let destinationFolder {
                 if entry.epicAppName != nil { try? EpicLibrary.shared.moveInstall(from: destinationFolder, to: originalFolder) }
+                if entry.gogProductID != nil { try? GOGLibrary.shared.moveInstall(from: destinationFolder, to: originalFolder) }
                 if entry.eaOfferID != nil { try? EALibrary.shared.moveInstall(from: destinationFolder, to: originalFolder) }
                 if entry.itchGameID != nil { try? ItchLibrary.shared.moveInstall(from: destinationFolder, to: originalFolder) }
             }

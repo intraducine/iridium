@@ -158,6 +158,27 @@ class NativeReuseTests(unittest.TestCase):
                 report = self.check_rejected(root, 'input_mismatch', current)
                 self.assertTrue(any(('inputs.' + group + '.' + name) in x for x in report['issues']))
 
+    def test_explicit_incremental_rebuild_requires_a_checked_compatible_base(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old = fixture_inputs()
+            old['enginePin'] = {'path': 'vendor/Madeira', 'revision': 'a' * 40, 'dependencies': {'wine': 'pin'}}
+            new = copy.deepcopy(old); new['revision'] = 'b' * 40; new['enginePin']['revision'] = 'b' * 40
+            new['upstreamSources'] = 'changed source'
+            fixture_record(root, old)
+            before = (root / '.build/iridium-native.json').read_bytes()
+            with patch.object(build.subprocess, 'run') as run:
+                build.validate_incremental_native(new, root)
+                self.assertIn('--is-ancestor', run.call_args.args[0])
+            self.assertEqual((root / '.build/iridium-native.json').read_bytes(), before)
+            for name in ('tools', 'recipes', 'enginePin'):
+                bad = copy.deepcopy(new); bad[name] = {'different': 'configuration'}
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'configuration changed'):
+                    build.validate_incremental_native(bad, root)
+            (root / 'app/Madeira/libavcodec.a').write_bytes(b'changed binary')
+            with self.assertRaisesRegex(ValueError, 'changed_output'):
+                build.validate_incremental_native(new, root)
+
     def test_missing_stamp_does_not_create_directories_or_bootstrap(self):
         with tempfile.TemporaryDirectory() as folder:
             self.check_rejected(Path(folder), 'unreadable_record')

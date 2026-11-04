@@ -37,11 +37,25 @@ CASES = r'''
 // the initial zero/short navigation measurement, for every console system.
 for platform in IridiumPlatform.allCases where platform != .windows {
     for size in [CGSize.zero, CGSize(width: 240, height: 240), CGSize(width: 402, height: 560), CGSize(width: 874, height: 180)] {
-        let controls = IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(platform.rawValue), size: size)
+        let controls = IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(platform.rawValue), size: size, platform: platform)
         let state = IridiumControlLayoutState(controls: controls, visible: true, size: 1, automatic: true, opacity: 0.78)
         try state.validate(for: platform)
     }
 }
+func actions(_ platform: IridiumPlatform, _ remote: Int = 0) -> Set<String> {
+    Set(IridiumConsoleControlLayout.defaults(profile: .consoleProfile(platform.rawValue),
+        bounds: CGRect(x: 0, y: 0, width: 874, height: 402), platform: platform, wiiRemote: remote).compactMap { $0.action.padName })
+}
+precondition(!actions(.wii).contains("LS") && !actions(.wii).contains("RS"))
+precondition(!actions(.wii).contains("LB") && !actions(.wii).contains("RB"))
+precondition(actions(.wii, 1).isSuperset(of: ["LS", "LB", "RB"]) && !actions(.wii, 1).contains("RS"))
+precondition(actions(.wii, 2).isSuperset(of: ["LS", "RS", "L3", "LT", "RT", "LB", "RB"]))
+for platform in [IridiumPlatform.dreamcast, .arcade] {
+    precondition(!actions(platform).contains("RS") && !actions(platform).contains("View"))
+    precondition(!actions(platform).contains("LB") && !actions(platform).contains("RB"))
+}
+precondition(!actions(.gameCube).contains("View") && actions(.gameCube).contains("RS"))
+precondition(actions(.psp).contains("LS") && !actions(.psp).contains("RS"))
 func frame(_ control: TouchControl, screen: CGSize, scale: Double) -> CGRect {
     let size = control.action.controlSize(diameter: 64 * CGFloat(control.scale * scale))
     return CGRect(x: CGFloat(control.nx) * screen.width - size.width / 2,
@@ -52,10 +66,12 @@ let screens = [CGSize(width: 375, height: 647), CGSize(width: 667, height: 375),
                CGSize(width: 320, height: 548), CGSize(width: 724, height: 354),
                CGSize(width: 393, height: 759), CGSize(width: 734, height: 372),
                CGSize(width: 1024, height: 722)]
-for profile in [IridiumPlayerProfile.psp, .gameBoy] {
+for platform in IridiumPlatform.allCases where platform != .windows {
+    let profile = IridiumPlayerProfile.consoleProfile(platform.rawValue)
+    for remote in platform == .wii ? [0, 1, 2] : [0] {
     for screen in screens {
         let bounds = CGRect(origin: .zero, size: screen)
-        let controls = IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds)
+        let controls = IridiumConsoleControlLayout.defaults(profile: profile, bounds: bounds, platform: platform, wiiRemote: remote)
         for editing in [false, true] {
             let frames = controls.map {
                 frame(IridiumConsoleControlLayout.fitted($0, screen: screen, sizeScale: 1, editing: editing),
@@ -66,15 +82,16 @@ for profile in [IridiumPlayerProfile.psp, .gameBoy] {
                 for other in frames.dropFirst(index + 1) {
                     let overlap = target.intersection(other)
                     precondition(overlap.isNull || overlap.width == 0 || overlap.height == 0,
-                                 "Actual default faces must not overlap, including in the editor")
+                                 "Default overlap: \(platform.rawValue) \(screen) \(controls[index].action) vs \(other)")
                 }
             }
         }
         let translated = IridiumConsoleControlLayout.defaults(profile: profile,
-            bounds: CGRect(origin: CGPoint(x: 44, y: 24), size: screen))
+            bounds: CGRect(origin: CGPoint(x: 44, y: 24), size: screen), platform: platform, wiiRemote: remote)
         precondition(zip(controls, translated).allSatisfy {
             abs($0.nx - $1.nx) < 0.0001 && abs($0.ny - $1.ny) < 0.0001 && $0.scale == $1.scale
         }, "Safe-area origin must not leak into normalized control positions")
+    }
     }
 }
 

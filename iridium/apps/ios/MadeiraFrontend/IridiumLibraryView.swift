@@ -218,6 +218,7 @@ struct IridiumLibraryView: View {
                 imports.resume()
                 repeat {
                     await steamGames.reconcileDeletedFiles()
+                    await GOGLibrary.shared.reconcileDeletedFiles()
                     await EpicLibrary.shared.reconcileDeletedFiles()
                     await EALibrary.shared.reconcileDeletedFiles()
                     await ItchLibrary.shared.reconcileDeletedFiles()
@@ -395,6 +396,18 @@ struct IridiumLibraryView: View {
                 Color.clear.frame(width: max(0, width - coverWidth - 2 * gutter - 10), height: 1)
             }
                 .overlay {
+                    if let id = selection.highlightedID, let index = order.firstIndex(of: id),
+                       !showFocus || focus == "games" {
+                        GeometryReader { proxy in
+                            let x = CGFloat(index) * (coverWidth + 10)
+                            IridiumLibrarySelectionOutline(x: x,
+                                scrollX: proxy.frame(in: .scrollView(axis: .horizontal)).minX,
+                                width: coverWidth, height: height, expands: wideLayout && !reduceMotion)
+                                .stroke(.white, lineWidth: 2)
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selection.highlightedID)
+                                .accessibilityIdentifier("librarySelectionBorder")
+                        }.allowsHitTesting(false).accessibilityHidden(true)
+                    }
                     if let slot = reorderSession.insertion {
                         let remaining = entries.filter { $0.id != reorderSession.active?.gameID }
                         if let id = slot.beforeID ?? remaining.last?.id, let index = order.firstIndex(of: id) {
@@ -495,13 +508,6 @@ struct IridiumLibraryView: View {
                 IridiumGameArtwork(game: entry, featured: false)
                     .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay {
-                        if selection.highlightedID == entry.id, !showFocus || focus == "games" {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(.white, lineWidth: 2)
-                                .accessibilityIdentifier("librarySelectionBorder")
-                        }
-                    }
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }.buttonStyle(.plain).id(entry.id)
                 .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
@@ -807,6 +813,25 @@ private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
             widths: widths, spacing: 10, focusWidth: focusWidth) else { return }
         target.rect.origin.x = x
         target.anchor = .leading
+    }
+}
+
+// Animate travel only. Size follows the current viewport, even when hints resize the row mid-scroll.
+private struct IridiumLibrarySelectionOutline: Shape {
+    var x: CGFloat
+    let scrollX: CGFloat
+    let width: CGFloat
+    let height: CGFloat
+    let expands: Bool
+    var animatableData: CGFloat {
+        get { x }
+        set { x = newValue }
+    }
+    func path(in bounds: CGRect) -> Path {
+        let geometry = IridiumLibraryCoverGeometry(x: scrollX + x, width: width, enabled: expands)
+        let rect = CGRect(x: x + geometry.shift, y: -height * (geometry.scale - 1) + geometry.drop,
+                          width: width * geometry.scale, height: height * geometry.scale)
+        return Path(roundedRect: rect.insetBy(dx: 1, dy: 1), cornerRadius: max(0, 8 * geometry.scale - 1))
     }
 }
 

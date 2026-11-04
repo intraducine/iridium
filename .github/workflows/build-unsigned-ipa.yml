@@ -181,7 +181,7 @@ jobs:
         run: |
           # The Windows FEX build also supplies its own ccache wrapper.
           unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
-          python3 ci/madeira-frontend.py windows
+          python3 ci/build-madeira-windows.py
       - name: Package i386 compilation
         if: steps.compiled_madeira_windows.outputs.run_id == ''
         run: python3 ci/compiled-components.py package madeira-windows

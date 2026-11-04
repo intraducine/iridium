@@ -406,7 +406,8 @@ struct IridiumTouchLayoutEditor: View {
                          opacity: 0.7, zones: GestureZonesModel.shared.zones)
         }
         let canvas = CGSize(width: size.width, height: max(320, size.height - 180))
-        return .init(controls: IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(target.platform.rawValue), size: canvas), visible: true, size: 1, automatic: true, opacity: 0.78)
+        let remote = target.gameID.map { IridiumDolphinSettings.load($0).remote } ?? 0
+        return .init(controls: IridiumConsoleControlLayout.editorDefaults(profile: .consoleProfile(target.platform.rawValue), size: canvas, platform: target.platform, wiiRemote: remote), visible: true, size: 1, automatic: true, opacity: 0.78)
     }
     private func recoverDefaults() {
         guard let builtIn else { return }

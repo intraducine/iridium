@@ -590,7 +590,7 @@ int main() {
             root = Path(folder)
             source = root / 'vendor/Play/Source/ui_libretro/main_libretro.cpp'
             source.parent.mkdir(parents=True)
-            for name in ('PH_Libretro_Input.h', 'PH_Libretro_Input.cpp'):
+            for name in ('PH_Libretro_Input.h', 'PH_Libretro_Input.cpp', 'SH_LibreAudio.cpp'):
                 shutil.copy2(ROOT / 'vendor/Play/Source/ui_libretro' / name, source.parent / name)
             shared = source.parent.parent / 'app_shared'
             shared.mkdir()

@@ -44,7 +44,8 @@ COMPONENT_INPUTS = {
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
     'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json',
-                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
+                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py',
+                        'ci/build-madeira-windows.py', 'ci/free-build-space.py'),
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
     # Both XcodeGen specs configure the later app build, not these libraries.
@@ -108,16 +109,18 @@ FRONTEND_MAIN = """if __name__ == '__main__':
     parser.add_argument('app', nargs='?', type=Path)
     parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
     parser.add_argument('--reuse-only', action='store_true', help='Validate completed native outputs without building or writing')
+    parser.add_argument('--incremental-native', action='store_true', help='Rebuild native recipes from a verified compatible prior build')
     args = parser.parse_args()
     if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
     if args.reuse_only and args.action != 'native': parser.error('--reuse-only requires native')
+    if args.incremental_native and (args.action != 'native' or args.reuse_only): parser.error('--incremental-native requires native without --reuse-only')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only), 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native), 'windows': windows, 'toolchains': toolchains}[args.action]()
 """
 
 

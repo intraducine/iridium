@@ -2212,6 +2212,7 @@ struct ContentView: View {
             case .stores: IridiumStoreBrowser(startDock: { startDock($0, compactPool: $1) }, open: { _ in devSheet = nil })
             case .importFolder: IridiumImportFolderView()
             case .steamSignIn: SteamSignInView()
+            case .gogSignIn: GOGSignInView()
             case .epicSignIn: EpicSignInView()
             case .eaSignIn: EASignInView()
             case .dock: MadeiraDockView { startDock($0, compactPool: $1) }
@@ -2649,6 +2650,8 @@ struct ContentView: View {
             if !began {
                 if eaReady { EALibrary.shared.launchEnded(owner: preparation) }
                 LibraryEntry.setTransientArguments(nil, for: entry.id)
+                LibraryEntry.setGOGSetup(nil, for: entry.id)
+                GOGGalaxy.shared.stop()
             }
         }
         guard !EpicCloud.shared.isBusy else {
@@ -2699,12 +2702,25 @@ struct ContentView: View {
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        // A GOG game's install-script registry values (The Witcher's launcher needs its
+        // InstallFolder), for its own entry or a program added from its folder.
+        guard GOGLibrary.shared.writeInstallScriptRegistry(for: entry) else {
+            library.error = "Restart Iridium to apply this GOG game's install settings."
+            return
+        }
+        if entry.gogProductID != nil {
+            // A GOG game: its redistributable installers still to run, before the game
+            // (from the services batch), and GOG's game services while it runs.
+            LibraryEntry.setGOGSetup(GOGLibrary.shared.setupBatch(for: entry), for: entry.id)
+            GOGGalaxy.shared.prepare(entry)
+        }
         do { if entry.desktop != true { _ = try LibraryModel.executable(entry.launchRelativePath) }; try entry.validate() }
         catch {
             EALibrary.shared.launchEnded(owner: preparation)
             LibraryEntry.setTransientArguments(nil, for: entry.id)
             library.error = error.localizedDescription
             logStore.log("[launch-preflight] profile validation failed: \(error.localizedDescription)", level: .error)
+            GOGGalaxy.shared.stop()
             return
         }
         // launchArguments carries the whole ml1163 command (explorer's /desktop=, the quoted
@@ -2712,6 +2728,7 @@ struct ContentView: View {
         guard entry.launchWindowsPath.utf8.count < 1024, entry.launchArguments.utf8.count < 4096 else {
             EALibrary.shared.launchEnded(owner: preparation)
             LibraryEntry.setTransientArguments(nil, for: entry.id)
+            GOGGalaxy.shared.stop()
             library.error = "The executable path or launch arguments are too long."; return
         }
         entry.configureLaunch()
@@ -2791,7 +2808,9 @@ struct ContentView: View {
         }
         // Steam downloads wait for the session, and the app's own Steam connection closes
         // before Valve's client signs in with the same account (SteamOwnedLibrary).
+        GOGGalaxy.shared.registerService()
         SteamOwnedLibrary.shared.sessionChanged(active: true)
+        GOGLibrary.shared.sessionChanged(active: true)
         ItchLibrary.shared.sessionChanged(active: true)
         EpicLibrary.shared.sessionChanged(active: true)
         EALibrary.shared.sessionChanged(active: true)

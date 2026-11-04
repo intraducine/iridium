@@ -74,6 +74,9 @@ struct IridiumGameStorage: Sendable {
             else if let common = parts.firstIndex(of: "common"), parts.count > common + 1 {
                 original = parts.prefix(common + 2).joined(separator: "/")
             } else if parts.first == "Imported", parts.count >= 3 { original = parts.prefix(2).joined(separator: "/") }
+            else if parts.count >= 4, parts[0] == "Program Files", ["Epic Games", "EA Games"].contains(parts[1]) {
+                original = parts.prefix(3).joined(separator: "/")
+            } else if ["itch", "GOG Games"].contains(parts.first ?? ""), parts.count >= 3 { original = parts.prefix(2).joined(separator: "/") }
             else if ["Program Files", "Program Files (x86)", "Games"].contains(parts.first ?? ""), parts.count >= 3 {
                 original = parts.prefix(2).joined(separator: "/")
             } else if parts.count >= 2, !["windows", "users", "programdata"].contains(parts[0].lowercased()) {
@@ -82,7 +85,7 @@ struct IridiumGameStorage: Sendable {
                 original = entry.relative; filename = parts[0]
             } else { continue }
             let source = drive.appendingPathComponent(original)
-            if state.moves.contains(where: { $0.original == original }) { continue }
+            if state.moves.contains(where: { $0.original == original || original.hasPrefix($0.original + "/") }) { continue }
             if !fm.fileExists(atPath: source.path) { continue }
             _ = try checked(source)
             let values = try source.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
