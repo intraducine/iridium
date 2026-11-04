@@ -20,16 +20,19 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertIn('let coverWidth = height / 1.5', source)
         self.assertNotIn('featuredWidth', source)
         self.assertIn('IridiumGameArtwork(game: entry, featured: false)', source)
-        self.assertIn('settledCoverID = next == .idle ? selectedID : nil', source)
-        self.assertIn('.scaleEffect(landscapeCoverSelected(entry) ? 1 : 0.88, anchor: .leading)', source)
-        self.assertIn('HStack(spacing: 20) { title(game); actions(game) }', source)
+        self.assertNotIn('settledCoverID', source)
+        self.assertIn('x: proxy.frame(in: .scrollView(axis: .horizontal)).minX,', source)
+        self.assertIn('content.scaleEffect(geometry.scale, anchor: .bottomLeading)', source)
+        self.assertIn('HStack(spacing: 20) { actions(game); title(game) }', source)
         self.assertIn('.onPreferenceChange(IridiumLibraryChromeHeight.self)', source)
         self.assertIn('ScrollView(.vertical)', source)
         self.assertIn('.scrollBounceBehavior(.basedOnSize, axes: .vertical)', source)
-        self.assertIn('.frame(height: layout.coverHeight).id("games")', source)
+        self.assertIn('.frame(height: layout.carouselHeight).id("games")', source)
         self.assertIn('.onChange(of: focus) { _, _ in revealFocusedSection(in: page) }', source)
         # Preserve single-line game titles and immediate, bidirectional selection.
-        self.assertIn('Text(artwork.title(entry)).font(.title2.weight(.semibold)).lineLimit(1)', source)
+        self.assertIn('IridiumLibraryText(text: name, title: true, multiline: false, animated: !reduceMotion)', source)
+        self.assertIn('IridiumLibraryText(text: subtitle, title: false, multiline: dynamicTypeSize.isAccessibilitySize, animated: !reduceMotion)', source)
+        self.assertIn('let expands = wideLayout && !reduceMotion', source)
         self.assertIn('.accessibilityLabel(artwork.title(entry))', source)
         self.assertIn('selection.observed(entries[index].id)', source)
         self.assertIn('previous: selection.highlightedID.flatMap { order.firstIndex(of: $0) }', source)
@@ -54,15 +57,16 @@ func metrics(_ height: CGFloat, _ chrome: CGFloat, compact: Bool = true,
 }
 let normal = metrics(375, 155)
 let scaled = metrics(375, 235)
-precondition(abs(normal.coverHeight - 105) < 0.001)
-precondition(scaled.coverHeight == 92) // Actual text growth reduces the cover.
+precondition(abs(normal.coverHeight - 109.333333) < 0.001)
+precondition(normal.carouselHeight == 172) // Includes all of the expanded cover.
+precondition(scaled.coverHeight == 96) // The full minimum remains scrollable.
 precondition(scaled.freeSpace == 0)
 let withHints = metrics(375, 260, hints: true)
-precondition(withHints.coverHeight == 72) // The full minimum cover remains scrollable.
+precondition(withHints.coverHeight == 96)
 let withSearch = metrics(375, 350)
-precondition(withSearch.coverHeight == 72 && withSearch.freeSpace == 0)
+precondition(withSearch.coverHeight == 96 && withSearch.freeSpace == 0)
 let roomy = metrics(600, 155)
-precondition(abs(roomy.coverHeight - 168) < 0.001 && abs(roomy.freeSpace - 229) < 0.001)
+precondition(abs(roomy.coverHeight - 216) < 0.001 && abs(roomy.freeSpace - 65) < 0.001)
 // A height-only resize must invalidate the frozen stride. An unchanged
 // viewport (including release to idle) keeps its existing touch geometry.
 let afterHeightResize = metrics(320, 155)
@@ -71,30 +75,56 @@ let idleBeforeResize = IridiumLibraryLayoutMetrics(viewportHeight: 600, compact:
     chromeHeight: 155, hasSelection: true, showsHints: false, frozenCoverHeight: roomy.coverHeight)
 precondition(idleBeforeResize.coverHeight == roomy.coverHeight)
 let portrait = metrics(852, 155, compact: false)
-precondition(portrait.coverHeight == 180 && portrait.freeSpace > 0)
+precondition(portrait.coverHeight == 200 && portrait.freeSpace > 0)
 let empty = metrics(375, 44, selected: false)
 precondition(empty.coverHeight == 0 && empty.freeSpace == 299)
 let dragging = IridiumLibraryLayoutMetrics(viewportHeight: 375, compact: true,
     chromeHeight: 155, hasSelection: true, showsHints: false, frozenCoverHeight: 100)
-precondition(dragging.coverHeight == 100 && dragging.freeSpace == 72)
+precondition(dragging.coverHeight == 100 && dragging.carouselHeight == 158 && dragging.freeSpace == 14)
 let changedStatusDuringSnap = IridiumLibraryLayoutMetrics(viewportHeight: 375, compact: true,
     chromeHeight: 350, hasSelection: true, showsHints: false, frozenCoverHeight: 100)
 precondition(changedStatusDuringSnap.coverHeight == 100 && changedStatusDuringSnap.freeSpace == 0)
-precondition(abs(metrics(375, 155).coverHeight - 105) < 0.001) // A new layout without frozen touch geometry adapts.
+precondition(abs(metrics(375, 155).coverHeight - 109.333333) < 0.001)
+
+let width: CGFloat = 96, stride = width + 10
+let left = IridiumLibraryCoverGeometry(x: 0, width: width, enabled: true)
+precondition(left.scale == 1.5 && left.shift == 0 && left.drop == 8)
+let approaching = IridiumLibraryCoverGeometry(x: stride / 2, width: width, enabled: true)
+precondition(approaching.scale == 1.25 && approaching.drop == 4)
+precondition(IridiumLibraryCoverGeometry(x: 0, width: width, enabled: false).scale == 1)
+precondition(IridiumLibraryCoverGeometry(x: .nan, width: width, enabled: true).scale == 1)
+// Simulate a continuous swipe in either direction. Growth never overlaps
+// neighbors or escapes the row reserved for the full 1.5x art and lower edge.
+for step in 0...1000 {
+    let x = -stride * CGFloat(step) / 1000
+    let a = IridiumLibraryCoverGeometry(x: x, width: width, enabled: true)
+    let b = IridiumLibraryCoverGeometry(x: x + stride, width: width, enabled: true)
+    let c = IridiumLibraryCoverGeometry(x: x + 2 * stride, width: width, enabled: true)
+    precondition(abs((x + stride + b.shift) - (x + a.shift + width * a.scale) - 10) < 0.001)
+    precondition(abs((x + 2 * stride + c.shift) - (x + stride + b.shift + width * b.scale) - 10) < 0.001)
+    for effect in [a, b, c] {
+        let height: CGFloat = 144
+        let top = height * 1.5 + effect.drop - height * effect.scale
+        let bottom = height * 1.5 + effect.drop
+        precondition(top >= 0 && bottom <= height * 1.5 + 8)
+        precondition(effect.scale >= 1 && effect.scale <= 1.5)
+    }
+}
 
 for height: CGFloat in [0, 240, 320, 375, 390, 667, 852, 1024] {
     for chrome: CGFloat in [0, 100, 155, 235, 340, 600] {
         for compact in [true, false] {
             for hints in [true, false] {
                 let layout = metrics(height, chrome, compact: compact, hints: hints)
-                let minimum: CGFloat = 72
-                let maximum: CGFloat = compact ? 220 : 180
+                let minimum: CGFloat = 96
+                let maximum: CGFloat = compact ? 224 : 200
                 let spacing: CGFloat = compact ? 8 : 12
                 let occupied = chrome + 24 + CGFloat(hints ? 4 : 3) * spacing
-                let total = occupied + layout.coverHeight + layout.freeSpace
+                let total = occupied + layout.carouselHeight + layout.freeSpace
                 precondition(layout.coverHeight >= minimum && layout.coverHeight <= maximum)
                 precondition(layout.freeSpace >= 0)
-                if occupied + minimum <= height {
+                let minimumRow = compact ? minimum * 1.5 + 8 : minimum
+                if occupied + minimumRow <= height {
                     precondition(abs(total - height) < 0.001) // Fits without clipping.
                 } else {
                     precondition(layout.coverHeight == minimum && layout.freeSpace == 0)

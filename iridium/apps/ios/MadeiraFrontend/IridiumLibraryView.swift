@@ -48,7 +48,6 @@ struct IridiumLibraryView: View {
     @State private var focus = "games"
     @State private var chromeHeight: CGFloat = 0
     @State private var wideLayout = false
-    @State private var settledCoverID: UUID?
     @State private var touchCoverHeight: CGFloat?
     @FocusState private var searchFocus: Bool
     @FocusState private var keyboardFocus: Bool
@@ -114,7 +113,6 @@ struct IridiumLibraryView: View {
     private func keepSelection() {
         let target = selection.reconcile(games.map(\.id))
         selectedID = selection.selectedID
-        if selection.phase == .idle { settledCoverID = selectedID }
         if let target { carouselPosition.scrollTo(id: target, anchor: .leading) }
     }
     private func select(_ id: UUID, touched: Bool = false) {
@@ -125,7 +123,6 @@ struct IridiumLibraryView: View {
             }
         }
         if let target = selection.select(id) {
-            if selectedID != id { settledCoverID = nil }
             selectedID = selection.selectedID
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
                 carouselPosition.scrollTo(id: target, anchor: .leading)
@@ -159,7 +156,7 @@ struct IridiumLibraryView: View {
                                 }
                                 if !compact { details(selected, compact: compact) }
                                 carousel(height: layout.coverHeight, width: geometry.size.width, gutter: gutter)
-                                    .frame(height: layout.coverHeight).id("games")
+                                    .frame(height: layout.carouselHeight).id("games")
                                 if compact { details(selected, compact: compact) }
                             } else {
                                 Group {
@@ -362,7 +359,7 @@ struct IridiumLibraryView: View {
     private func details(_ game: IridiumGame, compact: Bool) -> some View {
         Group {
             if compact && !dynamicTypeSize.isAccessibilitySize {
-                HStack(spacing: 20) { title(game); actions(game) }
+                HStack(spacing: 20) { actions(game); title(game) }
             } else {
                 VStack(alignment: .leading, spacing: 12) { title(game); actions(game) }
             }
@@ -383,34 +380,27 @@ struct IridiumLibraryView: View {
                 // the leading edge when every cover fits on screen.
                 Color.clear.frame(width: max(0, width - coverWidth - 2 * gutter - 10), height: 1)
             }
-                .overlayPreferenceValue(IridiumLibraryCardBounds.self) { anchors in
-                    GeometryReader { proxy in
-                        if let id = selection.highlightedID, let anchor = anchors[id],
-                           !showFocus || focus == "games" {
-                            let rect = proxy[anchor]
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(.white, lineWidth: 2)
-                                .frame(width: rect.width, height: rect.height)
-                                .scaleEffect(!wideLayout || settledCoverID == id ? 1 : 0.88, anchor: .leading)
-                                .offset(x: rect.minX, y: rect.minY)
-                                .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: id)
-                                .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: settledCoverID)
-                                .accessibilityIdentifier("librarySelectionBorder")
-                        }
-                        if let slot = reorderSession.insertion {
-                            let remaining = entries.filter { $0.id != reorderSession.active?.gameID }
-                            let anchor = slot.beforeID.flatMap { anchors[$0] } ?? remaining.last.flatMap { anchors[$0.id] }
-                            if let anchor {
-                                let rect = proxy[anchor]
+                .overlay {
+                    if let slot = reorderSession.insertion {
+                        let remaining = entries.filter { $0.id != reorderSession.active?.gameID }
+                        if let id = slot.beforeID ?? remaining.last?.id, let index = order.firstIndex(of: id) {
+                            GeometryReader { proxy in
+                                let x = CGFloat(index) * (coverWidth + 10)
+                                let geometry = IridiumLibraryCoverGeometry(
+                                    x: proxy.frame(in: .scrollView(axis: .horizontal)).minX + x,
+                                    width: coverWidth, enabled: wideLayout && !reduceMotion)
                                 Capsule().fill(Color.blue)
-                                    .frame(width: 4, height: height)
-                                    .offset(x: slot.beforeID == nil ? rect.maxX + 3 : rect.minX - 7, y: rect.minY)
+                                    .frame(width: 4, height: height * geometry.scale)
+                                    .offset(x: x + geometry.shift + (slot.beforeID == nil ? coverWidth * geometry.scale + 3 : -7),
+                                        y: -height * (geometry.scale - 1) + geometry.drop)
                                     .animation(reduceMotion ? nil : .smooth(duration: 0.16), value: slot)
                                     .accessibilityIdentifier("libraryInsertionLine")
-                            }
+                            }.allowsHitTesting(false).accessibilityHidden(true)
                         }
-                    }.allowsHitTesting(false).accessibilityHidden(true)
+                    }
                 }.scrollTargetLayout()
+                .padding(.top, wideLayout ? height * 0.5 : 0)
+                .padding(.bottom, wideLayout ? IridiumLibraryCoverGeometry.lowerEdge : 0)
         }.scrollIndicators(.hidden).accessibilityIdentifier("libraryCarousel")
             .scrollTargetBehavior(IridiumLibrarySnapBehavior(
                 widths: widths,
@@ -444,7 +434,6 @@ struct IridiumLibraryView: View {
                 if next == .tracking || next == .interacting { showFocus = false; showHints = false }
                 let target = selection.transition(to: next)
                 selectedID = selection.selectedID
-                settledCoverID = next == .idle ? selectedID : nil
                 // Keep this stride after release too. Restoring a larger cover
                 // when controller hints disappear would snap an idle touch scroll.
                 // A real viewport, text-size or search change can reflow it.
@@ -479,11 +468,9 @@ struct IridiumLibraryView: View {
             Text("LB / RB: Library")
         }
     }
-    private func landscapeCoverSelected(_ entry: IridiumGame) -> Bool {
-        !wideLayout || settledCoverID == entry.id
-    }
     private func cover(_ entry: IridiumGame, height: CGFloat, width: CGFloat, order: [UUID]) -> some View {
-        IridiumLibraryReorderCard(id: entry.id, session: reorderSession, order: order, commit: { id, target, after in
+        let expands = wideLayout && !reduceMotion
+        return IridiumLibraryReorderCard(id: entry.id, session: reorderSession, order: order, commit: { id, target, after in
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
                 savedOrder = IridiumLibraryOrder.encoded(IridiumLibraryOrder.moving(id, relativeTo: target, after: after, in: allGames.map(\.id)))
                 select(id)
@@ -494,8 +481,13 @@ struct IridiumLibraryView: View {
                 IridiumGameArtwork(game: entry, featured: false)
                     .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .scaleEffect(landscapeCoverSelected(entry) ? 1 : 0.88, anchor: .leading)
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: landscapeCoverSelected(entry))
+                    .overlay {
+                        if selection.highlightedID == entry.id, !showFocus || focus == "games" {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(.white, lineWidth: 2)
+                                .accessibilityIdentifier("librarySelectionBorder")
+                        }
+                    }
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }.buttonStyle(.plain).id(entry.id)
                 .accessibilityIdentifier("game-cover-" + entry.id.uuidString)
@@ -512,8 +504,14 @@ struct IridiumLibraryView: View {
                 }
                 .accessibilityAddTraits(selection.highlightedID == entry.id ? .isSelected : [])
         }.frame(width: width, height: height).id(entry.id)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: settledCoverID)
-            .anchorPreference(key: IridiumLibraryCardBounds.self, value: .bounds) { [entry.id: $0] }
+            .visualEffect { content, proxy in
+                // Scroll-content coordinates already start at the leading content margin.
+                let geometry = IridiumLibraryCoverGeometry(
+                    x: proxy.frame(in: .scrollView(axis: .horizontal)).minX,
+                    width: width, enabled: expands)
+                return content.scaleEffect(geometry.scale, anchor: .bottomLeading)
+                    .offset(x: geometry.shift, y: geometry.drop)
+            }
     }
     private var filters: some View {
         Picker("Library", selection: Binding(get: { favorites }, set: setFavorites)) {
@@ -545,11 +543,12 @@ struct IridiumLibraryView: View {
             .accessibilityLabel(label).buttonStyle(.plain).background(focusShape(id))
     }
     private func title(_ entry: IridiumGame) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(artwork.title(entry)).font(.title2.weight(.semibold)).lineLimit(1).truncationMode(.tail)
+        let name = artwork.title(entry)
+        let subtitle = (entry.console?.pspJITEnabled == true ? entry.platform.title + " · JIT" : entry.platform.libraryTitle) + (readiness(entry).isEmpty ? "" : " · " + readiness(entry))
+        return VStack(alignment: .leading, spacing: 5) {
+            IridiumLibraryText(text: name, title: true, multiline: false, animated: !reduceMotion)
                 .accessibilityIdentifier("libraryGameTitle").accessibilityAddTraits(.isHeader)
-            Text((entry.console?.pspJITEnabled == true ? entry.platform.title + " · JIT" : entry.platform.libraryTitle) + (readiness(entry).isEmpty ? "" : " · " + readiness(entry))).lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                .font(.caption).foregroundStyle(.white.opacity(0.75))
+            IridiumLibraryText(text: subtitle, title: false, multiline: dynamicTypeSize.isAccessibilitySize, animated: !reduceMotion)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func readiness(_ game: IridiumGame) -> String {
@@ -680,6 +679,72 @@ struct IridiumLibraryView: View {
     }
 }
 
+struct IridiumLibraryText: UIViewRepresentable {
+    let text: String
+    let title: Bool
+    let multiline: Bool
+    let animated: Bool
+    @ScaledMetric(relativeTo: .title2) private var titleSize: CGFloat = 22
+    @ScaledMetric(relativeTo: .caption) private var captionSize: CGFloat = 12
+
+    func makeUIView(context: Context) -> Canvas { Canvas() }
+    func updateUIView(_ view: Canvas, context: Context) {
+        for label in view.labels {
+            label.font = .systemFont(ofSize: title ? titleSize : captionSize, weight: title ? .semibold : .regular)
+            label.textColor = title ? .white : .white.withAlphaComponent(0.75)
+            label.numberOfLines = multiline ? 0 : 1
+            label.lineBreakMode = multiline ? .byWordWrapping : .byTruncatingTail
+            label.textAlignment = context.environment.layoutDirection == .rightToLeft ? .right : .left
+        }
+        view.accessibilityTraits = title ? [.header, .staticText] : .staticText
+        view.show(text, animated: animated)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Canvas, context: Context) -> CGSize? {
+        let size = uiView.measure(width: proposal.width ?? 10_000)
+        return CGSize(width: proposal.width ?? size.width, height: size.height)
+    }
+    final class Canvas: UIView {
+        let labels = [UILabel(), UILabel()]
+        private var target: UILabel?
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isAccessibilityElement = true; isUserInteractionEnabled = false
+            for label in labels { label.alpha = 0; label.isAccessibilityElement = false; addSubview(label) }
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        func show(_ text: String, animated: Bool) {
+            accessibilityLabel = text
+            if target?.text == text {
+                if !animated { for label in labels { label.layer.removeAllAnimations(); label.alpha = label === target ? 1 : 0 } }
+                return
+            }
+            // Reuse two labels, preserving the dominant visible text during interruption.
+            for label in labels {
+                let opacity = CGFloat(label.layer.presentation()?.opacity ?? Float(label.alpha))
+                label.layer.removeAllAnimations(); label.alpha = opacity
+            }
+            let outgoing = labels[0].alpha >= labels[1].alpha ? labels[0] : labels[1]
+            let next = labels.first { $0 !== outgoing }!
+            let fades = animated && target != nil
+            next.text = text; next.alpha = fades ? 1 - outgoing.alpha : 1
+            outgoing.alpha = 1 - next.alpha; target = next
+            guard fades else { return }
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut]) {
+                next.alpha = 1; outgoing.alpha = 0
+            }
+        }
+        func measure(width: CGFloat) -> CGSize {
+            let label = target ?? labels[0]
+            let size = label.sizeThatFits(CGSize(width: max(1, width), height: .greatestFiniteMagnitude))
+            return CGSize(width: min(width, size.width), height: ceil(size.height))
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            for label in labels { label.frame = bounds }
+        }
+    }
+}
+
 private struct IridiumSearchSurface: ViewModifier {
     var active: Bool
     @Environment(\.accessibilityReduceTransparency) private var opaque
@@ -712,15 +777,6 @@ private struct IridiumLibraryMeasureHeight: ViewModifier {
     }
 }
 
-// Kept independent of SwiftUI layout callbacks for executable geometry checks.
-
-private struct IridiumLibraryCardBounds: PreferenceKey {
-    static var defaultValue: [UUID: Anchor<CGRect>] { [:] }
-    static func reduce(value: inout [UUID: Anchor<CGRect>], nextValue: () -> [UUID: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
 private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
     let widths: [Double]
     let focusWidth: Double
@@ -734,8 +790,10 @@ private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
     }
 }
 
+// Kept independent of SwiftUI layout callbacks for executable geometry checks.
 struct IridiumLibraryLayoutMetrics {
     let coverHeight: CGFloat
+    let carouselHeight: CGFloat
     let freeSpace: CGFloat
 
     init(viewportHeight: CGFloat, viewportWidth: CGFloat = 844, compact: Bool, chromeHeight: CGFloat,
@@ -744,15 +802,34 @@ struct IridiumLibraryLayoutMetrics {
         let gaps = (hasSelection ? 3 : 1) + (showsHints ? 1 : 0)
         let available = max(0, viewportHeight - chromeHeight - 24 - CGFloat(gaps) * spacing)
         if hasSelection {
-            let minimum: CGFloat = 72
-            let preferred: CGFloat = compact ? min(220, max(96, viewportHeight * 0.28)) :
-                min(180, max(96, (viewportWidth - 40) * 0.44))
-            coverHeight = frozenCoverHeight ?? min(preferred, max(minimum, available))
+            let minimum: CGFloat = 96
+            let preferred: CGFloat = compact ? min(224, max(128, viewportHeight * 0.36)) :
+                min(200, max(112, (viewportWidth - 40) * 0.48))
+            let fits = compact ? (available - IridiumLibraryCoverGeometry.lowerEdge) / 1.5 : available
+            coverHeight = frozenCoverHeight ?? min(preferred, max(minimum, fits))
         } else {
             coverHeight = 0
         }
         // When even the minimum cover cannot fit, the vertical ScrollView keeps
         // the full cover and every action reachable instead of clipping content.
-        freeSpace = max(0, available - coverHeight)
+        carouselHeight = hasSelection && compact ? coverHeight * 1.5 + IridiumLibraryCoverGeometry.lowerEdge : coverHeight
+        freeSpace = max(0, available - carouselHeight)
+    }
+}
+
+struct IridiumLibraryCoverGeometry {
+    static let lowerEdge: CGFloat = 8
+    let scale: CGFloat
+    let shift: CGFloat
+    let drop: CGFloat
+
+    init(x: CGFloat, width: CGFloat, enabled: Bool) {
+        guard enabled, width > 0, x.isFinite else { scale = 1; shift = 0; drop = 0; return }
+        let stride = width + 10
+        let growth = max(0, 1 - abs(x) / stride)
+        scale = 1 + 0.5 * growth
+        // The same linear spacing keeps adjacent covers apart throughout a swipe.
+        shift = width * 0.5 * min(1, max(0, x / stride))
+        drop = Self.lowerEdge * growth
     }
 }
