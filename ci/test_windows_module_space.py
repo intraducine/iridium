@@ -41,12 +41,25 @@ class WindowsModuleSpaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);upstream=root/'vendor/Madeira';key='a'*64
             for k in [key,'b'*64]:
-                tree=upstream/f'toolchains/graphics/{k}/obj';tree.mkdir(parents=True)
+                tree=upstream/f'toolchains/graphics/runtime-v1-zink-{k}/obj';tree.mkdir(parents=True)
                 (tree/'shader.o').write_text('object');(tree/'module.dll').write_text('finished')
             with self.environment(root):space.cleanup_madeira_module(root,upstream,'zink',key)
-            self.assertFalse((upstream/f'toolchains/graphics/{key}/obj/shader.o').exists())
-            self.assertTrue((upstream/f'toolchains/graphics/{key}/obj/module.dll').exists())
-            self.assertTrue((upstream/('toolchains/graphics/'+'b'*64+'/obj/shader.o')).exists())
+            self.assertFalse((upstream/f'toolchains/graphics/runtime-v1-zink-{key}/obj/shader.o').exists())
+            self.assertTrue((upstream/f'toolchains/graphics/runtime-v1-zink-{key}/obj/module.dll').exists())
+            self.assertTrue((upstream/('toolchains/graphics/runtime-v1-zink-'+'b'*64+'/obj/shader.o')).exists())
+
+    def test_kosmickrisp_and_i386_use_the_actual_recipe_build_directories(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);upstream=root/'vendor/Madeira';key='c'*64
+            for name, relative in [('kosmickrisp',f'toolchains/graphics/runtime-v1-kosmickrisp-{key}/build-ios'),
+                                   ('kosmickrisp',f'toolchains/graphics/runtime-v1-kosmickrisp-{key}/build-native'),
+                                   ('i386','dxmt/build-pe-i386')]:
+                tree=upstream/relative;tree.mkdir(parents=True)
+                (tree/'shader.o').write_text('completed object')
+                (tree/'library.a').write_text('finished output')
+                with self.environment(root):space.cleanup_madeira_module(root,upstream,name,key)
+                self.assertFalse((tree/'shader.o').exists())
+                self.assertEqual((tree/'library.a').read_text(),'finished output')
 
     def test_each_validated_recipe_precedes_cleanup_and_i386_keeps_reserve(self):
         with tempfile.TemporaryDirectory() as folder:

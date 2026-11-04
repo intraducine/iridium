@@ -59,7 +59,7 @@ def cleanup_ci_runtimes(root):
             or os.environ.get('IRIDIUM_CHROME_SIMULATOR')):
         raise ValueError('Runtime image cleanup requires this hosted device-build workspace')
     before = shutil.disk_usage(root).free
-    target = 90 * 1024**3  # Reserve + native/Windows peaks + pinned inputs/staging.
+    target = 110 * 1024**3  # Reserve + native/Windows peaks + pinned inputs/staging.
     if before >= target: return
     devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
     if any(device.get('state') == 'Booted' for group in devices['devices'].values() for device in group):
@@ -91,6 +91,8 @@ def cleanup_ci_runtimes(root):
     after = shutil.disk_usage(root).free
     print(f'Hosted device build removed {removed} unused simulator images; '
           f'free before={before} after={after} measured_reclaimed={max(0, after - before)} bytes', flush=True)
+    if after < target:
+        raise ValueError(f'Hosted build needs 110 GiB before native/Windows phases; available={after / 1024**3:.2f} GiB')
 
 
 def cleanup_native(root):
@@ -140,12 +142,12 @@ def cleanup_madeira_module(root, upstream, name, key):
         'windows': ('wine/build-arm64ec', 'wine/build-macos', 'dxmt/build-arm64ec',
                     'dxmt/build-aarch64', 'FEX/build-arm64ec', 'FEX/build-wow64'),
         'moltenvk': (),
-        'zink': (f'toolchains/graphics/{key}/obj',),
+        'zink': (f'toolchains/graphics/runtime-v1-zink-{key}/obj',),
         'mesa-d3d12': ('build/mesa-d3d12/work/build',),
         'vulkan-pe': ('toolchains/dxvk-build/arm64ec', 'toolchains/vkd3d-proton-build/arm64ec'),
-        'kosmickrisp': (f'toolchains/graphics/{key}/build-native', f'toolchains/graphics/{key}/build-ios',
+        'kosmickrisp': (f'toolchains/graphics/runtime-v1-kosmickrisp-{key}/build-native', f'toolchains/graphics/runtime-v1-kosmickrisp-{key}/build-ios',
                         'toolchains/graphics/translator-build'),
-        'i386': ('wine/build-i386', 'dxmt/build-i386'),
+        'i386': ('wine/build-i386', 'dxmt/build-pe-i386'),
     }
     if name not in trees: raise ValueError('Unknown completed module: ' + name)
     objects = []
