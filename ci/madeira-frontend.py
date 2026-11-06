@@ -259,6 +259,8 @@ def prepare():
     # must be supplied by the user, rather than copied from a maintainer's games.
     (app / 'Madeira/x86_64-vcruntime').mkdir(exist_ok=True)
     names = app_sources.stage(app)
+    import stikjit_frontend
+    stikjit_frontend.stage(app)
     prepare_helper_versions(app)
     sources = sorted(p for p in RUNTIME_BRIDGE.glob('*.c')
         if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c'))
@@ -396,6 +398,8 @@ def check_bundle(app):
         if not (app / name).is_file() or not (app / name).stat().st_size:
             raise ValueError('The WoW64 runtime is missing: ' + name)
 
+    import stikjit_frontend
+    stikjit_frontend.verify(app / "Frameworks/StikJIT.framework")
     madeira_components.verify(UPSTREAM, app, compiler_identity())
     import madeira_session
     madeira_session.verify(app / 'aarch64-windows')
@@ -977,6 +981,8 @@ def native(reuse_only=False, incremental=False):
 
 
 def app(reuse_psp):
+    import stikjit_frontend
+    stikjit_frontend.build()
     subprocess.run([sys.executable, str(ROOT / 'ci/build-sameboy.py'),
                     '--output', str(ROOT / '.build/sameboy/iphoneos'),
                     '--sdk', 'iphoneos', '--target', 'arm64-apple-ios18.0'], check=True)

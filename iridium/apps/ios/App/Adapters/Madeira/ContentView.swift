@@ -2440,7 +2440,7 @@ struct ContentView: View {
         jitStatus = .testing
         logStore.log("Requesting JIT with \(jitCoordinator.resolvedMethod.title)...")
 
-        jitCoordinator.prepareConsoleMemory { result in
+        jitCoordinator.prepareWindowsMemory { result in
             switch result {
             case .success:
                 jitStatus = .available
@@ -2490,7 +2490,7 @@ struct ContentView: View {
             library.error = "JIT cleanup did not finish. Close and reopen Iridium."
             return false
         }
-        if StikJITHelper.ready && ir_jit_memory_ready() { return true }
+        if StikJITHelper.ready && IridiumMadeiraRuntime.jitMemoryReady { return true }
         if inLibrary, let launch {
             logStore.log("[jit-on-play] JIT is not on: enabling it, then starting the game")
             launchAfterJIT = launch
@@ -2801,7 +2801,7 @@ struct ContentView: View {
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
         guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
         let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID
-        guard jit_check_debugged(), ir_jit_memory_ready(), !jitCoordinator.consoleMemoryRequiresRestart else {
+        guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
             if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }
             return

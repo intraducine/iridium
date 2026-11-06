@@ -281,6 +281,8 @@ def collect(app, output, maps):
             dest = stage / '.build/runtime-downloads' / archive.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, dest)
+        import stikjit_frontend
+        stikjit_frontend.collect_source(stage)
         pairing = build.UPSTREAM / 'build/rppairing-ios'
         vendor = stage / 'vendor/Madeira/build/rppairing-ios/vendor'
         config = subprocess.check_output(['cargo', 'vendor', '--locked', '--manifest-path', str(pairing / 'Cargo.toml'), str(vendor)], text=True)

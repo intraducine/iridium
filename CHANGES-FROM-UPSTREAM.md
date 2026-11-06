@@ -543,3 +543,19 @@ images. If the runner cannot reach that target, the unchanged 40 GiB stage
 admission applies; a verified native checkpoint avoids its compiler scratch. Completed graphics cleanup uses
 the recipes' runtime-v1 component directories. It keeps source, finished modules
 and receipts. The 20 GiB reserve and 40 GiB stage admission are unchanged.
+
+## Checked JIT memory preparation
+
+Iridium builds the pinned StikJIT 1.9.0 Swift sources and idevice FFI from source.
+The maintained MPL-2.0 `JITSupport/ScriptRunner.swift` replaces the upstream
+runner. Its optional `prepare_memory_region_checked` bridge accepts exact
+hexadecimal strings, writes all 16 address digits, limits each batch to 128 pages,
+and checks every response. It drains queued responses after a rejected page and
+stops issuing commands after a transport error. Older external helpers retain
+the checked per-page fallback; Iridium never calls their unchecked batch bridge.
+
+Windows launches prepare only Madeira's adapter-owned arena. Console JIT launches
+prepare only the shared console arena. Both arenas remain reusable for the app's
+lifetime under the existing owned-helper and cleanup rules. Runtime pins and the
+version 1 runtime memory interface are unchanged. App preparation checks a separate
+helper source/binary receipt, so a runtime update cannot reuse a stale transport.
