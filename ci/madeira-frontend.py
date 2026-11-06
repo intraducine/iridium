@@ -395,7 +395,7 @@ def check_bundle(app):
             raise ValueError('The WoW64 runtime is missing: ' + name)
 
     import stikjit_frontend
-    stikjit_frontend.verify(app / "PlugIns/MadeiraJITHelper.appex/Frameworks/StikJIT.framework")
+    stikjit_frontend.verify(app / "Frameworks/StikJIT.framework")
     madeira_components.verify(UPSTREAM, app, compiler_identity())
     import madeira_session
     madeira_session.verify(app / 'aarch64-windows')

@@ -274,7 +274,7 @@ class FrontendImportTests(unittest.TestCase):
                 'protocol': 1, 'enginePin': madeira_session.engine_pins.selected('madeira-native'),
                 'sources': madeira_session.inputs(), 'toolchainSHA256': madeira_session.toolchain()['sha256'], 'sha256': madeira_session.digest(session)}))
             with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output), \
-                 patch('stikjit_frontend.verify'), patch.object(BUILD.madeira_components, 'verify'), patch.object(BUILD, 'compiler_identity', return_value='fixture-compiler'):
+                 patch('stikjit_frontend.verify') as jit_verify, patch.object(BUILD.madeira_components, 'verify'), patch.object(BUILD, 'compiler_identity', return_value='fixture-compiler'):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
                 names = ('arm64ec-windows/xtajit64.dll', 'd3d12/libmetalirconverter.dylib',
@@ -307,6 +307,7 @@ class FrontendImportTests(unittest.TestCase):
                     BUILD.check_bundle(app)
                 asset.write_bytes(original_asset)
                 BUILD.check_bundle(app)
+                jit_verify.assert_called_with(app / 'Frameworks/StikJIT.framework')
 
     def test_generated_psp_project_embeds_without_linking_and_preserves_settings(self):
         # Model plutil's parsed PBX graph; exercise project(), not source text.
