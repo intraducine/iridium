@@ -50,7 +50,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
         self.assertIn('try IridiumMadeiraRuntime.shared.submit(nativeLaunch, configuration:', resident)
         self.assertIn('guard library.nativeLaunchID == nativeLaunch else { return }', resident)
         admission = admission.replace(resident, '')
-        ready_guard = 'guard jit_check_debugged(), ir_jit_memory_ready(), !jitCoordinator.consoleMemoryRequiresRestart else {'
+        ready_guard = 'guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {'
         self.assertIn(ready_guard, admission)
         admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
         diagnostic = '            DeviceDiagnostics.logLaunch()\n'

@@ -302,6 +302,10 @@ enum StikJITHelper {
         poolLock.lock(); cachedPool = result; poolPreparing = false; poolLock.unlock()
         return result
     }
+    static var poolReady: Bool {
+        poolLock.lock(); defer { poolLock.unlock() }
+        return cachedPool != nil
+    }
     private static func createPool(poolSize requestedPoolSize: Int) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
         var poolSize = requestedPoolSize      // ml1036: may shrink to fit, see the hole census below
         poolFailure = nil

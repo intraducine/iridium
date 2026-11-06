@@ -216,6 +216,7 @@ class PublicSigningFixtureTests(unittest.TestCase):
             snapshot(self.root / 'vendor/Madeira/research/freetype', destination, revisions)
 
         with patch.object(COLLECT, 'ROOT', self.root), \
+                patch('stikjit_frontend.collect_source'), \
                 patch.object(COLLECT.build, 'UPSTREAM', self.root / 'vendor/Madeira'), \
                 patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
                 patch.object(COLLECT.build, 'verify_pin'), \

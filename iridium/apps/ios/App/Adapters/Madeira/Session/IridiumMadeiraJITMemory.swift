@@ -2,6 +2,8 @@
 import Foundation
 
 extension IridiumMadeiraRuntime {
+    static var jitMemoryReady: Bool { StikJITHelper.poolReady }
+
     /// The adapter owns Madeira's placement rules and host-lifetime arena size.
     static func prepareJITMemory() -> Bool {
         let configured = MadeiraConfig.get("pool").flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }

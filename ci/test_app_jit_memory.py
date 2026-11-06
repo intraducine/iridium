@@ -166,18 +166,22 @@ import Foundation
 final class Memory: @unchecked Sendable {
     static let shared = Memory()
     let lock = NSLock()
-    var ready = false, succeeds = true
-    var allocations = 0
+    var ready = false, windowsReady = false, succeeds = true
+    var allocations = 0, windowsAllocations = 0
     func prepared() -> Bool { lock.lock(); defer { lock.unlock() }; allocations += 1; ready = succeeds; return ready }
     func isReady() -> Bool { lock.lock(); defer { lock.unlock() }; return ready }
+    func windows() -> Bool { lock.lock(); defer { lock.unlock() }; windowsAllocations += 1; windowsReady = succeeds; return windowsReady }
+    func isWindowsReady() -> Bool { lock.lock(); defer { lock.unlock() }; return windowsReady }
 }
 func ir_jit_memory_ready() -> Bool { Memory.shared.isReady() }
 func ir_jit_memory_prepare(_ callback: Int) -> Bool { Memory.shared.prepared() }
 enum IridiumMadeiraRuntime {
-    static func prepareJITMemory() -> Bool { true }
+    static func prepareJITMemory() -> Bool { Memory.shared.windows() }
+    static var jitMemoryReady: Bool { Memory.shared.isWindowsReady() }
 }
 let ir_jit_prepare_region = 1
 func isDebuggerAttached() -> Bool { true }
+@MainActor enum LogStore { static let shared = Logger(); struct Logger { func log(_ text: String) {} } }
 @MainActor final class Host {
     enum CoordinatorError: Error { case setupRequired(String) }
     var enableRequest: UUID?, busy = false, status: String?, error: String?
@@ -188,6 +192,9 @@ BODY
         precondition(requiresAttachedDebugger); enables += 1; completion(.success(()))
     }
     func releaseAttachedDebugger(completion: (Bool) -> Void) { detaches += 1; completion(clean) }
+    func windows() async -> Bool {
+        await withCheckedContinuation { c in prepareWindowsMemory { c.resume(returning: (try? $0.get()) != nil) } }
+    }
     func prepare() async -> Bool {
         await withCheckedContinuation { c in prepareConsoleMemory { c.resume(returning: (try? $0.get()) != nil) } }
     }
@@ -195,15 +202,27 @@ BODY
 @main struct Check {
     @MainActor static func main() async {
         let host = Host()
+        let windows = await host.windows(); precondition(windows)
+        precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.allocations == 0)
+        for _ in 0..<100 { let reused = await host.windows(); precondition(reused) }
+        precondition(host.enables == 1 && host.detaches == 1)
         precondition(await host.prepare())
         for _ in 0..<100 { precondition(await host.prepare()) }
-        precondition(host.enables == 1 && host.detaches == 1 && Memory.shared.allocations == 1)
+        precondition(host.enables == 2 && host.detaches == 2 && Memory.shared.allocations == 1)
+        precondition(Memory.shared.windowsAllocations == 1)
         Memory.shared.ready = false; Memory.shared.succeeds = false
         precondition(!(await host.prepare()) && !host.consoleMemoryRequiresRestart)
         Memory.shared.succeeds = true; host.clean = false
         precondition(!(await host.prepare()) && host.consoleMemoryRequiresRestart && host.error != nil)
         let attempts = host.enables
         precondition(!(await host.prepare()) && host.enables == attempts)
+        Memory.shared.ready = false; Memory.shared.windowsReady = false
+        let consoleFirst = Host()
+        let consoleReady = await consoleFirst.prepare(); precondition(consoleReady)
+        precondition(Memory.shared.windowsAllocations == 1)
+        let windowsReady = await consoleFirst.windows(); precondition(windowsReady)
+        precondition(consoleFirst.enables == 2 && consoleFirst.detaches == 2)
+        precondition(Memory.shared.windowsAllocations == 2)
     }
 }
 '''.replace('BODY', body)

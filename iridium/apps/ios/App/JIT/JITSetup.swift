@@ -233,10 +233,16 @@ final class JITCoordinator: ObservableObject {
     private var consoleMemoryBusy = false
     var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
     func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        prepareMemory(windows: false, completion: completion)
+    }
+    func prepareWindowsMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        prepareMemory(windows: true, completion: completion)
+    }
+    private func prepareMemory(windows: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
         guard !consoleMemoryFailed, !consoleMemoryBusy, enableRequest == nil, !busy else {
             completion(.failure(CoordinatorError.setupRequired("JIT memory is busy or needs an app restart."))); return
         }
-        if ir_jit_memory_ready() { completion(.success(())); return }
+        if windows ? IridiumMadeiraRuntime.jitMemoryReady : ir_jit_memory_ready() { completion(.success(())); return }
         enable(requiresAttachedDebugger: true) { result in
             guard case .success = result else {
                 self.consoleMemoryBusy = false; completion(result); return
@@ -250,13 +256,15 @@ final class JITCoordinator: ObservableObject {
                 completion(.failure(CoordinatorError.setupRequired(message))); return
             }
             self.consoleMemoryBusy = true; self.busy = true
-            self.status = "Preparing JIT memory…"
+            self.status = windows ? "Preparing Windows JIT memory…" : "Preparing console JIT memory…"
+            let preparationStarted = ProcessInfo.processInfo.systemUptime
             DispatchQueue.global(qos: .userInitiated).async {
-                // Both arenas are prepared during this one owned helper activation.
-                // Madeira's arena persists; console cores lease reusable pages separately.
-                let windows = IridiumMadeiraRuntime.prepareJITMemory()
-                let prepared = windows && ir_jit_memory_prepare(ir_jit_prepare_region)
+                // Prepare only the requested arena; both persist for later launches.
+                let prepared = windows ? IridiumMadeiraRuntime.prepareJITMemory()
+                    : ir_jit_memory_prepare(ir_jit_prepare_region)
                 DispatchQueue.main.async {
+                    let milliseconds = Int((ProcessInfo.processInfo.systemUptime - preparationStarted) * 1000)
+                    LogStore.shared.log("[jit-memory] target=\(windows ? "windows" : "console") ms=\(milliseconds) prepared=\(prepared ? 1 : 0)")
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
                         self.consoleMemoryBusy = false
