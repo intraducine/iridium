@@ -10,12 +10,14 @@
 #include <atomic>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <dlfcn.h>
 #include "libretro.h"
@@ -101,6 +103,7 @@ struct RetroAPI {
     std::atomic<uint64_t> frameCount;
     std::atomic<bool> muted, imagePending, stopped;
     std::atomic<uint32_t> readAudio, writeAudio;
+    std::atomic<uint64_t> producedAudio, droppedAudio;
     std::vector<int16_t> samples;
     IRAudioPrefill audioPrefill;
     IRFramePacer framePacer;
@@ -117,7 +120,7 @@ struct RetroAPI {
     CGFloat surfaceAspect;
     double currentFPS, initialAudioRate;
     double diagnosticTime;
-    uint64_t diagnosticFrames, emulationSteps, diagnosticSteps;
+    uint64_t diagnosticFrames, emulationSteps, diagnosticSteps, diagnosticAudio;
     unsigned reportedJIT;
     std::atomic<bool> resizeQueued;
     bool needsContextReset, hardwareSelected, shutdownRequested;
@@ -343,14 +346,30 @@ static int16_t inputState(unsigned port, unsigned device, unsigned index, unsign
 static size_t audioBatch(const int16_t *source, size_t count) {
     IRRetroPlayer *p = active;
     if (!p || !source || p->muted.load()) return count;
-    uint32_t write = p->writeAudio.load(std::memory_order_relaxed);
-    uint32_t read = p->readAudio.load(std::memory_order_acquire);
-    size_t accepted = std::min(count, (size_t)(audioCapacity - (write - read)));
-    for (size_t i = 0; i < accepted; ++i) {
-        p->samples[((write + i) % audioCapacity) * 2] = source[i * 2];
-        p->samples[((write + i) % audioCapacity) * 2 + 1] = source[i * 2 + 1];
+    p->producedAudio.fetch_add(count, std::memory_order_relaxed);
+    const bool audioClocked = p->engine == "play" || p->engine == "flycast";
+    const uint32_t limit = audioClocked ? std::min(audioCapacity, (uint32_t)std::ceil(p->initialAudioRate * 0.08)) : audioCapacity;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    size_t offset = 0;
+    while (offset < count && !p->muted.load()) {
+        uint32_t write = p->writeAudio.load(std::memory_order_relaxed);
+        uint32_t read = p->readAudio.load(std::memory_order_acquire);
+        uint32_t queued = write - read;
+        size_t accepted = queued < limit ? std::min(count - offset, (size_t)(limit - queued)) : 0;
+        if (!accepted) {
+            // Only native producer threads wait. Pause releases them; a lost audio route cannot hang shutdown.
+            if (!audioClocked || std::chrono::steady_clock::now() >= deadline) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        for (size_t i = 0; i < accepted; ++i) {
+            p->samples[((write + i) % audioCapacity) * 2] = source[(offset + i) * 2];
+            p->samples[((write + i) % audioCapacity) * 2 + 1] = source[(offset + i) * 2 + 1];
+        }
+        p->writeAudio.store(write + (uint32_t)accepted, std::memory_order_release);
+        offset += accepted;
     }
-    p->writeAudio.store(write + (uint32_t)accepted, std::memory_order_release);
+    if (!p->muted.load()) p->droppedAudio.fetch_add(count - offset, std::memory_order_relaxed);
     return count; // Dropped overflow is consumed, never retried by the core.
 }
 static void audioSample(int16_t l, int16_t r) { const int16_t sample[] = {l, r}; audioBatch(sample, 1); }
@@ -535,7 +554,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
     [EAGLContext setCurrentContext:nil];
     if(!accepted)return false;
     paused=value;muted.store(value);framePacer.reset();
-    if(!value) {diagnosticTime=CACurrentMediaTime();diagnosticFrames=frameCount.load();diagnosticSteps=emulationSteps;}
+    if(!value) {diagnosticTime=CACurrentMediaTime();diagnosticFrames=frameCount.load();diagnosticSteps=emulationSteps;diagnosticAudio=producedAudio.load();}
     [capture suspend:value];
     if(value)[motion stopDeviceMotionUpdates];
     else if(sensorDemand)[motion startDeviceMotionUpdates];
@@ -738,7 +757,7 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
         });
     }];
     muted.store(paused);
-    diagnosticTime=CACurrentMediaTime();diagnosticFrames=0;diagnosticSteps=emulationSteps=0;reportedJIT=0;
+    diagnosticTime=CACurrentMediaTime();diagnosticFrames=0;diagnosticSteps=emulationSteps=diagnosticAudio=0;reportedJIT=0;
     clock = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, owner);
     dispatch_source_set_timer(clock, dispatch_time(DISPATCH_TIME_NOW, 0), (uint64_t)(NSEC_PER_SEC / fps), NSEC_PER_MSEC);
     dispatch_source_set_event_handler(clock, ^{
@@ -766,15 +785,17 @@ static void videoFrame(const void *data, unsigned w, unsigned h, size_t pitch) {
             double now=CACurrentMediaTime();
             if(now-self->diagnosticTime>=5) {
                 uint64_t frames=self->frameCount.load();
-                char message[256];
-                std::snprintf(message,sizeof message,"%s fps=%.2f target=%.2f steps_per_s=%.2f late=%llu discarded=%llu queued_audio=%u underruns=%llu cpu_jit=%u shader_jit=%u",self->engine.c_str(),
+                uint64_t audioFrames=self->producedAudio.load();
+                char message[384];
+                std::snprintf(message,sizeof message,"%s fps=%.2f target=%.2f steps_per_s=%.2f late=%llu discarded=%llu queued_audio=%u underruns=%llu audio_frames_per_s=%.2f audio_rate=%.0f dropped_audio=%llu cpu_jit=%u shader_jit=%u",self->engine.c_str(),
                     (frames-self->diagnosticFrames)/(now-self->diagnosticTime),self->currentFPS,
                     (self->emulationSteps-self->diagnosticSteps)/(now-self->diagnosticTime),
                     (unsigned long long)self->framePacer.late,(unsigned long long)self->framePacer.discarded,
                     self->writeAudio.load()-self->readAudio.load(),(unsigned long long)self->audioPrefill.underruns.load(),
+                    (audioFrames-self->diagnosticAudio)/(now-self->diagnosticTime),self->initialAudioRate,(unsigned long long)self->droppedAudio.load(),
                     self->reportedJIT&1,(self->reportedJIT>>1)&1);
                 report(0,message);
-                self->diagnosticTime=now;self->diagnosticFrames=frames;self->diagnosticSteps=self->emulationSteps;
+                self->diagnosticTime=now;self->diagnosticFrames=frames;self->diagnosticSteps=self->emulationSteps;self->diagnosticAudio=audioFrames;
             }
         }
         catch (const std::exception &failure) {
@@ -908,7 +929,7 @@ extern "C" void *ir_native_engine_create(const char *name,const char *binary,con
         ir_option_set(&p->options,"citra_use_cpu_jit","enabled",true);
         ir_option_set(&p->options,"citra_use_shader_jit","enabled",true);
     }
-    p->frameCount.store(0);p->muted.store(true);p->imagePending.store(false);p->resizeQueued.store(false);p->stopped.store(false);
+    p->frameCount.store(0);p->producedAudio.store(0);p->droppedAudio.store(0);p->muted.store(true);p->imagePending.store(false);p->resizeQueued.store(false);p->stopped.store(false);
     p->readAudio.store(0);p->writeAudio.store(0);p->samples.resize(audioCapacity*2);
     void *image=dlopen(binary,RTLD_NOW|RTLD_LOCAL);p->coreImage=image;
     if(!image) { event(generation,3,"The bundled upstream core could not be loaded."); return nullptr; }

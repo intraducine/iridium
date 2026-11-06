@@ -19,13 +19,18 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertLess(source.index('Color.clear.frame(height: layout.freeSpace)'), source.index('carousel(height: layout.coverHeight'))
         self.assertIn('let coverWidth = height / 1.5', source)
         self.assertNotIn('featuredWidth', source)
+        self.assertNotIn('leadingInset', source)
+        self.assertNotIn('Color.clear.frame(width:', source)
+        self.assertIn('.padding(.trailing, max(0, width - coverWidth - 2 * gutter))', source)
+        self.assertIn('enabled: selection.userIsScrolling', source)
+        self.assertIn('withAnimation(reduceMotion || wideLayout ? nil', source)
         self.assertIn('IridiumGameArtwork(game: entry, featured: false)', source)
         self.assertNotIn('settledCoverID', source)
         self.assertIn('x: proxy.frame(in: .scrollView(axis: .horizontal)).minX,', source)
         self.assertIn('content.scaleEffect(geometry.scale, anchor: .bottomLeading)', source)
         self.assertIn('HStack(spacing: 20) { actions(game); title(game) }', source)
         self.assertEqual(source.count('.accessibilityIdentifier("librarySelectionBorder")'), 1)
-        self.assertIn('.animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selection.highlightedID)', source)
+        self.assertIn('.animation(reduceMotion ? nil : .interactiveSpring(response: 0.22, dampingFraction: 1, blendDuration: 0.04), value: selection.highlightedID)', source)
         self.assertNotIn('if selection.highlightedID == entry.id, !showFocus', source)
         self.assertIn('private struct IridiumLibrarySelectionOutline: Shape', source)
         self.assertIn('var animatableData: CGFloat', source)
@@ -48,6 +53,48 @@ class LibraryLayoutTests(unittest.TestCase):
         self.assertIn('.onChange(of: height) { _, _ in keepSelection() }', source)
         self.assertIn('.onChange(of: geometry.size.height) { _, _ in touchCoverHeight = nil }', source)
         self.assertNotIn('showHints ? 240 : 212', source)
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_shipping_snap_target_uses_content_coordinates_without_direction_bias(self):
+        source = SOURCE.read_text()
+        behavior = source.split('private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {', 1)[1].split('// Animate travel only.', 1)[0]
+        fixture = '''import Foundation
+import CoreGraphics
+protocol ScrollTargetBehavior {}
+struct TargetContext {}
+enum Anchor { case leading }
+struct ScrollTarget { var rect: CGRect; var anchor: Anchor? }
+struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {BEHAVIOR
+let context = TargetContext()
+for count in [1, 2, 24, 100] {
+ let widths = Array(repeating: 66.0, count: count)
+ let behavior = IridiumLibrarySnapBehavior(widths: widths, focusWidth: 66, enabled: true)
+ for index in 0..<count {
+  for displacement in [-22.0, 0, 22] {
+   var target = ScrollTarget(rect: CGRect(x: Double(index) * 76 + displacement, y: 0, width: 400, height: 100))
+   behavior.updateTarget(&target, context: context)
+   precondition(target.rect.minX == Double(index) * 76)
+   precondition(target.anchor == .leading)
+  }
+ }
+ var end = ScrollTarget(rect: CGRect(x: 100000, y: 0, width: 400, height: 100))
+ behavior.updateTarget(&end, context: context)
+ precondition(end.rect.minX == Double(count - 1) * 76)
+}
+// Adding the 20-point viewport gutter here would incorrectly choose the next card.
+var nearFirst = ScrollTarget(rect: CGRect(x: 30, y: 0, width: 400, height: 100))
+IridiumLibrarySnapBehavior(widths: [66,66], focusWidth: 66, enabled: true).updateTarget(&nearFirst, context: context)
+precondition(nearFirst.rect.minX == 0)
+var explicit = ScrollTarget(rect: CGRect(x: 25, y: 0, width: 400, height: 100))
+IridiumLibrarySnapBehavior(widths: [66,66], focusWidth: 66, enabled: false).updateTarget(&explicit, context: context)
+precondition(explicit.rect.minX == 25)
+print("PASS shipping snap: first/last targets, both directions, content inset bias and explicit focus")
+'''.replace('BEHAVIOR', behavior)
+        with tempfile.TemporaryDirectory() as directory:
+            main = Path(directory) / 'main.swift'; main.write_text(fixture)
+            binary = Path(directory) / 'check'
+            subprocess.run(['swiftc', str(ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibrarySelection.swift'), str(main), '-o', str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=10)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for actual selection path checks')
     def test_selection_path_stays_inside_current_row_during_resize_and_retarget(self):

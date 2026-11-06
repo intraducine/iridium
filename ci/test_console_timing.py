@@ -66,7 +66,7 @@ int main() {
 ''')
 
     @unittest.skipUnless((ROOT / 'vendor/Play/Source/ui_libretro/SH_LibreAudio.cpp').is_file(), 'Pinned Play source required')
-    def test_play_preserves_multiple_producer_blocks_without_padding_or_replay(self):
+    def test_play_delivers_vm_audio_without_waiting_for_a_video_frame(self):
         text = phase3_play.audio_source((ROOT / 'vendor/Play/Source/ui_libretro/SH_LibreAudio.cpp').read_text())
         text = '\n'.join(line for line in text.splitlines() if not line.startswith('#include'))
         self.compile_run(r'''
@@ -91,16 +91,82 @@ struct CSH_LibreAudio:CSoundHandler {
 SOURCE
 int main() {
  CSH_LibreAudio audio;int16_t a[]={100,-100,200,-200},b[]={300,-300};
- audio.Write(a,4,44100);audio.Write(b,2,44100);audio.ProcessBuffer();
+ audio.Write(a,4,44100);
+ assert(heard.size()==4); // no video callback or ProcessBuffer is needed
+ audio.Write(b,2,44100);
  assert((heard==std::vector<int16_t>{100,-100,200,-200,300,-300}));
  audio.ProcessBuffer();assert(heard.size()==6);
  audio.Write(a,3,44100);audio.Write(nullptr,2,44100);audio.ProcessBuffer();assert(heard.size()==6);
 }
 '''.replace('SOURCE', text))
 
+    def test_native_audio_producer_is_clocked_without_drops_and_pause_releases_wait(self):
+        text = (BRIDGE / 'IRRetroPlayer.mm').read_text()
+        begin = text.index('static size_t audioBatch(')
+        end = text.index('static void audioSample', begin)
+        producer = text[begin:end]
+        self.compile_run(r'''
+#include <atomic>
+#include <algorithm>
+#include <cmath>
+#include <chrono>
+#include <thread>
+#include <future>
+#include <string>
+#include <vector>
+#include <cassert>
+static constexpr uint32_t audioCapacity=16384;
+struct IRRetroPlayer {
+ std::string engine;
+ std::atomic<bool> muted{false};
+ std::atomic<uint32_t> readAudio{UINT32_MAX-1000},writeAudio{UINT32_MAX-1000};
+ std::atomic<uint64_t> producedAudio{0},droppedAudio{0};
+ double initialAudioRate=44100;
+ std::vector<int16_t> samples=std::vector<int16_t>(audioCapacity*2);
+};
+static IRRetroPlayer *active;
+PRODUCER
+int main() {
+ for(const char *engine : {"play","flycast"}) {
+  IRRetroPlayer player;player.engine=engine;active=&player;
+  // 30-fps content produces 1,470 stereo frames per run. Calling it at 60 Hz
+  // must wait for audio consumption, rather than double speed and drop samples.
+  auto input=std::async(std::launch::async, [&] {
+   std::vector<int16_t> block(1470*2);
+   for(unsigned call=0;call<12;++call) {
+    for(unsigned i=0;i<1470;++i){block[i*2]=(call*1470+i)%30000;block[i*2+1]=-block[i*2];}
+    assert(audioBatch(block.data(),1470)==1470);
+   }
+  });
+  unsigned heard=0;
+  while(heard<12*1470) {
+   auto read=player.readAudio.load(),write=player.writeAudio.load();
+   auto queued=write-read;assert(queued<=3528);
+   auto frames=std::min(queued,441u);
+   for(unsigned i=0;i<frames;++i){
+    assert(player.samples[((read+i)%audioCapacity)*2]==(heard+i)%30000);
+    assert(player.samples[((read+i)%audioCapacity)*2+1]==-(int)((heard+i)%30000));
+   }
+   player.readAudio.store(read+frames);heard+=frames;
+   std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  input.get();assert(player.producedAudio==heard&&player.droppedAudio==0);
+  // A paused or lost output cannot trap a native worker or overwrite unread PCM.
+  player.readAudio=0;player.writeAudio=3528;
+  int16_t block[2]={1,-1};
+  auto blocked=std::async(std::launch::async,[&]{audioBatch(block,1);});
+  player.muted=true;
+  assert(blocked.wait_for(std::chrono::milliseconds(200))==std::future_status::ready);
+  blocked.get();assert(player.writeAudio==3528);
+  player.muted=false;
+  audioBatch(block,1);assert(player.writeAudio==3528&&player.droppedAudio==1);
+ }
+}
+'''.replace('PRODUCER', producer))
+
     def test_production_audio_render_preserves_stereo_pitch_and_wraps_without_padding(self):
         text = (BRIDGE / 'IRRetroPlayer.mm').read_text()
-        begin = text.index('        uint32_t read = p->readAudio.load')
+        begin = text.index('        uint32_t read = p->readAudio.load', text.index('audioSource = [[AVAudioSourceNode'))
         end = text.index('return noErr;', begin) + len('return noErr;')
         render = text[begin:end]
         self.compile_run(r'''

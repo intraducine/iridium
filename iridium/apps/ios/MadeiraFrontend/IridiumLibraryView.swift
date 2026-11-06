@@ -124,7 +124,7 @@ struct IridiumLibraryView: View {
         }
         if let target = selection.select(id) {
             selectedID = selection.selectedID
-            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) {
+            withAnimation(reduceMotion || wideLayout ? nil : .smooth(duration: 0.22)) {
                 carouselPosition.scrollTo(id: target, anchor: .leading)
             }
         }
@@ -377,9 +377,6 @@ struct IridiumLibraryView: View {
                 ForEach(entries) { entry in
                     cover(entry, height: height, width: coverWidth, order: order)
                 }
-                // Real content space lets even the last cover reach
-                // the leading edge when every cover fits on screen.
-                Color.clear.frame(width: max(0, width - coverWidth - 2 * gutter - 10), height: 1)
             }
                 .overlay {
                     if let id = selection.highlightedID, let index = order.firstIndex(of: id),
@@ -390,7 +387,7 @@ struct IridiumLibraryView: View {
                                 scrollX: proxy.frame(in: .scrollView(axis: .horizontal)).minX,
                                 width: coverWidth, height: height, expands: wideLayout && !reduceMotion)
                                 .stroke(.white, lineWidth: 2)
-                                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: selection.highlightedID)
+                                .animation(reduceMotion ? nil : .interactiveSpring(response: 0.22, dampingFraction: 1, blendDuration: 0.04), value: selection.highlightedID)
                                 .accessibilityIdentifier("librarySelectionBorder")
                         }.allowsHitTesting(false).accessibilityHidden(true)
                     }
@@ -412,12 +409,14 @@ struct IridiumLibraryView: View {
                         }
                     }
                 }.scrollTargetLayout()
+                // Padding is scrollable space, not another target after the last game.
+                .padding(.trailing, max(0, width - coverWidth - 2 * gutter))
                 .padding(.top, wideLayout ? height * 0.5 : 0)
                 .padding(.bottom, wideLayout ? IridiumLibraryCoverGeometry.lowerEdge : 0)
         }.scrollIndicators(.hidden).accessibilityIdentifier("libraryCarousel")
             .scrollTargetBehavior(IridiumLibrarySnapBehavior(
                 widths: widths,
-                focusWidth: Double(height / 1.5), leadingInset: Double(gutter), enabled: selection.userIsScrolling))
+                focusWidth: Double(height / 1.5), enabled: selection.userIsScrolling))
             .scrollPosition($carouselPosition, anchor: .leading)
             .contentMargins(.horizontal, gutter, for: .scrollContent)
             .padding(.horizontal, -gutter)
@@ -786,10 +785,9 @@ private struct IridiumLibraryMeasureHeight: ViewModifier {
 private struct IridiumLibrarySnapBehavior: ScrollTargetBehavior {
     let widths: [Double]
     let focusWidth: Double
-    let leadingInset: Double
     let enabled: Bool
     func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
-        guard enabled, let x = IridiumLibrarySelection.restingOffset(Double(target.rect.minX) + leadingInset,
+        guard enabled, let x = IridiumLibrarySelection.restingOffset(Double(target.rect.minX),
             widths: widths, spacing: 10, focusWidth: focusWidth) else { return }
         target.rect.origin.x = x
         target.anchor = .leading
