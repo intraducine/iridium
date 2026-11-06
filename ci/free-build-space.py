@@ -74,14 +74,20 @@ def cleanup_ci_runtimes(root):
         if (not re.fullmatch(r'[A-Fa-f0-9]{8}(?:-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}', identifier)
                 or not image['runtimeIdentifier'].startswith('com.apple.CoreSimulator.SimRuntime.')):
             raise ValueError('Unexpected simulator runtime identifier')
-        identifiers.append(identifier)
+        if image.get('deletable') is True:
+            identifiers.append(identifier)
     removed = 0
     for identifier in identifiers:
         # Recheck immediately: runtime deletion must never shut down another task.
         devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'booted', '--json'], text=True))
         if any(device.get('state') == 'Booted' for group in devices['devices'].values() for device in group):
             raise ValueError('A simulator became active; keep remaining runtime images')
-        subprocess.run(['xcrun', 'simctl', 'runtime', 'delete', identifier], check=True)
+        result = subprocess.run(['xcrun', 'simctl', 'runtime', 'delete', identifier],
+                                capture_output=True, text=True)
+        if result.returncode:
+            # Bundled/stale images can be listed but unavailable to deletion. Admission still requires actual free space.
+            print(f'Kept simulator image {identifier}: simctl returned {result.returncode}', flush=True)
+            continue
         removed += 1
         if shutil.disk_usage(root).free >= target: break
     current = [subprocess.check_output(['xcrun', '--sdk', name, '--show-sdk-path'], text=True).strip()
