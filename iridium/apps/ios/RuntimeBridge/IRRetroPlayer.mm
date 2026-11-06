@@ -349,11 +349,16 @@ static size_t audioBatch(const int16_t *source, size_t count) {
     p->producedAudio.fetch_add(count, std::memory_order_relaxed);
     const bool audioClocked = p->engine == "play" || p->engine == "flycast";
     const uint32_t limit = audioClocked ? std::min(audioCapacity, (uint32_t)std::ceil(p->initialAudioRate * 0.08)) : audioCapacity;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    uint32_t observedRead = p->readAudio.load(std::memory_order_acquire);
     size_t offset = 0;
     while (offset < count && !p->muted.load()) {
         uint32_t write = p->writeAudio.load(std::memory_order_relaxed);
         uint32_t read = p->readAudio.load(std::memory_order_acquire);
+        if (read != observedRead) {
+            observedRead = read;
+            deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+        }
         uint32_t queued = write - read;
         size_t accepted = queued < limit ? std::min(count - offset, (size_t)(limit - queued)) : 0;
         if (!accepted) {
