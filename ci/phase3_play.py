@@ -4,24 +4,16 @@
 def audio_source(text):
     start = text.index('void CSH_LibreAudio::Write(')
     end = text.index('bool CSH_LibreAudio::HasFreeBuffers()', start)
-    # Preserve PCM sample counts and every producer block until the frontend drains it.
+    # The VM produces audio independently of rendered frames. Feed the shared sink directly.
     return text[:start] + '''void CSH_LibreAudio::Write(int16* buffer, unsigned int sampleCount, unsigned int sampleRate)
 {
     if(!buffer || !sampleCount || sampleCount > 88200 || sampleCount % 2) return;
-    std::lock_guard<std::mutex> lock(m_buffer_lock);
-    if(m_buffer.size() + sampleCount > 88200) m_buffer.clear();
-    m_buffer.insert(m_buffer.end(), buffer, buffer + sampleCount);
+    if(g_set_audio_sample_batch_cb)
+        g_set_audio_sample_batch_cb(buffer, sampleCount / 2);
 }
 
 void CSH_LibreAudio::ProcessBuffer()
 {
-    std::vector<int16> pending;
-    {
-        std::lock_guard<std::mutex> lock(m_buffer_lock);
-        pending.swap(m_buffer);
-    }
-    if(!pending.empty() && g_set_audio_sample_batch_cb)
-        g_set_audio_sample_batch_cb(pending.data(), pending.size() / 2);
 }
 
 ''' + text[end:]

@@ -41,7 +41,7 @@ final class Host {
     var selectionFeedback = UIImpactFeedbackGenerator()
     var selection = IridiumLibrarySelection(), carouselPosition = Position()
     var selectedID: UUID?, selected: Game?, pageArtwork = ""
-    var showFocus = false, showHints = false, reduceMotion = false
+    var showFocus = false, showHints = false, reduceMotion = false, wideLayout = false
     let reorderSession = IridiumLibraryDragSession()
     let games: [Game]
     var focusRestores = 0
