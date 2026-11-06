@@ -104,7 +104,7 @@ int main() {
         text = (BRIDGE / 'IRRetroPlayer.mm').read_text()
         begin = text.index('static size_t audioBatch(')
         end = text.index('static void audioSample', begin)
-        producer = text[begin:end]
+        producer = text[begin:end].replace('std::chrono::steady_clock::now()', 'audioNow()')
         self.compile_run(r'''
 #include <atomic>
 #include <algorithm>
@@ -125,9 +125,14 @@ struct IRRetroPlayer {
  std::vector<int16_t> samples=std::vector<int16_t>(audioCapacity*2);
 };
 static IRRetroPlayer *active;
+static bool useWallClock = false;
+static auto audioNow() {
+ return useWallClock ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+}
 PRODUCER
 int main() {
  for(const char *engine : {"play","flycast"}) {
+  useWallClock=false; // PCM concurrency is independent of host scheduling latency.
   IRRetroPlayer player;player.engine=engine;active=&player;
   // 30-fps content produces 1,470 stereo frames per run. Calling it at 60 Hz
   // must wait for audio consumption, rather than double speed and drop samples.
@@ -159,7 +164,71 @@ int main() {
   assert(blocked.wait_for(std::chrono::milliseconds(200))==std::future_status::ready);
   blocked.get();assert(player.writeAudio==3528);
   player.muted=false;
+  useWallClock=true;
   audioBatch(block,1);assert(player.writeAudio==3528&&player.droppedAudio==1);
+ }
+}
+'''.replace('PRODUCER', producer))
+
+    def test_audio_timeout_tracks_stalled_consumption_not_long_healthy_batches(self):
+        text = (BRIDGE / 'IRRetroPlayer.mm').read_text()
+        begin = text.index('static size_t audioBatch(')
+        producer = text[begin:text.index('static void audioSample', begin)]
+        # Replace only the platform clock/wait boundaries, not the production queue logic.
+        self.assertEqual(producer.count('std::chrono::steady_clock::now()'), 3)
+        self.assertEqual(producer.count('std::this_thread::sleep_for(std::chrono::milliseconds(1));'), 1)
+        producer = producer.replace('std::chrono::steady_clock::now()', 'audioNow()').replace('std::this_thread::sleep_for(std::chrono::milliseconds(1));', 'audioWait();')
+        self.compile_run(r'''
+#include <atomic>
+#include <algorithm>
+#include <cmath>
+#include <chrono>
+#include <string>
+#include <vector>
+#include <cassert>
+static constexpr uint32_t audioCapacity=16384;
+struct IRRetroPlayer {
+ std::string engine;
+ std::atomic<bool> muted{false};
+ std::atomic<uint32_t> readAudio{0},writeAudio{0};
+ std::atomic<uint64_t> producedAudio{0},droppedAudio{0};
+ double initialAudioRate=44100;
+ std::vector<int16_t> samples=std::vector<int16_t>(audioCapacity*2);
+};
+static IRRetroPlayer *active;
+static std::chrono::steady_clock::time_point tick;
+static bool consuming=true,cancelOnWait=false;
+static unsigned heard=0;
+static auto audioNow(){return tick;}
+static void audioWait(){
+ tick+=std::chrono::milliseconds(10);
+ if(cancelOnWait){active->muted=true;return;}
+ if(!consuming)return;
+ auto read=active->readAudio.load(),write=active->writeAudio.load();
+ assert(write-read<=3528);
+ auto frames=std::min(write-read,441u);
+ for(unsigned i=0;i<frames;++i){
+  assert(active->samples[((read+i)%audioCapacity)*2]==(heard+i)%30000);
+  assert(active->samples[((read+i)%audioCapacity)*2+1]==-(int)((heard+i)%30000));
+ }
+ active->readAudio=read+frames;heard+=frames;
+}
+PRODUCER
+int main(){
+ for(const char *engine:{"play","flycast"}){
+  IRRetroPlayer p;p.engine=engine;active=&p;heard=0;consuming=true;cancelOnWait=false;
+  tick={};std::vector<int16_t> block(17640*2);
+  for(unsigned i=0;i<17640;++i){block[i*2]=i%30000;block[i*2+1]=-block[i*2];}
+  audioBatch(block.data(),17640);
+  while(p.readAudio!=p.writeAudio)audioWait();
+  assert(heard==17640&&p.droppedAudio==0);
+  assert(tick>=std::chrono::steady_clock::time_point{}+std::chrono::milliseconds(400));
+  // A real output stall still expires; pause releases the same loop immediately.
+  consuming=false;p.readAudio=0;p.writeAudio=3528;auto start=tick;
+  audioBatch(block.data(),1);
+  assert(tick-start==std::chrono::milliseconds(100)&&p.droppedAudio==1);
+  cancelOnWait=true;start=tick;audioBatch(block.data(),1);
+  assert(tick-start==std::chrono::milliseconds(10)&&p.muted&&p.droppedAudio==1);
  }
 }
 '''.replace('PRODUCER', producer))
