@@ -97,17 +97,43 @@ class HostedImageSpaceTests(unittest.TestCase):
             def output(command, **kwargs):
                 if command[1] == '--sdk': return str(sdks[command[2]])
                 if 'devices' in command: return json.dumps({'devices': {}})
-                return json.dumps({key: {'identifier': key, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'}
+                return json.dumps({key: {'identifier': key, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', 'deletable': True}
                                    for key in (identifier, second)})
             free = [shutil._ntuple_diskusage(100, 80, n * 1024**3) for n in (96, 102, 112, 112)]
             with patch.dict(os.environ, RUNNER_ENVIRONMENT='github-hosted', GITHUB_ACTIONS='true', GITHUB_WORKSPACE=str(root), IRIDIUM_CHROME_SIMULATOR=''), \
                  patch.object(space.subprocess, 'check_output', side_effect=output), \
                  patch.object(space.subprocess, 'run') as remove, \
                  patch.object(space.shutil, 'disk_usage', side_effect=free):
+                remove.return_value = subprocess.CompletedProcess([], 0)
                 space.cleanup_ci_runtimes(root)
             self.assertEqual([call.args[0] for call in remove.call_args_list],
                              [['xcrun', 'simctl', 'runtime', 'delete', key] for key in (identifier, second)])
             self.assertTrue(all(path.is_dir() for path in sdks.values()))
+
+    def test_bundled_unknown_and_failed_deletions_never_bypass_space_admission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sdks = {name: root / name for name in ('iphoneos', 'iphonesimulator')}
+            for path in sdks.values(): path.mkdir()
+            keys = [f'12345678-1234-1234-1234-1234567890a{n}' for n in range(4)]
+            images = {key: {'identifier': key, 'runtimeIdentifier': 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'} for key in keys}
+            images[keys[0]]['deletable'] = False
+            images[keys[2]]['deletable'] = images[keys[3]]['deletable'] = True
+            def output(command, **kwargs):
+                if command[1] == '--sdk': return str(sdks[command[2]])
+                if 'devices' in command: return json.dumps({'devices': {}})
+                return json.dumps(images)
+            for available in [39, 60]:
+                with patch.dict(os.environ, RUNNER_ENVIRONMENT='github-hosted', GITHUB_ACTIONS='true', GITHUB_WORKSPACE=str(root), IRIDIUM_CHROME_SIMULATOR=''), \
+                     patch.object(space.subprocess, 'check_output', side_effect=output), \
+                     patch.object(space.subprocess, 'run', side_effect=[subprocess.CompletedProcess([], 2), subprocess.CompletedProcess([], 0)]) as remove, \
+                     patch.object(space.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(200, 100, available * 1024**3)):
+                    if available < 40:
+                        with self.assertRaisesRegex(ValueError, 'reserve'): space.cleanup_ci_runtimes(root)
+                    else:
+                        space.cleanup_ci_runtimes(root)
+                self.assertEqual([call.args[0][-1] for call in remove.call_args_list], keys[2:])
+                self.assertTrue(all(path.is_dir() for path in sdks.values()))
 
     def test_idle_images_are_best_effort_and_the_stage_reserve_is_required(self):
         with tempfile.TemporaryDirectory() as folder:
