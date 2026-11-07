@@ -371,9 +371,10 @@ class FrontendImportTests(unittest.TestCase):
         self.assertIn(component_ref, result['group']['children'])
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
                          if key != 'existing-resource']
-        self.assertEqual([r for r in resource_refs if r.get('path') == 'PSP'], [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
-                                         'path': 'PSP', 'sourceTree': '<group>'}])
-        self.assertFalse(any(r.get('path') == 'MenuAudio' for r in resource_refs))
+        self.assertEqual([r for r in resource_refs if r.get('path') in {'PSP', 'MenuAudio'}], [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+                                         'path': 'PSP', 'sourceTree': '<group>'},
+                                        {'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+                                         'path': 'MenuAudio', 'sourceTree': '<group>'}])
         self.assertIn('existing-resource', result['resources']['files'])
         source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
                        if key != 'existing-source']

@@ -11,8 +11,22 @@ licenses in `iridium/apps/ios/App/source-ownership.json` and `App/Origin`.
 Iridium owns its library, artwork, navigation, setup, controls, settings, and
 runtime adapters. Frozen build-43 overlays remain test fixtures only.
 
-Library and Settings navigation do not play UI sounds or activate an audio
-session. Game audio and touch haptics remain owned by their existing systems.
+Library and Settings navigation use ten selected clips from AtkeySounds'
+Nintendo-ish Menu Sounds pack, published on 2026-10-21. Its royalty-free
+license permits app use and modification and distribution within finished
+projects, and prohibits standalone redistribution or resale of the sounds.
+The audio is licensed separately from Iridium's code. The original license,
+archive/source/output hashes, and PCM conversion details are bundled in
+`App/Resources/MenuAudio`. A saved Menu sounds switch controls playback.
+Focus, invoke, overlay show/hide, page movement, and Back have separate cues.
+Four existing focus clips alternate. Each crossed cover gets a cue, including
+coalesced scroll updates and rapid keyboard/controller steps. Independent
+AVAudioPlayer voices retain overlapping tails; coalesced focus onsets are spaced
+12 ms apart. Idle voices are reused. Menu audio uses the ambient audio category
+and stops on mute, interruption, backgrounding, or game launch. Runtime adapters
+keep ownership of the audio session during gameplay. Excess silence and very
+low tails are trimmed; short edge fades and lower levels retain the original
+pitch and timbre. Focus clips are 136-270 ms; other cues are 409-935 ms.
 
 The library uses lazy cover views and changes focus only at cover boundaries.
 Backdrop transitions retain an opaque outgoing image and at most two layers.
@@ -553,8 +567,8 @@ configuration use 0.3.0 for the app and helpers. CI still supplies a unique buil
 number. This changes Iridium's app version, not Madeira's 0.2.0 engine pin or the
 other modular runtime pins. The current user, storage, JIT, build, runtime, and
 validation guides describe the integrated implementation. Historical release
-evidence retains its original versions. Menu sound effects are not packaged in
-this integration; adding them remains a separate draft PR.
+evidence retains its original versions. The main integration omits menu sounds;
+this draft adds them separately.
 
 Visible help uses shorter instructions for controls, imports, INI files, store
 sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button

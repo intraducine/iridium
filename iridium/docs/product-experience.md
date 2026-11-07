@@ -26,7 +26,7 @@ A disconnected external drive does not remove its games from the library.
 The loading screen shows the current stage, elapsed time, and live app memory
 use. It stays until the game is ready or launch fails. A middle dot followed by
 **JIT** beside the system name marks games which need JIT, including PSP when its
-JIT mode is selected. Menu sound effects are absent from this integration.
+JIT mode is selected. **Settings → Menu sounds** controls optional menu effects.
 
 For Windows prerequisites, use **Run Installer** with the required EXE or MSI.
 Successful groups are remembered. Closing requests cancellation; follow any
