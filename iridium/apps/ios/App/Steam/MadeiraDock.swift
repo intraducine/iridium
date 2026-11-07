@@ -32,8 +32,10 @@ struct DockGame: Identifiable, Equatable, Sendable, Codable {
     let name: String
     let installDir: String      // one folder name under <library>/common
     let library: String         // drive-relative steamapps folder
-    let installed: Bool         // StateFlags has "fully installed"
+    var installed: Bool         // StateFlags and the install folder agree
     let customExecutables: Bool // the install record lists per-user executables (CheckGuid)
+    var filesMissing: Bool? = nil
+    var sharedOnly: Bool? = nil
 
     /// Windows path of the game's folder, which Dock requires Valve's client to resolve to.
     var windowsInstallPath: String {
@@ -107,8 +109,47 @@ enum MadeiraDock {
 
     /// Installed games in the client's own library (`<client>/steamapps`) and the other
     /// libraries on C: that its `libraryfolders.vdf` lists. Read-only.
-    static func games(drive: URL) -> [DockGame] {
+    static func games(drive: URL, includeSharedOnly: Bool = false) -> [DockGame] {
         let fm = FileManager.default
+        let libraries = steamLibraries(drive: drive)
+        let external = ExternalDrives.steamLibraries
+        var result: [DockGame] = []
+        // Apps that only lend depots to another install ("Shared Only", e.g. GTA V
+        // Enhanced's RGL/SC 1899670) have a record but nothing to start. A game that
+        // lends depots but has its own installed too (a base game whose depots its
+        // expansions share) stays: the same test as the uninstall (SteamInstall.swift).
+        var lent: [Int: Set<String>] = [:], installed: [Int: Set<String>] = [:]
+        for library in libraries.prefix(32) {
+            let folder = drive.appendingPathComponent(library, isDirectory: true)
+            let isExternal = external.contains { $0.caseInsensitiveCompare(library) == .orderedSame }
+            guard isExternal || folder.resolvingSymlinksInPath().path.hasPrefix(drive.resolvingSymlinksInPath().path + "/"),
+                  let names = try? fm.contentsOfDirectory(atPath: folder.path) else { continue }
+            for file in names.sorted().prefix(2000) where file.hasPrefix("appmanifest_") && file.hasSuffix(".acf") {
+                guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)) else { continue }
+                let held = depots(manifest: data)
+                lent.merge(held.lent) { $0.union($1) }
+                guard var game = game(manifest: data, library: library),
+                      !result.contains(where: { $0.id == game.id }) else { continue }
+                let install = folder.appendingPathComponent("common/" + game.installDir, isDirectory: true)
+                var directory: ObjCBool = false
+                let present = fm.fileExists(atPath: install.path, isDirectory: &directory) && directory.boolValue &&
+                    ((try? fm.contentsOfDirectory(atPath: install.path).isEmpty) == false)
+                game.filesMissing = !present
+                game.installed = game.installed && present && !fm.fileExists(atPath: folder.appendingPathComponent("downloading/\(game.id)").path)
+                installed[game.id] = held.installed
+                result.append(game)
+            }
+        }
+        for index in result.indices {
+            result[index].sharedOnly = lent[result[index].id].map { installed[result[index].id, default: []].isSubset(of: $0) } ?? false
+        }
+        if !includeSharedOnly { result.removeAll { $0.sharedOnly == true } }
+        return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The client's own library, the libraries on C: its `libraryfolders.vdf` lists and
+    /// the ones on external drives, as drive_c-relative steamapps folders. Read-only.
+    static func steamLibraries(drive: URL) -> [String] {
         let clientLibrary = SteamRuntimeFiles.relativeRoot + "/steamapps"
         var libraries = [clientLibrary]
         if let data = try? Data(contentsOf: drive.appendingPathComponent(clientLibrary + "/libraryfolders.vdf")),
@@ -119,28 +160,13 @@ enum MadeiraDock {
                 if !libraries.contains(where: { $0.caseInsensitiveCompare(relative) == .orderedSame }) { libraries.append(relative) }
             }
         }
-        var result: [DockGame] = []
-        // Apps that only lend depots to another install ("Shared Only", e.g. GTA V
-        // Enhanced's RGL/SC 1899670) have a record but nothing to start. A game that
-        // lends depots but has its own installed too (a base game whose depots its
-        // expansions share) stays: the same test as the uninstall (SteamInstall.swift).
-        var lent: [Int: Set<String>] = [:], installed: [Int: Set<String>] = [:]
-        for library in libraries.prefix(16) {
-            let folder = drive.appendingPathComponent(library, isDirectory: true)
-            guard folder.resolvingSymlinksInPath().path.hasPrefix(drive.resolvingSymlinksInPath().path + "/"),
-                  let names = try? fm.contentsOfDirectory(atPath: folder.path) else { continue }
-            for file in names.sorted().prefix(2000) where file.hasPrefix("appmanifest_") && file.hasSuffix(".acf") {
-                guard let data = try? Data(contentsOf: folder.appendingPathComponent(file)) else { continue }
-                let held = depots(manifest: data)
-                lent.merge(held.lent) { $0.union($1) }
-                guard let game = game(manifest: data, library: library),
-                      !result.contains(where: { $0.id == game.id }) else { continue }
-                installed[game.id] = held.installed
-                result.append(game)
-            }
+        // Libraries on external drives (ExternalDrives.swift). They are reached
+        // through drive_c/External/<name> links, so they resolve outside drive_c.
+        let external = ExternalDrives.steamLibraries
+        for library in external where !libraries.contains(where: { $0.caseInsensitiveCompare(library) == .orderedSame }) {
+            libraries.append(library)
         }
-        result.removeAll { game in lent[game.id].map { installed[game.id, default: []].isSubset(of: $0) } ?? false }
-        return result.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return libraries
     }
 
     /// "C:\\Games\\SteamLibrary" -> "Games/SteamLibrary/steamapps" (C: only).
@@ -162,9 +188,12 @@ enum MadeiraDock {
             throw DockError.message("Steam's client files are missing. Download Valve's client components first.")
         }
         var isFolder: ObjCBool = false
-        guard game.installed,
-              FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/common/" + game.installDir).path, isDirectory: &isFolder),
-              isFolder.boolValue else {
+        let install = drive.appendingPathComponent(game.library + "/common/" + game.installDir)
+        guard FileManager.default.fileExists(atPath: install.path, isDirectory: &isFolder), isFolder.boolValue,
+              (try? FileManager.default.contentsOfDirectory(atPath: install.path).isEmpty) == false else {
+            throw DockError.message("The game's files are missing. Repair the installation before playing.")
+        }
+        guard game.installed, !FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/downloading/\(game.id)").path) else {
             throw DockError.message("Steam does not list this game as fully installed.")
         }
     }
@@ -235,6 +264,9 @@ enum MadeiraDock {
                 return fields["session-authenticated-online"] == "1"
                     ? "Steam signed in but did not confirm this game's license in time. Export the log before trying again."
                     : "Steam did not finish signing in. Check the connection and try again."
+            }
+            if result == 54, fields["launch-user-arguments-invalid"] != nil {
+                return "The game's launch arguments are invalid or too long. Edit them in Game details and try again."
             }
             if result == 35 { return "Steam did not confirm a license for this game on the signed-in account." }
             // Offline start (madeira-dock docs/OFFLINE.md): Valve's client decides.
@@ -321,16 +353,17 @@ enum MadeiraDock {
         "session-offline-logon-retry", "session-offline-logon-state", "session-offline-callback-id",
         "session-offline-entitled", "session-offline-listed", "session-offline-timeout-state",
         "session-offline-fallback", "session-offline-ready",
+        "launch-user-arguments-bytes", "launch-user-arguments-invalid",
         "launch-client-error", "launch-option-index", "launch-option-invalid", "launch-option-missing",
         "launch-update-wait", "launch-update-retry", "launch-update-ready",
         "launch-config-wait", "launch-config-gave-up", "launch-session-wait", "launch-session-gave-up",
-        "ceg-request", "ceg-request-result", "ceg-request-busy", "ceg-server-result", "ceg-job-result",
-        "ceg-finished-jobs", "ceg-result", "ceg-disabled", "ceg-unsupported-client",
-        "ceg-scm", "ceg-scm-started", "ceg-scm-error", "ceg-service-registered", "ceg-service-install", "ceg-service-stop", "ceg-scm-stopped",
-        "game-scm", "game-scm-timeout", "launch-keep-alive",
+        "ceg-request", "ceg-request-result", "ceg-request-busy", "ceg-request-retry", "ceg-server-result", "ceg-job-result",
+        "ceg-finished-jobs", "ceg-result", "ceg-already-prepared", "ceg-disabled", "ceg-unsupported-client",
+        "ceg-scm", "ceg-scm-started", "ceg-scm-error", "ceg-service-registered", "ceg-service-install", "ceg-service-start", "ceg-service-start-retry", "ceg-service-stop", "ceg-scm-stopped",
+        "game-scm", "game-scm-services", "game-scm-timeout", "launch-keep-alive", "launch-keep-alive-held",
         "shutdown-begin", "shutdown-complete", "probe-result"]
     /// The host's report rounds (madeira-dock src/main.c).
-    static let reportRounds: Set<String> = ["ml1820", "ml1830", "ml1860", "ml1870", "ml1970", "ml1990", "ml2000", "ml2011", "ml2015", "ml2016"]
+    static let reportRounds: Set<String> = ["ml1820", "ml1830", "ml1860", "ml1870", "ml1970", "ml1990", "ml2000", "ml2011", "ml2015", "ml2016", "ml2020"]
 
     static func parseReport(_ data: Data) -> Report {
         guard data.count <= 32768, let text = String(data: data, encoding: .utf8) else { return Report() }
@@ -431,7 +464,7 @@ enum MadeiraDock {
     }
 
     /// The host's environment for one launch.
-    static func configure(_ game: DockGame, launchOption: UInt32 = 0) {
+    static func configure(_ game: DockGame, launchOption: UInt32 = 0, arguments: String = "") {
         for key in ["MADEIRA_STEAM_HOST_PROBE", "MADEIRA_STEAM_HOST_SESSION", "MADEIRA_STEAM_HOST_LOGIN", "MADEIRA_STEAM_HOST_LAUNCH"] {
             setenv(key, "1", 1)
         }
@@ -440,6 +473,10 @@ enum MadeiraDock {
         setenv("MADEIRA_STEAM_HOST_CLIENT_DIR", SteamRuntimeFiles.windowsRoot, 1)
         setenv("MADEIRA_STEAM_HOST_EXPECTED_INSTALL", game.windowsInstallPath, 1)
         setenv("MADEIRA_STEAM_HOST_LOG", "C:\\madeira-dock.txt", 1)
+        // The client receives only this game's extra arguments, separately from the host's
+        // explorer/cmd command. An empty profile clears any previous game's choice.
+        if arguments.isEmpty { unsetenv("MADEIRA_STEAM_HOST_ARGUMENTS") }
+        else { setenv("MADEIRA_STEAM_HOST_ARGUMENTS", arguments, 1) }
         // The install record lists per-user executables: Dock asks Valve's client to prepare
         // them before it launches. env.MADEIRA_DOCK_CEG = 0 never asks.
         if game.customExecutables && SteamSignIn.flag("MADEIRA_DOCK_CEG", default: true) {

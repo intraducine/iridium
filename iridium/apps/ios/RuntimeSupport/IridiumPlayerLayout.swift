@@ -55,21 +55,14 @@ enum IridiumMenuPlacement {
 }
 
 enum Iridium3DSTouchProjection {
-    /// Azahar's selected top-bottom layout is a 400x480 canvas. Its lower
-    /// 320x240 touchscreen is centered below the top screen. Rejecting other
-    /// taps also prevents upstream from pressing the last valid touch point.
-    static func project(point: CGPoint, size: CGSize) -> (Int16, Int16)? {
-        guard point.x.isFinite, point.y.isFinite else { return nil }
-        let canvas = IridiumPlayerLayout.aspectFit(400.0 / 480.0, in: CGRect(origin: .zero, size: size))
-        guard canvas.width > 0, canvas.height > 0 else { return nil }
-        let x = (point.x - canvas.minX) / canvas.width
-        let y = (point.y - canvas.minY) / canvas.height
-        guard x >= 0.1, x < 0.9, y >= 0.5, y < 1 else { return nil }
-        // Encode pixel centers so upstream's truncating conversion cannot
-        // round an edge onto the adjacent non-touch area.
-        let px = min(359, max(40, floor(x * 400))) + 0.5
-        let py = min(479, max(240, floor(y * 480))) + 0.5
-        return (Int16((px / 400 * 65534 - 32767).rounded()), Int16((py / 480 * 65534 - 32767).rounded()))
+    // The core maps canvas coordinates through its current screen layout.
+    static func canvas(point: CGPoint, size: CGSize, aspect: CGFloat) -> (Int16, Int16)? {
+        guard point.x.isFinite, point.y.isFinite, aspect.isFinite, aspect > 0 else { return nil }
+        let frame = IridiumPlayerLayout.aspectFit(aspect, in: CGRect(origin: .zero, size: size))
+        guard frame.width > 0, frame.height > 0, frame.contains(point) else { return nil }
+        let x = min(1, max(0, (point.x - frame.minX) / frame.width))
+        let y = min(1, max(0, (point.y - frame.minY) / frame.height))
+        return (Int16((x * 65534 - 32767).rounded()), Int16((y * 65534 - 32767).rounded()))
     }
 }
 
@@ -137,11 +130,11 @@ enum IridiumConsoleControlMapping {
         if platform == "dreamcast", let label = ["A": "B", "B": "A", "X": "Y", "Y": "X", "LT": "L", "RT": "R"][action] { return label }
         if platform == "playStation2", let label = ["A": "Circle", "B": "Cross", "X": "Triangle", "Y": "Square", "LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2"][action] { return label }
         if platform == "wii" {
-            let remote = ["Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
-            let classic = ["Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]
+            let remote = ["DPad": "D-pad", "LS": "Nunchuk Stick", "RS": "Pointer", "Menu": "+", "View": "−", "X": "2", "Y": "1", "LB": "C", "RB": "Z", "LT": "Shake", "RT": "Home", "L3": "Home"]
+            let classic = ["DPad": "D-pad", "LS": "Left Stick", "RS": "Right Stick", "Menu": "+", "View": "−", "LB": "ZL", "RB": "ZR", "LT": "L", "RT": "R", "L3": "Home"]
             return (wiiRemote == 2 ? classic : remote)[action] ?? action
         }
-        if platform == "gameCube", let label = ["LB": "L Click", "RB": "Z", "LT": "L", "RT": "R"][action] { return label }
+        if platform == "gameCube", let label = ["LS": "Stick", "RS": "C Stick", "LB": "L Click", "RB": "Z", "LT": "L", "RT": "R"][action] { return label }
         if action == "DPad" { return "D-pad" }; if action == "Menu" { return "Start" }; if action == "View" { return "Select" }
         if profile == .psp {
             return ["A": "Cross", "B": "Circle", "X": "Square", "Y": "Triangle", "LB": "L", "RB": "R"][action] ?? action
@@ -170,6 +163,7 @@ struct IridiumPlayerButton: Identifiable {
 
 struct IridiumPlayerLayout {
     let viewport: CGRect
+    let display: CGRect
     let dpad: CGRect
     let stick: CGRect?
     let buttons: [IridiumPlayerButton]
@@ -178,11 +172,12 @@ struct IridiumPlayerLayout {
     /// The viewport is solved before controls. Landscape controls never subtract game area.
     init(profile: IridiumPlayerProfile, bounds: CGRect, touchVisible: Bool) {
         let landscape = bounds.width > bounds.height
-        var display = bounds
+        var available = bounds
         if !landscape && touchVisible {
-            display.size.height = max(0, bounds.height - min(300, bounds.height * 0.48))
+            available.size.height = max(0, bounds.height - min(300, bounds.height * 0.48))
         }
-        viewport = Self.aspectFit(profile.aspectRatio, in: display)
+        display = available
+        viewport = Self.aspectFit(profile.aspectRatio, in: available)
         menu = CGPoint(x: bounds.midX, y: bounds.minY + 26)
         let left = bounds.minX, right = bounds.maxX, bottom = bounds.maxY
         let dpadCenter = CGPoint(x: left + 76, y: bottom - (landscape ? 132 : 166))
@@ -216,12 +211,13 @@ struct IridiumPlayerLayout {
             let shoulderY = landscape ? bounds.minY + 26 : bottom - 264
             add("L", bit: 1 << 10, x: left + 44, y: shoulderY, width: 60)
             add("R", bit: 1 << 11, x: right - 44, y: shoulderY, width: 60)
-            add("L2", bit: 1 << 12, x: left + 112, y: shoulderY, width: 60)
-            add("R2", bit: 1 << 13, x: right - 112, y: shoulderY, width: 60)
+            add("L2", bit: 1 << 12, x: left + 124, y: shoulderY, width: 60)
+            add("R2", bit: 1 << 13, x: right - 124, y: shoulderY, width: 60)
         }
-        let selectX = landscape ? bounds.midX - 84 : right - 116
-        let startX = landscape ? bounds.midX + 84 : right - 44
-        let systemY = landscape ? bounds.minY + 26 : bottom - 44
+        let dualStick = profile == .console || profile == .nintendo3DS
+        let selectX = landscape ? bounds.midX - 84 : dualStick ? bounds.midX - 40 : right - 116
+        let startX = landscape ? bounds.midX + 84 : dualStick ? bounds.midX + 40 : right - 44
+        let systemY = landscape || dualStick ? bounds.minY + 26 : bottom - 44
         add("Select", bit: 1 << 2, x: selectX, y: systemY, width: 64)
         add("Start", bit: 1 << 3, x: startX, y: systemY, width: 64)
         buttons = result

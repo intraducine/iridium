@@ -30,6 +30,7 @@ final class GamepadInput: @unchecked Sendable {
             if wasConnected != touchState.connected || wasAccepting != touchState.acceptingInput {
                 LogStore.shared.log("[touch-xinput] connected=\(touchState.connected ? 1 : 0) accepting=\(acceptingInput ? 1 : 0) controls=\(allowed.count)")
             }
+            updateTimer()   // touch play with gyro aim or turbo needs the poll (PadAssist)
             sample()
         }
     }
@@ -116,6 +117,16 @@ final class GamepadInput: @unchecked Sendable {
         // Player 1 is the first paired extended gamepad, as refreshControllers assigns slots.
         let first = GCController.controllers().first { $0.extendedGamepad != nil }
         let sony = first?.extendedGamepad is GCDualSenseGamepad || first?.extendedGamepad is GCDualShockGamepad
+        // "hid" is there for the DualSense identity. Any other pad became a generic HID
+        // gamepad off XInput, which an XInput game sees only if it also enumerates
+        // DirectInput (logs 2026-10-26 23:33/23:36: a GameSir pad, no controller in game
+        // in two of three runs). Such a pad stays on XInput; "generic" still forces it.
+        if mode.value == "hid", first != nil, !sony, !Self.optIn("MADEIRA_HIDPAD_AUTO_GENERIC") {
+            LogStore.shared.log("[hid-pad] ml2100 session mode=hid source=\(mode.source) pad=\(first?.productCategory ?? "none") "
+                                + "is not a PlayStation pad: XInput (env.MADEIRA_HIDPAD_AUTO_GENERIC=1 makes it a generic HID gamepad)")
+            beginPadOutput(xinput: output.xinput, hid: false, value: output.value)
+            return
+        }
         let kind: String
         switch mode.value {
         case "dualsense", "generic": kind = mode.value
@@ -166,6 +177,31 @@ final class GamepadInput: @unchecked Sendable {
     /// Availability of the mode. 0 removes the per-game choice; the physical pad then always feeds XInput.
     static let keyboardMouseAvailable: Bool = flag("MADEIRA_XINPUT") && flag("MADEIRA_PAD_KBM")
 
+    /// ml2170: XInputGetBatteryInformation and XINPUT_CAPS_WIRELESS from each
+    /// pad's GCDeviceBattery (win32u op 4). 0: nothing is published and XInput
+    /// reports an unknown battery, as before.
+    static let batteryEnabled: Bool = flag("MADEIRA_XINPUT_BATTERY")  // 0: XInput keeps reporting an unknown battery (no GCDeviceBattery level, no wireless flag)
+
+    /// ml2170: GameController's battery as XInput reports one. Charging or full
+    /// means a cable is in, which Windows shows as a wired pad (wired, full). On
+    /// its battery the level is bucketed at 5/20/70 % (SDL's reverse mapping).
+    /// No battery object or an unknown state: type unknown at full, so a game
+    /// does not warn about a battery level nobody can read.
+    static func xinputBattery(level: Float?, state: GCDeviceBattery.State?) -> (type: UInt8, level: UInt8) {
+        switch state {
+        case .charging?, .full?:
+            return (UInt8(WINIOS_BATTERY_TYPE_WIRED), UInt8(WINIOS_BATTERY_LEVEL_FULL))
+        case .discharging?:
+            let fraction = level.map { $0.isFinite ? max(0, min(1, $0)) : 1 } ?? 1
+            let bucket = fraction <= 0.05 ? WINIOS_BATTERY_LEVEL_EMPTY
+                : fraction <= 0.20 ? WINIOS_BATTERY_LEVEL_LOW
+                : fraction <= 0.70 ? WINIOS_BATTERY_LEVEL_MEDIUM : WINIOS_BATTERY_LEVEL_FULL
+            return (UInt8(WINIOS_BATTERY_TYPE_NIMH), UInt8(bucket))
+        default:
+            return (UInt8(WINIOS_BATTERY_TYPE_UNKNOWN), UInt8(WINIOS_BATTERY_LEVEL_FULL))
+        }
+    }
+
     /// Whether keyboard-and-mouse mode is on. Main thread: PadStickMouse ("Right
     /// stick controls mouse") stands down while it is, since this mode moves the
     /// mouse (or drives keys) with the same stick.
@@ -188,6 +224,96 @@ final class GamepadInput: @unchecked Sendable {
         }
     }
 
+    /// Gyro aim and turbo for player 1 (PadAssist.swift): the session's game's
+    /// choices, nil when off. Main thread (LibraryModel), read on `queue`.
+    func setPadAssist(_ settings: PadAssistSettings?) {
+        let live = MainActor.assumeIsolated { () -> PadAssistSettings? in
+            let live = Self.enabled ? settings.flatMap { $0.isOff ? nil : $0 } : nil
+            let gyro = live?.gyro == true
+            controllerGyro = gyro && live?.source != .device
+            PadAssistSensors.setControllerGyro(controllerGyro)
+            PadAssistSensors.shared.setDeviceGyro(gyro && live?.source != .controller)
+            return live
+        }
+        queue.async { [self] in
+            if assist != live {
+                let gyroText = live.map { $0.gyro ? "\($0.source.rawValue)/\($0.when.rawValue)/\($0.turn.rawValue)/\($0.output.rawValue)" : "off" } ?? "off"
+                let turbo = live.map { $0.turbo.joined(separator: "+") } ?? ""
+                LogStore.shared.log("[pad-assist] gyro=\(gyroText) sensitivity=\(live?.sensitivity ?? 0) "
+                                    + "anti-dead-zone=\(live?.antiDeadzone ?? 0) turbo=\(turbo.isEmpty ? "off" : turbo) rate=\(live?.turboRate ?? 0)")
+            }
+            assist = live
+            turboState.reset()
+            updateTimer()
+            sample()
+        }
+    }
+    /// Gyro aim reads the controller's gyro: a pad that connects mid-session has its sensors switched on too.
+    @MainActor private var controllerGyro = false
+    private var assist: PadAssistSettings?
+    private var turboState = TurboState()
+
+    /// Gyro aim's rotation in the player's view, from the source the game's choices allow (queue).
+    private func gyroRates(_ assist: PadAssistSettings) -> (turn: Double, pitch: Double)? {
+        if assist.source != .device, let motion = controllers[0]?.motion, motion.hasRotationRate {
+            let r = motion.rotationRate
+            return GyroAim.controllerRates(x: r.x, y: r.y, z: r.z, turn: assist.turn)
+        }
+        return assist.source != .controller ? PadAssistSensors.shared.rates(turn: assist.turn) : nil
+    }
+
+    /// Player 1's sample through gyro aim and turbo (queue). `mouse`: gyro aim
+    /// moves the mouse instead of the right stick.
+    private func applyAssist(_ state: inout winios_gamepad, mouse: Bool) {
+        guard let assist else { return }
+        var pad = AssistPad(buttons: state.buttons, lt: state.left_trigger, rt: state.right_trigger, rx: state.rx, ry: state.ry)
+        if mouse && assist.gyro {
+            gyroToMouse(assist, held: GyroAim.held(pad, assist.when))
+        }
+        var stickOnly = assist
+        if mouse { stickOnly.gyro = false }
+        let rates = stickOnly.gyro ? gyroRates(assist) : nil
+        applyPadAssist(&pad, settings: stickOnly, rates: rates, turbo: &turboState, now: DispatchTime.now().uptimeNanoseconds)
+        state.buttons = pad.buttons
+        state.left_trigger = pad.lt; state.right_trigger = pad.rt
+        state.rx = pad.rx; state.ry = pad.ry
+    }
+
+    /// Whether gyro aim moves the mouse for this sample of player 1: chosen, or
+    /// automatic while the game sees no controller from the pad.
+    private func gyroMouse(physical: Bool, touch: Bool) -> Bool {
+        guard let assist, assist.gyro else { return false }
+        switch assist.output {
+        case .mouse: return true
+        case .stick: return false
+        case .auto: return keyboardMouse != nil || (!physical && !touch)
+        }
+    }
+
+    private var gyroMouseCarry = MotionCarry()
+    private var gyroMouseAt: UInt64 = 0
+    private var gyroMouseMoving = false
+
+    /// Gyro aim as relative mouse motion, by the time since the last sample (queue).
+    private func gyroToMouse(_ assist: PadAssistSettings, held: Bool) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let dt = gyroMouseAt == 0 ? 0 : min(Double(now &- gyroMouseAt) / 1e9, 1.0 / 15)
+        gyroMouseAt = now
+        guard held, HardwareInput.shared.baseFocused, !LibraryController.shared.ownsInput,
+              let rates = gyroRates(assist) else {
+            gyroMouseCarry.reset(); gyroMouseMoving = false
+            return
+        }
+        let m = GyroAim.mouse(turn: rates.turn, pitch: rates.pitch, dt: dt, settings: assist)
+        let d = gyroMouseCarry.add(m.dx, m.dy, gain: 1)
+        guard d.dx != 0 || d.dy != 0 else { return }
+        if !gyroMouseMoving {
+            gyroMouseMoving = true
+            DispatchQueue.main.async { HardwareInput.shared.stickMoved() }
+        }
+        HardwareInput.shared.postRelative(d.dx, d.dy)
+    }
+
     private let queue = DispatchQueue(label: "madeira.gamepad", qos: .userInteractive)
     private var controllers = [GCController?](repeating: nil, count: 4)
     private var profiles = [GCExtendedGamepad?](repeating: nil, count: 4)
@@ -199,9 +325,26 @@ final class GamepadInput: @unchecked Sendable {
     private var hidKeepsXInput = false
     private var hidBattery: (level: UInt8, charging: UInt8) = (UInt8(WINIOS_HIDPAD_BATTERY_UNKNOWN), 0)
     private var hidBatteryCountdown = 0
+    /// ml2170: when each XInput slot's battery is read next (uptime ns); 0 = at once.
+    private var batteryNextRead = [UInt64](repeating: 0, count: 4)
+    private var batteryLogs = 0
+    /// ml2172: uptime (ns) at which each slot's controller joined; 0 = empty.
+    private var joinedAt = [UInt64](repeating: 0, count: 4)
+    /// ml2172: player 1 back to slot 0 after a reconnect GameController reported
+    /// as a new controller before the old one left (see refreshControllers).
+    static let slot0Reconnect: Bool = flag("MADEIRA_XINPUT_SLOT0_RECONNECT")  // 0: a reconnected player 1 stays in the slot it landed in (slot 0 left empty)
+    /// ml2190: every 2 s (and on each refresh) a controller whose extendedGamepad is no
+    /// longer the profile its slot reads gets the live one; the old object can keep
+    /// reporting buttons with its axes frozen at rest (device log 107: buttons and
+    /// triggers reached the game, the sticks never left zero).
+    static let profileCheck: Bool = flag("MADEIRA_XINPUT_PROFILE_CHECK")  // 0: a slot keeps the profile its controller had when it joined
+    /// ml2190: the first 8 times each slot's sticks leave rest, with GameController's raw values.
+    private static var stickDiagLeft = [8, 8, 8, 8]
+    private static var stickDiagLive = [false, false, false, false]
     private var touchState = TouchGamepadState()
     @MainActor private var observers: [NSObjectProtocol] = []
     @MainActor private var started = false
+    @MainActor private var profileTimer: Timer?
 
     @MainActor func start() {
         guard !started else { return }
@@ -227,41 +370,89 @@ final class GamepadInput: @unchecked Sendable {
         })
         refreshControllers()
         setActive(UIApplication.shared.applicationState == .active)
+        if Self.profileCheck {
+            profileTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshControllers() }
+            }
+        }
+    }
+
+    /// Slot i reads `profile`; its changes sample at once (queue-owned).
+    private func attach(_ profile: GCExtendedGamepad, slot i: Int) {
+        profiles[i]?.valueChangedHandler = nil
+        profiles[i] = profile
+        profile.valueChangedHandler = { [weak self] _, _ in
+            // Explicit queue hop also serializes callbacks already in flight
+            // when a controller is disconnected or the app resigns active.
+            self?.queue.async { [weak self] in self?.sample() }
+        }
     }
 
     @MainActor private func refreshControllers() {
         // Capture the live profile on main. Re-fetching extendedGamepad on the
         // polling queue yielded stale axes on devices tested in the fork.
+        if controllerGyro { PadAssistSensors.setControllerGyro(true) }
         let live = GCController.controllers().compactMap { controller -> (GCController, GCExtendedGamepad)? in
             guard let profile = controller.extendedGamepad else { return nil }
             controller.handlerQueue = queue
             return (controller, profile)
         }
         queue.async { [self] in
+            let now = DispatchTime.now().uptimeNanoseconds
+            var slot0Freed = false
             for i in controllers.indices {
                 guard let old = controllers[i], !live.contains(where: { $0.0 === old }) else { continue }
                 profiles[i]?.valueChangedHandler = nil
                 controllers[i] = nil
                 profiles[i] = nil
+                joinedAt[i] = 0
+                if i == 0 { slot0Freed = true }
                 // ml2106: a game's "motors off" for a pad that left is dropped (the
                 // slot reads disconnected), so the slot's motors end here.
                 winios_gamepad_set_vibration(Int32(i), 0, 0)
+                clearBattery(i)
                 fputs("[xinput] ml1920 slot=\(i) disconnected\n", stderr)
             }
             for (controller, profile) in live {
+                if Self.profileCheck, let i = controllers.firstIndex(where: { $0 === controller }) {
+                    if profiles[i] !== profile {
+                        attach(profile, slot: i)
+                        LogStore.shared.log("[xinput] ml2190 slot=\(i) controller has a new input profile: the slot reads the live one")
+                    }
+                    continue
+                }
                 guard !controllers.contains(where: { $0 === controller }),
                       let i = controllers.firstIndex(where: { $0 == nil }) else { continue }
                 controllers[i] = controller
-                profiles[i] = profile
+                joinedAt[i] = now
                 // A pad joining a slot starts still, before sample() publishes it,
                 // rather than replaying the level the slot had before.
                 winios_gamepad_set_vibration(Int32(i), 0, 0)
-                profile.valueChangedHandler = { [weak self] _, _ in
-                    // Explicit queue hop also serializes callbacks already in flight
-                    // when a controller is disconnected or the app resigns active.
-                    self?.queue.async { [weak self] in self?.sample() }
-                }
+                batteryNextRead[i] = 0   // ml2170: the new pad's battery at the next sample
+                attach(profile, slot: i)
                 fputs("[xinput] ml1920 slot=\(i) connected\n", stderr)
+            }
+            // ml2172: GameController can report a reconnecting pad as a new
+            // controller before the old object leaves. The new one then lands in
+            // slot 1 while slot 0 is still taken, slot 0 empties a moment later,
+            // and a game that reads only player 1 sees nothing. When slot 0 has
+            // just emptied and exactly one controller joined another slot in the
+            // last 5 s, that controller becomes player 1 again. A second player's
+            // pad that has been there longer keeps its slot.
+            if slot0Freed, controllers[0] == nil, Self.slot0Reconnect {
+                let recent = (1..<controllers.count).filter {
+                    controllers[$0] != nil && joinedAt[$0] != 0 && now - joinedAt[$0] < 5_000_000_000
+                }
+                if recent.count == 1, let j = recent.first {
+                    controllers[0] = controllers[j]; profiles[0] = profiles[j]; joinedAt[0] = joinedAt[j]
+                    controllers[j] = nil; profiles[j] = nil; joinedAt[j] = 0
+                    winios_gamepad_set_vibration(Int32(j), 0, 0)
+                    winios_gamepad_set_vibration(0, 0, 0)
+                    winios_gamepad_set_state(Int32(j), nil)
+                    clearBattery(j)
+                    batteryNextRead[0] = 0
+                    LogStore.shared.log("[xinput] ml2172 slot=\(j) moved to slot 0: player 1 reconnected as a new controller")
+                }
             }
             // ml2106: the pad in each slot is where that slot's rumble plays
             // (and slot 0's the DualSense output); unchanged slots are no-ops.
@@ -287,7 +478,10 @@ final class GamepadInput: @unchecked Sendable {
     }
 
     private func updateTimer() {
-        let needed = active && profiles.contains(where: { $0 != nil })
+        // Touch play with gyro aim (the device's gyro) or turbo is polled as a pad is.
+        // So is gyro aim moving the mouse with no controller at all.
+        let mouseGyro = assist.map { $0.gyro && $0.output != .stick } ?? false
+        let needed = active && (profiles.contains(where: { $0 != nil }) || (assist != nil && (touchState.connected || mouseGyro)))
         if !needed { timer?.cancel(); timer = nil; return }
         guard timer == nil else { return }
         let source = DispatchSource.makeTimerSource(queue: queue)
@@ -297,6 +491,9 @@ final class GamepadInput: @unchecked Sendable {
         source.resume()
     }
 
+    /// ml2180: per-slot diagnostic budget (first 16 rest/input transitions) and last state.
+    private static var diagLeft = [16, 16, 16, 16]
+    private static var diagLive = [false, false, false, false]
     // XInput leaves dead zones to the game. Preserve the complete signed range.
     static func axis(_ value: Float) -> Int16 {
         guard value.isFinite else { return 0 }
@@ -319,12 +516,21 @@ final class GamepadInput: @unchecked Sendable {
             }
             let hid = i == 0 && hidActive
             guard pad != nil || touchConnected else {
+                // No controller for the game: gyro aim can still move the mouse
+                // (with nothing to hold, only "Always" does).
+                if i == 0, active, let assist, gyroMouse(physical: false, touch: false) {
+                    gyroToMouse(assist, held: assist.when == .always)
+                }
                 winios_gamepad_set_state(Int32(i), nil)
+                clearBattery(i)
                 if hid { winios_hidpad_set_state(nil) }
                 continue
             }
             var state = winios_gamepad()
             state.connected = 1
+            // Gyro aim and turbo apply once to player 1: before the keyboard-and-mouse
+            // feed, else after the touch merge; never while the library owns input.
+            var assisted = i != 0 || !active
             // ml2100: the pad whose HID-only inputs (touchpad click) this sample
             // carries; nil while the app is inactive or the library owns input.
             var hidLive: GCExtendedGamepad?
@@ -348,6 +554,17 @@ final class GamepadInput: @unchecked Sendable {
                 state.ly = Self.axis(pad.leftThumbstick.yAxis.value)
                 state.rx = Self.axis(pad.rightThumbstick.xAxis.value)
                 state.ry = Self.axis(pad.rightThumbstick.yAxis.value)
+                if Self.stickDiagLeft[i] > 0 {
+                    let moved = abs(Int(state.lx)) > 7849 || abs(Int(state.ly)) > 7849
+                        || abs(Int(state.rx)) > 8689 || abs(Int(state.ry)) > 8689
+                    if moved != Self.stickDiagLive[i] {
+                        Self.stickDiagLive[i] = moved
+                        if moved {
+                            Self.stickDiagLeft[i] -= 1
+                            LogStore.shared.log("[xinput] ml2190 app slot=\(i) sticks: left \(pad.leftThumbstick.xAxis.value),\(pad.leftThumbstick.yAxis.value) right \(pad.rightThumbstick.xAxis.value),\(pad.rightThumbstick.yAxis.value)")
+                        }
+                    }
+                }
                 // The library front end navigates with player 1's pad (Library.swift).
                 // While it owns input (no session, or its menu is open) the game
                 // sees a connected pad at rest.
@@ -358,8 +575,11 @@ final class GamepadInput: @unchecked Sendable {
                         state = winios_gamepad()
                         state.connected = 1
                         hidLive = nil
+                        assisted = true
                         if keyboardMouse != nil { PadKeyboardMouse.shared.releaseAll("library menu") }
                     } else if let kbm = keyboardMouse {
+                        applyAssist(&state, mouse: gyroMouse(physical: true, touch: touchConnected))
+                        assisted = true
                         // Keyboard-and-mouse mode: the pad becomes keys and mouse
                         // motion; XInput sees no physical player 1 (touch may still
                         // connect it below). The HID controller, when on, likewise
@@ -387,6 +607,9 @@ final class GamepadInput: @unchecked Sendable {
                 state.left_trigger = merged.lt; state.right_trigger = merged.rt
                 state.lx = merged.lx; state.ly = merged.ly; state.rx = merged.rx; state.ry = merged.ry
             }
+            if !assisted && !LibraryController.shared.ownsInput {
+                applyAssist(&state, mouse: gyroMouse(physical: pad != nil, touch: touchConnected))
+            }
             if hid {
                 publishHID(state, live: hidLive, pad: pad)
                 // One controller, one API: player 1 is not also an XInput pad,
@@ -396,8 +619,56 @@ final class GamepadInput: @unchecked Sendable {
                     continue
                 }
             }
+            // ml2180: evidence for "the pad is detected but nothing happens": the
+            // first transitions between rest and input per slot, as published to
+            // win32u (the driver logs what the program reads, ml2180 there).
+            if Self.diagLeft[i] > 0 {
+                let live = state.buttons != 0 || state.left_trigger != 0 || state.right_trigger != 0
+                    || abs(Int(state.lx)) > 7849 || abs(Int(state.ly)) > 7849
+                    || abs(Int(state.rx)) > 8689 || abs(Int(state.ry)) > 8689
+                if live != Self.diagLive[i] {
+                    Self.diagLive[i] = live
+                    Self.diagLeft[i] -= 1
+                    let kind = live ? "input" : "rest"
+                    let owns = i == 0 ? LibraryController.shared.ownsInput : false
+                    LogStore.shared.log("[xinput] ml2180 app slot=\(i) \(kind): buttons=0x\(String(state.buttons, radix: 16)) lt=\(state.left_trigger) rt=\(state.right_trigger) lx=\(state.lx) ly=\(state.ly) rx=\(state.rx) ry=\(state.ry) physical=\(pad != nil) active=\(active) libraryOwns=\(owns) kbm=\(keyboardMouse != nil) hid=\(hid)")
+                }
+            }
+            publishBattery(i, pad: pad)
             winios_gamepad_set_state(Int32(i), &state)
         }
+    }
+
+    /// ml2170: slot i's XInput battery, read from GameController at most once a
+    /// second (queue). A physical pad reports its GCDeviceBattery; the touch
+    /// controller alone has no battery to run down and reads as wired and full.
+    private func publishBattery(_ i: Int, pad: GCExtendedGamepad?) {
+        guard Self.batteryEnabled else { return }
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now >= batteryNextRead[i] else { return }
+        batteryNextRead[i] = now + 1_000_000_000
+        var value = winios_gamepad_battery()
+        value.valid = 1
+        if let pad {
+            let battery = pad.controller?.battery
+            let mapped = Self.xinputBattery(level: battery?.batteryLevel, state: battery?.batteryState)
+            value.type = mapped.type
+            value.level = mapped.level
+        } else {
+            value.type = UInt8(WINIOS_BATTERY_TYPE_WIRED)
+            value.level = UInt8(WINIOS_BATTERY_LEVEL_FULL)
+        }
+        if winios_gamepad_set_battery(Int32(i), &value) != 0 && batteryLogs < 32 {
+            batteryLogs += 1
+            LogStore.shared.log("[xinput] ml2170 slot=\(i) battery type=\(value.type) level=\(value.level)")
+        }
+    }
+
+    /// ml2170: the slot has no pad, so its battery is withdrawn (op 4 answers 0).
+    private func clearBattery(_ i: Int) {
+        guard batteryNextRead[i] != 0 else { return }
+        batteryNextRead[i] = 0
+        _ = winios_gamepad_set_battery(Int32(i), nil)
     }
 
     /// ml2100: player 1 as the HID controller reports it: the XInput sample above

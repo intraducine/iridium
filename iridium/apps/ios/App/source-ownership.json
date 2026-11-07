@@ -516,5 +516,195 @@
     "TouchGamepad.swift": "d8db4817052bc8fbed23108c6d39f0074c6158328efc426b4afdb86771960f79",
     "WineMono.swift": "f158dd71dbdde7b093848a62af37742701a0607ee82374a355fd3c3a9c6417cf"
   },
-  "helper": "JIT/Helper/MadeiraJITHelper.swift"
+  "helper": "JIT/Helper/MadeiraJITHelper.swift",
+  "upstreamImports": {
+    "Stores/Epic/EpicGames.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/EpicGames.swift"
+    },
+    "Stores/Epic/EpicLibrary.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/EpicLibrary.swift"
+    },
+    "Stores/Epic/EpicCloud.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/EpicCloud.swift"
+    },
+    "Stores/EA/EAGames.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/EAGames.swift"
+    },
+    "Stores/EA/EALibrary.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/EALibrary.swift"
+    },
+    "Stores/Itch/ItchGames.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/ItchGames.swift"
+    },
+    "Stores/Itch/ItchLibrary.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/ItchLibrary.swift"
+    },
+    "Library/GameIniFiles.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/GameIniFiles.swift"
+    },
+    "Library/GameSetupShare.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/GameSetupShare.swift"
+    },
+    "Library/GPUCards.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/GPUCards.swift"
+    },
+    "Controls/PadAssist.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/PadAssist.swift"
+    },
+    "Diagnostics/JITPoolMeter.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/JITPoolMeter.swift"
+    },
+    "Diagnostics/LogSummary.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/LogSummary.swift"
+    },
+    "Steam/SteamWorkshop.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SteamWorkshop.swift"
+    },
+    "Steam/SteamWorkshopFiles.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SteamWorkshopFiles.swift"
+    },
+    "Steam/SteamAchievements.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SteamAchievements.swift"
+    },
+    "Steam/DockGameSession.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/DockGameSession.swift"
+    },
+    "Steam/DockStartProgram.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/DockStartProgram.swift"
+    },
+    "Storage/ExternalDrives.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/ExternalDrives.swift"
+    },
+    "Storage/ExternalStorage.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/ExternalStorage.swift"
+    },
+    "Windows/VCRedist.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/VCRedist.swift"
+    },
+    "Windows/WineGecko.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/WineGecko.swift"
+    },
+    "Windows/BackgroundRun.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/BackgroundRun.swift"
+    },
+    "Stores/Epic/Transport/EpicAPI.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEpic/EpicAPI.swift"
+    },
+    "Stores/Epic/Transport/EpicDownloader.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEpic/EpicDownloader.swift"
+    },
+    "Stores/Epic/Transport/EpicFormats.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEpic/EpicFormats.swift"
+    },
+    "Stores/Epic/Transport/EpicCloudSaves.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEpic/EpicCloudSaves.swift"
+    },
+    "Stores/EA/Transport/EALicense.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEA/EALicense.swift"
+    },
+    "Stores/EA/Transport/EAAPI.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEA/EAAPI.swift"
+    },
+    "Stores/EA/Transport/EAFormats.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEA/EAFormats.swift"
+    },
+    "Stores/EA/Transport/EAService.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEA/EAService.swift"
+    },
+    "Stores/EA/Transport/EADownloader.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftEA/EADownloader.swift"
+    },
+    "Stores/Itch/Transport/ItchArchive.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftItch/ItchArchive.swift"
+    },
+    "Stores/Itch/Transport/ItchAPI.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftItch/ItchAPI.swift"
+    },
+    "Steam/Transport/Content/SteamLANPeer.swift": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/SwiftSteam/Content/SteamLANPeer.swift"
+    },
+    "Resources/Localizable.xcstrings": {
+      "revision": "2927f0edbecaed8d463c5ca40bb1700826941763",
+      "path": "app/Madeira/Localizable.xcstrings"
+    },
+    "Stores/GOG/GOGGames.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/GOGGames.swift"
+    },
+    "Stores/GOG/GOGLibrary.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/GOGLibrary.swift"
+    },
+    "Stores/GOG/Transport/GOGSetup.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/GOGSetup.swift"
+    },
+    "Stores/GOG/Transport/GOGDownloader.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/GOGDownloader.swift"
+    },
+    "Stores/GOG/Transport/GOGGalaxy.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/GOGGalaxy.swift"
+    },
+    "Stores/GOG/Transport/GOGAPI.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/GOGAPI.swift"
+    },
+    "Stores/GOG/Transport/GOGInstallScript.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/GOGInstallScript.swift"
+    },
+    "Stores/GOG/Transport/Galaxy/GalaxySupport.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/Galaxy/GalaxySupport.swift"
+    },
+    "Stores/GOG/Transport/Galaxy/GalaxyWire.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/Galaxy/GalaxyWire.swift"
+    },
+    "Stores/GOG/Transport/Galaxy/GalaxyService.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/Galaxy/GalaxyService.swift"
+    },
+    "Stores/GOG/Transport/Galaxy/GalaxyListener.swift": {
+      "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
+      "path": "app/Madeira/SwiftGOG/Galaxy/GalaxyListener.swift"
+    }
+  }
 }

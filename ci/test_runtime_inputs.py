@@ -47,7 +47,7 @@ class RuntimeInputTests(unittest.TestCase):
             inputs.destination(ROOT, bad)
         workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
         stages = ['ci/local_build_tools.py --madeira', 'ci/madeira-frontend.py toolchains',
-                  'ci/madeira-frontend.py native', 'ci/madeira-frontend.py windows',
+                  'ci/madeira-frontend.py native', 'ci/build-madeira-windows.py',
                   'ci/check-ipa-prerequisites.py --profile madeira-frontend', 'ci/madeira-frontend.py app']
         positions = [workflow.index(stage) for stage in stages]
         self.assertEqual(positions, sorted(positions))

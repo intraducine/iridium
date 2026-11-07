@@ -8,7 +8,7 @@ class ProductionUXTests(unittest.TestCase):
     def test_setup_navigation_resume_and_library_completion(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumOnboarding.swift').read_text()
         core=source[source.index('enum OnboardingRules'):source.index('struct OnboardingView:')].replace('UserDefaults.standard','fixtureDefaults')
-        fixture='''import SwiftUI\nimport Combine\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static var enabled=true;static func flag(_ key:String)->Bool {enabled} }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String?;var launching=false }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nvar wineRunning:Int32=0\nfunc wine_process_is_running()->Int32 {wineRunning}\nvar serverRunning:Int32=0\nfunc wineserver_is_running()->Int32 {serverRunning}\n'''
+        fixture='''import SwiftUI\nimport Combine\n@MainActor enum OnboardingCompletion { static var completed:Bool?=false;static var saves=0;static func load()->Bool? {completed};static func save() {completed=true;saves += 1} }\nlet fixtureDefaults=UserDefaults(suiteName: UUID().uuidString)!\nenum MadeiraConfig { static var enabled=true;static func flag(_ key:String)->Bool {enabled} }\n@MainActor final class LibraryModel { static let shared=LibraryModel();var current:String?;var launching=false }\n@MainActor final class IridiumConsoleSession { static let shared=IridiumConsoleSession();var isActive=false }\nvar wineRunning:Int32=0\nfunc wine_process_is_running()->Int32 {wineRunning}\nvar serverRunning:Int32=0\nfunc wineserver_is_running()->Int32 {serverRunning}\n'''
         checks='''
 @main struct Checks {
  @MainActor static func main() {
@@ -32,6 +32,19 @@ class ProductionUXTests(unittest.TestCase):
   precondition(fixtureDefaults.string(forKey:"iridium.setup.step")==nil)
   let completed=OnboardingModel();completed.presentIfNeeded();precondition(!completed.presented)
   precondition(fixtureDefaults.integer(forKey:OnboardingRules.revisionKey)==2)
+  precondition(OnboardingCompletion.completed == true)
+  fixtureDefaults.removeObject(forKey:OnboardingRules.revisionKey)
+  let reinstalled=OnboardingModel();reinstalled.presentIfNeeded();precondition(!reinstalled.presented)
+  precondition(fixtureDefaults.integer(forKey:OnboardingRules.revisionKey)==2)
+  OnboardingCompletion.completed=false
+  fixtureDefaults.set(1,forKey:OnboardingRules.revisionKey)
+  let upgraded=OnboardingModel();upgraded.presentIfNeeded();precondition(!upgraded.presented && OnboardingCompletion.completed == true)
+  fixtureDefaults.removeObject(forKey:OnboardingRules.revisionKey)
+  OnboardingCompletion.completed=nil
+  let locked=OnboardingModel();locked.presentIfNeeded();precondition(!locked.presented)
+  OnboardingCompletion.completed=false
+  locked.presentIfNeeded();precondition(locked.presented)
+  locked.skip();precondition(OnboardingCompletion.completed == true)
   for step in steps {
    let skipped=OnboardingModel();skipped.rerun();skipped.go(step);skipped.skip()
    precondition(!skipped.presented && skipped.takeLibraryAction()==nil)
@@ -93,7 +106,8 @@ class ProductionUXTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_setup_completion_enters_main_library_after_dismissal(self):
         source=(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
-        handler=source[source.index('    private func completeOnboardingAction()'):source.index('    private func restoreKeyboardFocus()')]
+        start=source.index('    private func completeOnboardingAction()')
+        handler=source[start:source.index('\n    private func ',start+1)]
         fixture='''import Foundation
 @MainActor final class Setup {
  enum Action { case library }

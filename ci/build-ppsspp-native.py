@@ -20,7 +20,7 @@ RELEASE = engine_pins.get('ppsspp')['releaseTag']
 EXTRA_DEPENDENCIES = ('ffmpeg', 'ios/MoltenVK', 'ext/naett', 'ext/discord-rpc', 'ext/freetype', 'assets/debugger')
 import ppsspp_sources as support
 NATIVE = ROOT / 'iridium/apps/ios/RuntimeBridge'
-EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'resolution', 'stop', 'restart', 'frames', 'set_volume',
+EXPORTS = {'_ir_native_psp_' + n for n in ('abi', 'check_jit', 'check_jit_diagnostic', 'create', 'pause', 'resume', 'request', 'command', 'resolution', 'stop', 'restart', 'frames', 'set_volume',
     'exec_version', 'exec_prepare_shared', 'exec_prepare', 'exec_prepare_diagnostic', 'exec_detach', 'exec_accept_shutdown', 'exec_restored', 'exec_restored_diagnostic', 'exec_advance', 'exec_cancel', 'exec_end')}
 
 
@@ -303,6 +303,8 @@ def build(source, destination, sdk, jobs):
         executableMemoryHeaderSHA256=digest(NATIVE / 'IRPSPExecutableMemory.h'),
         sharedMemoryHeaderSHA256=digest(NATIVE / 'IRJITMemory.h'),
         adapterSHA256=digest(NATIVE / 'IRPPSSPPNative.mm'), codecCheckSHA256=digest(NATIVE / 'IRPPSSPPCodecCheck.c'),
+        optionsHeaderSHA256=digest(NATIVE / 'IRPPSSPPOptions.h'),
+        cheatsHeaderSHA256=digest(NATIVE / 'IRCheats.h'),
         sdkVersion=output('xcrun', '--sdk', sdk, '--show-sdk-version'),
         mode='native iOS engine; upstream media/graphics; shared Iridium frontend')
     overlay.gl_sync.validate_component(record, source)

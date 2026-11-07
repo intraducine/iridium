@@ -28,6 +28,10 @@ final class LibraryModel: ObservableObject {
     @Published var padMouseVertical: Double = 1 {
         didSet { if oldValue != padMouseVertical { applyControllerMode() } }
     }
+    /// The session's gyro aim and turbo (LibraryEntry.padAssist); the pad sampler takes a change at once.
+    @Published var padAssist: PadAssistSettings? {
+        didSet { if oldValue != padAssist { GamepadInput.shared.setPadAssist(current == nil ? nil : padAssist) } }
+    }
     /// The session's touch-control opacity (the entry's Control opacity).
     @Published var opacity = 0.7
     /// The session's Aspect & scaling; MetalBackedView lays the game out with it.
@@ -36,6 +40,17 @@ final class LibraryModel: ObservableObject {
     }
     @Published var error: String? { didSet { if error != nil { preparing = nil } } }
     @Published var sessionMessage = ""
+    private var smallPoolNoted = false
+    /// Quit game was asked for and the program is still running after `forceCloseAfter`
+    /// seconds: a frozen program never handles Alt+F4, so the menu offers to close Madeira.
+    @Published var forceCloseOffered = false
+    static let forceCloseAfter: TimeInterval = 10
+    /// A Dock session whose game ended: Madeira Dock shut Valve's client down, and
+    /// explorer's desktop is asked to close so the session returns to the library.
+    /// Close Madeira is offered if the session is still up `forceCloseAfter` seconds later.
+    @Published var dockGameEnded = false
+    private var dockGameEndedAt: Date?
+    private var quitRequestedAt: Date?
     @Published var launching = false
     @Published var overlayFields = ["FPS", "Frame time", "RAM", "Battery"]
     private var launchPresent: UInt64 = 0
@@ -55,7 +70,7 @@ final class LibraryModel: ObservableObject {
     // Why a session ended by itself (not Quit): the program the app launched
     // exited with a Windows error (wine_crash_exit_status, WineProcessBridge.m).
     // MADEIRA_EXIT_REPORT=0 returns to the library without a message.
-    private var quitRequested = false
+    private(set) var quitRequested = false
     private func exitReport() -> String? {
         guard !quitRequested, MadeiraConfig.flag("MADEIRA_EXIT_REPORT") else { return nil }
         var status: UInt32 = 0
@@ -63,6 +78,21 @@ final class LibraryModel: ObservableObject {
         LogStore.shared.log("[exit-report] status=0x\(String(status, radix: 16))")
         let kind = status == 0xC0000005 ? " (memory access violation)" : status == 0xC0000017 ? " (out of memory)" : ""
         return "The game stopped with Windows error 0x\(String(status, radix: 16, uppercase: true))\(kind). Export the diagnostic log to report it."
+    }
+    /// A game in a Madeira Dock session asked Steam to start another game (steam://run/<App ID>;
+    /// ntdll refused steam.exe and reported it, WineProcessBridge.m): the next app run starts that
+    /// game (NextSteamApp), since a second session cannot start in this one. Black Ops II's
+    /// campaign does this when the player chooses Zombies.
+    private func steamRunRequest() -> String? {
+        var appID: UInt32 = 0
+        guard !quitRequested, wine_steam_run_request(&appID) != 0 else { return nil }
+        let id = Int(appID)
+        let name = entries.first { $0.steamAppID == id }?.title
+            ?? MadeiraDock.games(drive: MadeiraDock.drive).first { $0.id == id }?.name
+        LogStore.shared.log("[dock-steam-run] the game asked Steam to start app \(id)\(name == nil ? ", which is not installed" : "")")
+        guard let name else { return nil }
+        NextSteamApp.set(id)
+        return "The game asked to start \(name). Madeira runs one game per app session: close Madeira and open it again, and \(name) starts by itself."
     }
     private var readOnly = false
     private var metadataInFlight = Set<UUID>()
@@ -75,7 +105,8 @@ final class LibraryModel: ObservableObject {
     private var savedSize = 1.0
     /// The session's first frame makes the drawable's shape known (Aspect).
     private var laidOutAfterFirstPresent = false
-    private struct Document: Codable { var version: Int; var entries: [LibraryEntry] }
+    private struct Document: Codable { var version: Int; var entries: [LibraryEntry]; var hiddenSteamApps: [Int]? = nil }
+    @Published private(set) var hiddenSteamApps: Set<Int> = []
     private var file: URL { Self.documents.appendingPathComponent("madeira-library.json") }
 
     private init() {
@@ -84,6 +115,7 @@ final class LibraryModel: ObservableObject {
             do {
                 let doc = try JSONDecoder().decode(Document.self, from: Data(contentsOf: file))
                 guard doc.version == 1 else { throw LibraryError.message("This library uses a newer format.") }
+                hiddenSteamApps = Set(doc.hiddenSteamApps ?? [])
                 entries = doc.entries
             } catch {
                 readOnly = true
@@ -127,7 +159,7 @@ final class LibraryModel: ObservableObject {
     }
 
     func refreshFlag() {
-        guard current == nil, wine_process_is_running() == 0 else { return }
+        guard current == nil, !IridiumMadeiraRuntime.shared.isBusy else { return }
         // Fixed for the whole run (FrontendChoice); a change applies at the next start.
         let allowed = FrontendChoice.startup.useNew
         if enabled != allowed { fputs("[frontend] library enabled=\(allowed ? 1 : 0)\n", stderr) }
@@ -135,8 +167,17 @@ final class LibraryModel: ObservableObject {
         LibraryController.shared.configure(enabled: allowed, ownsInput: allowed)
     }
 
-    func save(_ entry: LibraryEntry) {
-        guard !readOnly else { error = "The library file could not be read. Preserve or repair it before making changes."; return }
+    func saveMovedEntries(_ moved: [LibraryEntry]) throws {
+        let replacements = Dictionary(uniqueKeysWithValues: moved.map { ($0.id, $0) })
+        guard persist(entries.map { replacements[$0.id] ?? $0 }) else {
+            throw LibraryError.message("The new game location could not be saved. The original files were kept.")
+        }
+    }
+
+    @discardableResult
+    func save(_ entry: LibraryEntry) -> Bool {
+        guard !readOnly else { error = "The library file could not be read. Preserve or repair it before making changes."; return false }
+        guard entry.steamAppID.map({ !hiddenSteamApps.contains($0) }) ?? true else { return false }
         var next = entries
         var entry = entry
         // madeira-bcd: a game seen for the first time gets Madeira's recommended settings
@@ -146,7 +187,11 @@ final class LibraryModel: ObservableObject {
         // A Steam game has one entry: a details page opened before its card first saved
         // one (refreshSteamMetadata) updates that entry.
         if let i = next.firstIndex(where: { $0.id == entry.id }) ??
-            next.firstIndex(where: { entry.steamAppID != nil && $0.steamAppID == entry.steamAppID }) {
+            next.firstIndex(where: { entry.steamAppID != nil && $0.steamAppID == entry.steamAppID }) ??
+            next.firstIndex(where: { entry.gogProductID != nil && $0.gogProductID == entry.gogProductID }) ??
+            next.firstIndex(where: { entry.itchGameID != nil && $0.itchGameID == entry.itchGameID }) ??
+            next.firstIndex(where: { entry.epicAppName != nil && $0.epicAppName == entry.epicAppName }) ??
+            next.firstIndex(where: { entry.eaOfferID != nil && $0.eaOfferID == entry.eaOfferID }) {
             // A details sheet may predate an asynchronous metadata refresh.
             if (next[i].metadataChecked ?? .distantPast) > (entry.metadataChecked ?? .distantPast) {
                 entry.folderBytes = next[i].folderBytes; entry.graphicsAPI = next[i].graphicsAPI
@@ -156,10 +201,12 @@ final class LibraryModel: ObservableObject {
             }
             next[i] = entry
         } else { next.append(entry) }
-        persist(next)
+        return persist(next)
     }
     func remove(_ id: UUID) {
-        persist(entries.filter { $0.id != id })
+        if let appID = entries.first(where: { $0.id == id })?.steamAppID {
+            persist(entries, hiddenSteamApps: hiddenSteamApps.union([appID]))
+        } else { persist(entries.filter { $0.id != id }) }
     }
     /// A Steam game's library entry, which holds its per-game settings
     /// (SteamGames.swift). A game without one gets a new entry made from what
@@ -180,21 +227,208 @@ final class LibraryModel: ObservableObject {
     /// entry, or an existing one keeps its title, artwork and settings.
     func upsertSteam(_ game: DockGame, title: String) {
         guard !readOnly else { return }
+        if hiddenSteamApps.contains(game.id), !persist(entries, hiddenSteamApps: hiddenSteamApps.subtracting([game.id])) { return }
         var entry = steamEntry(game, title: title)
         entry.folderBytes = SteamInstallFiles.sizeOnDisk(appID: game.id, steamApps: Self.drive.appendingPathComponent(game.library, isDirectory: true)) ?? entry.folderBytes
         save(entry)
     }
-    /// A Steam game was uninstalled: its entry goes with its files.
-    func removeSteam(appID: Int) {
-        guard entries.contains(where: { $0.steamAppID == appID }) else { return }
-        persist(entries.filter { $0.steamAppID != appID })
+    /// Keep settings and identity for a reinstall, while hiding the removed install.
+    @discardableResult func removeSteam(appID: Int) -> Bool {
+        hideSteam([appID])
     }
+    @discardableResult func hideSteam(_ appIDs: Set<Int>) -> Bool {
+        guard !appIDs.isSubset(of: hiddenSteamApps) else { return true }
+        return persist(entries, hiddenSteamApps: hiddenSteamApps.union(appIDs))
+    }
+
+    @MainActor func steamInstall(_ entry: LibraryEntry) -> DockGame? {
+        guard let appID = entry.steamAppID, MadeiraDock.validAppID(appID) else { return nil }
+        guard !SteamGamesModel.shared.sharedOnlyApps.contains(appID) else { return nil }
+        if let game = SteamGamesModel.shared.games.first(where: { $0.id == appID }) { return game }
+        let library = SteamOwnedLibrary.shared.library(for: appID)
+        if SteamInstallPaths.isManaged(library: library),
+           let apps = try? ExternalDrives.nativeURL(library, write: false),
+           let folder = SteamInstallFiles.installFolder(appID: appID, steamApps: apps), MadeiraDock.validFolderName(folder) {
+            return DockGame(id: appID, name: entry.title, installDir: folder, library: library,
+                            installed: false, customExecutables: false, filesMissing: true)
+        }
+        let prefix = SteamInstallPaths.libraryRelative + "/common/"
+        guard entry.relativePath.lowercased().hasPrefix(prefix.lowercased()) else { return nil }
+        let folder = String(entry.relativePath.dropFirst(prefix.count))
+        guard MadeiraDock.validFolderName(folder) else { return nil }
+        return DockGame(id: appID, name: entry.title, installDir: folder, library: SteamInstallPaths.libraryRelative,
+                        installed: false, customExecutables: false, filesMissing: true)
+    }
+    /// A store's cover art as a JPEG of at most 1200 pixels, or nil.
+    static func storeCover(_ url: URL) async -> Data? {
+        guard url.scheme == "https", let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count < 20_000_000,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                             kCGImageSourceThumbnailMaxPixelSize: 1200,
+                                                                             kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
+        else { return nil }
+        return UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85)
+    }
+    /// A GOG download finished (GOGLibrary): the game gets its library entry, or an
+    /// existing one follows the new build's program and keeps its title, artwork and
+    /// settings. Arguments and working folder follow GOG's play task unless the player
+    /// changed them. A new entry gets GOG's cover art as its cover image.
+    @MainActor
+    func upsertGOG(_ game: GOGInstalledGame, previous: GOGInstalledGame?, cover: URL?) async {
+        guard !readOnly else { return }
+        let existing = entries.first { $0.gogProductID == game.productID }
+        var entry = existing ?? LibraryEntry(title: game.title, relativePath: game.programPath, bits: 0)
+        entry.gogProductID = game.productID
+        entry.relativePath = game.programPath
+        entry.folderBytes = game.installBytes
+        if existing == nil || entry.arguments == (previous?.arguments ?? "") { entry.arguments = game.arguments }
+        if existing == nil || entry.workingDirectory == previous?.workingWindowsPath { entry.workingDirectory = game.workingWindowsPath }
+        let program = Self.drive.appendingPathComponent(game.programPath)
+        if let inspected = await Task.detached(priority: .utility, operation: { try? LibraryModel.inspect(program) }).value {
+            entry.bits = inspected.bits
+            entry.graphicsAPI = inspected.graphicsAPI ?? entry.graphicsAPI
+        }
+        if entry.coverFile == nil, let cover, let jpeg = await Self.storeCover(cover) {
+            let dir = Self.documents.appendingPathComponent("madeira-art", isDirectory: true)
+            let name = entry.id.uuidString + ".jpg"
+            if (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+               (try? jpeg.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil {
+                entry.coverFile = name
+            }
+        }
+        entry.metadataChecked = nil
+        save(entry)
+    }
+    /// A GOG game was uninstalled: its entry goes with its files.
+    @discardableResult func removeGOG(productID: String) -> Bool {
+        guard entries.contains(where: { $0.gogProductID == productID }) else { return true }
+        return persist(entries.filter { $0.gogProductID != productID })
+    }
+    /// An itch.io download finished (ItchLibrary): the game gets its library entry, or an
+    /// existing one follows the new program and keeps its title, artwork and settings.
+    /// A new entry gets itch.io's cover art as its cover image. While its program is an
+    /// installer (ItchSetup), the entry starts in the Wine desktop with Windows services
+    /// first; once the installer has installed the game, it starts directly again.
+    @MainActor
+    func upsertItch(_ game: ItchInstalledGame, cover: URL?, setupFinished: Bool = false) async -> Bool {
+        guard !readOnly else { return false }
+        var entry = entries.first { $0.itchGameID == game.gameID } ?? LibraryEntry(title: game.title, relativePath: game.programPath, bits: 0)
+        entry.itchGameID = game.gameID
+        entry.relativePath = game.programPath
+        if game.setup != nil {
+            entry.launchMode = "desktop"; entry.startServices = true
+        } else if setupFinished {
+            entry.launchMode = nil; entry.startServices = nil
+        }
+        entry.folderBytes = game.installBytes
+        let program = Self.drive.appendingPathComponent(game.programPath)
+        if let inspected = await Task.detached(priority: .utility, operation: { try? LibraryModel.inspect(program) }).value {
+            entry.bits = inspected.bits
+            entry.graphicsAPI = inspected.graphicsAPI ?? entry.graphicsAPI
+        }
+        if entry.coverFile == nil, let cover, let jpeg = await Self.storeCover(cover) {
+            let dir = Self.documents.appendingPathComponent("madeira-art", isDirectory: true)
+            let name = entry.id.uuidString + ".jpg"
+            if (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+               (try? jpeg.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil {
+                entry.coverFile = name
+            }
+        }
+        entry.metadataChecked = nil
+        return save(entry)
+    }
+    /// An itch.io game was uninstalled: its entry goes with its files.
+    @discardableResult func removeItch(gameID: Int) -> Bool {
+        guard entries.contains(where: { $0.itchGameID == gameID }) else { return true }
+        return persist(entries.filter { $0.itchGameID != gameID })
+    }
+    /// An EA download finished (EALibrary): the game gets its library entry, or an
+    /// existing one follows the new build's program and keeps its title, artwork and
+    /// settings. Arguments follow the build's manifest unless the player changed them.
+    /// A new entry gets EA's cover art as its cover image.
+    @MainActor
+    func upsertEA(_ game: EAInstalledGame, previous: EAInstalledGame?, cover: URL?) async -> Bool {
+        guard !readOnly else { return false }
+        let existing = entries.first { $0.eaOfferID == game.offerID }
+        var entry = existing ?? LibraryEntry(title: game.title, relativePath: game.programPath, bits: 0)
+        entry.eaOfferID = game.offerID
+        entry.relativePath = game.programPath
+        entry.folderBytes = game.installBytes
+        if existing == nil || entry.arguments == (previous?.arguments ?? "") { entry.arguments = game.arguments }
+        let program = Self.drive.appendingPathComponent(game.programPath)
+        if let inspected = await Task.detached(priority: .utility, operation: { try? LibraryModel.inspect(program) }).value {
+            entry.bits = inspected.bits
+            entry.graphicsAPI = inspected.graphicsAPI ?? entry.graphicsAPI
+        }
+        if entry.coverFile == nil, let cover, let jpeg = await Self.storeCover(cover) {
+            let dir = Self.documents.appendingPathComponent("madeira-art", isDirectory: true)
+            let name = entry.id.uuidString + ".jpg"
+            if (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+               (try? jpeg.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil {
+                entry.coverFile = name
+            }
+        }
+        entry.metadataChecked = nil
+        return save(entry)
+    }
+    /// An EA game was uninstalled: its entry goes with its files.
+    @discardableResult func removeEA(offerID: String) -> Bool {
+        guard entries.contains(where: { $0.eaOfferID == offerID }) else { return true }
+        return persist(entries.filter { $0.eaOfferID != offerID })
+    }
+    /// An Epic download finished (EpicLibrary): the game gets its library entry, or an
+    /// existing one follows the new build's program and keeps its title, artwork and
+    /// settings. A new entry gets Epic's cover art as its cover image.
+    @MainActor
+    func upsertEpic(_ game: EpicInstalledGame, cover: URL?) async -> Bool {
+        guard !readOnly else { return false }
+        var entry = entries.first { $0.epicAppName == game.appName } ?? LibraryEntry(title: game.title, relativePath: game.programPath, bits: 0)
+        entry.epicAppName = game.appName
+        entry.relativePath = game.programPath
+        entry.folderBytes = game.installBytes
+        let program = Self.drive.appendingPathComponent(game.programPath)
+        if let inspected = await Task.detached(priority: .utility, operation: { try? LibraryModel.inspect(program) }).value {
+            entry.bits = inspected.bits
+            entry.graphicsAPI = inspected.graphicsAPI ?? entry.graphicsAPI
+        }
+        if entry.coverFile == nil, let cover, let jpeg = await Self.epicCover(cover) {
+            let dir = Self.documents.appendingPathComponent("madeira-art", isDirectory: true)
+            let name = entry.id.uuidString + ".jpg"
+            if (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+               (try? jpeg.write(to: dir.appendingPathComponent(name), options: .atomic)) != nil {
+                entry.coverFile = name
+            }
+        }
+        entry.metadataChecked = nil
+        return save(entry)
+    }
+    /// Epic's cover art as a JPEG of at most 1200 pixels, or nil.
+    private static func epicCover(_ url: URL) async -> Data? {
+        guard url.scheme == "https", let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200, data.count < 20_000_000,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                             kCGImageSourceThumbnailMaxPixelSize: 1200,
+                                                                             kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
+        else { return nil }
+        return UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85)
+    }
+    /// An Epic game was uninstalled: its entry goes with its files.
+    @discardableResult func removeEpic(appName: String) -> Bool {
+        guard entries.contains(where: { $0.epicAppName == appName }) else { return true }
+        return persist(entries.filter { $0.epicAppName != appName })
+    }
+    /// Publishes `next` and writes it. The write (encoding the whole library and replacing the file) happens off the
+    /// main thread, newest snapshot wins; `wait` writes before returning and reports whether it worked (start-up).
     @discardableResult
-    private func persist(_ next: [LibraryEntry]) -> Bool {
+    private func persist(_ next: [LibraryEntry], hiddenSteamApps: Set<Int>? = nil) -> Bool {
         guard !readOnly else { return false }
         do {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(Document(version: 1, entries: next)).write(to: file, options: .atomic)
+            let hidden = hiddenSteamApps ?? self.hiddenSteamApps
+            try encoder.encode(Document(version: 1, entries: next, hiddenSteamApps: hidden.isEmpty ? nil : hidden.sorted())).write(to: file, options: .atomic)
+            self.hiddenSteamApps = hidden
             entries = next
             return true
         } catch { self.error = "Could not save the library: " + error.localizedDescription; return false }
@@ -226,6 +460,7 @@ final class LibraryModel: ObservableObject {
     @MainActor
     func refreshSteamMetadata(_ game: DockGame, title: String) async {
         let revision = 1
+        guard !hiddenSteamApps.contains(game.id), game.sharedOnly != true else { return }
         guard !readOnly, game.installed, !steamMetadataInFlight.contains(game.id) else { return }
         steamMetadataInFlight.insert(game.id)
         defer { steamMetadataInFlight.remove(game.id) }
@@ -253,7 +488,7 @@ final class LibraryModel: ObservableObject {
         }.value
         var api = program?.api
         if let program, let scanned = await LibraryMetadataScanner.shared.scan(program.url, drive: drive, countBytes: false).api { api = scanned }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !hiddenSteamApps.contains(game.id) else { return }
         var updated = entries.first { $0.steamAppID == game.id } ?? LibraryEntry(title: title, relativePath: folder, bits: 0)
         updated.steamAppID = game.id
         updated.relativePath = folder
@@ -268,37 +503,54 @@ final class LibraryModel: ObservableObject {
 
     /// What an entry can start: an executable, or (ml1163) a batch file run through cmd.exe.
     static let programExtensions: Set<String> = ["exe", "bat", "cmd"]
+    /// The path relative to drive_c that reaches `url`, or nil when it is
+    /// outside drive_c. Files on an external drive are reached through
+    /// drive_c/External/<name> (ExternalDrives.swift).
+    static func relativeToDrive(_ url: URL) -> String? {
+        if let managed = IridiumGameStorage.windowsRelative(url, drive: drive) { return managed }
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        if path.hasPrefix(drive.path + "/") { return String(path.dropFirst(drive.path.count + 1)) }
+        for root in ExternalDrives.shared.roots {
+            if path == root.path { return "External/" + root.name }
+            if path.hasPrefix(root.path + "/") {
+                return "External/" + root.name + "/" + path.dropFirst(root.path.count + 1)
+            }
+        }
+        return nil
+    }
     static func executable(_ relative: String) throws -> URL {
+        let parts = relative.split(separator: "/", omittingEmptySubsequences: false)
+        guard !parts.isEmpty, !parts.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") }) else {
+            throw LibraryError.message("The executable path is not valid.")
+        }
         let url = drive.appendingPathComponent(relative).resolvingSymlinksInPath().standardizedFileURL
-        guard url.path.hasPrefix(drive.path + "/"), programExtensions.contains(url.pathExtension.lowercased()),
+        guard (IridiumGameStorage.windowsRelative(url, drive: drive) ?? relativeToDrive(url)) != nil, programExtensions.contains(url.pathExtension.lowercased()),
               FileManager.default.fileExists(atPath: url.path) else {
-            throw LibraryError.message("Choose an executable (.exe, .bat or .cmd) inside drive_c.")
+            throw LibraryError.message("Choose an executable (.exe, .bat or .cmd) in Iridium’s game storage.")
         }
         return url
     }
     static func inspect(_ url: URL) throws -> LibraryEntry {
-        guard url.resolvingSymlinksInPath().path.hasPrefix(drive.path + "/") else {
-            throw LibraryError.message("The executable must be inside drive_c.")
+        guard let relative = IridiumGameStorage.windowsRelative(url, drive: drive) ?? relativeToDrive(url) else {
+            throw LibraryError.message(L("The executable must be inside drive_c or an external drive."))
         }
         if ["bat", "cmd"].contains(url.pathExtension.lowercased()) {
             // ml1163: a batch file has no PE header. Like every entry it starts
             // directly by default, as upstream starts every game; the details page
             // warns that Wine then stops when cmd.exe, its first process, exits.
-            let relative = String(url.resolvingSymlinksInPath().path.dropFirst(drive.path.count + 1))
             return LibraryEntry(title: url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " "),
                                 relativePath: relative, bits: 0)
         }
         let h = try FileHandle(forReadingFrom: url); defer { try? h.close() }
         let dos = try h.read(upToCount: 64) ?? Data()
-        guard dos.count == 64, dos[0] == 0x4d, dos[1] == 0x5a else { throw LibraryError.message("This is not a Windows executable.") }
+        guard dos.count == 64, dos[0] == 0x4d, dos[1] == 0x5a else { throw LibraryError.message(L("This is not a Windows executable.")) }
         let offset = (0..<4).reduce(UInt64(0)) { $0 | (UInt64(dos[60 + $1]) << ($1 * 8)) }
-        guard offset >= 64, offset < 16 * 1024 * 1024 else { throw LibraryError.message("Invalid executable header.") }
+        guard offset >= 64, offset < 16 * 1024 * 1024 else { throw LibraryError.message(L("Invalid executable header.")) }
         try h.seek(toOffset: offset)
         let pe = try h.read(upToCount: 6) ?? Data()
-        guard pe.count == 6, Array(pe.prefix(4)) == [0x50, 0x45, 0, 0] else { throw LibraryError.message("Missing PE header.") }
+        guard pe.count == 6, Array(pe.prefix(4)) == [0x50, 0x45, 0, 0] else { throw LibraryError.message(L("Missing PE header.")) }
         let machine = Int(pe[4]) | Int(pe[5]) << 8
-        guard machine == 0x14c || machine == 0x8664 else { throw LibraryError.message("Only x86 and x64 executables are supported.") }
-        let relative = String(url.resolvingSymlinksInPath().path.dropFirst(drive.path.count + 1))
+        guard machine == 0x14c || machine == 0x8664 else { throw LibraryError.message(L("Only x86 and x64 executables are supported.")) }
         let name = url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ")
         var entry = LibraryEntry(title: name, relativePath: relative, bits: machine == 0x14c ? 32 : 64)
         entry.graphicsAPI = graphicsImports(url)
@@ -379,12 +631,28 @@ final class LibraryModel: ObservableObject {
 
     // MARK: session
 
-    /// Wine sessions started in this app run. A second one cannot start in the
-    /// same process: the wineserver's permanent objects from the first session
-    /// are still there and init_registry aborts on "\Registry". Madeira asks for
-    /// a restart instead. MADEIRA_ONE_SESSION_PER_RUN=0 lets the launch go ahead.
+    /// Initialize the embedded Windows host once. Game jobs reuse that host;
+    /// a failed native initialization still retains admission.
     static var sessionsThisRun = 0
-    static let restartMessage = "Restart Madeira to start another game: swipe Madeira away in the app switcher, then open it again."
+    private static var nativeInitializationStarted = false
+    private(set) var nativeLaunchID = UUID()
+    static let restartMessage = "Windows could not finish the session safely. Close and reopen Iridium."
+    @MainActor static func reserveNativeSession() -> Bool {
+        guard !nativeInitializationStarted else { return false }
+        nativeInitializationStarted = true
+        sessionsThisRun = 1
+        return true
+    }
+    @MainActor func launchFailedBeforeNative(_ owner: UUID, reason: String? = nil, offerJIT: Bool = false) {
+        guard nativeLaunchID == owner else { return }
+        guard !Self.nativeInitializationStarted else { launchFailed(Self.restartMessage); return }
+        JITCoordinator.shared.releaseAttachedDebugger { clean in
+            guard self.nativeLaunchID == owner, !Self.nativeInitializationStarted else { return }
+            guard clean else { self.launchFailed(Self.restartMessage); return }
+            Self.sessionsThisRun = 0
+            self.launchFailed(reason, offerJIT: offerJIT)
+        }
+    }
     @Published var restartNotice: String? { didSet { if restartNotice != nil { preparing = nil } } }
     /// CS_DEBUGGED is set but no debugger is attached (JIT was enabled outside
     /// Madeira): the text of the alert that offers Madeira's own Enable JIT.
@@ -395,6 +663,7 @@ final class LibraryModel: ObservableObject {
     /// A Play still enabling JIT or getting its start ready: the starting screen is up
     /// for it before the session begins (LibraryHUD), so the press goes straight to it.
     @Published var preparing: LibraryEntry?
+    private(set) var preparationID = UUID()
     private var preparingSince = Date()
     /// The starting screen is up: a session starting, or a Play getting ready.
     var startingScreen: Bool { launching || preparing != nil }
@@ -402,16 +671,12 @@ final class LibraryModel: ObservableObject {
     /// When the starting screen went up, for its elapsed-time line.
     var startingSince: Date { launching ? launchStarted : preparingSince }
     func prepare(_ entry: LibraryEntry) {
-        guard MadeiraConfig.flag("MADEIRA_LAUNCH_EARLY"), current == nil else { return }   // 0: Play keeps the Game details page up until the session begins
+        guard current == nil else { return }
+        preparationID = UUID()
         preparingSince = Date(); preparing = entry
         // The starting screen draws in the controls window (LibraryHUD), which otherwise
         // only comes up with the session's game view.
         TouchControlsHost.attach()
-        let id = entry.id
-        // A start that neither begins nor reports an error lets the screen go.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            if let self, self.preparing?.id == id, self.current == nil { self.preparing = nil }
-        }
     }
     /// A Steam game's saves may not be the latest (SteamOwnedLibrary.cloudHold):
     /// the alert Play shows before starting it.
@@ -436,10 +701,13 @@ final class LibraryModel: ObservableObject {
     func begin(_ entry: LibraryEntry, remember: Bool = true, dock: DockGame? = nil) {
         GestureZonesModel.shared.flush()
         wine_exit_status_reset()
+        JITPoolMeter.reset(); smallPoolNoted = false
         quitRequested = false
+ quitRequestedAt = nil; forceCloseOffered = false; dockGameEnded = false; dockGameEndedAt = nil
         LibraryController.shared.configure(enabled: enabled, ownsInput: false)
+        nativeLaunchID = UUID()
         Self.sessionsThisRun += 1
-        launchPresent = madeira_get_present_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
+        launchPresent = madeira_frame_count(); launchStarted = Date(); launchSlow = false; launchLogs = entry.liveLogs
         launchSurface = winios_surface_present_count()
         MetalBackedView.presentCountAtLaunch = launchPresent; laidOutAfterFirstPresent = false
         preparing = nil; launching = true; overlayFields = entry.overlayFields ?? ["FPS", "Frame time", "RAM", "Battery"]
@@ -489,6 +757,8 @@ final class LibraryModel: ObservableObject {
         padMouseVertical = GamepadInput.keyboardMouseAvailable ? (entry.padMouseVertical ?? 1) : 1
         controllerMode = GamepadInput.keyboardMouseAvailable ? entry.controllerMode : nil
         applyControllerMode()
+        padAssist = entry.padAssist
+        GamepadInput.shared.setPadAssist(padAssist)
         MetalHostView.shared.isHidden = false
         ProMotionIntent.apply(mode: entry.effectiveFPSMode)
         ThermalPacing.shared.begin()
@@ -497,30 +767,55 @@ final class LibraryModel: ObservableObject {
         DockStartScreen.shared.begin(dock, at: launchStarted)
         sawProcess = false
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.poll() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
     }
-    private func poll() {
+    @MainActor private func poll() {
+        if IridiumMadeiraRuntime.shared.isResident {
+            let owner = nativeLaunchID
+            IridiumMadeiraRuntime.shared.poll(owner) { event in
+                guard self.nativeLaunchID == owner, self.current != nil else { return }
+                switch event {
+                case .starting: break
+                case .running:
+                    self.sawProcess = true
+                    if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
+                case .ended(let status):
+                    let requestedQuit = self.quitRequested
+                    let closedBeforeVideo = self.startingScreen
+                    self.finish()
+                    if !requestedQuit {
+                        if status != 0 { self.error = "The Windows game ended with code \(status)." }
+                        else if closedBeforeVideo && self.error == nil { self.error = "The Windows game closed before it displayed video. Open View Log for details." }
+                    }
+                case .blocked(let message):
+                    self.timer?.invalidate(); self.timer = nil
+                    self.launching = false; self.error = message
+                }
+            }
+        }
         let dockStart = DockStartScreen.shared
         if dockStart.active {
             // A Dock start: the desktop's own frames (explorer, the host's console window)
             // do not end this starting screen; the game's window does (DockStartScreen).
-            dockStart.poll(self, rendered: madeira_get_present_count() >= launchPresent + 3)
+            dockStart.poll(self, rendered: madeira_frame_count() >= launchPresent + 3)
         }
         if dockStart.holding {
             if launching && !launchSlow && Date().timeIntervalSince(launchStarted) > 30 { launchSlow = true }
         } else if launching {
-            if madeira_get_present_count() >= launchPresent + 3 {
+            if madeira_frame_count() >= launchPresent + 3 {
                 showGameView(reason: "present")
             } else if winios_surface_present_count() > launchSurface {
                 showGameView(reason: "surface")
             } else if Date().timeIntervalSince(launchStarted) > 30 { launchSlow = true }
         }
-        if wine_process_is_running() != 0 {
+        if !IridiumMadeiraRuntime.shared.isResident, wine_process_is_running() != 0 {
             sawProcess = true
             if sessionMessage == "Starting…" { sessionMessage = "" }
-        } else if sawProcess && wineserver_is_running() == 0 { finish() }
+        } else if !IridiumMadeiraRuntime.shared.isResident, sawProcess && wineserver_is_running() == 0 { finish() }
         // The first frame gives Aspect and Fill height the drawable's shape.
-        if current != nil, !laidOutAfterFirstPresent, madeira_get_present_count() != MetalBackedView.presentCountAtLaunch {
+        if current != nil, !laidOutAfterFirstPresent, madeira_frame_count() != MetalBackedView.presentCountAtLaunch {
             laidOutAfterFirstPresent = true
             MetalBackedView.refreshDisplayMode(reason: "first-present")
         }
@@ -532,7 +827,7 @@ final class LibraryModel: ObservableObject {
         guard current != nil && !sawProcess else { return }
         finish()
         if offerJIT, let reason { jitNotice = reason }
-        else { error = reason ?? "The session could not start. Check the diagnostic log and JIT status." }
+        else { error = reason ?? L("The session could not start. Check the diagnostic log and JIT status.") }
     }
     /// Both flags change in one transaction without animation: the animated
     /// removal of a scrolling view with live content could leave the starting
@@ -587,14 +882,24 @@ final class LibraryModel: ObservableObject {
     }
     func requestQuit() {
         LibraryKeyboard.hide()
+        if quitRequested, IridiumMadeiraRuntime.shared.isResident {
+            IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID)
+            sessionMessage = "Ending the remaining game processes…"
+            menu = false
+            return
+        }
         quitRequested = true
+        if !sawProcess { IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID) }
+        let closingOwner = nativeLaunchID
+        if quitRequestedAt == nil { quitRequestedAt = Date() }
         // Ask the application to close (Alt+F4) through the normal input queue,
         // so it can save; the surface stays up until the native session ends.
         winios_post_key(0x12, 1); winios_post_key(0x73, 1)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            guard self.nativeLaunchID == closingOwner, self.current != nil else { return }
             winios_post_key(0x73, 0); winios_post_key(0x12, 0)
         }
-        sessionMessage = "Close requested. Confirm any in-game exit dialog."
+        sessionMessage = "Confirm the exit in the game. Close again to end remaining processes."
         menu = false
         fputs("[frontend] graceful close requested\n", stderr)
     }
@@ -620,6 +925,7 @@ final class LibraryModel: ObservableObject {
             if GamepadInput.keyboardMouseAvailable { entry.controllerMode = controllerMode }
             if GamepadInput.keyboardMouseAvailable { entry.controllerBinds = controllerBinds.isEmpty ? nil : controllerBinds }
             if GamepadInput.keyboardMouseAvailable { entry.padMouseVertical = padMouseVertical == 1 ? nil : padMouseVertical }
+            entry.padAssist = padAssist
             // The in-game Aspect & scaling choice sticks to the game. MADEIRA_SESSION_TOOLS=0
             // hides that picker and leaves the stored choice alone.
             if MadeiraConfig.flag("MADEIRA_SESSION_TOOLS") { entry.display = displayMode.rawValue }
@@ -627,28 +933,43 @@ final class LibraryModel: ObservableObject {
         }
     }
     private func finish() {
-        if sawProcess, let report = exitReport() { error = report }
+        MainActor.assumeIsolated { IridiumPlayerTransition.returnToLibrary() }
+        if sawProcess, let next = steamRunRequest() { restartNotice = next }
+        else if sawProcess, let report = exitReport() { error = report }
         timer?.invalidate(); timer = nil
         saveCurrentProfile()
         controllerMode = nil
         controllerBinds = [:]
         padMouseVertical = 1
+        padAssist = nil
+        GamepadInput.shared.setPadAssist(nil)
         let controls = TouchControlsModel.shared
         controls.editing = false; controls.selected = nil
         controls.controls = savedControls; controls.visible = savedVisible; controls.sizeScale = savedSize
         GestureZonesModel.shared.selected = nil; GestureZonesModel.shared.zones = savedZones
         if ControlPresetsModel.enabled { controls.layoutID = savedLayout }
         iridiumWindowsControlsBaseline = nil
+        if let current { LibraryEntry.setGOGSetup(nil, for: current) }
         current = nil; activeEntry = nil; menu = false; sessionMessage = ""
+        quitRequestedAt = nil; forceCloseOffered = false; dockGameEnded = false; dockGameEndedAt = nil
         displayMode = .fit
         LogStore.shared.setDisplayActive(true)
         launching = false; launchLogs = false; LibraryKeyboard.hide()
+        MainActor.assumeIsolated {
+            SteamOwnedLibrary.shared.reconcileSession()
+            GOGLibrary.shared.sessionChanged(active: false)
+            GOGGalaxy.shared.stop()
+            EpicLibrary.shared.sessionChanged(active: false)
+            EALibrary.shared.sessionChanged(active: false)
+            ItchLibrary.shared.sessionChanged(active: false)
+        }
         DockStartScreen.shared.finish()
         LibraryController.shared.configure(enabled: enabled, ownsInput: enabled)
         MetalHostView.shared.isHidden = true
         ProMotionIntent.shared.setActive(false)
         ThermalPacing.shared.end()
         fputs("[frontend] returned to library\n", stderr)
+        LogSummary.writeLater(from: LogStore.shared.logURL, source: "madeira-log.txt (this session)")
     }
 }
 
@@ -692,7 +1013,7 @@ private actor LibraryMetadataScanner {
     /// `countBytes: false` skips the size walk (a Steam game's size is its install record's).
     func scan(_ executable: URL, drive: URL, countBytes: Bool = true) -> (bytes: Int64?, api: String?) {
         let folder = executable.deletingLastPathComponent()
-        guard folder.path.hasPrefix(drive.path + "/"), !Task.isCancelled else { return (nil, nil) }
+        guard IridiumGameStorage.windowsRelative(folder, drive: drive) != nil, !Task.isCancelled else { return (nil, nil) }
         let manager = FileManager.default
         // Executables commonly live below the installation root. Only ascend
         // conventional binary directories, never an arbitrary library parent.
@@ -701,7 +1022,7 @@ private actor LibraryMetadataScanner {
         for _ in 0..<4 {
             guard binaryFolders.contains(installation.lastPathComponent.lowercased()) else { break }
             let parent = installation.deletingLastPathComponent()
-            guard parent.path.hasPrefix(drive.path + "/"),
+            guard IridiumGameStorage.windowsRelative(parent, drive: drive) != nil,
                   !["program files", "program files (x86)", "games", "common", "steamapps"].contains(parent.lastPathComponent.lowercased()) else { break }
             installation = parent
         }
@@ -723,7 +1044,7 @@ private actor LibraryMetadataScanner {
         let siblings = (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         var local: [String: URL] = [:]
         for file in siblings where file.pathExtension.lowercased() == "dll" {
-            if file.resolvingSymlinksInPath().path.hasPrefix(drive.path + "/") { local[file.lastPathComponent.lowercased()] = file }
+            if IridiumGameStorage.windowsRelative(file, drive: drive) != nil { local[file.lastPathComponent.lowercased()] = file }
         }
         var budget = 32 * 1024 * 1024
         var pending = [executable], visited = Set<String>(), apis = Set<String>()
@@ -732,7 +1053,7 @@ private actor LibraryMetadataScanner {
         if LibraryModel.graphicsImports(executable) == nil {
             pending.insert(contentsOf: siblings.filter {
                 $0.pathExtension.lowercased() == "exe" && $0 != executable &&
-                $0.resolvingSymlinksInPath().path.hasPrefix(drive.path + "/")
+                IridiumGameStorage.windowsRelative($0, drive: drive) != nil
             }.sorted { $0.path < $1.path }.prefix(8), at: 0)
         }
         while let file = pending.popLast(), visited.count < 64, !Task.isCancelled {

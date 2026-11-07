@@ -88,14 +88,14 @@ enum IridiumConsoleControlLayout {
     /// Navigation can first measure the editor at zero or at a short transition
     /// size. Generate normalized defaults in a usable reference canvas; fitting
     /// still follows the actual canvas without rewriting the saved layout.
-    static func editorDefaults(profile: IridiumPlayerProfile, size: CGSize) -> [TouchControl] {
+    static func editorDefaults(profile: IridiumPlayerProfile, size: CGSize, platform: IridiumPlatform? = nil, wiiRemote: Int = 0) -> [TouchControl] {
         let wide = size.width > size.height
         let reference = CGSize(width: max(wide ? 667 : 320, size.width),
                                height: max(wide ? 320 : 548, size.height))
-        return defaults(profile: profile, bounds: CGRect(origin: .zero, size: reference))
+        return defaults(profile: profile, bounds: CGRect(origin: .zero, size: reference), platform: platform, wiiRemote: wiiRemote)
     }
 
-    static func defaults(profile: IridiumPlayerProfile, bounds: CGRect) -> [TouchControl] {
+    static func defaults(profile: IridiumPlayerProfile, bounds: CGRect, platform: IridiumPlatform? = nil, wiiRemote: Int = 0) -> [TouchControl] {
         let layout = IridiumPlayerLayout(profile: profile, bounds: bounds, touchVisible: true)
         func control(_ action: String, _ frame: CGRect) -> TouchControl {
             TouchControl(nx: Double((frame.midX - bounds.minX) / max(1, bounds.width)),
@@ -111,6 +111,21 @@ enum IridiumConsoleControlLayout {
         if profile == .console || profile == .nintendo3DS {
             values.append(control("RS", CGRect(x: bounds.maxX - 192, y: bounds.maxY - 98, width: 80, height: 80)))
         }
+        // Keep saved custom layouts unchanged; only built-in controls follow the hardware.
+        let supported: Set<String>
+        switch platform {
+        case .wii:
+            if wiiRemote == 2 {
+                values.append(control("L3", CGRect(x: bounds.midX - 22, y: bounds.minY + 58, width: 44, height: 44)))
+                supported = ["DPad", "LS", "RS", "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "L3", "Menu", "View"]
+            } else {
+                supported = Set(["DPad", "A", "B", "X", "Y", "LT", "RT", "Menu", "View"] + (wiiRemote == 1 ? ["LS", "LB", "RB"] : []))
+            }
+        case .gameCube: supported = ["DPad", "LS", "RS", "A", "B", "X", "Y", "LT", "RT", "RB", "Menu"]
+        case .dreamcast, .arcade: supported = ["DPad", "LS", "A", "B", "X", "Y", "LT", "RT", "Menu"]
+        default: return values
+        }
+        values.removeAll { !supported.contains($0.action.padName ?? "") }
         return values
     }
 }

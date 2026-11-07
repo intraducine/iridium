@@ -25,8 +25,11 @@ PATHS = {
                        FRONTEND + '.build/iridium-native.json',
                        FRONTEND + 'app/Madeira/arm64ec-windows/dockhost.exe',
                        FRONTEND + 'app/Madeira/arm64ec-windows/dock-notices.txt',
+                       FRONTEND + 'app/Madeira/arm64ec-windows/xtajit64.dll',
                        FRONTEND + 'app/Madeira/legal/LICENSES-rppairing-crates.txt'),
-    'madeira-windows': (FRONTEND + 'app/Madeira/i386-windows', FRONTEND + '.build/iridium-i386.json'),
+    'madeira-windows': (FRONTEND + 'app/Madeira/i386-windows', FRONTEND + '.build/iridium-i386.json',
+        *(FRONTEND + 'app/Madeira/' + name for name in ('arm64ec-windows', 'aarch64-windows', 'vulkan', 'gl', 'x86_64-opengl', 'compat/love', 'licenses')),
+        *(FRONTEND + '.build/iridium-' + name + '.json' for name in ('windows', 'moltenvk', 'zink', 'mesa-d3d12', 'vulkan-pe', 'kosmickrisp'))),
     'native': (
         M + 'toolchains/llvm-ios-build/lib', M + 'toolchains/llvm-ios-build/include',
         M + 'toolchains/gnutls-ios', M + 'build/freetype-ios/build',

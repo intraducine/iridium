@@ -121,16 +121,25 @@ struct IridiumBackdropCanvas: UIViewRepresentable {
             guard target != nil || image != nil else { return }
             guard target?.image !== image || target?.position != position else { return }
             let hadImage = target != nil
-            let layers = subviews.compactMap { $0 as? ArtworkLayer }
-            var next = layers.first { $0.image === image && $0.position == position }
-            if next == nil, let image {
+            // Keep one opaque outgoing image. Fading both layers exposes black,
+            // and interrupted transitions must not accumulate image views.
+            let outgoing = target
+            outgoing?.layer.removeAllAnimations(); outgoing?.alpha = 1
+            subviews.filter { $0 !== outgoing }.forEach { $0.removeFromSuperview() }
+            var next: ArtworkLayer?
+            if let image {
                 let layer = ArtworkLayer(image: image, position: position); layer.alpha = 0
                 addSubview(layer); next = layer
             }
             target = next; setNeedsLayout(); layoutIfNeeded()
-            UIView.animate(withDuration: animated && hadImage ? 0.32 : 0, delay: 0,
+            guard animated && hadImage else {
+                next?.alpha = 1
+                subviews.filter { $0 !== next }.forEach { $0.removeFromSuperview() }
+                return
+            }
+            UIView.animate(withDuration: 0.32, delay: 0,
                 options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseInOut]) {
-                for layer in self.subviews { layer.alpha = layer === next ? 1 : 0 }
+                if let next { next.alpha = 1 } else { outgoing?.alpha = 0 }
             } completion: { [weak self] finished in
                 guard finished, let self, self.target === next else { return }
                 self.subviews.filter { $0 !== next }.forEach { $0.removeFromSuperview() }

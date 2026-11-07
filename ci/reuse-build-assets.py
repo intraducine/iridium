@@ -36,12 +36,16 @@ NATIVE_INPUTS = MEDIA_INPUTS + (
     'iridium/apps/ios/project.yml', 'iridium/apps/ios/madeira.yml', '.gitmodules')
 
 COMPONENT_INPUTS = {
-    'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
+    'madeira-native': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json',
                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py', 'ci/madeira_audio_volume.py',
+                       'ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                       'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h',
+                       'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
                        'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'),
-    'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/runtime-inputs.json',
-                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py'),
+    'madeira-windows': ('vendor/Madeira', 'ci/madeira-frontend.py', 'ci/madeira_managed_patches.py', 'ci/madeira_components.py', 'ci/runtime-inputs.json',
+                        'ci/local_build_tools.py', 'ci/fetch-runtime-inputs.py',
+                        'ci/build-madeira-windows.py', 'ci/free-build-space.py'),
     # App UI, docs, and tools are not inputs to the native compiler recipes.
     # Track Madeira's compiler trees rather than its entire repository.
     # Both XcodeGen specs configure the later app build, not these libraries.
@@ -94,9 +98,9 @@ COMPONENT_INPUTS = {
 FRONTEND_APP_FUNCTIONS = frozenset(('overlay', 'project', 'refresh_generated_tree',
                                     'prepare', 'verify', 'app', 'check_bundle'))
 FRONTEND_APP_METADATA = frozenset(('PSP_PRIVACY_DESCRIPTIONS',))
-FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume',
+FRONTEND_IMPORTS = frozenset(('argparse', 'plistlib', 'shutil', 'subprocess', 'shlex', 'madeira_audio_volume', 'madeira_threads',
                               'hashlib', 'importlib.util', 'inspect', 'json', 'os',
-                              'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins'))
+                              'time', 'sys', 'tempfile', 'madeira_presentation', 'engine_pins', 'copy', 'madeira_components', 'madeira_managed_patches'))
 # This reviewed route cannot run app preparation during a compiler action.
 # A new CLI shape uses whole-file comparison until its isolation is reviewed.
 FRONTEND_MAIN = """if __name__ == '__main__':
@@ -105,16 +109,18 @@ FRONTEND_MAIN = """if __name__ == '__main__':
     parser.add_argument('app', nargs='?', type=Path)
     parser.add_argument('--reuse-psp-component', action='store_true', help='Validate and retain an explicitly rebuilt PSP component during relinking')
     parser.add_argument('--reuse-only', action='store_true', help='Validate completed native outputs without building or writing')
+    parser.add_argument('--incremental-native', action='store_true', help='Rebuild native recipes from a verified compatible prior build')
     args = parser.parse_args()
     if args.reuse_psp_component and args.action != 'app': parser.error('--reuse-psp-component requires app')
     if args.reuse_only and args.action != 'native': parser.error('--reuse-only requires native')
+    if args.incremental_native and (args.action != 'native' or args.reuse_only): parser.error('--incremental-native requires native without --reuse-only')
     if args.action == 'check-bundle':
         if args.app is None: parser.error('check-bundle requires the built app path')
         check_bundle(args.app)
         print('The built app contains the pinned Madeira runtime farms, WoW64 and D3D12.')
     else:
         if args.app is not None: parser.error('Only check-bundle accepts an app path')
-        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only), 'windows': windows, 'toolchains': toolchains}[args.action]()
+        {'prepare': prepare, 'verify': verify, 'app': lambda: app(reuse_psp=args.reuse_psp_component), 'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native), 'windows': windows, 'toolchains': toolchains}[args.action]()
 """
 
 

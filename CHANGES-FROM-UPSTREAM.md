@@ -11,6 +11,36 @@ licenses in `iridium/apps/ios/App/source-ownership.json` and `App/Origin`.
 Iridium owns its library, artwork, navigation, setup, controls, settings, and
 runtime adapters. Frozen build-43 overlays remain test fixtures only.
 
+Library and Settings navigation do not play UI sounds or activate an audio
+session. Game audio and touch haptics remain owned by their existing systems.
+
+The library uses lazy cover views and changes focus only at cover boundaries.
+Backdrop transitions retain an opaque outgoing image and at most two layers.
+Landscape portrait covers grow with their scroll position toward the left slot,
+up to 1.5 times their base size. Bottom anchoring and reserved space keep the
+larger art whole, with its lower edge slightly below the other covers. Adjacent
+covers keep their spacing throughout the movement. The large cover and Play
+button share the same left edge. Titles and console labels
+use short, interruptible fades with two reused labels, so fast changes cannot
+accumulate old titles. Reduced Motion keeps them static.
+One shared white selection border slides between covers and follows their live
+scroll size, including the larger landscape art.
+The hosted review build validates each completed Windows/graphics module before
+removing only its loose compiler objects. Sources, libraries and module receipts
+remain available. The 20 GiB reserve and 40 GiB module admission remain unchanged.
+Required runtimes and games with optional JIT enabled show `· JIT` beside their
+system name. The standalone Windows control overlay
+is hidden between library sessions. Startup diagnostics and Dock executable
+scans run off the UI thread.
+
+Stores share one visible selector, search field and Accounts page for Steam,
+Epic Games, EA and itch.io. Game Options links to each store's install controls.
+Workshop has an empty state for unsupported installed games. Journaled game
+aliases remain removable after the user deletes their target folder in Files.
+CIA installation uses the shared Import queue with an explicit storage choice;
+source files are consumed only after installation and library persistence finish.
+Option descriptions use short, task-specific copy.
+
 Adaptations include:
 
 - Shared player/input ownership, isolated console records, Favorites, artwork,
@@ -24,9 +54,42 @@ Adaptations include:
 - Source-built native/i386 dependencies, fail-on-error compilation, checked
   completion records, architecture validation, and independent component reuse.
 
+The Windows supervisor is a native ARM64 program. It does not force ARM64EC
+for the whole host, so native store launchers and translated games can coexist.
+Its distinct filename prevents an older x64 helper in an existing prefix from
+winning the executable probe. The checked request protocol and thread-drain
+admission remain unchanged.
+All runtimes share the loading layout, live RAM readout, movable menu position,
+and return fade. Native console players fit video once in the available display
+area. Startup presentation and JIT helper handoff do not open the pause menu;
+backgrounding or an audio interruption pauses a running game.
+The disposable hosted device-build job removes unused simulator disk images
+through simctl only when no simulator is active. It checks that both build SDKs
+stay in place, then logs measured free space. Local machines and self-hosted
+runners cannot enter this cleanup path.
+The initial space target includes both native and Windows build peaks before
+the unchanged per-stage reserve checks.
+The Actions job validates and retains its native checkpoint before removing only
+its loose compiler objects, transfer copy and verified consumed toolchain archives.
+The 20 GiB reserve and 20 GiB Windows working-space check remain enforced.
+Both native and Windows FEX steps clear the outer CMake cache launchers because
+FEX supplies its own compiler-cache wrapper.
+Runtime bootstrap recipes run separately from standard input, so an installer
+cannot consume the shell commands that follow it. Failed builds still fail.
+
 The native recipes reconstruct wineserver archives, configure FEX for arm64,
 adapt LLVM 15 Darwin checks for iOS, and adapt the tessellation shader's atomic
 operation. Existing sources/notices are retained with these build recipes.
+ARM64EC callbacks tolerate missing CPU areas on native startup threads, before
+the emulator initializes their thread state. Native ARM64 children in an x64
+session load their own native ntdll instead of inheriting the ARM64EC loader.
+Read-only system32 opens in those children select the native copy when the
+shared prefix resolves to a bundled ARM64EC DLL. User files and the parent
+process retain their existing file view.
+Installed 3DS content retains its shared storage owner and save path when raw
+ROMs move into named Games folders. Import and CIA installation routes coexist.
+The early launch screen and RAM display remain active for resident Windows jobs;
+failed JIT requests clear only their own pending launch screen.
 
 The Madeira update through `e3a88fddb8daed1f5ac28a45dcb4663d65192629`
 retains the native memory, process, synchronization, audio, archive and input
@@ -37,12 +100,28 @@ includes the window-caption field used by the startup window census.
 
 Steam Cloud cache records, download languages, clipboard input, mouse-wheel
 mapping, touch-control locking and gesture zones retain their upstream behavior.
+Cloud upload before quit can finish its checks after taking over the Steam
+connection. Downloads and client-cache writes stay blocked while a game runs.
+Quit waits for stable saves and server confirmation; a save changed during
+upload keeps the app open and can be retried without a false conflict.
 Windows gesture zones also participate in Iridium's saved control profiles and
 editor restoration, with platform and geometry validation. Per-game zones do
 not replace the global working layout. Iridium keeps its own library and
 navigation; the upstream zoomable grid is not included. Windows launch content
 stays visible when an animation is interrupted or disabled. Gesture-zone options
 fit their content and scroll when the available height is too small.
+Steam WebSocket setup and logon share a single-completion guard. Repeated ping
+callbacks cannot resume a continuation twice, and a retired socket cannot start
+receiving after a later disconnect or replacement.
+The generated Metal adapter records owned graphics references by guest process
+and session. After guest kernel threads end, it drains completed processes'
+submitted GPU work before releasing their remaining references or private memory.
+Live, unknown and shared references retain their normal lifetime. A failed or
+timed-out GPU drain keeps the old references and mappings in place.
+The native shader adapter fills unwritten vertex-output lanes and replaces
+non-finite floating-point interpolants with zero. Metal cannot safely interpolate
+NaN or infinity. Integer outputs, pixel outputs and position handling keep their
+upstream paths. The adapter checks the pinned signature and build recipe.
 
 ### Selected compatibility ports
 
@@ -76,28 +155,78 @@ interfaces. [Console documentation](docs/console-engines.md) lists build entries
 
 - **SameBoy:** private symbol namespace, generated replacement boot data, bounded
   frame/audio/input delivery, and per-game battery/RTC storage. Boot generation
-  uses pinned RGBDS; the unchanged Libretro adapter accepts a 96 kHz target.
+  uses pinned RGBDS; the pinned Libretro adapter accepts a 96 kHz target.
+  The app exposes core options, version-checked state slots, bounded rewind,
+  and 2× speed with muted audio. A checked generated adapter enables upstream
+  GameShark/Game Genie parsing. It validates a replacement set before changing
+  live codes.
 - **Dolphin:** upstream iOS/Metal integration with strict floating-point flags,
   checked executable-memory preparation, ordinary ownership for non-executable
   blocks, and no cached-interpreter fallback. CoreAudio sample gain provides mute
   and disposes its audio unit on stop. Generated hooks correct state-load success,
   simulator framebuffer fetch, bundled dependency flags, and Apple Clang compatibility.
   Iridium supplies controller profiles, state slots, WAD backup/recovery, and Sys data.
+  Additional typed graphics/compatibility settings use an optional command interface.
+  The command interface also changes disc images and edits per-game OnFrame
+  patches through upstream parsing and atomic INI saving. Built-in patch code
+  stays immutable. Patch reload restores Iridium-managed cheats.
 - **Azahar:** verified official unified source; Oaknut/Dynarmic/shader overlays use
   separate writable/executable aliases and checked cache updates through shared
   JIT. Generated locks initialize after callback registration. Checked-memory mode
   preserves debugger exception handlers. The main Vulkan renderer uses an iOS
   Metal surface and source-built MoltenVK 1.4.1. Libretro retains input/audio/saves.
+  Screen layout and swap settings reach the core. Pointer coordinates cover the
+  selected canvas; generated input rejects taps outside the current touchscreen.
+  The shared host supplies motion through the Libretro sensor interface.
+  An optional camera factory uses an explicit versioned callback to host-owned
+  camera frames. A locked settings snapshot fixes each frame's dimensions and
+  format; concurrent capture reads share a serialized pixel buffer. The Libretro microphone interface consumes bounded 48 kHz mono
+  input from the host. Capture is off by default and stops on pause/close.
+  An optional CIA installer uses upstream AM validation and installation in
+  staged user storage. Base-title metadata creates a library entry after safe
+  publication. Add Game can create new storage without an existing 3DS entry;
+  updates and DLC require an existing storage target. The AM installer uses the
+  pinned upstream source without changes.
 - **Play!:** per-game configuration, CodeGen allocations and block-link writes
   through shared JIT aliases, pooled executable pages for small blocks, executable
-  probe, and upstream VM pause with GS mailbox draining.
+  probe, and upstream VM pause with GS mailbox draining. Teardown pauses before
+  the single GS release. The generated pad adapter polls two independent ports
+  and maps the full signed stick range without wrapping its negative endpoint.
+  Optional disc changes run through the VM mailbox while paused and restore the
+  previous media on insertion failure. Failed restoration retains runtime ownership
+  and blocks resume. The GS adapter reports scaled CRT dimensions before drawing.
+  State controls use upstream full-VM save/load, including VM timing, through private
+  temporary files. The owner drains GS work while waiting; snapshots force graphics
+  memory synchronization before the archive is written. Bounded state buffers record
+  the archive length, clear unused bytes, and reject earlier incomplete snapshots.
 - **Flycast:** generated ES3 capability, shared JIT aliases for SH4, ARM7 and DSP
   code, executable probe, upstream VM stop/resume, and nonvolatile-storage flush.
   The host registers international core options using its English language
   selection and configures all Flycast controller ports before the first frame.
+  Supported controller choices and expansion options remain under upstream
+  device ownership. The pinned miniupnpc dependency is built for network options.
+  Serialization preserves the prior VM running/paused state.
   During Flycast sessions, memory faults follow upstream's iOS signal
   route while JIT breakpoints stay with the shared debugger. Shutdown restores
   the previous memory-fault route before releasing JIT.
+
+The shared Libretro host copies option definitions, validates changed values,
+exposes save states with rollback, changes disc images, polls separate
+controller ports, and forwards controller vibration. Optional control exports
+extend the host interface without changing the required base ABI or shared JIT
+memory contract. The extended disk interface supplies the actual prior image
+path for rollback after a failed external disc insertion. Failed recovery retains
+the runtime lease. PSP Model and Software Rendering remain staged per game until
+a checked hook applies them before native CPU/GPU initialization. State writes use bounded files and atomic slot replacement.
+Iridium's cheat editor uses the native SameBoy, CWCheat, Gecko/Action Replay,
+and Gateway implementations. Its per-game entries preserve upstream cheat
+files and existing Dolphin/Azahar entries. A generated PPSSPP hook copies its
+managed codes under a mutex and reloads them on the core's cheat callback.
+The OpenGL display blit restores core framebuffer/renderbuffer bindings, scissor
+enable and clear color even when presentation fails. Content import/export uses
+bounded staged copies with recoverable backups. Host media capture stays outside
+the core and is available only through optional interfaces. Engine pins and the
+shared JIT ownership contract are unchanged by these controls.
 
 ## Native PPSSPP
 
@@ -105,6 +234,9 @@ The v1.20.4 iOS player replaces the historical Libretro/software player. Generat
 hooks adapt app/window ownership, input, callbacks, settings, managed memory sticks,
 media checks, sensors, picker lifetime, renderer drain, and main-thread teardown.
 Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
+Typed graphics, compatibility, shader, texture and network settings use the
+upstream config fields on the render thread. JIT and backend selection remain
+under the existing memory and rendering contracts.
 
 - GL synchronization binds each readback to its completed request, cancels skipped
   work, and drains producer/render queues before teardown.
@@ -126,6 +258,26 @@ Iridium owns controls and menus; upstream CPU/HLE/GPU/save algorithms remain.
   Four replacement atlases use licensed font inputs and preserve glyph/icon IDs.
   [Atlas adaptations](ci/psp-atlas-host/README.md) describe generation.
 
+## Shared import storage
+
+The app owns a Documents/Import queue for individual and bulk game imports,
+ZIP/7z extraction through system libarchive, and validated Keychain pairing
+imports. Existing console and Windows installations move to Documents/Games
+without changing game IDs or save roots. Recorded relative links retain Windows
+and Steam paths, including installations shared by several library entries.
+Imports keep their source until durable registration and use persistent receipts
+for retry. These storage and UI changes remain outside emulator source trees.
+Managed game folders include a readable title and stable ID. Empty completed
+import staging folders are removed without deleting retained user files. Steam
+discovery checks that its install folder is present and nonempty; missing
+installations offer repair before JIT or runtime launch.
+Shared-only Steam records stay out of the game carousel. Library removal persists
+without removing game files. Managed Steam uninstall waits for active writes,
+checks shared-folder ownership, and handles missing files or install records.
+Steam Cloud checks, restores, conflict choices, and quit uploads use the same
+file transfer gate as imports. Folder migration and Cloud save access cannot
+overlap; quit uploads can still run while a game is open.
+
 ## Shared JIT and controls
 
 The app owns a prepared executable-memory pool through `IRJITMemoryAPI` version 1.
@@ -146,8 +298,85 @@ interface. PSP's additive shared-memory entry point retains its four bounded
 arenas between clean sessions, validates their permissions, and repeats its
 execution/rewrite probe. Older PSP adapters keep the owned-helper path.
 Play resets its configuration and option-update state before a new VM starts.
-Wine still requires a process restart between sessions because its loader and
-server keep process-global state; the console memory service does not reset it.
+Its teardown pauses the VM with bounded GS mailbox draining before destroying
+graphics resources. A failed pause retains the runtime for an app restart.
+The Madeira session adapter initializes the Windows host once and launches games
+through an owned Windows job supervisor. Its versioned request/status contract is
+compiled with the pinned Madeira cross compiler and audited against its source and
+engine pin. Checked creation hooks track Wine guest threads with retained Mach
+thread ports while preserving Wine's join/detach ownership. The app returns
+admission only after job completion and guest-thread drain; retained framework
+services do not block reuse. JIT setup prepares both retained Windows and reusable console arenas once;
+closing a game preserves those mappings. A checked Madeira server adaptation sends
+SIGQUIT through the shared task only for threads in this host process. Other
+signals and debugger memory access keep their upstream behavior. Process thread
+counts and deferred TEB disposal are keyed to each pseudo-process. Cleanup waits
+for that process's last guest thread. Completed socket, identity and file-cache
+slots are released or reused rather than imposing a lifetime session limit.
+The Mach exception registry and per-thread JIT trampolines share bounded slots.
+A slot can be reused only after its retained Mach port proves the previous
+kernel thread ended, including TLS destructors. An unknown thread never uses
+the host process's exception state. Live-slot exhaustion fails admission.
+Steered memory reservations retire their tracking records when a view is deleted.
+Cleanup checks the current view under the memory lock. Private views and large
+reservations carry their owning process and job number. Split views retain that
+ownership. Process exit retires them; admission to a later
+job releases their data pages only after all prior guest kernel threads and TLS
+destructors have ended. Cleanup also unmaps the dead process's original PE images;
+their reusable JIT pool copies stay allocated. Live images, anonymous executable
+memory, shared files, special and replaced views stay protected.
+A later game can reuse an address without an old record freeing it.
+Windows image copies keep their complete pool allocation after process exit.
+A later job can reuse it only after the old guest threads end, no live ledger
+entry overlaps it, and its code, data and trampoline pages fit the new image.
+Writable pages must already be data pages. Reuse cannot remove execute access
+from more pool pages. The anonymous-code allocator keeps its original checks.
+Before unmapping retired private data, cleanup removes its abandoned WaitOnAddress
+entries from Wine's shared queues. Live and current-job entries remain linked.
+A busy queue defers reclamation. The adapter checks the pinned PE and native
+queue layouts before compilation.
+Native TEB cache blocks belong to the resident host even when a game's thread
+causes a block to be allocated. Per-window WoW64 TEB blocks keep their process
+ownership. Private-data cleanup preserves the shared cache for the next thread.
+Native GDI table and 64-bit DC attribute buckets also retain host ownership.
+Metal shared-event listeners retain their run loops and release their dummy
+sources on thread exit. Callbacks use non-repeating registry handles instead of
+capturing freed listener pointers. Retirement stops pending delivery, and a later
+job releases abandoned listener registrations after the guest threads end.
+The next process can reuse these shared graphics caches after game data is
+released. WoW64 DC buckets retain their process-window ownership.
+Each x64 child uses Madeira's existing fresh ARM64EC ntdll loader. A private
+pool copy alone can inherit hooks written into the shared PE image by a prior
+game. Other child architectures keep their upstream loader path.
+Child startup calls win32u's existing GDI table publication helper. The shared
+host initializes once, but each new process needs its own published PEB field.
+The shared USER object cache records each pointer's process ID and full handle.
+Recycled handles cannot expose stale pointers from a previous game.
+Window procedure tables release each process's callbacks before its code is
+reclaimed. New processes reuse those entries instead of filling a lifetime table.
+FEX's allocation-watch diagnostic uses the host thread pointer on ARM64EC as it
+already does on WoW64. It can run before Wine allocates the Windows TLS array.
+The translator is rebuilt and included in the native component receipt.
+No Wine registry reset is used for repeated launches. Runtime startup-only configuration retains its
+upstream host-lifetime scope.
+Windows preparation holds launch admission until error cleanup completes.
+A missing-debugger failure releases its launch reservation only after
+the shared helper confirms cleanup. A failed native initialization retains admission. Allocation errors report the
+failure without terminating the app on a timer.
+JIT execution checks preserve resident signal handlers' masks, alternate-stack
+and restart flags. Unrelated faults keep their existing handler. One-shot and
+legacy handlers remain unsupported; changed handlers are never overwritten.
+Core state, rewind, cheat, patch and disc completions retain the pause intent from
+their request. A later pause prevents automatic resume. Windows status polling
+grants one background grace period per observed heartbeat; slow polls cannot
+renew a missing heartbeat indefinitely.
+Data reservations can retain read/write protection flags during cleanup.
+Address ownership, job admission and special-view checks still protect live memory.
+Core state files open from Foundation's app or temporary directory, so iOS does
+not need to grant access to filesystem ancestors. Canonical-path and no-symlink
+checks still apply to each save directory and state file.
+Diagnostic exports release temporary Foundation strings after each sanitized
+line instead of retaining them until the full export completes.
 
 
 Per-game volume uses a shared saved gain and menu slider. SameBoy, native PSP,
@@ -194,3 +423,139 @@ Source collection includes dependency closures, generated recipes, Cargo sources
 compiler-source inputs, manifests, and notices. It omits only exact reviewed unused
 signing fixtures and superseded/prebuilt assets recorded by the source receipts.
 Original vendor checkouts are retained. See [LICENSING.md](LICENSING.md).
+
+## Launch feedback and saved setup
+
+- The owned Windows launch entry shows its starting screen before launch checks and blocks repeated requests while it prepares. The screen stays until a launch result is known.
+- Windows and console starting screens show live app RAM use and available app memory, using the existing shared memory sampler.
+- Setup completion migrates from existing preferences into a separate device-local Keychain record. Replacement installs can restore completion when the same signing identity can read that record. Getting Started remains available in Settings. Keychain retention after app deletion is not guaranteed by iOS.
+
+## Madeira main integration (2026-11-02)
+
+Madeira is pinned at `2927f0edbecaed8d463c5ca40bb1700826941763`. Its selected
+Wine, FEX, DXMT and Dock revisions remain in `UPSTREAM-SOURCES.json`. The owned
+app adds Epic Games, EA and itch.io, Steam DLC/branches/local transfers, Workshop,
+achievements, external drives, verified game moves, shared setups and INI editing.
+Gyro/turbo controls, GPU card choices, x87 modes, background controls, memory
+helper support and bounded log summaries follow the pinned runtime. Store files,
+cloud transfers, imports and game moves use Iridium's shared storage admission.
+Cancelled launch preparation cannot commit EA licences or start its local service.
+
+The early loading screen, live RAM bar, shared JIT, per-game volume, menu audio,
+saved setup marker and independent console components remain in place. The
+optional memory helper does not replace the owned JIT helper. The Windows host
+still requires restart for startup-only settings or uncertain cleanup. Optional
+graphics routes have separate receipts and source collection; DXMT stays default.
+Code and package checks do not establish device performance or store account
+compatibility. No Apple account/signing refresh UI or generated art was added.
+The editor also carries the size-slider stability and lock checks from
+Madeira `effa2ff15d99bfc8082e91f42e170dbe8c7e652f`. Iridium retains its existing
+per-control size/opacity sliders and outside-tap dismissal. This UI-only change
+does not change the pinned native runtime or rebuild its components.
+
+## Shared-session follow-up
+
+Iridium prepares debugger-owned JIT mappings in 2 MiB steps, with a run-loop
+interval between stops. The shared app and console arenas retain their existing
+sizes and leases. The bundled debugger script has an allocation-only command.
+The UI shows elapsed JIT time. These changes require device timing checks.
+
+PPSSPP's Darwin memory arena reserves a free host address band for its PSP RAM
+aliases. It replaces only its own reservation and retains it until shutdown.
+This avoids the low-address probe range occupied by other resident engines.
+The pinned upstream source and its notices remain unchanged.
+
+Windows cleanup retains the shared ARM64EC bitmap even when a child created it.
+The library mutex is released during native cleanup, and resident requests use
+the full Windows system path for Explorer. Store removal handles whole deleted
+managed folders while retaining partial installs for repair and leaving absent
+external drives unchanged. App settings hold the default game volume and haptics.
+
+
+## Console audio, timing and store removal follow-up
+
+Console sessions activate their audio session on the existing worker queue before
+native boot. SameBoy releases its bounded PCM queue when audio is rendered,
+rather than after downstream device latency. The shared libretro host uses a
+monotonic frame deadline, bounded catch-up and 50 ms audio prefill. Pause/resume
+resets the deadline. Runtime logs report frame rate, timer debt and audio gaps.
+The Play embedding overlay queues complete producer blocks under its mutex until
+the frontend drains them. Native core CPU/GPU code remains pinned and unchanged.
+
+Built-in touch layouts follow console hardware. Sideways Wii uses no sticks;
+Nunchuk adds its stick and C/Z, and Classic retains both sticks. GameCube and
+Dreamcast omit unrelated controls. Controller-mode changes refresh automatic
+layouts, while saved custom layouts remain unchanged.
+
+Store deletion accepts descendants of a journaled parent alias from older
+migrations. Descendants stay confined to that recorded destination. New Epic,
+EA and itch.io migrations select each game folder instead of the whole store.
+Repeated migration keeps existing parent owners. Store removal reports blocked
+and failed requests and records credential-free outcomes for diagnosis.
+
+## Madeira 0.2.0 and main snapshot
+
+The Madeira engine is pinned to `5fda6a0e9543e5de1df010aff35748ab913fd0d9`,
+the `v0.2.0` release and reviewed main snapshot. The native API remains compatible.
+This brings the Social Club 2.4.0.296 renderer bridge and its host checks.
+The engine dependency revisions are unchanged.
+
+Iridium imports the GOG transport, downloader, install scripts, setup and Galaxy
+service with their Playport notices. GOG uses the shared Stores and Accounts
+sheets, game details, launch admission, download ownership and Games migration.
+Uninstall waits for writes, checks owned paths, saves records after deletion and
+reports failures. Deleting a whole game folder removes its install record;
+partial damage stays available for repair. The Galaxy Windows service is built
+from the pinned source and included in the Windows component receipt.
+
+Mouse focus follows upstream's iPhone AssistiveTouch fix. Recommended settings
+for The Escapists 2 and Garry's Mod are retained as upstream recommendations,
+not Iridium device results. The updated localization and settings catalog are
+imported. Store tabs are used in the retained Madeira library; the Iridium
+library keeps its console carousel and shared Stores sheet. Iridium's shared
+solid control faces already fade the full face, expose per-control size and
+opacity, and dismiss editor panels outside their controls. They replace the
+upstream Glass/Solid picker rather than adding a second control renderer.
+
+GOG token refresh updates the device-only Keychain item before attempting an
+insert, so a locked or failed save cannot delete the prior sign-in. Tests use
+substitute Keychain calls and never read real credentials. The Galaxy service
+registration is prepared before the first Windows host start. If a later GOG
+launch needs install-script registry changes while that host is resident,
+Iridium requests a restart instead of editing files owned by wineserver.
+
+The hosted device build targets 110 GiB by reclaiming identified idle Simulator
+images. If the runner cannot reach that target, the unchanged 40 GiB stage
+admission applies; a verified native checkpoint avoids its compiler scratch. Completed graphics cleanup uses
+the recipes' runtime-v1 component directories. It keeps source, finished modules
+and receipts. The 20 GiB reserve and 40 GiB stage admission are unchanged.
+
+## Checked JIT memory preparation
+
+Iridium builds the pinned StikJIT 1.9.0 Swift sources and idevice FFI from source.
+The maintained MPL-2.0 `JITSupport/ScriptRunner.swift` replaces the upstream
+runner. Its optional `prepare_memory_region_checked` bridge accepts exact
+hexadecimal strings, writes all 16 address digits, limits each batch to 128 pages,
+and checks every response. It drains queued responses after a rejected page and
+stops issuing commands after a transport error. Older external helpers retain
+the checked per-page fallback; Iridium never calls their unchecked batch bridge.
+
+Windows launches prepare only Madeira's adapter-owned arena. Console JIT launches
+prepare only the shared console arena. Both arenas remain reusable for the app's
+lifetime under the existing owned-helper and cleanup rules. Runtime pins and the
+version 1 runtime memory interface are unchanged. App preparation checks a separate
+helper source/binary receipt, so a runtime update cannot reuse a stale transport.
+
+## Iridium 0.3.0 review version
+
+The owned app project, maintained project generator, and retained XcodeGen
+configuration use 0.3.0 for the app and helpers. CI still supplies a unique build
+number. This changes Iridium's app version, not Madeira's 0.2.0 engine pin or the
+other modular runtime pins. The current user, storage, JIT, build, runtime, and
+validation guides describe the integrated implementation. Historical release
+evidence retains its original versions. Menu sound effects are not packaged in
+this integration; adding them remains a separate draft PR.
+
+Visible help uses shorter instructions for controls, imports, INI files, store
+sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button
+both use JIT Setup. Save replacement, file retention, and restart warnings remain.

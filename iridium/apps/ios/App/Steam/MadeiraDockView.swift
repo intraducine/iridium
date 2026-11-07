@@ -173,7 +173,7 @@ struct MadeiraDockView: View {
             Form {
                 Group {
                 Section {
-                    Text("Madeira Dock starts an installed Steam game through Valve's own Steam client, without the Steam desktop window. Valve's client signs in with your account and decides whether the game may run.")
+                    Text("Starts Steam games through the Steam client.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Steam account") {
@@ -224,7 +224,7 @@ struct MadeiraDockView: View {
                             DockInstallRequestRows(dock: dock, appID: game.id, name: game.name)
                         }
                     } header: { Text("One-time installs") } footer: {
-                        Text("Programs from a game's Steam install script, such as runtime setups, that Steam's desktop client runs before a first start. A Dock start runs the ones not yet recorded as done before Valve's client starts; the choice then changes to Skip. Record as done and Reset take effect at the game's next Dock start.")
+                        Text("Installs required Windows components before the first launch.")
                     }
                 }
                 if let status = dock.status {
@@ -276,7 +276,7 @@ struct DockInstallRequestRows: View {
             Button("Record as done") { dock.setInstallRequest(appID, .record) }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("For an installer that finished its work but never closed, so Madeira never saw it end. At the next start the game's own install-script programs are recorded as done, as a finished run would be, and are not run again. Nothing is installed or removed.")
+            Text("Marks shared installers as complete. Files do not change.")
         }
         // madeira-bcd: a reset removes what the installers put in (DockReset.swift), into a backup.
         .confirmationDialog("Reset \(name)'s one-time installs?", isPresented: $confirmReset, titleVisibility: .visible) {
@@ -284,7 +284,7 @@ struct DockInstallRequestRows: View {
             Button("Reset and sign out of Rockstar", role: .destructive) { dock.setInstallRequest(appID, .resetSignOut) }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("At the next start Madeira removes what the one-time installs put into Wine: the Rockstar Games Launcher, Social Club, the Visual C++ 2015-2022 runtimes (x86 and x64) and the Vulkan runtime. That start then runs only the installers again, as on a new device; after it, restart Madeira and start the game. Games sharing these installs (GTA V, Red Dead Redemption 2) install them again at their next start too. The game files and saves stay. Everything removed is kept in the madeira-reset-backup folder in Madeira's Documents. Sign out also removes the Rockstar sign-in.")
+            Text("Resets shared Windows components for all games, then runs their installers again.")
         }
     }
 }

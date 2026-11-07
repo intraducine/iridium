@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / 'ci/engine-integrations/madeira-api.json'
-PREFIXES = ('jit_', 'jit26_', 'fex_', 'wine', 'winios_', 'madeira_', 'Madeira', 'lzma_', 'zstd_', 'zip_')
+PREFIXES = ('jit_', 'jit26_', 'fex_', 'wine', 'winios_', 'madeira_', 'Madeira', 'lzma_', 'zstd_', 'zip_', 'i7z_')
 
 
 def native_api(candidate):

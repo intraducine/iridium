@@ -51,6 +51,10 @@ enum JITPairingFileStore {
 
     static func data() throws -> Data {
         moveLegacyFile()
+        return try readStored()
+    }
+
+    private static func readStored() throws -> Data {
         var result: AnyObject?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassGenericPassword,
@@ -69,12 +73,15 @@ enum JITPairingFileStore {
     static func importFile(from source: URL) throws {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        try store(try Data(contentsOf: source), source: .imported)
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        let bytes = try input.read(upToCount: 1024 * 1024 + 1) ?? Data()
+        try store(bytes, source: .imported)
     }
 
     /// Validates an RPPairing plist and makes it the pairing file.
     static func store(_ data: Data, source: JITPairingSource) throws {
-        guard !data.isEmpty,
+        guard !data.isEmpty, data.count <= 1024 * 1024,
               let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
               let dictionary = plist as? [String: Any],
               let publicKey = dictionary["public_key"] as? Data, publicKey.count == 32,
@@ -89,15 +96,21 @@ enum JITPairingFileStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(item as CFDictionary)
-        var add = item
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        let status = SecItemAdd(add as CFDictionary, nil)
+        let attributes: [String: Any] = [kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+        var status = SecItemUpdate(item as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            let add = item.merging(attributes) { _, new in new }
+            status = SecItemAdd(add as CFDictionary, nil)
+        }
         guard status == errSecSuccess else {
             throw NSError(domain: "MadeiraJIT", code: 12,
                           userInfo: [NSLocalizedDescriptionKey:
                             "The pairing file could not be saved in the Keychain (\(status)). Unlock this device and try again."])
+        }
+        guard try readStored() == data else {
+            throw NSError(domain: "MadeiraJIT", code: 12,
+                userInfo: [NSLocalizedDescriptionKey: "The stored pairing file could not be verified. The original file was kept."])
         }
         UserDefaults.standard.set(source.rawValue, forKey: sourceKey)
     }
@@ -111,7 +124,9 @@ enum JITPairingFileStore {
     private static func moveLegacyFile() {
         let manager = FileManager.default
         let file = legacyFolder.appendingPathComponent("pairingFile.plist")
-        guard manager.fileExists(atPath: file.path), let data = try? Data(contentsOf: file) else { return }
+        guard (try? readStored()) == nil, manager.fileExists(atPath: file.path),
+              let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1024 * 1024,
+              let data = try? Data(contentsOf: file) else { return }
         let kept = UserDefaults.standard.string(forKey: sourceKey).flatMap(JITPairingSource.init(rawValue:)) ?? .imported
         // Deleted only once the Keychain holds it (a locked device keeps it for later).
         if (try? store(data, source: kept)) != nil {
@@ -218,10 +233,16 @@ final class JITCoordinator: ObservableObject {
     private var consoleMemoryBusy = false
     var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
     func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        prepareMemory(windows: false, completion: completion)
+    }
+    func prepareWindowsMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        prepareMemory(windows: true, completion: completion)
+    }
+    private func prepareMemory(windows: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
         guard !consoleMemoryFailed, !consoleMemoryBusy, enableRequest == nil, !busy else {
             completion(.failure(CoordinatorError.setupRequired("JIT memory is busy or needs an app restart."))); return
         }
-        if ir_jit_memory_ready() { completion(.success(())); return }
+        if windows ? IridiumMadeiraRuntime.jitMemoryReady : ir_jit_memory_ready() { completion(.success(())); return }
         enable(requiresAttachedDebugger: true) { result in
             guard case .success = result else {
                 self.consoleMemoryBusy = false; completion(result); return
@@ -230,15 +251,20 @@ final class JITCoordinator: ObservableObject {
                 self.consoleMemoryFailed = self.builtInHelperReleased == false
                 let message = self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
                     : self.builtInHelper != nil ? "The JIT helper stopped. Try again."
-                    : "Shared console JIT needs the built-in helper. Disconnect any external debugger and choose Built-in in JIT Settings."
+                    : "Shared JIT needs the built-in helper. Disconnect any external debugger and choose Built-in StikJIT in JIT Setup."
                 self.error = message
                 completion(.failure(CoordinatorError.setupRequired(message))); return
             }
             self.consoleMemoryBusy = true; self.busy = true
-            self.status = "Preparing JIT memory…"
+            self.status = windows ? "Preparing Windows JIT memory…" : "Preparing console JIT memory…"
+            let preparationStarted = ProcessInfo.processInfo.systemUptime
             DispatchQueue.global(qos: .userInitiated).async {
-                let prepared = ir_jit_memory_prepare(jit26_prepare_region)
+                // Prepare only the requested arena; both persist for later launches.
+                let prepared = windows ? IridiumMadeiraRuntime.prepareJITMemory()
+                    : ir_jit_memory_prepare(ir_jit_prepare_region)
                 DispatchQueue.main.async {
+                    let milliseconds = Int((ProcessInfo.processInfo.systemUptime - preparationStarted) * 1000)
+                    LogStore.shared.log("[jit-memory] target=\(windows ? "windows" : "console") ms=\(milliseconds) prepared=\(prepared ? 1 : 0)")
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
                         self.consoleMemoryBusy = false
@@ -260,6 +286,7 @@ final class JITCoordinator: ObservableObject {
     }
 
     func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
+        if !requiresAttachedDebugger { prepareConsoleMemory(completion: completion); return }
         guard enableRequest == nil, !busy, !consoleMemoryBusy,
               !requiresAttachedDebugger || builtInHelper == nil || builtInHelperReleased == true || isDebuggerAttached() else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")
@@ -1058,7 +1085,7 @@ struct JITSetupContent: View {
             }
         }
         if coordinator.busy {
-            JITSetupGroup(inline: inline) { HStack { ProgressView(); Text(coordinator.status ?? "Working…") } }
+            JITSetupGroup(inline: inline) { IridiumJITProgress(status: coordinator.status) }
         } else if let error = coordinator.error {
             JITSetupGroup(inline: inline) {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
@@ -1217,13 +1244,30 @@ struct JITSetupView: View {
                 JITSetupContent(inline: false)
                 JITShortcutSetupContent(inline: false).iridiumRowSurface()
             }
-            .iridiumPageSurface().navigationTitle("JIT setup")
+            .iridiumPageSurface().navigationTitle("JIT Setup")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { coordinator.showSetup = false; dismiss() }
                 }
             }
+        }
+    }
+}
+
+struct IridiumJITProgress: View {
+    let status: String?
+    @State private var started = Date()
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 12) {
+                ProgressView()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(status ?? "Preparing JIT…")
+                    Text("\(max(0, Int(context.date.timeIntervalSince(started)))) seconds")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("jitProgress")
         }
     }
 }

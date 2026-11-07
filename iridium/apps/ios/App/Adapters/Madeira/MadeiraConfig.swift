@@ -124,6 +124,15 @@ enum MadeiraConfig {
     /// lines first and the game's file after them, so a key the game's file sets
     /// wins. A launch without a game file (applyExtras unset the variable) is
     /// upstream's behaviour unchanged.
+    static func sessionEnvironment() throws -> [String: String] {
+        var pairs = all()
+        if let path = getenv("MADEIRA_CFG_GAME"), path.pointee != 0 {
+            pairs.merge(parse(try String(contentsOfFile: String(cString: path), encoding: .utf8))) { _, value in value }
+        }
+        return Dictionary(uniqueKeysWithValues: pairs.filter { $0.key.hasPrefix("env.") }
+            .map { (String($0.key.dropFirst(4)), $0.value) })
+    }
+
     @discardableResult
     static func applyGame(_ text: String?) throws -> [String: String] {
         let profileURL = bcdProfileURL()

@@ -15,15 +15,25 @@
 // signal so wine's sigaction handlers run; if the signal cannot be delivered
 // the script detaches so the process dies visibly instead of wandering.
 
-// StikJIT 1.9's batch formatter keeps only nine address digits. Keep the
-// complete address and check each reply, including on 512 GB address maps.
+// Use the source-built checked batch bridge. Older external helpers keep the
+// per-page fallback; their unchecked nine-digit batch formatter is never called.
 function iridiumPrepareRegion(address, length) {
     const limit = 1n << 64n;
     if (address <= 0n || length <= 0n || length > (1n << 32n) ||
         address >= limit || length > limit - address) return false;
     const end = address + length;
-    for (let page = address & ~0x3fffn; page < end; page += 0x4000n) {
-        if (send_command(`M${page.toString(16)},1:69`) !== 'OK') return false;
+    const first = address & ~0x3fffn;
+    if (typeof prepare_memory_region_checked === 'function') {
+        const alignedEnd = (end + 0x3fffn) & ~0x3fffn;
+        if (alignedEnd >= limit) return false;
+        for (let page = first; page < alignedEnd; page += 0x200000n) {
+            const bytes = alignedEnd - page < 0x200000n ? alignedEnd - page : 0x200000n;
+            if (prepare_memory_region_checked(page.toString(16), bytes.toString(16)) !== 'OK') return false;
+        }
+    } else {
+        for (let page = first; page < end; page += 0x4000n) {
+            if (send_command(`M${page.toString(16)},1:69`) !== 'OK') return false;
+        }
     }
     return true;
 }
@@ -333,6 +343,17 @@ while (!detached) {
             if (send_command(`D`) !== 'OK') throw new Error('JIT detach was not acknowledged.');
             detached = true;
 
+        } else if (x16Num === 4n) {
+            // Allocate once; the app prepares small chunks between debugger stops.
+            let addr = 0n;
+            if (x0 === 0n && x1 > 0n && x1 <= 0x48000000n && (x1 & 0x3fffn) === 0n) {
+                const reply = send_command(`_M${x1.toString(16)},rx`);
+                if (typeof reply === 'string' && /^[0-9a-f]{1,16}$/i.test(reply)) {
+                    const candidate = BigInt('0x' + reply);
+                    if (candidate > 0n && (candidate & 0x3fffn) === 0n && x1 <= (1n << 64n) - candidate) addr = candidate;
+                }
+            }
+            send_command(`P0=${numberToLittleEndianHexString(addr)};thread:${tid};`);
         } else if (x16Num === 1n) {
             // CMD_PREPARE_REGION
             ulog(`Madeira JIT: prepare addr=0x${x0.toString(16)} size=0x${x1.toString(16)}`);

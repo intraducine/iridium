@@ -7,8 +7,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Catches faults only at this thread's generated leaf function. All other
-// signals retain their previous disposition. No handlers survive this call.
+// Catches faults only at this thread's generated leaf function. Compatible
+// resident handlers retain their delivery rules. No handlers survive this call.
 bool ir_jit_probe_execute(void *code, size_t length, int64_t expected);
 bool ir_jit_probe_execute_diagnostic(void *code, size_t length, int64_t expected,
     const IRJITDiagnosticSink *sink, uint32_t pass);

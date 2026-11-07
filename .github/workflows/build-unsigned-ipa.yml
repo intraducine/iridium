@@ -44,6 +44,8 @@ jobs:
         run: |
           test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
           echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
+      - name: Prepare hosted device-build disk space
+        run: python3 ci/free-build-space.py --hosted-device-build
       - name: Identify pinned runtime sources
         id: runtime_sources
         run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
@@ -153,6 +155,8 @@ jobs:
           path: .build/madeira-native-compiled-transfer/
           if-no-files-found: error
           retention-days: 14
+      - name: Reclaim retained native phase scratch
+        run: python3 ci/free-build-space.py --madeira-native
       - name: Select completed i386 compilation
         id: compiled_madeira_windows
         env:
@@ -174,7 +178,10 @@ jobs:
           COMPONENT_RUN_ID: ${{ steps.compiled_madeira_windows.outputs.run_id }}
         run: python3 ci/compiled-components.py restore madeira-windows
       - name: Compile madeira-windows
-        run: python3 ci/madeira-frontend.py windows
+        run: |
+          # The Windows FEX build also supplies its own ccache wrapper.
+          unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
+          python3 ci/build-madeira-windows.py
       - name: Package i386 compilation
         if: steps.compiled_madeira_windows.outputs.run_id == ''
         run: python3 ci/compiled-components.py package madeira-windows

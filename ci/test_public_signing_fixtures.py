@@ -216,16 +216,21 @@ class PublicSigningFixtureTests(unittest.TestCase):
             snapshot(self.root / 'vendor/Madeira/research/freetype', destination, revisions)
 
         with patch.object(COLLECT, 'ROOT', self.root), \
+                patch('stikjit_frontend.collect_source'), \
                 patch.object(COLLECT.build, 'UPSTREAM', self.root / 'vendor/Madeira'), \
                 patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
                 patch.object(COLLECT.build, 'verify_pin'), \
                 patch.object(COLLECT.build, 'native_source_inventory', return_value=native_inventory), \
                 patch.object(COLLECT.build, 'check_bundle'), \
+                patch.object(COLLECT.build, 'compiler_identity', return_value='fixture'), \
+                patch.object(COLLECT.build.madeira_components, 'source_inventory', return_value={'schema': 1, 'files': [], 'pins': {}}), \
+                patch.object(COLLECT.build.madeira_components, 'verify', return_value={}), \
                 patch.object(COLLECT.audit, 'inventory', return_value=[{'path': 'Iridium'}]), \
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[
                     {'archive': 'libntdll_unix.a'}, {'archive': 'libIridiumSameBoy.a'}]), \
                 patch.object(COLLECT, 'snapshot', side_effect=snapshot), \
                 patch.object(COLLECT, 'snapshot_freetype', side_effect=snapshot_freetype), \
+                patch.object(COLLECT, 'collect_graphics_sources', return_value=[]), \
                 patch.object(COLLECT.subprocess, 'check_output', side_effect=command):
             COLLECT.collect(app, output, maps)
 

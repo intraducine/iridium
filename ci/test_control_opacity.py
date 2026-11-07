@@ -14,6 +14,34 @@ SPEC.loader.exec_module(FRONTEND)
 
 
 class ControlOpacityTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
+    def test_locked_control_rejects_size_and_opacity_changes(self):
+        text = self.generated().split('struct MappingPanel: View {', 1)[1]
+        setters = []
+        for marker in ('m.controls[i].scale =', 'm.controls[i].opacity ='):
+            end = text.index(marker)
+            start = text.rfind('}, set: { value in', 0, end) + len('}, set: { value in')
+            setters.append(text[start:text.index('\n                    })', end)])
+        fixture = '''import Foundation
+struct Control { var id=UUID(), scale=1.0; var opacity: Double?; var locked: Bool? }
+final class Model { var controls=[Control()]; func index(of id: UUID) -> Int? { controls.firstIndex { $0.id == id } } }
+enum IridiumControlOpacity { static func normalized(_ value: Double?) -> Double { min(1,max(0.15,value ?? 1)) } }
+let m=Model(), control=m.controls[0]
+func size(_ value: Double) { SIZE }
+func opacity(_ value: Double) { OPACITY }
+m.controls[0].locked=true
+size(2); opacity(0.5)
+precondition(m.controls[0].scale == 1 && m.controls[0].opacity == nil)
+m.controls[0].locked=false
+size(2); opacity(0.5)
+precondition(m.controls[0].scale == 2 && m.controls[0].opacity == 0.5)
+print("PASS locked controls reject slider updates; unlocked controls accept them")
+'''.replace('SIZE', setters[0]).replace('OPACITY', setters[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); source=root/'main.swift'; source.write_text(fixture)
+            subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'), str(source), '-o', str(root/'check')], check=True, timeout=60)
+            subprocess.run([str(root/'check')], check=True, timeout=15)
+
     def generated(self):
         return FRONTEND.overlay('ContentView.swift', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text())
 

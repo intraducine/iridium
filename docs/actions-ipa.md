@@ -4,6 +4,11 @@ Use an Apple Silicon Mac, full Xcode 27 with Metal tools, Homebrew, Python 3.11+
 and Rust. Run commands from the repository root. Set `DEVELOPER_DIR` to select
 Xcode. The main app targets iOS 18+; helper requirements are in the [JIT guide](../iridium/docs/builtin-stikjit-ios27.md).
 
+The current app version is **0.3.0**. The maintained project generator applies it
+to all app and helper configurations. The source project and retained XcodeGen
+configuration carry the same version. CI supplies a unique numeric build number;
+verify both values in the packaged app, JIT helper, and memory helper.
+
 ## Local build
 
 ```sh
@@ -54,11 +59,17 @@ compiler or SDK requires new matching checks and components.
 
 ## Reuse
 
-Madeira native/i386 and each console component have separate saved outputs,
+Madeira native/Windows and each console component have separate saved outputs,
 retained for 14 days before app packaging. Reuse checks source pins, recipes,
 toolchain, platform, workspace paths, receipts, and output hashes. App-only edits
 can reuse matching engine builds. Set `reuse_assets=false` for a fresh hosted run.
 Compiler caches can reuse unchanged units after a component cache miss.
+
+The checked JIT framework is built from pinned StikJIT Swift and idevice sources.
+Its separate source/binary receipt includes the maintained runner and dependency
+notices. Runtime component reuse does not bypass that check. The app packages it
+at `Frameworks/StikJIT.framework`; the owned helper loads it from there. See
+[the transport contract](../iridium/apps/ios/JITSupport/README.md).
 
 Local native reuse can be checked without compiling:
 
@@ -67,10 +78,17 @@ source .build/madeira-build-tools.env
 python3 -B ci/madeira-frontend.py native --reuse-only
 ```
 
+Keep the same tool environment when relinking, packaging, or checking component
+receipts. A different compiler path or SDK can invalidate a retained receipt.
+Use a stable incremental output and keep at least 20 GiB free plus peak temporary
+space. Reuse matching results before starting a full build; do not keep duplicate
+IPAs in scratch and Downloads. Preserve the last checked IPA until its replacement
+passes the same checks.
+
 Native schema-2 receipts record completed inputs and outputs. Old, partial,
 expired, or changed receipts fail validation. Restores reject symlinks and verify
-source inventories before copying. Do not reseal partial outputs; use a fresh
-checkout for a full rebuild when required.
+source inventories before copying. A failed native command can resume only in the same workspace when its inputs
+and every retained partial file still match. Unverified partial outputs are refused.
 
 ## Signing and output
 
@@ -91,7 +109,9 @@ bash ci/build-madeira-ipa.sh "$HOME/Downloads/Iridium-rebuilt"
 
 The archive includes dependency trees, locked source downloads, patches,
 generators, notices, and revision/component manifests. It supports builds without
-Git metadata. Xcode, Apple SDKs, and host toolchains remain external prerequisites.
+pre-existing Git metadata. The Windows recipes fetch pinned public Git metadata
+when needed and retain the supplied source files. Xcode, Apple SDKs, network
+access for that metadata, and host toolchains remain external prerequisites.
 Pairing Cargo dependencies use a relative vendored-source configuration.
 
 ## Replace native libraries
@@ -159,3 +179,13 @@ See [the atlas recipe](../ci/psp-atlas-host/README.md).
 Preserve notices and deliver matching source with redistributed binaries.
 [LICENSING.md](../LICENSING.md) records unresolved combined-app terms. Replacement
 libraries may have different hashes; release hashes identify shipped files.
+
+## Madeira graphics modules
+
+The Madeira pin selects its own `tools/build/runtime-components.json` contract.
+Windows, MoltenVK, Mesa Zink, Mesa D3D12, Vulkan DLLs and KosmicKrisp each have an
+input key and output checksums. The app checks all six receipts during packaging.
+A signature change is allowed only when the underlying dynamic library bytes
+still match after signature removal. Each renderer remains an optional route;
+DXMT remains the default. Source collection includes the renderer source trees,
+patches, pinned archives, notices and `MADEIRA-RUNTIME-RECEIPTS.json`.
