@@ -11,6 +11,12 @@ background, or crop. Local imports are limited to 25 MB and downsampled to
 `Application Support/LibraryArtwork`, separate from saves and launch records.
 Manual choices take priority over pending automatic results.
 
+The library retains its current backdrop while the next image loads. Fast cover
+changes replace the pending transition rather than clearing to black. The selected
+cover grows as it approaches the left Play position. Text and the selection border
+follow the current title. Check fast swipes, rotation, and reduced motion on the
+device; source and simulator tests do not establish phone frame times.
+
 Artwork belongs to its rights holders. Custom images stay local; the app links
 to the selected source. No commercial game artwork is bundled as sample content.
 

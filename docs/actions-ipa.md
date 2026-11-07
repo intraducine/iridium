@@ -4,6 +4,11 @@ Use an Apple Silicon Mac, full Xcode 27 with Metal tools, Homebrew, Python 3.11+
 and Rust. Run commands from the repository root. Set `DEVELOPER_DIR` to select
 Xcode. The main app targets iOS 18+; helper requirements are in the [JIT guide](../iridium/docs/builtin-stikjit-ios27.md).
 
+The current app version is **0.3.0**. The maintained project generator applies it
+to all app and helper configurations. The source project and retained XcodeGen
+configuration carry the same version. CI supplies a unique numeric build number;
+verify both values in the packaged app, JIT helper, and memory helper.
+
 ## Local build
 
 ```sh
@@ -60,12 +65,25 @@ toolchain, platform, workspace paths, receipts, and output hashes. App-only edit
 can reuse matching engine builds. Set `reuse_assets=false` for a fresh hosted run.
 Compiler caches can reuse unchanged units after a component cache miss.
 
+The checked JIT framework is built from pinned StikJIT Swift and idevice sources.
+Its separate source/binary receipt includes the maintained runner and dependency
+notices. Runtime component reuse does not bypass that check. The app packages it
+at `Frameworks/StikJIT.framework`; the owned helper loads it from there. See
+[the transport contract](../iridium/apps/ios/JITSupport/README.md).
+
 Local native reuse can be checked without compiling:
 
 ```sh
 source .build/madeira-build-tools.env
 python3 -B ci/madeira-frontend.py native --reuse-only
 ```
+
+Keep the same tool environment when relinking, packaging, or checking component
+receipts. A different compiler path or SDK can invalidate a retained receipt.
+Use a stable incremental output and keep at least 20 GiB free plus peak temporary
+space. Reuse matching results before starting a full build; do not keep duplicate
+IPAs in scratch and Downloads. Preserve the last checked IPA until its replacement
+passes the same checks.
 
 Native schema-2 receipts record completed inputs and outputs. Old, partial,
 expired, or changed receipts fail validation. Restores reject symlinks and verify

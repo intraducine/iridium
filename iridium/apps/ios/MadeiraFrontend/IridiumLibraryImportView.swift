@@ -15,7 +15,7 @@ struct IridiumLibraryImportView: View {
             ScrollViewReader { proxy in
             List {
                 Section {
-                    Text("Import an existing game and its saves. Original folders stay in place. Different saves with the same name need your choice before import.")
+                    Text("Copy a game and its saves. Originals stay in place. Conflicting saves need your choice.")
                         .foregroundStyle(.secondary)
                     ForEach(Array(games.enumerated()), id: \.element.id) { index, game in
                         Button(game.title) { transfer(game) }.disabled(busy).id(index)

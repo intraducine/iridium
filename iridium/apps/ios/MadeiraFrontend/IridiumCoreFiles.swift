@@ -42,7 +42,7 @@ struct IridiumCoreFiles: View {
             Section {
                 Text("Close the game first. Existing content is backed up.")
                 if game.runtimeID == "dolphin" {
-                    Text("Game patches use Dolphin Game INI files. Keep the original game ID as the file name. Enable patches in the INI before importing.")
+                    Text("Import Dolphin Game INI files. Keep the game ID as the filename and enable patches in the file.")
                 }
                 if game.runtimeID == "flycast" {
                     Text("VMU files keep their original names. Export this folder before moving a VMU to another game.")

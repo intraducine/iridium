@@ -563,7 +563,7 @@ struct EpicSignInView: View {
                 Button("Sign in") { submit(pasted) }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Open the login page in Safari and sign in. Epic then shows a short text with \"authorizationCode\". Copy the whole text, or only the code, and paste it here.")
+                Text("Sign in using Safari. Copy Epic's authorizationCode, or its full response, then paste it here.")
             }
             .alert("Epic Games", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("OK", role: .cancel) { failure = nil; reload += 1 }

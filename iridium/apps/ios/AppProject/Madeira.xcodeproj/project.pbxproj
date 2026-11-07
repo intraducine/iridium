@@ -1892,7 +1892,7 @@ bash "$SRCROOT/../build/wine-mono/bundle.sh" "$CODESIGNING_FOLDER_PATH/wine-mono
 					<string>$(SRCROOT)/Madeira</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.3</string>
+				<string>0.3.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MADEIRA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -1969,7 +1969,7 @@ bash "$SRCROOT/../build/wine-mono/bundle.sh" "$CODESIGNING_FOLDER_PATH/wine-mono
 					<string>$(SRCROOT)/Madeira</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.3</string>
+				<string>0.3.0</string>
 				<key>PRODUCT_BUNDLE_IDENTIFIER</key>
 				<string>$(MADEIRA_BUNDLE_IDENTIFIER)</string>
 				<key>PRODUCT_NAME</key>
@@ -2392,7 +2392,7 @@ fi
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.3</string>
+				<string>0.3.0</string>
 				<key>OTHER_LDFLAGS[sdk=iphoneos*]</key>
 				<array>
 					<string>$(inherited)</string>
@@ -2445,7 +2445,7 @@ fi
 					<string>@executable_path/../../Frameworks</string>
 				</array>
 				<key>MARKETING_VERSION</key>
-				<string>0.1.3</string>
+				<string>0.3.0</string>
 				<key>OTHER_LDFLAGS[sdk=iphoneos*]</key>
 				<array>
 					<string>$(inherited)</string>

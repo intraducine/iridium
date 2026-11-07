@@ -197,7 +197,7 @@ def project(source, names):
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
-            value['buildSettings']['MARKETING_VERSION'] = '0.2.1'
+            value['buildSettings']['MARKETING_VERSION'] = '0.3.0'
             value['buildSettings']['CURRENT_PROJECT_VERSION'] = '1'
             value['buildSettings']['DEVELOPMENT_TEAM'] = ''
             value['buildSettings']['MADEIRA_BUNDLE_IDENTIFIER'] = 'software.iridium'

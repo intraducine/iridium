@@ -251,7 +251,7 @@ final class JITCoordinator: ObservableObject {
                 self.consoleMemoryFailed = self.builtInHelperReleased == false
                 let message = self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
                     : self.builtInHelper != nil ? "The JIT helper stopped. Try again."
-                    : "Shared JIT needs the built-in helper. Disconnect any external debugger and choose Built-in in JIT Settings."
+                    : "Shared JIT needs the built-in helper. Disconnect any external debugger and choose Built-in StikJIT in JIT Setup."
                 self.error = message
                 completion(.failure(CoordinatorError.setupRequired(message))); return
             }
@@ -1244,7 +1244,7 @@ struct JITSetupView: View {
                 JITSetupContent(inline: false)
                 JITShortcutSetupContent(inline: false).iridiumRowSurface()
             }
-            .iridiumPageSurface().navigationTitle("JIT setup")
+            .iridiumPageSurface().navigationTitle("JIT Setup")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

@@ -435,13 +435,13 @@ struct SteamAchievementsSection: View {
                     .opacity(a.unlocked == nil ? 0.6 : 1)
                 }
             } footer: {
-                Text("As Steam saved them on this device the last time the game ran through Madeira Dock. A banner shows each new one while you play.")
+                Text("Saved after play through Steam Client. New achievements appear as banners.")
             }
         } else {
             Section {
                 Text("No achievements on this device yet.")
             } footer: {
-                Text("Play the game once through Madeira Dock: Steam then keeps its achievements here, and a banner shows each one you unlock.")
+                Text("Play once through Steam Client to save achievements here.")
             }
         }
     }

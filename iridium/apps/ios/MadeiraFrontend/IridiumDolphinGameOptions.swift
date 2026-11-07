@@ -48,7 +48,7 @@ private struct IridiumDolphinFiles: View {
     var body: some View {
         Form {
             Section {
-                Text("These files belong to \(game.title). Dolphin keeps this game's memory cards, Wii storage, settings, and save states together.")
+                Text("Memory cards, Wii storage, settings, and save states for \(game.title).")
                 Button("Export Save and System Files", systemImage: "square.and.arrow.up") {
                     do { export = try IridiumConsoleLibrary.shared.store.saveDirectory(game) }
                     catch { self.error = error.localizedDescription }
