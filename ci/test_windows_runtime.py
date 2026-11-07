@@ -829,16 +829,34 @@ int main(){pthread_t a,b;assert(!pthread_create(&a,0,check,0));assert(!pthread_c
             subprocess.run([str(path / 'check')], check=True, timeout=10)
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
-    def test_running_game_clears_starting_message_without_clearing_stop_progress(self):
-        source = (ROOT / 'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
+    def test_library_reports_startup_failures_and_retains_stop_progress(self):
+        app = ROOT / 'iridium/apps/ios/App'
+        source = (app / 'Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
         handler = source.split('IridiumMadeiraRuntime.shared.poll(owner) { event in\n', 1)[1]
         handler = handler.split('\n            }\n        }\n        let dockStart', 1)[0]
+        cancel_policy = source.split('    var canCancelStalledLaunch', 1)[1].split('    var startingEntry', 1)[0]
+        request_quit = source.split('    func requestQuit()', 1)[1].split('    func saveCurrentProfile()', 1)[0]
+        dock = (app / 'Steam/MadeiraDock.swift').read_text()
+        report = dock.split('    struct Report {', 1)[1].split('    static let reportAllowed', 1)[0]
         fixture = '''import Foundation
-enum Event { case starting, running, ended(UInt32), blocked(String) }
+enum Event { case starting, running, ended(UInt32), failed(UInt32), blocked(String) }
+enum MadeiraDock {
+    struct Report {''' + report + '''}
+enum LibraryKeyboard { static func hide() {} }
+final class IridiumMadeiraRuntime {
+    static let shared = IridiumMadeiraRuntime()
+    var isResident = true
+    var stopped: [UUID] = []
+    func requestStop(_ owner: UUID) { stopped.append(owner) }
+}
+func winios_post_key(_ key: Int, _ down: Int) { fatalError("Stalled launch sent keyboard input") }
 final class Library {
  var nativeLaunchID=UUID(), current:UUID?=UUID(), sawProcess=false, quitRequested=false, launching=true
  var sessionMessage="Starting…", error:String?, timer:Timer?
+ var launchSlow=false, menu=true, quitRequestedAt:Date?
  var startingScreen:Bool { launching }
+ var canCancelStalledLaunch''' + cancel_policy + '''
+ func requestQuit()''' + request_quit + '''
  func finish(){current=nil;quitRequested=false}
  func accept(_ event:Event, owner:UUID) {
 ''' + handler + '''
@@ -858,13 +876,37 @@ let early=Library();early.accept(.ended(0),owner:early.nativeLaunchID)
 precondition(early.current == nil && early.error?.contains("before it displayed video") == true)
 let closed=Library();closed.quitRequested=true;closed.accept(.ended(1223),owner:closed.nativeLaunchID)
 precondition(closed.current == nil && closed.error == nil)
-let failed=Library();failed.accept(.ended(5),owner:failed.nativeLaunchID)
-precondition(failed.error?.contains("code 5") == true)
+let failed=Library();failed.accept(.failed(5),owner:failed.nativeLaunchID)
+precondition(failed.error?.contains("could not start the game (code 5)") == true)
+let unspecified=Library();unspecified.accept(.failed(0),owner:unspecified.nativeLaunchID)
+precondition(unspecified.error?.contains("could not start the game") == true)
+let conflict=Library();conflict.accept(.ended(0xC0000018),owner:conflict.nativeLaunchID)
+precondition(conflict.error?.contains("0xC0000018 (memory address conflict)") == true)
+let stalled=Library()
+precondition(!stalled.canCancelStalledLaunch)
+stalled.launchSlow=true
+stalled.sawProcess=true
+precondition(stalled.canCancelStalledLaunch)
+stalled.requestQuit()
+precondition(stalled.quitRequested && !stalled.canCancelStalledLaunch && !stalled.menu)
+precondition(stalled.quitRequestedAt != nil && IridiumMadeiraRuntime.shared.stopped == [stalled.nativeLaunchID])
+''' + r'''
+let facts = LogSummary.facts(lines: [
+    #"0024:err:module:import_dll Library UnityPlayer.dll (which is needed by L"C:\\Games\\Game.exe") not found"#,
+    "wineserver crashed, please enable coredumps (ulimit -c unlimited) and restart."
+])
+let summary = LogSummary.text(facts, source: "fixture")
+precondition(facts.sawSession && facts.missing.count == 1)
+precondition(summary.contains("unityplayer.dll - Game.exe"))
+precondition(summary.contains("Windows could not load a required DLL."))
+precondition(summary.contains("The Windows runtime server crashed."))
+precondition(!summary.contains(#"C:\\Games"#))
 '''
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             (path / 'main.swift').write_text(fixture)
             subprocess.run(['swiftc', '-module-cache-path', module_cache('macosx'),
+                            str(app / 'Diagnostics/LogSummary.swift'),
                             str(path / 'main.swift'), '-o', str(path / 'check')], check=True, timeout=45)
             subprocess.run([str(path / 'check')], check=True, timeout=10)
 
@@ -954,11 +996,26 @@ try runtime.submit(b)
 if case .starting=poll(b){}else{fatalError("accepted previous game's status")}
 try FileManager.default.removeItem(at:request)
 try status(b,phase:4,result:2)
-if case .ended(2)=poll(b){}else{fatalError("failed launch not released")}
+if case .failed(2)=poll(b){}else{fatalError("failed launch lost its status")}
 precondition(!runtime.isBusy)
 let cancelled=UUID();runtime.requestStop(cancelled);try runtime.submit(cancelled)
 if case .ended(0)=poll(cancelled){}else{fatalError("cancelled preparation launched")}
 precondition(!FileManager.default.fileExists(atPath:request.path) && !runtime.isBusy)
+let stalledLaunch=UUID(),stop=folder.appendingPathComponent("stop.bin")
+try runtime.submit(stalledLaunch)
+try FileManager.default.removeItem(at:request)
+try status(stalledLaunch,phase:1)
+_=poll(stalledLaunch)
+runtime.requestStop(UUID())
+_=poll(stalledLaunch)
+precondition(!FileManager.default.fileExists(atPath:stop.path),"a stale cancel stopped the current launch")
+runtime.requestStop(stalledLaunch)
+_=poll(stalledLaunch)
+let stopData=try Data(contentsOf:stop)
+precondition(stopData[8..<24] == withUnsafeBytes(of:stalledLaunch.uuid){Data($0)})
+try FileManager.default.removeItem(at:stop)
+try status(stalledLaunch,phase:3,result:1223)
+if case .ended(1223)=poll(stalledLaunch){}else{fatalError("cancelled launch did not drain")}
 for _ in 0..<100 {
  let repeated=UUID();try runtime.submit(repeated)
  try FileManager.default.removeItem(at:request)

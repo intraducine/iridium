@@ -667,6 +667,9 @@ final class LibraryModel: ObservableObject {
     private var preparingSince = Date()
     /// The starting screen is up: a session starting, or a Play getting ready.
     var startingScreen: Bool { launching || preparing != nil }
+    var canCancelStalledLaunch: Bool {
+        launching && launchSlow && !quitRequested && IridiumMadeiraRuntime.shared.isResident
+    }
     var startingEntry: LibraryEntry? { launching ? activeEntry : preparing }
     /// When the starting screen went up, for its elapsed-time line.
     var startingSince: Date { launching ? launchStarted : preparingSince }
@@ -781,13 +784,19 @@ final class LibraryModel: ObservableObject {
                 case .running:
                     self.sawProcess = true
                     if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
-                case .ended(let status):
+                case .ended(let status), .failed(let status):
                     let requestedQuit = self.quitRequested
                     let closedBeforeVideo = self.startingScreen
                     self.finish()
                     if !requestedQuit {
-                        if status != 0 { self.error = "The Windows game ended with code \(status)." }
-                        else if closedBeforeVideo && self.error == nil { self.error = "The Windows game closed before it displayed video. Open View Log for details." }
+                        if case .failed = event {
+                            self.error = status == 0 ? "Windows could not start the game. Open View Log for details."
+                                : "Windows could not start the game (code \(status)). Open View Log for details."
+                        } else if status != 0 {
+                            self.error = "The game ended with \(LogSummary.windowsExitDescription(status)). Open View Log for details."
+                        } else if closedBeforeVideo && self.error == nil {
+                            self.error = "The Windows game closed before it displayed video. Open View Log for details."
+                        }
                     }
                 case .blocked(let message):
                     self.timer?.invalidate(); self.timer = nil
@@ -882,7 +891,9 @@ final class LibraryModel: ObservableObject {
     }
     func requestQuit() {
         LibraryKeyboard.hide()
-        if quitRequested, IridiumMadeiraRuntime.shared.isResident {
+        if IridiumMadeiraRuntime.shared.isResident, quitRequested || canCancelStalledLaunch {
+            quitRequested = true
+            if quitRequestedAt == nil { quitRequestedAt = Date() }
             IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID)
             sessionMessage = "Ending the remaining game processes…"
             menu = false

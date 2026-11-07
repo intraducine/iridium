@@ -3822,8 +3822,13 @@ struct LibraryHUD: View {
                 Button(model.launchLogs ? "Hide live log" : "Show live log") { model.toggleLaunchLogs() }
                 if dockStart.holding { Button("Show desktop") { dockStart.showDesktop(model) } }
             }.frame(minHeight: 44)
-            if model.launchSlow && !dockStart.holding {
+            if model.launchSlow && !dockStart.holding && !model.quitRequested {
                 Button("Show game view") { model.showGameView(reason: "button") }.frame(minHeight: 44)
+            }
+            if model.canCancelStalledLaunch && !dockStart.holding {
+                Button("Cancel launch") {
+                    if model.canCancelStalledLaunch { model.requestQuit() }
+                }.frame(minHeight: 44)
             }
             if model.launchLogs {
                 LibraryLiveLogs().frame(height: 120).frame(maxWidth: 520)
@@ -3891,6 +3896,7 @@ struct LibraryHUD: View {
     }
     /// What the start is doing before the Dock reports (or for a game without Dock).
     private var launchIdleStatus: String {
+        if model.quitRequested { return L("Ending the remaining game processes…") }
         if let entry = model.preparing { return model.startingJIT == entry.id ? L("Enabling JIT…") : L("Getting ready…") }
         return model.launchSlow ? L("Still starting…") : L("Starting your game…")
     }
