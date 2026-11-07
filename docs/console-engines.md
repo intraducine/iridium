@@ -18,7 +18,7 @@ Dolphin and Azahar cannot pass the required JIT probes on Simulator.
 
 ## Import and storage
 
-Use **Add Game → Choose Files**. Select the containing folder for GDI/CUE games
+Use **Add Game → Files and Folders**. Select the containing folder for GDI/CUE games
 so all referenced tracks are available. Ambiguous formats ask for a system.
 
 | System | Files | Restrictions |
@@ -41,9 +41,9 @@ bundles upstream `Sys` and stores NAND/cards/configuration with the game saves.
 The build supplies no commercial games, console keys, or proprietary BIOS files.
 
 `Documents/Import` accepts game files, complete game folders, pairing files, and
-bulk ZIP/7z archives. It runs while the app is active and no game or Steam download
-is running. Add Game > Import Folder shows choices, errors, remaining files, and
-Retry Import. Choose Files adds every selected input to the same queue; copies
+bulk ZIP/7z archives. It runs while the app is active and storage admission permits
+imports. **Add Game → Import Folder** shows choices, errors, remaining files, and
+Retry Import. Files and Folders adds every selected input to the same queue; copies
 outside Iridium remain untouched. This layout uses the host's Documents folder
 in both standalone installs and LiveContainer.
 
@@ -59,8 +59,12 @@ Steam records used only for shared content do not create extra game cards.
 Remove from Library keeps files and saves. Steam removals keep settings and stay
 hidden across scans and restarts. Add to Library in the game's Steam options
 restores the card. Uninstall removes a managed Steam game's files and install
-record, even if either is already missing. Its confirmation warns that saves
-inside the game folder are removed too; saves elsewhere stay on the device.
+record, even if either is already missing. GOG, Epic Games, EA, and itch.io also
+expose uninstall in their game options. Removing a whole managed game folder in
+Files removes its install record on refresh. Partial damage remains available
+for repair where the store supports it. Missing external drives do not count as
+deleted installs. Uninstall warns that saves inside the game folder are removed
+too; saves elsewhere stay on the device.
 Archive extraction rejects links and paths that escape its new staging folder,
 limits entries and expanded bytes, and publishes only complete extractions.
 Unrecognized files from an archive stay in its extracted folder.
@@ -144,8 +148,8 @@ thread and restores the old disc on insertion failure. Flycast also retains its
 registered disc list and restores the previous path and tray state if insertion
 fails. Failed recovery keeps the runtime lease and requires an app restart. Disc changes do not create or replace a save-state slot.
 
-For the first 3DS game, choose **Install 3DS CIA** from Add Game and use new
-storage. Select an existing game's storage for updates or DLC. Emulator Files
+For the first 3DS game, select a CIA through **Add Game → Files and Folders** and
+use new storage when prompted. Select an existing game's storage for updates or DLC. Emulator Files
 also has **Install CIA Game, Update, or DLC**. Azahar installs into a staged copy
 of the selected storage. New storage accepts a base game only. Base games
 receive library entries which share that storage; updates and DLC remain with
@@ -184,7 +188,7 @@ retested; the source fix does not establish its cause or visual result.
 
 ## Lifecycle and JIT
 
-Madeira, PSP, Dolphin, and Azahar share `JITCoordinator`. Each engine retains its
+Madeira, PSP, Dolphin, Azahar, Play!, and Flycast share `JITCoordinator`. Each engine retains its
 own allocation and execution checks. Dolphin/Azahar require live attachment for
 new executable memory. Their shared helper must finish, detach, clear the live
 debugger flag, and restore networking before the next launch. Unknown attachment
@@ -240,9 +244,13 @@ The native shader adapter gives unused vertex-output lanes fixed values and
 replaces NaN and infinity in floating-point interpolants with zero before Metal
 interpolation. It preserves integer, pixel and position outputs.
 
-Shared JIT preparation creates the retained Windows arena and the reusable console
-arena during one owned built-in-helper activation. Later games reuse these arenas;
-they do not enable JIT again. The Windows host remains resident while console games
+Shared JIT preparation creates only the arena needed by the requested launch.
+Windows uses Madeira's arena; console JIT uses the shared console arena. Starting
+Windows does not prepare console memory. A later console launch prepares it on
+demand, then later games reuse it. The owned helper uses checked batches of up to
+128 pages with full 64-bit addresses. Older external helpers retain safe per-page
+preparation. This reduces debugger requests; new phone startup timings remain
+unverified. The Windows host remains resident while console games
 run. This retains its memory and services, so a passing build alone does not establish
 phone memory use, power use, performance, or graphics compatibility. Windows
 configuration read only during host initialization still applies to the host lifetime.

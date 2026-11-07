@@ -328,7 +328,7 @@ struct GameIniFilesSection: View {
                 Label("Add .ini file", systemImage: "plus")
             }
         } footer: {
-            Text("A game's own settings files, like Fallout.ini or FalloutPrefs.ini. Changes are saved into the file; close the game first. Swipe left to take a file off this list (the file stays).")
+            Text("Close the game before editing INI files. Swipe left to remove a file from this list; its disk copy stays.")
         }
         .onAppear { files = GameIniFiles.files(windowsPath) }
     }
@@ -348,7 +348,7 @@ struct IniFilePicker: View {
             if let found {
                 let shown = query.isEmpty ? found : found.filter { $0.localizedCaseInsensitiveContains(query) }
                 if shown.isEmpty {
-                    Text(found.isEmpty ? "No .ini files in the game's folder or Documents › My Games yet. A game often writes its files the first time it runs." : "No file matches.")
+                    Text(found.isEmpty ? "No INI files in the game folder or Documents › My Games. Run the game once, then check again." : "No file matches.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(shown, id: \.self) { file in

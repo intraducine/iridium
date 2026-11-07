@@ -3353,8 +3353,8 @@ struct RuntimeMemorySyncSettings: View {
             }
         } header: { Text("Advanced Runtime Tuning") } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Code translation memory is reserved when a game starts. Low values can prevent large games from running.")
-                Text("Video memory is reported to the game. Automatic is recommended; high values can cause memory-related exits.")
+                Text("Translation memory is reserved at launch. Too little can prevent startup.")
+                Text("Video memory: use Automatic. High values can cause memory-related exits.")
                 Text("Memory fallback uses storage when RAM runs short. It can slow games down.")
                 Text("The optional memory helper must be signed with the app. It is separate from the shared JIT helper.")
                 Text("Change synchronization only if a game needs it.")
@@ -3375,7 +3375,7 @@ struct LibraryPointerSettings: View {
     @AppStorage("IridiumMouseSensitivity") private var sensitivity = 1.0
     var body: some View {
         if TouchMouseGate.mode == .off {
-            Text("Touch mouse is disabled by MADEIRA_TOUCH_MOUSE=0. Remove that override and restart Iridium to use these modes.")
+            Text("Remove MADEIRA_TOUCH_MOUSE=0 and restart Iridium to enable touch mouse.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         Picker("Touch mouse", selection: $mode) {
@@ -4023,7 +4023,7 @@ struct LibraryHUD: View {
                 // ml1133's ECO switch, live: the same as the developer overlay's ECO pill.
                 Text("CPU").font(.headline)
                 Toggle("Lower power priority", isOn: Binding(get: { eco }, set: { on in eco = on; madeira_set_eco(on ? 1 : 0) }))
-                Text("Runs the game's threads at a low priority, on the efficiency cores: cooler and slower. Use it while a game loads and turn it off to play.")
+                Text("Reduces power use and game speed. Turn off for full speed.")
                     .font(.caption).foregroundStyle(.secondary)
                 Divider()
                 }

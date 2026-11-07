@@ -250,7 +250,7 @@ struct IridiumConsolePlayer: View {
                                 menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
                                 if controller.isActive {
                                     menuRow(controller.forceTouchVisible ? "Use Controller" : "Use Touch Controls", "gamecontroller")
-                                    Text(controller.forceTouchVisible ? "Touch controls stay visible until the controller disconnects." : "Touch controls hide automatically with a controller. Choose Use Touch Controls to show them temporarily.")
+                                    Text(controller.forceTouchVisible ? "Touch controls stay visible until the controller disconnects." : "Touch controls hide when a controller connects.")
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                                 HStack { Text("Opacity"); Slider(value: controlOpacity, in: 0.15...1); Text("\(Int(controls.iridiumConsoleOpacity * 100))%").monospacedDigit() }.padding(.vertical, 12)
@@ -325,7 +325,7 @@ struct IridiumConsolePlayer: View {
                                 menuRow("Slot \(stateSlot + 1)", "number.square")
                                 menuRow("Save State and Resume", "square.and.arrow.down")
                                 menuRow("Load State and Resume", "square.and.arrow.up")
-                                Text("Five slots per game. Saving replaces the selected slot. Loading replaces current unsaved progress. In-game saves stay separate.")
+                                Text("Five slots. Saving replaces this slot; loading replaces unsaved progress. In-game saves stay separate.")
                                     .font(.footnote).foregroundStyle(.secondary)
                                 if let status = stateStatus { Text(status).font(.footnote) }
                             } else { help }
@@ -361,7 +361,7 @@ struct IridiumConsolePlayer: View {
             }.id("help.1")
             VStack(alignment: .leading, spacing: 12) {
                 Label("Display", systemImage: "rectangle").font(.headline)
-                Text("The game keeps its original proportions. In landscape, translucent controls overlay the largest available game view.")
+                Text("Games keep their proportions. Landscape controls overlay the game.")
             }.id("help.2")
         }.font(.subheadline).frame(maxWidth: .infinity, alignment: .leading)
     }

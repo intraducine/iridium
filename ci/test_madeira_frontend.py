@@ -346,7 +346,7 @@ class FrontendImportTests(unittest.TestCase):
         self.assertEqual(target['name'], 'Iridium')
         self.assertEqual(result['product']['path'], 'Iridium.app')
         for configuration in ('debug', 'release', 'helper-debug', 'helper-release'):
-            self.assertEqual(result[configuration]['buildSettings']['MARKETING_VERSION'], '0.2.1')
+            self.assertEqual(result[configuration]['buildSettings']['MARKETING_VERSION'], '0.3.0')
             self.assertEqual(result[configuration]['buildSettings']['CURRENT_PROJECT_VERSION'], '1')
         embeds = [result[key] for key in target['buildPhases']
                   if result[key]['isa'] == 'PBXCopyFilesBuildPhase']
