@@ -1299,8 +1299,7 @@ struct ContentView: View {
     @StateObject private var logStore = LogStore.shared
     @StateObject private var jitCoordinator = JITCoordinator.shared
     @State private var jitStatus: JITStatus = .unknown
-    /// Play without JIT: the start that waits for Enable JIT (jitReadyForLaunch).
-    @State private var launchAfterJIT: (() -> Void)?
+    @State private var dockConnectionPreparing = false
     @State private var entitlements: EntitlementStatus?
     @State private var debuggerAttached = isDebuggerAttached()
     @ObservedObject private var input = InputSettings.shared
@@ -2464,8 +2463,8 @@ struct ContentView: View {
     /// debugger is attached (so the start cannot ask for JIT again) and nothing else
     /// started meanwhile. A failure drops it: a later Enable JIT starts no game.
     private func launchAfterJITEnded(started: Bool) {
-        guard let launch = launchAfterJIT else { return }
-        launchAfterJIT = nil
+        guard let launch = library.launchAfterJIT else { return }
+        library.launchAfterJIT = nil
         let requestedGame = library.startingJIT
         library.startingJIT = nil
         guard started, StikJITHelper.ready, library.current == nil, !IridiumMadeiraRuntime.shared.isBusy else {
@@ -2493,7 +2492,7 @@ struct ContentView: View {
         if StikJITHelper.ready && IridiumMadeiraRuntime.jitMemoryReady { return true }
         if inLibrary, let launch {
             logStore.log("[jit-on-play] JIT is not on: enabling it, then starting the game")
-            launchAfterJIT = launch
+            library.launchAfterJIT = launch
             library.startingJIT = entry
             if jitStatus != .testing { enableJIT() }   // a second Play while it runs only replaces the game
             return false
@@ -3531,16 +3530,19 @@ struct ContentView: View {
                 StikJITHelper.fixedBaseWindowMB(in: installFolder)
             }.value
             guard !inLibrary || (library.preparationID == preparation && library.current == nil) else { return }
-            if let need {
-                StikJITHelper.exeWindowAutoMB = need.mb
-                LogStore.shared.log("[exe-window] \(need.exe) is a fixed-base image ending \(need.mb)MB above 0x140000000: "
-                    + "the executable window is widened to \(need.mb)MB for this session (exe-window-mb in the game's file overrides)")
-            } else {
-                StikJITHelper.exeWindowAutoMB = 0
+            guard !dockConnectionPreparing else {
+                if inLibrary { library.error = "Steam is still closing its previous connection. Try again." }
+                return
             }
+            dockConnectionPreparing = true
+            defer { dockConnectionPreparing = false }
             let launchOption = chosen ?? 0
             LogStore.shared.log("[madeira-dock] launch option \(launchOption)\(chosen == nil ? " (none chosen: the default)" : "")")
             await SteamOwnedLibrary.shared.prepareDock()
+            guard !inLibrary || library.preparationID == preparation else {
+                SteamOwnedLibrary.shared.dockEnded()
+                return
+            }
             do {
                 // The launch state may have changed while the connection closed.
                 guard TouchControlsModel.shared.iridiumSettingsContext == nil, StikJITHelper.ready, !IridiumMadeiraRuntime.shared.isBusy,
@@ -3552,6 +3554,11 @@ struct ContentView: View {
                 }
                 try MadeiraDock.writeHandoff(account: signIn.accountName, token: signIn.refreshToken, appID: game.id)
             } catch { fail(error); return }
+            StikJITHelper.exeWindowAutoMB = need?.mb ?? 0
+            if let need {
+                LogStore.shared.log("[exe-window] \(need.exe) is a fixed-base image ending \(need.mb)MB above 0x140000000: "
+                    + "the executable window is widened to \(need.mb)MB for this session (exe-window-mb in the game's file overrides)")
+            }
             MadeiraDock.configure(game, launchOption: launchOption, arguments: LaunchArgumentText.plain(profile?.arguments ?? ""))
             // "Steam starts" (DockStartProgram): the chosen program takes the place of the
             // one Steam's launch entry names, or the kept launcher goes back. No session runs.

@@ -834,12 +834,14 @@ int main(){pthread_t a,b;assert(!pthread_create(&a,0,check,0));assert(!pthread_c
         source = (app / 'Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text()
         handler = source.split('IridiumMadeiraRuntime.shared.poll(owner) { event in\n', 1)[1]
         handler = handler.split('\n            }\n        }\n        let dockStart', 1)[0]
-        cancel_policy = source.split('    var canCancelStalledLaunch', 1)[1].split('    var startingEntry', 1)[0]
+        cancel_policy = source.split('    var cancellableLaunchID', 1)[1].split('    var startingEntry', 1)[0]
+        cancel_launch = source.split('    func cancelLaunch(_ id: UUID)', 1)[1].split("    /// A Steam game's saves", 1)[0]
         request_quit = source.split('    func requestQuit()', 1)[1].split('    func saveCurrentProfile()', 1)[0]
         dock = (app / 'Steam/MadeiraDock.swift').read_text()
         report = dock.split('    struct Report {', 1)[1].split('    static let reportAllowed', 1)[0]
         fixture = '''import Foundation
 enum Event { case starting, running, ended(UInt32), failed(UInt32), blocked(String) }
+struct LibraryEntry {}
 enum MadeiraDock {
     struct Report {''' + report + '''}
 enum LibraryKeyboard { static func hide() {} }
@@ -853,9 +855,12 @@ func winios_post_key(_ key: Int, _ down: Int) { fatalError("Stalled launch sent 
 final class Library {
  var nativeLaunchID=UUID(), current:UUID?=UUID(), sawProcess=false, quitRequested=false, launching=true
  var sessionMessage="Starting…", error:String?, timer:Timer?
- var launchSlow=false, menu=true, quitRequestedAt:Date?
+ var menu=true, quitRequestedAt:Date?
+ var preparationID=UUID(), preparing: LibraryEntry?, startingJIT: UUID?
+ var launchAfterJIT: (() -> Void)?, cloudRetry: (() -> Void)?
  var startingScreen:Bool { launching }
- var canCancelStalledLaunch''' + cancel_policy + '''
+ var cancellableLaunchID''' + cancel_policy + '''
+ func cancelLaunch(_ id: UUID)''' + cancel_launch + '''
  func requestQuit()''' + request_quit + '''
  func finish(){current=nil;quitRequested=false}
  func accept(_ event:Event, owner:UUID) {
@@ -882,14 +887,18 @@ let unspecified=Library();unspecified.accept(.failed(0),owner:unspecified.native
 precondition(unspecified.error?.contains("could not start the game") == true)
 let conflict=Library();conflict.accept(.ended(0xC0000018),owner:conflict.nativeLaunchID)
 precondition(conflict.error?.contains("0xC0000018 (memory address conflict)") == true)
-let stalled=Library()
-precondition(!stalled.canCancelStalledLaunch)
-stalled.launchSlow=true
-stalled.sawProcess=true
-precondition(stalled.canCancelStalledLaunch)
-stalled.requestQuit()
-precondition(stalled.quitRequested && !stalled.canCancelStalledLaunch && !stalled.menu)
-precondition(stalled.quitRequestedAt != nil && IridiumMadeiraRuntime.shared.stopped == [stalled.nativeLaunchID])
+let starting=Library()
+IridiumMadeiraRuntime.shared.isResident=false
+precondition(starting.cancellableLaunchID == starting.nativeLaunchID)
+starting.cancelLaunch(UUID())
+precondition(IridiumMadeiraRuntime.shared.stopped.isEmpty)
+starting.cancelLaunch(starting.nativeLaunchID)
+starting.cancelLaunch(starting.nativeLaunchID)
+precondition(starting.quitRequested && starting.cancellableLaunchID == nil && !starting.menu)
+precondition(starting.quitRequestedAt != nil && IridiumMadeiraRuntime.shared.stopped == [starting.nativeLaunchID])
+let playing=Library()
+playing.launching=false
+precondition(playing.cancellableLaunchID == nil)
 ''' + r'''
 let facts = LogSummary.facts(lines: [
     #"0024:err:module:import_dll Library UnityPlayer.dll (which is needed by L"C:\\Games\\Game.exe") not found"#,

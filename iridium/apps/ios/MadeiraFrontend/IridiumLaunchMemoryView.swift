@@ -26,6 +26,7 @@ struct IridiumLaunchMemoryView: View {
 struct IridiumGameLoadingView<Cover: View, Status: View, Actions: View>: View {
     let title: String
     var wideEnabled = true
+    var cancelLaunch: (() -> Void)? = nil
     @ViewBuilder var cover: Cover
     @ViewBuilder var status: Status
     @ViewBuilder var actions: Actions
@@ -50,6 +51,9 @@ struct IridiumGameLoadingView<Cover: View, Status: View, Actions: View>: View {
                         status
                         IridiumLaunchMemoryView().frame(maxWidth: 440)
                         actions
+                        if let cancelLaunch {
+                            Button("Cancel Launch", action: cancelLaunch).frame(minHeight: 44)
+                        }
                     }.frame(maxWidth: 520)
                 }
                 .frame(maxWidth: .infinity, minHeight: height)

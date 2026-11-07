@@ -3809,7 +3809,8 @@ struct LibraryHUD: View {
     }
     private let launchWideEnabled = MadeiraConfig.flag("MADEIRA_LAUNCH_WIDE")
     private func launchView(_ entry: LibraryEntry, geometry geo: GeometryProxy) -> some View {
-        IridiumGameLoadingView(title: entry.title, wideEnabled: launchWideEnabled) {
+        IridiumGameLoadingView(title: entry.title, wideEnabled: launchWideEnabled,
+                               cancelLaunch: model.cancellableLaunchID.map { id in { model.cancelLaunch(id) } }) {
             launchCover(entry)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                     coverFrame = $0; LaunchCurtain.shared.track($0)
@@ -3818,17 +3819,11 @@ struct LibraryHUD: View {
             launchWideStatus
         } actions: {
             HStack(spacing: 20) {
-                if dockStart.failure != nil { Button("Close session") { model.requestQuit() } }
                 Button(model.launchLogs ? "Hide live log" : "Show live log") { model.toggleLaunchLogs() }
-                if dockStart.holding { Button("Show desktop") { dockStart.showDesktop(model) } }
+                if dockStart.holding && !model.quitRequested { Button("Show desktop") { dockStart.showDesktop(model) } }
             }.frame(minHeight: 44)
             if model.launchSlow && !dockStart.holding && !model.quitRequested {
                 Button("Show game view") { model.showGameView(reason: "button") }.frame(minHeight: 44)
-            }
-            if model.canCancelStalledLaunch && !dockStart.holding {
-                Button("Cancel launch") {
-                    if model.canCancelStalledLaunch { model.requestQuit() }
-                }.frame(minHeight: 44)
             }
             if model.launchLogs {
                 LibraryLiveLogs().frame(height: 120).frame(maxWidth: 520)
@@ -3839,14 +3834,14 @@ struct LibraryHUD: View {
     /// The landscape status: a small spinner and one line of what the start is doing,
     /// the one-time-install note and the elapsed time under it; or why the Dock stopped.
     @ViewBuilder private var launchWideStatus: some View {
-        if let failure = dockStart.failure {
+        if let failure = dockStart.failure, !model.quitRequested {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Madeira Dock stopped").font(.headline)
                 Text(failure).font(.subheadline).foregroundStyle(.white.opacity(0.75)).frame(maxWidth: 440, alignment: .leading)
             }
         } else {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                let status = dockStart.active ? dockStatus : launchIdleStatus
+                let status = dockStart.active && !model.quitRequested ? dockStatus : launchIdleStatus
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         ProgressView().controlSize(.small).tint(.white)
