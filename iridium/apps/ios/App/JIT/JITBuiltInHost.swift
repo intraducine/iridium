@@ -48,8 +48,8 @@ enum MadeiraBuiltInJIT {
 #if targetEnvironment(simulator)
         return "Built-in JIT is available only on a physical device."
 #else
-        guard #available(iOS 26.0, *) else {
-            return "Built-in JIT requires iOS 26 or later."
+        guard #available(iOS 18.0, *) else {
+            return "Built-in JIT requires iOS 18 or later."
         }
         if getenv("LC_HOME_PATH") != nil {
             return "The built-in JIT helper needs a standalone installation. In LiveContainer, use the JIT launch route in global settings."

@@ -2303,7 +2303,7 @@ ditto "$SRC" "$DST"
 # The framework ships without an Info.plist, which an app's embedded framework needs.
 if [ ! -f "$DST/Info.plist" ]; then
   P="$DST/Info.plist"
-  /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string StikJIT' -c "Add :CFBundleIdentifier string $PRODUCT_BUNDLE_IDENTIFIER.StikJIT" -c 'Add :CFBundleName string StikJIT' -c 'Add :CFBundlePackageType string FMWK' -c 'Add :CFBundleInfoDictionaryVersion string 6.0' -c 'Add :CFBundleShortVersionString string 1.0' -c 'Add :CFBundleVersion string 1' -c 'Add :CFBundleSupportedPlatforms array' -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' -c 'Add :MinimumOSVersion string 26.0' "$P" &gt;/dev/null
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string StikJIT' -c "Add :CFBundleIdentifier string $PRODUCT_BUNDLE_IDENTIFIER.StikJIT" -c 'Add :CFBundleName string StikJIT' -c 'Add :CFBundlePackageType string FMWK' -c 'Add :CFBundleInfoDictionaryVersion string 6.0' -c 'Add :CFBundleShortVersionString string 1.0' -c 'Add :CFBundleVersion string 1' -c 'Add :CFBundleSupportedPlatforms array' -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' -c "Add :MinimumOSVersion string $IPHONEOS_DEPLOYMENT_TARGET" "$P" &gt;/dev/null
   plutil -convert binary1 "$P"
 fi
 if [ -n "$EXPANDED_CODE_SIGN_IDENTITY" ] &amp;&amp; [ "$CODE_SIGNING_ALLOWED" != "NO" ]; then
@@ -2385,7 +2385,7 @@ fi
 				<key>INFOPLIST_FILE</key>
 				<string>MadeiraJITHelper/Info.plist</string>
 				<key>IPHONEOS_DEPLOYMENT_TARGET</key>
-				<string>26.0</string>
+				<string>18.0</string>
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<array>
 					<string>$(inherited)</string>
@@ -2438,7 +2438,7 @@ fi
 				<key>INFOPLIST_FILE</key>
 				<string>MadeiraJITHelper/Info.plist</string>
 				<key>IPHONEOS_DEPLOYMENT_TARGET</key>
-				<string>26.0</string>
+				<string>18.0</string>
 				<key>LD_RUNPATH_SEARCH_PATHS</key>
 				<array>
 					<string>$(inherited)</string>

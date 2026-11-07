@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import platform
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -96,10 +97,16 @@ print("checked native batch: high addresses, checksums, bounds, all replies and 
             binary = framework / 'StikJIT'; binary.write_bytes(b'compiled')
             expected = {'runner': 'reviewed'}
             record = {'inputs': expected, 'files': {'StikJIT': build.digest(binary)}}
+            metadata = framework / 'Info.plist'
+            metadata.write_bytes(plistlib.dumps({'MinimumOSVersion': '18.0'}))
             (root / 'component.json').write_text(json.dumps(record))
             (framework / 'IridiumJITTransport.json').write_text(json.dumps(record))
             with patch.object(build, 'verify_source'), patch.object(build, 'OUTPUT', root), patch.object(build, 'identity', return_value=expected):
                 self.assertEqual(build.verify(framework), record)
+                metadata.write_bytes(plistlib.dumps({'MinimumOSVersion': '26.0'}))
+                with self.assertRaisesRegex(ValueError, 'wrong iOS deployment target'):
+                    build.verify(framework)
+                metadata.write_bytes(plistlib.dumps({'MinimumOSVersion': '18.0'}))
                 binary.write_bytes(b'stale')
                 with self.assertRaisesRegex(ValueError, 'differs'): build.verify(framework)
             with patch.object(build, 'verify_source'), patch.object(build, 'OUTPUT', root), patch.object(build, 'identity', return_value={'runner': 'new'}):
