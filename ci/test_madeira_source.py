@@ -1,5 +1,6 @@
 """Corresponding source must remain available after native output reuse."""
 from pathlib import Path
+import hashlib
 import os
 import subprocess
 import tarfile
@@ -53,6 +54,44 @@ class MadeiraSourceTests(unittest.TestCase):
         revisions = {'.': revision, 'vendor/Flycast': flycast_revision,
                      'vendor/Flycast/core/deps/oboe': oboe_revision}
         return repo, (proto / 'descriptor.proto').relative_to(repo), revisions
+
+    def test_snapshot_only_allows_verified_madeira_binary_changes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            repo = root / 'vendor/Madeira'
+            self.init_repo(repo)
+            name = 'app/Madeira/arm64ec-windows/wine.dll'
+            binary = repo / name
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'pinned wine binary')
+            code = repo / 'app/Madeira/runtime.c'
+            code.write_bytes(b'pinned source')
+            revision = self.commit(repo, name, 'app/Madeira/runtime.c')
+            binary.write_bytes(b'built wine binary')
+            digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            outputs = {name: digest}
+            with patch.object(source, 'ROOT', root), patch.object(source.build, 'UPSTREAM', repo):
+                stage = root / 'stage'
+                revisions = {}
+                source.snapshot(repo, stage, revisions, madeira_outputs=outputs)
+                self.assertEqual((stage / name).read_bytes(), b'pinned wine binary')
+                self.assertEqual(revisions, {'vendor/Madeira': revision})
+
+                for invalid in ({}, {name: '0' * 64}):
+                    with self.subTest(outputs=invalid), self.assertRaisesRegex(ValueError, name):
+                        source.snapshot(repo, root / 'rejected', {}, madeira_outputs=invalid)
+
+                code.write_bytes(b'edited source')
+                outputs['app/Madeira/runtime.c'] = hashlib.sha256(code.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, 'runtime.c'):
+                    source.snapshot(repo, root / 'rejected', {}, madeira_outputs=outputs)
+
+                code.write_bytes(b'pinned source')
+                target = binary.with_name('replacement.dll')
+                binary.rename(target)
+                binary.symlink_to(target.name)
+                with self.assertRaisesRegex(ValueError, name):
+                    source.snapshot(repo, root / 'rejected', {}, madeira_outputs=outputs)
 
     def test_recursive_snapshot_preserves_sibling_source_symlink(self):
         with tempfile.TemporaryDirectory() as folder:
