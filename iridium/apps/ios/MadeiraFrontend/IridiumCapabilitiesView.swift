@@ -15,12 +15,12 @@ struct IridiumCapabilitiesView: View {
                 LabeledContent("JIT", value: state.enabled ? "Active" : "Not active")
                 Text("Required for Windows, GameCube, Wii, Nintendo 3DS, PlayStation 2, Dreamcast and arcade games.")
                     .font(.footnote).foregroundStyle(.secondary)
-                Button("JIT Settings", systemImage: "bolt") { showingJITSetup = true }
+                Button("JIT Setup", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)
                 if !state.enabled {
                     Button("Enable JIT", action: enableJIT).disabled(coordinator.busy)
                 }
-                if coordinator.busy { ProgressView(coordinator.status ?? "Connecting…") }
+                if coordinator.busy { IridiumJITProgress(status: coordinator.status) }
                 if let error = coordinator.error {
                     Text(error).foregroundStyle(.red).font(.footnote)
                     if let problem = coordinator.connectionProblem {
@@ -28,7 +28,7 @@ struct IridiumCapabilitiesView: View {
                     }
                 }
             } header: { Text("JIT") } footer: {
-                Text("Console games use Built-in JIT. Enable it once per app run.")
+                Text("Shared JIT needs the built-in helper. Prepared memory lasts until the app closes.")
             }
             #if !targetEnvironment(simulator)
             Section {

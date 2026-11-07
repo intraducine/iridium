@@ -66,6 +66,7 @@ func measuredPERead(_ file:FileHandle,offset:Int,count:Int) throws -> Data? {
             main=path/'Check.swift';main.write_text(check);binary=path/'check'
             subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumGameStorage.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),
                 str(ROOT/'iridium/apps/ios/App/Steam/SteamKeyValues.swift'),str(source),str(main),'-o',str(binary)],check=True,timeout=120)
             for name,tree,size,reads in cases:
@@ -154,6 +155,7 @@ static func main() throws {
             main=path/'Check.swift';main.write_text(code);binary=path/'check'
             subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumGameStorage.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),
                 str(ROOT/'iridium/apps/ios/App/Steam/SteamKeyValues.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumGameIdentity.swift'),str(main),'-o',str(binary)],check=True,timeout=120)
@@ -186,6 +188,7 @@ static func main() {
             path=Path(folder);main=path/'Check.swift';main.write_text(code);binary=path/'check'
             subprocess.run(['swiftc','-swift-version','6','-parse-as-library','-module-cache-path',module_cache('macosx'),
                 str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                str(ROOT/'iridium/apps/ios/RuntimeSupport/IridiumGameStorage.swift'),
                 str(ROOT/'iridium/apps/ios/MadeiraFrontend/IridiumArtworkState.swift'),str(main),'-o',str(binary)],check=True,timeout=120)
             subprocess.run([str(binary)],check=True,timeout=10)
 

@@ -33,7 +33,7 @@ import Foundation
     func begin(owner: UUID, platform: IridiumPlatform, layout: IridiumControlLayoutState) throws {
         let admission = LibraryModel.shared.current == nil && !LibraryModel.shared.launching &&
             !IridiumConsoleSession.shared.isActive && !JITCoordinator.shared.busy &&
-            wine_process_is_running() == 0 && wineserver_is_running() == 0
+            !IridiumMadeiraRuntime.shared.isBusy
         try TouchControlsModel.shared.iridiumBeginSettings(owner: owner, platform: platform, state: layout, admission: admission)
     }
     func end(owner: UUID) { TouchControlsModel.shared.iridiumEndSettings(owner: owner) }

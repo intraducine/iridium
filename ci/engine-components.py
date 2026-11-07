@@ -42,10 +42,10 @@ INPUTS = {
             'ci/fetch-runtime-inputs.py', 'iridium/apps/ios/RuntimeSupport/PPSSPPAtlases',
             'iridium/apps/ios/RuntimeSupport/Notices/PPSSPPFonts',
             'iridium/apps/ios/MadeiraSupport/Notices/MoltenVK') + tuple(BRIDGE + name for name in
-                ('IRPPSSPPNative.mm', 'IRPPSSPPNative.h', 'IRPPSSPPCodecCheck.c', 'IRAudioVolume.c', 'IRAudioVolume.h', 'IRJITDiagnostic.h',
+                ('IRPPSSPPNative.mm', 'IRPPSSPPNative.h', 'IRPPSSPPOptions.h', 'IRCheats.h', 'IRPPSSPPCodecCheck.c', 'IRAudioVolume.c', 'IRAudioVolume.h', 'IRJITDiagnostic.h',
                  'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRPSPExecutableMemory.h',
                  'IRPSPExecutableMemory.cpp', 'IRPSPTeardownObservation.h', 'IRJITMemory.h')),
-    'sameboy': ('vendor/SameBoy', 'ci/build-sameboy.py', 'ci/sameboy_bootroms.py', 'ci/sameboy-bootroms.json'),
+    'sameboy': ('vendor/SameBoy', 'ci/build-sameboy.py', 'ci/sameboy_bootroms.py', 'ci/sameboy-bootroms.json', BRIDGE + 'IRCheats.h'),
 }
 for engine in ('host', *phase3.PINS):
     folder = '.build/phase3/' + engine + '/iphoneos/'

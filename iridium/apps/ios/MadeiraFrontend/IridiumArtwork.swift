@@ -417,12 +417,20 @@ struct IridiumArtworkImage: View {
     let image: UIImage?
     var position = 0.5
     var fit = false
+    var filledBacking = false
     var body: some View {
         GeometryReader { geometry in
             if let image {
                 if fit {
-                    Image(uiImage: image).resizable().scaledToFit()
-                        .frame(width: geometry.size.width, height: geometry.size.height).background(.black)
+                    ZStack {
+                        if filledBacking {
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .clipped().blur(radius: 18).overlay { Color.black.opacity(0.35) }
+                        }
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                    }.background(.black)
                 } else {
                     let scale = max(geometry.size.width / max(image.size.width, 1), geometry.size.height / max(image.size.height, 1))
                     Image(uiImage: image).resizable()

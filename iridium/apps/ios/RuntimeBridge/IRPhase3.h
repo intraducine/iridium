@@ -20,6 +20,8 @@ typedef struct {
 // Events may arrive on the engine owner queue.
 typedef void (*IRPhase3Event)(uint64_t generation, unsigned, const char *);
 typedef void (*IRPhase3Poll)(IRPhase3Input *);
+typedef void (*IRPhase3PollPlayer)(unsigned player, IRPhase3Input *);
+typedef bool (*IRPhase3Rumble)(unsigned player, unsigned motor, uint16_t strength);
 typedef void *(*IRPhase3JITPrepare)(void *, size_t);
 void *ir_phase3_open(const char *engine, const char *frameworks, const char *game,
     const char *save, const char *assets, bool jit, uint64_t generation, IRPhase3Event, IRPhase3Poll);
@@ -29,6 +31,10 @@ uint64_t ir_phase3_frames(void);
 bool ir_phase3_available(const char *engine, const char *frameworks);
 bool ir_phase3_configure_jit(IRPhase3JITPrepare);
 bool ir_phase3_configure_memory(const IRJITMemoryAPI *);
+// Optional controls extension. Each engine keeps its base ABI and JIT adapter.
+bool ir_phase3_command(const char *json);
+bool ir_phase3_configure_input(IRPhase3PollPlayer, IRPhase3Rumble);
+int ir_phase3_azahar_install_cia(const char *frameworks, const char *user, const char *file);
 #ifdef __cplusplus
 }
 #endif

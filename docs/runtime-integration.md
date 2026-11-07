@@ -1,6 +1,6 @@
 # Runtime integration
 
-Iridium owns the app entry, library, artwork, settings, setup, Steam UI, and
+Iridium owns the app entry, library, artwork, settings, setup, store UI, and
 controls. Engines provide execution through native adapters. Source revisions
 are recorded in [UPSTREAM-SOURCES.json](../UPSTREAM-SOURCES.json).
 
@@ -25,8 +25,9 @@ upstream UI changes do not rewrite the app.
 
 The unified library retains Windows records and separate console records.
 `IridiumRuntimeDriver` declares engine capabilities and lifecycle requirements.
-Only one native runtime may own the process. Windows requires an app restart
-before switching engines; uncertain teardown also retains ownership until restart.
+Only one game may own the process. A retained Windows host accepts separate game
+jobs, then returns admission after confirmed guest-thread cleanup. Uncertain
+teardown retains ownership until restart.
 
 Console engines use isolated binaries and checked C interfaces. Components have
 separate pins, build outputs, resources, and receipts. Shared JIT handles provider
@@ -35,9 +36,23 @@ Changing one engine need not change another, but its adapter and dependencies
 must remain compatible. See [console engines](console-engines.md).
 
 Windows keeps `madeira-library.json`, game IDs, Wine paths, and saves. Console
-records use `Documents/IridiumRuntimes/library.json`; games and saves are isolated
-by runtime and UUID. Corrupt libraries block writes. Removing an entry retains
-files. Imports reject unsafe paths and conflicting saves.
+records use `Documents/IridiumRuntimes/library.json`. Managed Windows and console
+games use `Documents/Games/<title> - <UUID>`. Journaled aliases retain old Windows
+paths. Console saves stay isolated by runtime and storage owner, including shared
+installed 3DS content. Corrupt libraries block writes. Removing an entry retains
+files; store uninstall is a separate operation. Imports reject unsafe paths and
+conflicting saves. See [storage and recovery](console-engines.md#import-and-storage).
+
+Shared JIT prepares the Windows arena or console arena only when that launch
+needs it. Each remains reusable until the app exits. The owned helper uses the
+[checked transport](../iridium/apps/ios/JITSupport/README.md); older external
+helpers retain the safe per-page fallback. Runtime pins and the version 1 memory
+interface remain separate from this app service.
+
+The shared launch presentation appears before native work and retains status and
+live app memory use until readiness or failure. App UI remains on the main thread;
+runtime work uses its adapter queues. This contract requires device timing and
+rotation tests under native load. Source checks alone do not establish responsiveness.
 
 ## Engine updates
 

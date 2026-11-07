@@ -228,21 +228,6 @@ class SteamSession {
     /// NOTE: Despite the parameter name, CM logon requires the *refresh* token (audience: "renew"),
     /// not the access token (audience: "web"). The CMsgClientLogon.access_token field accepts both,
     /// but only the refresh token establishes a CM session.
-    /// Single-resume guard for the logon continuation. The logon response,
-    /// ClientLoggedOff, the send-error path, and the 20s timeout can each reach
-    /// the continuation; without this the timeout double-resumed and crashed
-    /// (CheckedContinuation traps on a second resume). Exactly one resume wins.
-    private final class LogonResumeGuard: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func claim() -> Bool {
-            lock.lock(); defer { lock.unlock() }
-            if done { return false }
-            done = true
-            return true
-        }
-    }
-
     func loginWithToken(accessToken: String, accountName: String) async throws {
         guard await connection.isConnected else {
             throw SteamError.disconnected
@@ -269,7 +254,7 @@ class SteamSession {
         // ClientLogonResponse (EMsg 5515) is NOT job-correlated — it's an unsolicited push.
         // Register a one-time handler that resolves the continuation when the response arrives.
         // Also handle legacy EMsg 751 (old CMsgClientLogOnResponse numbering).
-        let resumeOnce = LogonResumeGuard()
+        let resumeOnce = SteamResumeGuard()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             // All resume paths funnel through these so the continuation resumes
             // at most once, even if a handler and the timeout fire together.
@@ -544,6 +529,16 @@ class SteamSession {
         body: Data,
         timeout: TimeInterval = 10
     ) async throws -> Data {
+        try await callServiceMethodWithResult(method: method, body: body, timeout: timeout).body
+    }
+
+    /// A service method call that also returns the response header's EResult
+    /// (Steam Workshop's subscribe calls answer with an empty body either way).
+    func callServiceMethodWithResult(
+        method: SteamServiceMethod,
+        body: Data,
+        timeout: TimeInterval = 10
+    ) async throws -> (eresult: Int32, body: Data) {
         resetIdleTimer()
         let jobID = nextJobID()
 
@@ -583,9 +578,42 @@ class SteamSession {
         }
 
         if response.header.eresult != 1 {
-            SteamLog.trace("\(method.rawValue) header eresult=\(response.header.eresult)")
+            if method.rawValue.hasPrefix("RemoteClient.") || method == .requestPeerContentServer || method == .getPeerContentInfo {
+                SteamLog.event("[steam-lan] \(method.rawValue) eresult=\(response.header.eresult)")
+            } else {
+                SteamLog.trace("\(method.rawValue) header eresult=\(response.header.eresult)")
+            }
         }
-        return response.body
+        return (response.header.eresult, response.body)
+    }
+
+    /// A unified-service notification (a method that returns NoResponse):
+    /// no source job, so the CM neither answers nor rejects it as a call.
+    func sendServiceNotification(method: SteamServiceMethod, body: Data) async throws {
+        resetIdleTimer()
+        var header = CMsgProtoBufHeader()
+        header.steamid = steamID
+        header.clientSessionid = sessionID
+        header.targetJobName = method.rawValue
+        let data = SteamMessageCodec.encode(eMsg: .serviceMethodCallFromClient, header: header, body: body)
+        try await connection.send(data)
+    }
+
+    /// A packet another client of this account sent through Steam: a status
+    /// is kept for SteamLANPeer; a discovery is answered with this device's
+    /// status, once it has one.
+    private func handleRelayed(method: String, body: Data) {
+        guard method.hasPrefix("RemoteClientSteamClient.NotifySteamBroadcastPacket"),
+              let packet = SteamLANPeer.relayedPacket(body) else { return }
+        let relay = SteamLANRelay.shared
+        if let status = SteamLANPeer.parseStatus(packet.payload) {
+            if relay.record(status) {
+                SteamLog.event("[steam-lan] relayed status host=\(status.hostname) client=\(status.clientID) addresses=\(status.addresses.count)")
+            }
+        } else if SteamLANPeer.packetType([UInt8](packet.payload)) == 0, let own = relay.ownStatus, packet.clientID != own.clientID {
+            let reply = SteamLANPeer.steamBroadcast(steamID: steamID, clientID: own.clientID, payload: own.status)
+            Task { try? await self.sendServiceNotification(method: .remoteClientSendSteamBroadcastPacket, body: reply) }
+        }
     }
 
     /// Send a message without waiting for response
@@ -652,6 +680,13 @@ class SteamSession {
         // Log unmatched service method responses for debugging
         if message.rawEMsg == EMsg.serviceMethodResponse.rawValue {
             SteamLog.trace("ServiceMethodResponse not matched: jobTarget=\(message.header.jobidTarget), pending=\(Array(pendingJobs.keys))")
+        }
+
+        // What Steam relays between this account's devices (SteamLANPeer):
+        // the other clients' discovery answers and connection packets.
+        if message.rawEMsg == EMsg.serviceMethod.rawValue, message.header.targetJobName.hasPrefix("RemoteClientSteamClient.") {
+            handleRelayed(method: message.header.targetJobName, body: message.body)
+            return
         }
 
         // Dispatch to registered handlers

@@ -34,6 +34,7 @@ def main_sources(root=ROOT):
     for folder in ('MadeiraFrontend', 'RuntimeSupport'):
         sources.extend((root / 'iridium/apps/ios' / folder).glob('*.swift'))
     sources.append(root / 'iridium/apps/ios/Iridium/RuntimeDiagnosticLogFiles.swift')
+    sources.append(root / 'iridium/apps/ios/Iridium/RuntimeLaunchPresentation.swift')
     names = [path.name for path in sources]
     if len(names) != len(set(names)):
         raise ValueError('Duplicate app-owned Swift source names')
@@ -54,10 +55,14 @@ def stage(app, root=ROOT):
     helper = root / APP / ownership(root)['helper']
     shutil.copy2(helper, app / 'MadeiraJITHelper/MadeiraJITHelper.swift')
     resources = root / APP / 'Resources'
-    catalog = destination / 'Assets.xcassets'
-    if catalog.exists():
-        shutil.rmtree(catalog)
-    shutil.copytree(resources / 'Assets.xcassets', catalog)
+    # Retire menu audio from existing incremental staging trees too.
+    retired = destination / 'MenuAudio'
+    if retired.exists(): shutil.rmtree(retired)
+    for name in ('Assets.xcassets',):
+        target = destination / name
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(resources / name, target)
     for source in resources.iterdir():
         if source.is_file():
             shutil.copy2(source, destination / source.name)
@@ -66,6 +71,8 @@ def stage(app, root=ROOT):
 
 
 def verify(app, root=ROOT):
+    if (app / "Madeira/MenuAudio").exists():
+        raise ValueError("Retired menu audio remains in the staged app")
     expected = {path.name: path for path in main_sources(root)}
     actual = list((app / 'Madeira').rglob('*.swift'))
     if {path.name for path in actual} != set(expected) or len(actual) != len(expected):

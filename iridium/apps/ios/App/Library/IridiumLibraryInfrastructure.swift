@@ -6,6 +6,13 @@ import ImageIO
 import Combine
 import Metal
 
+/// A text that is built in code (a note, a picker title, a status or an error) in the
+/// device's language, from Localizable.xcstrings; English when the catalog lacks it.
+/// Texts written straight into Text("...")/Button("...") are looked up by SwiftUI already.
+func L(_ text: String) -> String {
+    Bundle.main.localizedString(forKey: text, value: text, table: "Localizable")
+}
+
 // ============================================================================
 // Library front end.
 //

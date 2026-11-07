@@ -2,12 +2,12 @@
   "frontend_runtime": {
     "path": "vendor/Madeira",
     "upstream": "https://github.com/willfaust/Madeira",
-    "revision": "e3a88fddb8daed1f5ac28a45dcb4663d65192629",
+    "revision": "5fda6a0e9543e5de1df010aff35748ab913fd0d9",
     "dependencies": {
-      "FEX": "f59cab95659e8add0c88f0c76ec1cf483c536dbf",
-      "wine": "9129e9684daaeae70da9435e7c6060e59392634e",
-      "dxmt": "128b297c6e9a00014408dc68b4c2c2373b5813de",
-      "madeira-dock": "72558e416a390f3669457930f09a389e54f49556"
+      "FEX": "1dc6ed4932bd231df1c53dd7b8043ffdee0ac34a",
+      "wine": "80c859a76e1073bd41095b1b0abc43135efdd475",
+      "dxmt": "1f617cd5bbe7a71bc0ad9083589cb44c747cdc9b",
+      "madeira-dock": "67780ba92e60dbfac4fe80eaf2ce34b9ea1a1c60"
     },
     "presentation": "iridium/apps/ios/MadeiraFrontend",
     "native_build": "ci/build-madeira-ipa.sh",
@@ -254,5 +254,6 @@
       "build": "ci/build-phase3.py",
       "adaptation": "Shared player host; no guest CPU/GPU/media replacement. See docs/console-engines.md for platform adapters, complete source and unverified limits."
     }
-  ]
+  ],
+  "assets": []
 }

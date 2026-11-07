@@ -24,12 +24,21 @@ enum SteamInstallPaths {
 
     /// Whether an install (its drive-relative library folder) is in the library
     /// Madeira downloads into, and so can be updated or removed here.
+    /// A library on an external drive (drive_c/External/<name>/...) counts too.
     static func isManaged(library: String) -> Bool {
-        library.caseInsensitiveCompare(libraryRelative) == .orderedSame
+        if library.caseInsensitiveCompare(libraryRelative) == .orderedSame { return true }
+        guard let parts = try? ExternalStoragePath.components(library) else { return false }
+        return parts.count >= 3 && parts[0] == "External" && parts.last == "steamapps"
     }
 }
 
 enum SteamInstallFiles {
+    static func installFolder(appID: Int, steamApps: URL) -> String? {
+        guard let folder = record(appID: appID, steamApps: steamApps)?["installdir"]?.string,
+              !folder.isEmpty, folder == safeFolderName(folder) else { return nil }
+        return folder
+    }
+
     /// The `buildid` the install record of an app states, or nil when there is
     /// no readable record.
     static func buildID(appID: Int, steamApps: URL) -> Int? {
@@ -44,12 +53,35 @@ enum SteamInstallFiles {
         return language.lowercased()
     }
 
+    /// The beta branch the install record names (`UserConfig.BetaKey`, as
+    /// Madeira's downloads and Valve's client write it), or nil for public.
+    static func betaKey(appID: Int, steamApps: URL) -> String? {
+        guard let state = record(appID: appID, steamApps: steamApps),
+              let key = (state["MountedConfig"]?["BetaKey"] ?? state["UserConfig"]?["BetaKey"])?.string,
+              !key.isEmpty, key.lowercased() != "public", key.utf8.count <= 64 else { return nil }
+        return key
+    }
+
     /// The depots the install record holds: its own (`InstalledDepots`) and
     /// those shared from other apps (`SharedDepots`).
     static func depots(appID: Int, steamApps: URL) -> Set<Int> {
         guard let state = record(appID: appID, steamApps: steamApps) else { return [] }
         let keys = Array((state["InstalledDepots"]?.fields ?? [:]).keys) + Array((state["SharedDepots"]?.fields ?? [:]).keys)
         return Set(keys.prefix(512).compactMap { Int($0) })
+    }
+
+    /// The DLC the install record holds: each `InstalledDepots` entry with a
+    /// `dlcappid` (written by Madeira's downloads and by Valve's client), by DLC
+    /// app, with the bytes its depots take when the record states them.
+    static func installedDLC(appID: Int, steamApps: URL) -> [Int: Int64] {
+        guard let state = record(appID: appID, steamApps: steamApps) else { return [:] }
+        var found: [Int: Int64] = [:]
+        for (_, depot) in (state["InstalledDepots"]?.fields ?? [:]).prefix(512) {
+            guard let dlc = depot["dlcappid"]?.string.flatMap({ Int($0) }), dlc > 0 else { continue }
+            let size = depot["size"]?.string.flatMap { Int64($0) } ?? 0
+            found[dlc, default: 0] += max(size, 0)
+        }
+        return found
     }
 
     /// The install size the record states (`SizeOnDisk`, bytes), or nil.
@@ -61,34 +93,67 @@ enum SteamInstallFiles {
 
     /// Removes an app's install: its folder under `common`, its record, its
     /// resume journal and the records of the apps that own its shared depots
-    /// (those describe the same folder). Only paths strictly inside
-    /// `steamApps/common` are removed.
-    nonisolated static func delete(appID: Int, folderName: String, steamApps: URL) {
+    /// (those describe the same folder). Removal accepts direct common children
+    /// and journaled aliases to managed game folders.
+    @discardableResult
+    nonisolated static func delete(appID: Int, folderName: String, steamApps: URL) -> Bool {
+        guard appID > 0, UInt64(appID) < UInt64(UInt32.max), folderName == safeFolderName(folderName) else { return false }
         let fm = FileManager.default
-        let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
-        let folder = common.appendingPathComponent(safeFolderName(folderName)).resolvingSymlinksInPath().standardizedFileURL
-        if folder.path.hasPrefix(common.path + "/"), folder.deletingLastPathComponent().path == common.path {
-            try? fm.removeItem(at: folder)
+        func remove(_ url: URL) throws {
+            if fm.fileExists(atPath: url.path) || (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil { try fm.removeItem(at: url) }
         }
-        let recordURL = steamApps.appendingPathComponent("appmanifest_\(appID).acf")
-        if let state = record(appID: appID, steamApps: steamApps) {
-            let shared = (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64)
-            for (_, owner) in shared {
-                guard let ownerID = owner.string.flatMap({ Int($0) }), ownerID > 0, ownerID != appID,
-                      let ownerState = record(appID: ownerID, steamApps: steamApps),
-                      let dir = ownerState["installdir"]?.string
-                else { continue }
-                // An owner in another folder (its own installdir) goes too when
-                // it holds nothing but depots shared into this app.
-                let mine = Set(shared.filter { $0.value.string == owner.string }.map { $0.key })
-                let held = Set((ownerState["InstalledDepots"]?.fields ?? [:]).keys)
-                guard safeFolderName(dir).caseInsensitiveCompare(safeFolderName(folderName)) == .orderedSame ||
-                      held.isSubset(of: mine) else { continue }
-                try? fm.removeItem(at: steamApps.appendingPathComponent("appmanifest_\(ownerID).acf"))
+        do {
+            let state = record(appID: appID, steamApps: steamApps)
+            if let recordedFolder = state?["installdir"]?.string, recordedFolder.caseInsensitiveCompare(folderName) != .orderedSame { return false }
+            let common = steamApps.appendingPathComponent("common", isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+            let link = common.appendingPathComponent(folderName)
+            let folder = link.resolvingSymlinksInPath().standardizedFileURL
+            let drive = steamApps.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            let managedTarget = IridiumGameStorage.movedWindowsFolder(link, drive: drive)
+            guard managedTarget != nil || folder.deletingLastPathComponent().path == common.path else { return false }
+            let target = managedTarget ?? folder
+            var folderMissing = false
+            do { _ = try fm.attributesOfItem(atPath: target.path) }
+            catch let error as NSError where error.domain == NSCocoaErrorDomain &&
+                [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) { folderMissing = true }
+            let held = Set((state?["InstalledDepots"]?.fields ?? [:]).keys)
+            let owners = Set((state?["SharedDepots"]?.fields ?? [:]).values.compactMap { $0.string })
+            let names = (try? fm.contentsOfDirectory(atPath: steamApps.path)) ?? []
+            guard names.count <= 100_000 else { return false }
+            for name in names where name.hasPrefix("appmanifest_") && name.hasSuffix(".acf") {
+                guard let id = Int(name.dropFirst(12).dropLast(4)), id != appID,
+                      let other = record(appID: id, steamApps: steamApps) else { continue }
+                let lent = Set((other["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(appID) }.keys)
+                // A shared-only record belongs to the consuming game, not a separate install.
+                if !folderMissing && !lent.isEmpty && held.isSubset(of: lent) { return false }
+                if other["installdir"]?.string?.caseInsensitiveCompare(folderName) == .orderedSame {
+                    let shared = Set((state?["SharedDepots"]?.fields ?? [:]).filter { $0.value.string == String(id) }.keys)
+                    let owned = Set((other["InstalledDepots"]?.fields ?? [:]).keys)
+                    if folderMissing { try remove(steamApps.appendingPathComponent("appmanifest_\(id).acf")) }
+                    else { guard owners.contains(String(id)), owned.isSubset(of: shared) else { return false } }
+                }
             }
-        }
-        try? fm.removeItem(at: recordURL)
-        try? fm.removeItem(at: steamApps.appendingPathComponent("downloading/\(appID)", isDirectory: true))
+            if let managed = IridiumGameStorage.movedWindowsFolder(link, drive: drive) {
+                try remove(managed); try remove(link)
+            } else {
+                guard folder.deletingLastPathComponent().path == common.path else { return false }
+                try remove(link)
+            }
+            if let state {
+                let shared = (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64)
+                for (_, owner) in shared {
+                    guard let ownerID = owner.string.flatMap({ Int($0) }), ownerID > 0, ownerID != appID,
+                          let ownerState = record(appID: ownerID, steamApps: steamApps) else { continue }
+                    let mine = Set(shared.filter { $0.value.string == owner.string }.map { $0.key })
+                    let owned = Set((ownerState["InstalledDepots"]?.fields ?? [:]).keys)
+                    guard owned.isSubset(of: mine) else { continue }
+                    try remove(steamApps.appendingPathComponent("appmanifest_\(ownerID).acf"))
+                }
+            }
+            try remove(steamApps.appendingPathComponent("appmanifest_\(appID).acf"))
+            try remove(steamApps.appendingPathComponent("downloading/\(appID)", isDirectory: true))
+            return true
+        } catch { return false }
     }
 
     /// Validates a manifest path and folds directory spelling to the first

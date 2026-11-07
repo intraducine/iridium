@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from test_native_psp_frontend import function
+from test_native_psp_frontend import function, CHEATS_FIXTURE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,6 +33,10 @@ class NativePSPStateCompletionTests(unittest.TestCase):
 @implementation Owner
 @end
 static Owner *container;
+static std::mutex optionsLock;
+static NSDictionary *pendingOptions;
+static bool optionsReported=true;
+static NSArray *irPSPOptions(NSString *,NSString *,bool *) { return @[]; }
 static std::atomic<int> pendingResolution, currentResolution, pendingState;
 static std::atomic<bool> stateBusy, acceptingCallbacks;
 static std::atomic<uint64_t> generation;
@@ -51,13 +55,13 @@ struct Config {
  int iInternalResolution=2, iStateUndoLastSaveSlot=0;
  bool bEnableStateUndo=false, bAchievementsSaveStateInHardcoreMode=false;
  std::string sStateLoadUndoGame,sStateUndoLastSaveGame;
- void Save(const char*) {}
+ bool Save(const char*) { return true; }
 } g_Config;
 namespace Achievements { bool HardcoreModeActive() { return hardcore; } }
 namespace Reporting { void UpdateConfig() {} }
 enum class UIMessage { GPU_RENDER_RESIZED };
 void System_PostUIMessage(UIMessage) {}
-static int g_paramSFO;
+static struct ParamSFO { std::string GetDiscID() { return "FIXTURE"; } } g_paramSFO;
 struct Path {
  std::string value;
  Path()=default;
@@ -84,7 +88,7 @@ namespace SaveState {
  static std::mutex mutex;
  static bool needsProcess;
  static struct Rewind { void NotifyState() {} } rewindStates;
- std::string GetGamePrefix(int) { return "fixture"; }
+ std::string GetGamePrefix(const ParamSFO &) { return "fixture"; }
  Path GenerateSaveSlotPath(std::string_view prefix,int slot,const char *ext) {
   return Path(std::string(prefix)+std::to_string(slot)+ext);
  }
@@ -163,6 +167,7 @@ int main() { @autoreleasepool {
  puts("PASS upstream network/hardcore rejection, undo chain, queued ownership and once-only generation-safe completion");
 } }
 '''
+        harness = CHEATS_FIXTURE + harness
         harness = harness.replace('OPERATION_TYPE', function(saved, 'enum class OperationType'))
         harness = harness.replace('OPERATION', function(saved, 'struct Operation'))
         harness = harness.replace('UPSTREAM_FUNCTIONS', '\n'.join(function(saved, signature) for signature in (

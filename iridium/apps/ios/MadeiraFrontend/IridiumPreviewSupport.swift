@@ -132,7 +132,7 @@ struct IridiumPreviewRoot: View {
                 case "layout": IridiumTouchLayoutEditor(target: .init(platform: .psp, title: "PSP"))
                 case "import-preview", "import-empty-preview":
                     if let previewImport {
-                        IridiumGameImportView(source: previewImport, importedConsole: { _ in }) { _ in }
+                        IridiumGameImportView(source: previewImport, importingEnabled: false, importedConsole: { _ in }, imported: { _ in })
                             .disabled(true)
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 previewNotice(screen == "import-empty-preview" ? "Preview folder · No game files · Actions disabled" :
@@ -140,7 +140,7 @@ struct IridiumPreviewRoot: View {
                             }
                     }
                 case "steam-preview":
-                    IridiumSteamView(startDock: { _, _ in unavailableWindows() }, open: { _ in })
+                    IridiumStoreBrowser(startDock: { _, _ in unavailableWindows() }, open: { _ in })
                         .disabled(true)
                         .safeAreaInset(edge: .bottom, spacing: 0) { previewNotice("Preview account · Sample games · Actions disabled") }
                 default: IridiumLibraryView(services: .init(

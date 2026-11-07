@@ -30,7 +30,7 @@ class CompiledComponentsTests(unittest.TestCase):
                                 'names = fixture_stage(app)')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
-        before = source.replace('Wii and PSP controls use device motion while you play.',
+        before = source.replace('Wii, 3DS, and PSP controls use device motion while you play.',
                                 'PSP tilt controls use device motion while you play.')
         self.assertNotEqual(before, source)
         self.assertEqual(original, reuse.frontend_compiler_source(before))
@@ -48,7 +48,8 @@ class CompiledComponentsTests(unittest.TestCase):
         for old, new in (("CRYPTO_LIBRARIES = ('gnutls',", "CRYPTO_LIBRARIES = ('different',"),
                          (revision, "REVISION = '0000000000000000000000000000000000000000'"),
                          ('import subprocess', 'import subprocess as another_process'),
-                         ("'native': lambda: native(reuse_only=args.reuse_only)", "'native': windows"),
+                         ('import madeira_threads', 'import madeira_threads as another_module'),
+                         ("'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native)", "'native': windows"),
                          ('def prepare():', 'def prepare(*args):')):
             with self.subTest(input=old):
                 changed = source.replace(old, new)
@@ -81,8 +82,8 @@ class CompiledComponentsTests(unittest.TestCase):
             helper('    module.prepare()\n'),
             source.replace('import json', 'from builtins import globals as namespace\nimport json'),
             source.replace('import json', 'import inspect as inspection\nimport json'),
-            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    inspect.stack()\n'),
-            source.replace('def native(reuse_only=False):\n', 'def native(reuse_only=False):\n    __builtins__["globals"]()["prepare"]()\n'),
+            source.replace('def native(reuse_only=False, incremental=False):\n', 'def native(reuse_only=False, incremental=False):\n    inspect.stack()\n'),
+            source.replace('def native(reuse_only=False, incremental=False):\n', 'def native(reuse_only=False, incremental=False):\n    __builtins__["globals"]()["prepare"]()\n'),
             source.replace('def prepare():', '@decorator\ndef prepare():'),
             source.replace('def prepare():', 'def prepare(value=bootstrap()):'),
             source.replace('def prepare():', 'def prepare() -> bootstrap():'),
@@ -98,12 +99,13 @@ class CompiledComponentsTests(unittest.TestCase):
                            '"}; OTHER_INPUT = 1\nUNREVIEWED_METADATA = {'),
             source.replace("if __name__ == '__main__':", "if __name__ == '__main__':\n    prepare()"),
             source.replace('args = parser.parse_args()', 'args = parser.parse_args()\n    args.action = "prepare"'),
-            source.replace("'native': lambda: native(reuse_only=args.reuse_only)", "'native': prepare"),
+            source.replace("'native': lambda: native(reuse_only=args.reuse_only, incremental=args.incremental_native)", "'native': prepare"),
             source.replace("engine_pins.get('madeira')['revision']", "engine_pins.get(prepare())['revision']"),
             source + '\ninvalid python !\n',
         ]
         for index, changed in enumerate(variants):
             with self.subTest(variant=index):
+                self.assertNotEqual(source, changed, "The failure fixture must change real source")
                 self.assertEqual(reuse.frontend_compiler_source(changed), changed)
 
     def test_frontend_app_only_edit_reuses_existing_producer_both_components(self):
@@ -117,7 +119,7 @@ class CompiledComponentsTests(unittest.TestCase):
             script = root / 'ci/madeira-frontend.py'
             script.parent.mkdir()
             source = (components.ROOT / 'ci/madeira-frontend.py').read_text()
-            script.write_text(source.replace('Wii and PSP controls use device motion while you play.',
+            script.write_text(source.replace('Wii, 3DS, and PSP controls use device motion while you play.',
                                              'PSP tilt controls use device motion while you play.'))
             workflow = root / reuse.WORKFLOW
             workflow.parent.mkdir(parents=True)
@@ -126,6 +128,11 @@ class CompiledComponentsTests(unittest.TestCase):
             contract.write_text((components.ROOT / 'ci/compiled-components.py').read_text())
             for name in ('ci/engine_pins.py', 'UPSTREAM-SOURCES.json'):
                 (root / name).write_bytes((components.ROOT / name).read_bytes())
+            tracker_inputs = ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                              'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h')
+            for name in tracker_inputs:
+                path = root / name; path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((components.ROOT / name).read_bytes())
             def commit():
                 git('add', '.'); git('commit', '-qm', 'fixture')
             commit(); revision = git('rev-parse', 'HEAD')
@@ -134,6 +141,13 @@ class CompiledComponentsTests(unittest.TestCase):
             for stage in ('madeira-native', 'madeira-windows'):
                 reuse.compatible(root, revision, stage)
             app_only = script.read_text()
+            for name in tracker_inputs:
+                path = root / name; saved = path.read_bytes()
+                path.write_bytes(saved + b'\n/* Changed thread adapter */\n'); commit()
+                with self.assertRaisesRegex(ValueError, 'Changed producer input: ' + name):
+                    reuse.compatible(root, revision, 'madeira-native')
+                reuse.compatible(root, revision, 'madeira-windows')
+                path.write_bytes(saved); commit()
             for name in ('build_native', 'windows', 'verify_pin', 'run_checked_recipe', 'stage_crypto_libraries'):
                 header = next(line for line in source.splitlines() if line.startswith('def ' + name + '('))
                 script.write_text(app_only.replace(header + '\n', header + '\n    print("changed recipe")\n'))
@@ -217,7 +231,7 @@ class CompiledComponentsTests(unittest.TestCase):
                 root = Path(temp)
                 for name in components.PATHS[component]:
                     base = root / name
-                    if base.suffix in {'.json', '.exe', '.txt'}:
+                    if base.suffix in {'.json', '.exe', '.dll', '.txt'}:
                         base.parent.mkdir(parents=True, exist_ok=True)
                         base.write_bytes(b'completion record')
                     else:
@@ -463,6 +477,6 @@ class CompiledComponentsTests(unittest.TestCase):
         for component, action in (('madeira-native', 'native'), ('madeira-windows', 'windows')):
             step = workflow.split('      - name: Compile ' + component + '\n')[1].split('      - name:')[0]
             self.assertNotIn('if:', step)
-            self.assertIn('ci/madeira-frontend.py ' + action, step)
+            self.assertIn('ci/build-madeira-windows.py' if action == 'windows' else 'ci/madeira-frontend.py native', step)
             self.assertLess(workflow.index('Compile ' + component), workflow.index('Check build prerequisites'))
         self.assertNotIn('build_controller_runtime.sh', workflow)

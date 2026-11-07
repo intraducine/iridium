@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import Foundation
+
+precondition(!IridiumRuntimeRegistry.madeira.restartAfterStop)
 func check(_ value: Bool, line: UInt = #line) { precondition(value, "Check failed at line \(line)") }
 
 func rejects(_ block: () throws -> Void) {
@@ -488,3 +490,14 @@ var identifiedPSP = elfFixture();putLE(0x10a23001, in: &identifiedPSP, at: 36, b
 check(try IridiumGameFileDetection.platforms(ambiguousELF, selectedFiles: [ambiguousELF]) == [.psp])
 check(try IridiumROMInspection.inspect(ambiguousELF, fileExtension: "elf", preferredPlatform: .playStation2).platform == .psp)
 print("Ambiguous containers and PlayStation generation detection passed")
+
+for runtime in IridiumRuntimeRegistry.all {
+    precondition(runtime.jitSuffix == (runtime.jit == .required ? " · JIT" : ""))
+    for platform in runtime.platforms {
+        precondition(platform.libraryTitle == platform.title + runtime.jitSuffix)
+    }
+}
+for system in IridiumConsoleSystem.all {
+    precondition(system.displayTitle == system.title + system.runtime.jitSuffix)
+    precondition(IridiumConsoleSystem.system(titled: system.title)?.id == system.id)
+}

@@ -49,7 +49,7 @@ struct SteamSettingsSection: View {
         } header: {
             Text("Steam")
         } footer: {
-            Text("Choose the language for new Steam downloads. Games without that language use English. Download an installed game again to change its language. Signing out removes this device’s saved Steam sign-in.")
+            Text("Language applies to new downloads. Sign-in stays on this device.")
         }
         .confirmationDialog("Sign out of Steam?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { signIn.signOut() }

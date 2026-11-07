@@ -32,6 +32,7 @@ void *ir_psp_native_open(const char *component, const char *game, const char *me
 void ir_psp_native_pause(void);
 void ir_psp_native_resume(void);
 bool ir_psp_native_request(unsigned operation, int value);
+bool ir_psp_native_command(const char *json);
 int ir_psp_native_resolution(void);
 void ir_psp_native_stop(void);
 uint64_t ir_psp_native_frames(void);

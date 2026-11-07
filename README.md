@@ -5,8 +5,13 @@ Iridium is an iPhone and iPad game launcher with Windows support through
 SameBoy, PPSSPP, Dolphin, Azahar, Play!, and Flycast.
 
 It provides a shared library, artwork, touch controls, controller and keyboard
-input, Steam access, and per-game settings. Compatibility varies by game and
-device. Play! and Flycast still need device validation.
+input, stores, and per-game settings. Stores include Steam, GOG, Epic Games, EA,
+and itch.io. Compatibility varies by game and device. Each engine needs its own
+device tests for graphics, input, audio, saves, and repeated launches.
+
+The current development version is **0.3.0**. See its
+[review notes](docs/releases/0.3.0.md) for changes and limits. This version is not
+a published release. Menu sound effects remain in a separate draft PR.
 
 ## Install
 
@@ -17,6 +22,10 @@ LiveContainer. Supply your own game files.
 The app requires iOS/iPadOS 18 or later. JIT requirements depend on the engine
 and installation method; see [JIT setup](iridium/docs/builtin-stikjit-ios27.md).
 Back up saves before updating and keep the existing app data.
+
+Use **Add Game → Files and Folders** for games, archives, or pairing files.
+`Documents/Import` also accepts bulk imports. Managed game folders use
+`Documents/Games`; see [Using Iridium](iridium/docs/product-experience.md).
 
 ## Build
 
@@ -37,6 +46,7 @@ library replacement.
 ## Documentation
 
 - [Using Iridium](iridium/docs/product-experience.md)
+- [0.3.0 review notes](docs/releases/0.3.0.md)
 - [Runtime integration](docs/runtime-integration.md)
 - [Console engines](docs/console-engines.md)
 - [Contributing](CONTRIBUTING.md)

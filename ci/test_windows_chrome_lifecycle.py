@@ -28,25 +28,46 @@ class WindowsChromeSourceTests(unittest.TestCase):
         for name, relative in [('GamepadInput.swift', 'GamepadInput.swift'),
                                ('TouchGamepad.swift', 'TouchGamepad.swift'),
                                ('WiniosGamepad.c', 'Winios/WiniosGamepad.c')]:
-            base = ROOT/'ci/fixtures/madeira-build43/app/Madeira' if name.endswith('.swift') else frontend.UPSTREAM/'app/Madeira'
+            base = frontend.UPSTREAM/'app/Madeira' if name.endswith('.swift') else frontend.UPSTREAM/'app/Madeira'
             original = (base/relative).read_text()
             self.assertEqual(frontend.overlay(name, original), original)
-        original = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
+        original = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         actual = frontend.overlay('ContentView.swift', original)
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
         guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
         settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
         self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
-        self.assertEqual(actual[actual.index(start):actual.index(end)].replace(guard, '').replace(settings_guard, ''),
-                         original[original.index(start):original.index(end)])
+        storage_guard = '        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }\n'
+        self.assertIn(storage_guard, actual[actual.index(start):actual.index(end)])
+        admission = actual[actual.index(start):actual.index(end)]
+        self.assertIn('let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID', admission)
+        self.assertIn('LibraryModel.shared.launchFailedBeforeNative(nativeLaunch)', admission)
+        admission = admission.replace('        let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID\n', '')
+        admission = admission.replace('if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }',
+                                      'if profile != nil { LibraryModel.shared.launchFailed() }')
+        resident = admission[admission.index('        if IridiumMadeiraRuntime.shared.isResident'):admission.index('        logStore.log("Running full Wine sequence...")')]
+        self.assertIn('try IridiumMadeiraRuntime.shared.submit(nativeLaunch, configuration:', resident)
+        self.assertIn('guard library.nativeLaunchID == nativeLaunch else { return }', resident)
+        admission = admission.replace(resident, '')
+        ready_guard = 'guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {'
+        self.assertIn(ready_guard, admission)
+        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
+        diagnostic = '            DeviceDiagnostics.logLaunch()\n'
+        worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
+        self.assertGreater(admission.index(diagnostic), worker)
+        self.assertIn('        GOGGalaxy.shared.registerService()\n', admission)
+        admission = admission.replace('        GOGGalaxy.shared.registerService()\n', '')
+        self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, '').replace(diagnostic, ''),
+                         original[original.index(start):original.index(end)].replace(
+                             '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', '').replace('        DeviceDiagnostics.logLaunch()\n', ''))
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
         spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, start, end in [('ContentView.swift', 'enum TouchControlsHost {', 'struct TouchControlsOverlay: View {'),
                                  ('Library.swift', '    func showGameView(reason:', '    /// The hotkey')]:
-            before = (ROOT/'ci/fixtures/madeira-build43/app/Madeira'/name).read_text()
+            before = (frontend.UPSTREAM/'app/Madeira'/name).read_text()
             after = frontend.overlay(name, before)
             # The next Library comment is pin-specific; compare the method alone.
             if name == 'Library.swift':
@@ -65,7 +86,7 @@ class WindowsChromeLifecycleTests(unittest.TestCase):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
         spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira-frontend.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
-        upstream = (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text()
+        upstream = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         current = frontend.overlay('ContentView.swift', upstream)
         menu = (frontend.FRONTEND/'IridiumPlayerMenu.swift').read_text()
         menu = menu[menu.index('struct IridiumPlayerMenuButton:'):menu.index('struct IridiumPlayerMenuHeader:')]
@@ -100,16 +121,21 @@ enum MadeiraConfig {
 }
 struct LibraryEntry {}
 final class SteamOwnedLibrary {static let shared=SteamOwnedLibrary();func sessionChanged(active:Bool) {}}
-@MainActor enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
+@MainActor final class IridiumImportCoordinator {
+    static let shared=IridiumImportCoordinator();var blocksLaunch=false;var launchMessage="Import in progress"
+}
+enum DeviceDiagnostics {static var called=false;static func logLaunch() {called=true}}
 func jit_check_debugged()->Bool {true}
 var ws_log_quiet:Int32=0
 @MainActor final class LibraryModel:ObservableObject {
     static let shared=LibraryModel();var current:UUID?=UUID()
+    let nativeLaunchID=UUID()
     @Published var menu=false
     @Published var launching=true
     var error:String?,failed=false
     var performance=false,menuButtonRect=CGRect.zero,performanceRect=CGRect.zero
     func launchFailed(_ reason:String?=nil) {failed=true;error=reason}
+    func launchFailedBeforeNative(_ owner:UUID) {launchFailed()}
 }
 final class GamepadInput:@unchecked Sendable {
     static let shared=GamepadInput();static let enabled=true,touchEnabled=true
@@ -165,7 +191,7 @@ final class FixtureScene:UIResponder,UIWindowSceneDelegate {
         let button=UIButton(type:.system)
         button.addAction(UIAction {_ in self.launch.begin()},for:.touchUpInside)
         button.sendActions(for:.touchUpInside)
-        orderingRestored=DeviceDiagnostics.called && LogStore.shared.uiPaused && ws_log_quiet==1
+        orderingRestored=LogStore.shared.uiPaused && ws_log_quiet==1
         let baseline=ProcessInfo.processInfo.arguments.contains("baseline31")
         precondition(orderingRestored != baseline)
         DispatchQueue.main.asyncAfter(deadline:.now()+0.6) {

@@ -20,6 +20,17 @@ class OwnedAppTests(unittest.TestCase):
             self.assertIn('IridiumApp.swift', names)
             self.assertFalse((stage / 'Madeira/RenamedUpstreamUI.swift').exists())
             self.assertFalse((stage / 'MadeiraJITHelper/obsolete.swift').exists())
+            stale = stage / 'Madeira/MenuAudio/obsolete.wav'
+            stale.parent.mkdir(); stale.write_bytes(b'obsolete cue')
+            app.stage(stage)
+            self.assertFalse(stale.exists())
+            stale.parent.mkdir()
+            with self.assertRaisesRegex(ValueError, 'Retired menu audio'): app.verify(stage)
+            app.stage(stage)
+            resource = stage / 'Madeira/Assets.xcassets/Contents.json'
+            original = resource.read_bytes(); resource.write_bytes(b'broken resource')
+            with self.assertRaisesRegex(ValueError, 'Assets.xcassets/Contents.json'): app.verify(stage)
+            resource.write_bytes(original)
             native = stage / 'Madeira/IridiumMadeiraServices.swift'
             native.write_text(native.read_text() + '\n// stale output')
             with self.assertRaisesRegex(ValueError, 'IridiumMadeiraServices'): app.verify(stage)

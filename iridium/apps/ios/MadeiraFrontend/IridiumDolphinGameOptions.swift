@@ -48,7 +48,7 @@ private struct IridiumDolphinFiles: View {
     var body: some View {
         Form {
             Section {
-                Text("These files belong to \(game.title). Dolphin keeps this game's memory cards, Wii storage, settings, and save states together.")
+                Text("Memory cards, Wii storage, settings, and save states for \(game.title).")
                 Button("Export Save and System Files", systemImage: "square.and.arrow.up") {
                     do { export = try IridiumConsoleLibrary.shared.store.saveDirectory(game) }
                     catch { self.error = error.localizedDescription }
@@ -66,7 +66,7 @@ private struct IridiumDolphinFiles: View {
             if game.platform == .wii {
                 Section("Wii System Content") {
                     Button("Install WAD from Files", systemImage: "square.and.arrow.down") { importing = true }
-                    Text("Choose Wii content that you own. Iridium makes a backup before installation. Dolphin checks and installs the content. The original files are restored if installation fails.")
+                    Text("Existing Wii content is backed up before installation.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }

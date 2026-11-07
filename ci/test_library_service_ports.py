@@ -37,6 +37,11 @@ enum Fault: Error { case busy, save }
 @MainActor final class IridiumConsoleSession { static let shared = IridiumConsoleSession(); var isActive = false }
 @MainActor final class JITCoordinator { static let shared = JITCoordinator(); var busy = false }
 @MainActor var nativeRunning = false
+@MainActor final class IridiumMadeiraRuntime {
+ static let shared=IridiumMadeiraRuntime()
+ var idle=false
+ var isBusy:Bool {nativeRunning && !idle}
+}
 @MainActor func wine_process_is_running() -> Int { nativeRunning ? 1 : 0 }
 @MainActor func wineserver_is_running() -> Int { 0 }
 @MainActor final class TouchControlsModel {
@@ -73,7 +78,7 @@ enum SaveBackup {
   let editor: any IridiumControlEditing = IridiumMadeiraControlAdapter(), owner = UUID()
   nativeRunning = true
   do { try editor.begin(owner: owner, platform: .psp, layout: .init(marker: 3)); preconditionFailure("native process must block settings") } catch Fault.busy {}
-  nativeRunning = false
+  IridiumMadeiraRuntime.shared.idle = true
   try editor.begin(owner: owner, platform: .psp, layout: .init(marker: 3))
   precondition(TouchControlsModel.shared.marker == 3)
   editor.end(owner: UUID()); precondition(TouchControlsModel.shared.owner == owner)

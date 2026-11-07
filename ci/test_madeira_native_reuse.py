@@ -52,14 +52,18 @@ def source_fixture():
             subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
                             'commit', '-qm', 'fixture'], check=True)
             return subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        contract = upstream / 'tools/build'; contract.mkdir(parents=True)
+        for name in ('runtime-components.py', 'runtime-components.json'):
+            shutil.copy2(build.UPSTREAM / 'tools/build' / name, contract / name)
         revision = commit(upstream, ['native.c', 'parser.y', 'scanner.l', 'Makefile', 'config.data'])
         freetype = upstream / 'research/freetype'; freetype.mkdir(parents=True)
         freetype_revision = commit(freetype, ['freetype.c'])
         (root / 'ci').mkdir()
-        for name in ('runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
+        for name in ('madeira_components.py', 'madeira_managed_patches.py', 'runtime-inputs.json', 'local_build_tools.py', 'fetch-runtime-inputs.py', 'engine_pins.py'):
             (root / 'ci' / name).write_bytes((build.ROOT / 'ci' / name).read_bytes())
-        for name in ('ci/madeira_audio_volume.py', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c',
-                     'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h'):
+        for name in ('ci/madeira_audio_volume.py', 'ci/madeira_threads.py',
+                     'iridium/apps/ios/RuntimeBridge/IRAudioVolume.c', 'iridium/apps/ios/RuntimeBridge/IRAudioVolume.h',
+                     'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
             destination = root / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes((build.ROOT / name).read_bytes())
@@ -91,8 +95,17 @@ class NativeReuseTests(unittest.TestCase):
             manifest.write_text(json.dumps(data))
             self.assertNotEqual(before, build.native_inputs())
             manifest.write_text(original)
-            helper = root / 'ci/engine_pins.py'; helper.write_text(helper.read_text() + '\n# Changed reader\n')
+            helper = root / 'ci/engine_pins.py'; original_helper = helper.read_bytes()
+            helper.write_bytes(original_helper + b'\n# Changed reader\n')
             self.assertNotEqual(before, build.native_inputs())
+            helper.write_bytes(original_helper)
+            self.assertEqual(before, build.native_inputs())
+            for name in ('ci/madeira_threads.py', 'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.c',
+                         'iridium/apps/ios/RuntimeBridge/IRWindowsThreads.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetal.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h', 'iridium/apps/ios/RuntimeBridge/IRWindowsMetalEvents.h'):
+                path = root / name; saved = path.read_bytes()
+                path.write_bytes(saved + b'\n/* Changed thread adapter */\n')
+                self.assertNotEqual(before, build.native_inputs(), name)
+                path.write_bytes(saved)
 
     def check_rejected(self, root, message, inputs=None):
         before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
@@ -145,6 +158,27 @@ class NativeReuseTests(unittest.TestCase):
                 report = self.check_rejected(root, 'input_mismatch', current)
                 self.assertTrue(any(('inputs.' + group + '.' + name) in x for x in report['issues']))
 
+    def test_explicit_incremental_rebuild_requires_a_checked_compatible_base(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            old = fixture_inputs()
+            old['enginePin'] = {'path': 'vendor/Madeira', 'revision': 'a' * 40, 'dependencies': {'wine': 'pin'}}
+            new = copy.deepcopy(old); new['revision'] = 'b' * 40; new['enginePin']['revision'] = 'b' * 40
+            new['upstreamSources'] = 'changed source'
+            fixture_record(root, old)
+            before = (root / '.build/iridium-native.json').read_bytes()
+            with patch.object(build.subprocess, 'run') as run:
+                build.validate_incremental_native(new, root)
+                self.assertIn('--is-ancestor', run.call_args.args[0])
+            self.assertEqual((root / '.build/iridium-native.json').read_bytes(), before)
+            for name in ('tools', 'recipes', 'enginePin'):
+                bad = copy.deepcopy(new); bad[name] = {'different': 'configuration'}
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'configuration changed'):
+                    build.validate_incremental_native(bad, root)
+            (root / 'app/Madeira/libavcodec.a').write_bytes(b'changed binary')
+            with self.assertRaisesRegex(ValueError, 'changed_output'):
+                build.validate_incremental_native(new, root)
+
     def test_missing_stamp_does_not_create_directories_or_bootstrap(self):
         with tempfile.TemporaryDirectory() as folder:
             self.check_rejected(Path(folder), 'unreadable_record')
@@ -190,13 +224,16 @@ class NativeReuseTests(unittest.TestCase):
             root = Path(folder)
             def failure():
                 path = root / 'toolchains/llvm-ios-build/lib/libLLVMPasses.a'
-                path.parent.mkdir(parents=True); path.write_bytes(b'partial output')
+                path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'partial output')
                 raise RuntimeError('Wine configure failed')
             with patch.object(build, 'UPSTREAM', root), patch.object(build, 'verify_pin'), \
                  patch.object(build, 'native_inputs', return_value=fixture_inputs()), patch.object(build, 'bootstrap'), \
                  patch.object(build, 'build_native', side_effect=failure):
                 with self.assertRaisesRegex(RuntimeError, 'Wine configure'): build.native()
                 self.assertFalse((root / '.build/iridium-native.json').exists())
+                # Resume the same failed command, but never bless modified partial outputs.
+                with self.assertRaisesRegex(RuntimeError, 'Wine configure'): build.native()
+                (root / 'toolchains/llvm-ios-build/lib/libLLVMPasses.a').write_bytes(b'changed output')
                 with self.assertRaisesRegex(ValueError, 'Unverified native substages'): build.native()
 
     def test_old_bison_fails_before_bootstrap(self):
@@ -223,6 +260,41 @@ class NativeReuseTests(unittest.TestCase):
 
 
 class NativeSourceIdentityTests(unittest.TestCase):
+    def test_only_the_exact_managed_fex_patch_is_accepted_and_hashed_consistently(self):
+        module_relative = 'Source/Windows/ARM64EC/Module.cpp'
+        module_original = (build.ROOT / 'vendor/Madeira/FEX' / module_relative).read_text()
+        with source_fixture() as (root, upstream):
+            fex = upstream / 'FEX'; fex.mkdir()
+            relative = 'FEXCore/Source/Utils/AllocWatch.cpp'
+            source = fex / relative; source.parent.mkdir(parents=True)
+            original = '#if defined(FEX_IOS_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)\n#endif\n'
+            source.write_text(original)
+            module = fex / module_relative; module.parent.mkdir(parents=True)
+            module.write_text(module_original)
+            def git(repo, *args):
+                return subprocess.check_output(['git', '-C', str(repo), *args], text=True).strip()
+            git(fex, 'init', '-q'); git(fex, 'add', '.')
+            git(fex, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture')
+            revision = git(fex, 'rev-parse', 'HEAD')
+            (upstream / '.gitmodules').write_text('[submodule "FEX"]\npath = FEX\nurl = https://example.invalid/FEX\n')
+            git(upstream, 'add', '.gitmodules')
+            git(upstream, 'update-index', '--add', '--cacheinfo', '160000,' + revision + ',FEX')
+            git(upstream, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture FEX')
+            git(upstream, 'config', 'submodule.FEX.url', str(fex))
+            with patch.object(build, 'REVISION', git(upstream, 'rev-parse', 'HEAD')):
+                build.verify_pin(); before = build.native_source_identity()
+                source.write_text(build.madeira_threads.apply_fex(original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(build.madeira_threads.apply_fex_arm64ec(module_original))
+                build.verify_pin(); self.assertEqual(before, build.native_source_identity())
+                module.write_text(module.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+                module.write_text(module_original)
+                source.write_text(source.read_text() + '// unrelated edit\n')
+                with self.assertRaisesRegex(ValueError, 'Pinned source has changes'): build.verify_pin()
+                self.assertNotEqual(before, build.native_source_identity())
+
     def test_tracked_grammars_and_build_configuration_are_bound_to_actual_bytes(self):
         with source_fixture() as (root, upstream):
             inventory = build.native_source_inventory()

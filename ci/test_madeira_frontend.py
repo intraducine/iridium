@@ -1,5 +1,6 @@
 """One migration check: old paths, save conflicts, containment and retry."""
 import pathlib
+import os
 import hashlib
 import json
 import importlib.util
@@ -20,6 +21,34 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_converter_signing_obeys_unsigned_build_setting(self):
+        project = plistlib.loads((ROOT / 'iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj').read_bytes())
+        script = next(value['shellScript'] for value in project['objects'].values()
+                      if value.get('name') == 'Sign bundled dylibs')
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pathlib.Path(directory)
+            app = folder / 'Iridium.app'
+            (app / 'd3d12').mkdir(parents=True)
+            (app / 'licenses').mkdir()
+            (app / 'd3d12/libmetalirconverter.dylib').write_bytes(b'fixture')
+            for source, target in [('COPYING', 'LICENSE-MADEIRA-GPL-3.0.txt'), ('LICENSE-EXCEPTION.md', 'LICENSE-MADEIRA-EXCEPTION.txt')]:
+                (folder / source).write_text(source)
+                (app / 'licenses' / target).write_text(source)
+            tools = folder / 'tools'; tools.mkdir()
+            capture = folder / 'calls'
+            signer = tools / 'codesign'
+            signer.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n')
+            signer.chmod(0o755)
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                       SRCROOT=str(folder / 'source'), CODESIGNING_FOLDER_PATH=str(app), CAPTURE=str(capture))
+            (folder / 'source').mkdir()
+            for allowed, identity in [('NO', ''), ('NO', 'fixture-identity'), ('YES', ''), ('YES', 'fixture-identity')]:
+                capture.unlink(missing_ok=True)
+                subprocess.run(['/bin/sh'], input=script, text=True,
+                               env=dict(env, CODE_SIGNING_ALLOWED=allowed, EXPANDED_CODE_SIGN_IDENTITY=identity), check=True)
+                self.assertEqual(capture.exists(), allowed == 'YES')
+                if allowed == 'YES': self.assertEqual(capture.read_text().splitlines()[2], identity or '-')
+
     def test_preparation_refreshes_only_generated_source_links(self):
         import textwrap
         source = pathlib.Path(BUILD.__file__).read_text()
@@ -47,6 +76,8 @@ class FrontendImportTests(unittest.TestCase):
             'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
             'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
             'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
+            'optionsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest(),
+            'cheatsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest(),
             'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
             'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
             'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
@@ -56,6 +87,8 @@ class FrontendImportTests(unittest.TestCase):
                        *({'exports': [name for name in record['exports'] if name != missing]}
                          for missing in ('_ir_native_psp_exec_prepare_shared', '_ir_native_psp_exec_prepare_diagnostic', '_ir_native_psp_exec_restored_diagnostic', '_ir_native_psp_set_volume')),
                        {'audioVolumeHeaderSHA256': '0' * 64},
+                       {'optionsHeaderSHA256': '0' * 64},
+                       {'cheatsHeaderSHA256': '0' * 64},
                        {'diagnosticHeaderSHA256': '0' * 64}, {'sharedMemoryHeaderSHA256': '0' * 64}, {'executableMemoryHeaderSHA256': '0' * 64}, {'adapterSHA256': '0' * 64}, {'compiledInputSHA256': {}}):
             with self.assertRaisesRegex(ValueError, 'matching JIT validation'):
                 BUILD.check_psp_jit_interface(dict(record, **change))
@@ -168,6 +201,21 @@ class FrontendImportTests(unittest.TestCase):
                 archive.write_bytes(b'changed')
                 self.assertTrue(module.blockers(root, profile='madeira-frontend', package=True))
 
+    def test_both_helper_plists_use_the_same_build_version_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app = pathlib.Path(folder)
+            for name in ('MadeiraJITHelper', 'MadeiraMemoryHost'):
+                path = app / name / 'Info.plist'
+                path.parent.mkdir()
+                path.write_bytes(plistlib.dumps({'CFBundleShortVersionString': '1.0', 'CFBundleVersion': '1',
+                    'NSExtension': {'NSExtensionPointIdentifier': 'fixture'}}))
+            BUILD.prepare_helper_versions(app)
+            for name in ('MadeiraJITHelper', 'MadeiraMemoryHost'):
+                data = plistlib.loads((app / name / 'Info.plist').read_bytes())
+                self.assertEqual(data['CFBundleShortVersionString'], '$(MARKETING_VERSION)')
+                self.assertEqual(data['CFBundleVersion'], '$(CURRENT_PROJECT_VERSION)')
+                self.assertEqual(data['NSExtension']['NSExtensionPointIdentifier'], 'fixture')
+
     def test_source_inventory_rejects_unknown_binary(self):
         spec = importlib.util.spec_from_file_location('frontend_collect', ROOT / 'ci/collect-madeira-source.py')
         collect = importlib.util.module_from_spec(spec)
@@ -202,6 +250,8 @@ class FrontendImportTests(unittest.TestCase):
                 'sharedMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITMemory.h').read_bytes()).hexdigest(),
                 'executableMemoryHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.h').read_bytes()).hexdigest(),
                 'audioVolumeHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.h').read_bytes()).hexdigest(),
+                'optionsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPOptions.h').read_bytes()).hexdigest(),
+                'cheatsHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRCheats.h').read_bytes()).hexdigest(),
                 'diagnosticHeaderSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITDiagnostic.h').read_bytes()).hexdigest(),
                 'adapterSHA256': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPPSSPPNative.mm').read_bytes()).hexdigest(),
                 'compiledInputSHA256': {'Iridium/IRAudioVolume.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRAudioVolume.c').read_bytes()).hexdigest(), 'Iridium/IRPSPExecutableMemory.cpp': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRPSPExecutableMemory.cpp').read_bytes()).hexdigest(), 'Iridium/IRJITExecutionProbe.c': hashlib.sha256((BUILD.RUNTIME_BRIDGE / 'IRJITExecutionProbe.c').read_bytes()).hexdigest()},
@@ -213,7 +263,18 @@ class FrontendImportTests(unittest.TestCase):
                     (parent / farm).mkdir(parents=True)
                     (parent / farm / '.gitkeep').touch()
                     if farm != 'i386-windows': (parent / farm / 'ntdll.dll').write_bytes(b'binary')
-            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output):
+            import madeira_session
+            session = app / 'aarch64-windows/iridium-session-native.exe'
+            pe = bytearray(256); pe[0x3c:0x40] = (128).to_bytes(4, 'little')
+            pe[128:132] = b'PE\0\0'; pe[132:134] = (0xaa64).to_bytes(2, 'little')
+            pe[220:222] = (2).to_bytes(2, 'little')
+            session.write_bytes(pe)
+            (session.parent / 'iridium-session-notices.txt').write_text('Runtime notice fixture')
+            (session.parent / 'iridium-session.json').write_text(json.dumps({
+                'protocol': 1, 'enginePin': madeira_session.engine_pins.selected('madeira-native'),
+                'sources': madeira_session.inputs(), 'toolchainSHA256': madeira_session.toolchain()['sha256'], 'sha256': madeira_session.digest(session)}))
+            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'PSP_OUTPUT', psp_output), \
+                 patch('stikjit_frontend.verify') as jit_verify, patch.object(BUILD.madeira_components, 'verify'), patch.object(BUILD, 'compiler_identity', return_value='fixture-compiler'):
                 with self.assertRaisesRegex(ValueError, 'i386-windows'):
                     BUILD.check_bundle(app)
                 names = ('arm64ec-windows/xtajit64.dll', 'd3d12/libmetalirconverter.dylib',
@@ -246,13 +307,14 @@ class FrontendImportTests(unittest.TestCase):
                     BUILD.check_bundle(app)
                 asset.write_bytes(original_asset)
                 BUILD.check_bundle(app)
+                jit_verify.assert_called_with(app / 'Frameworks/StikJIT.framework')
 
     def test_generated_psp_project_embeds_without_linking_and_preserves_settings(self):
         # Model plutil's parsed PBX graph; exercise project(), not source text.
         objects = {
             'target': {'isa': 'PBXNativeTarget', 'name': 'Madeira', 'productName': 'Madeira',
                        'productReference': 'product', 'buildPhases': ['sources', 'resources', 'frameworks'],
-                       'buildConfigurationList': 'configurations'},
+                       'buildConfigurationList': 'configurations', 'dependencies': []},
             'product': {'isa': 'PBXFileReference', 'path': 'Madeira.app'},
             'group': {'isa': 'PBXGroup', 'path': 'Madeira', 'children': ['existing-reference']},
             'sources': {'isa': 'PBXSourcesBuildPhase', 'files': ['existing-source']},
@@ -269,19 +331,28 @@ class FrontendImportTests(unittest.TestCase):
             'helper-release': {'isa': 'XCBuildConfiguration', 'buildSettings': {
                 'MARKETING_VERSION': '0.1.3', 'CURRENT_PROJECT_VERSION': '99'}},
         }
-        with patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+        for build_id, reference, path in [('existing-source', 'existing-reference', 'Existing.swift'),
+                ('existing-resource', 'existing-resource-ref', 'Existing.dat'), ('existing-link', 'existing-link-ref', 'libExisting.a')]:
+            objects[build_id] = {'isa': 'PBXBuildFile', 'fileRef': reference}
+            objects[reference] = {'isa': 'PBXFileReference', 'path': path}
+        objects['root'] = {'isa': 'PBXProject', 'mainGroup': 'root-group', 'productRefGroup': 'products', 'targets': ['target']}
+        objects['root-group'] = {'isa': 'PBXGroup', 'children': ['group', 'products']}
+        objects['products'] = {'isa': 'PBXGroup', 'children': ['product']}
+        native = subprocess.check_output(['plutil', '-convert', 'xml1', '-o', '-', str(BUILD.UPSTREAM / 'app/Madeira.xcodeproj/project.pbxproj')])
+        with patch.object(BUILD.subprocess, 'check_output', side_effect=[plistlib.dumps({'objects': objects, 'rootObject': 'root'}), native]):
             result = BUILD.project(pathlib.Path('/fixture/project.pbxproj'),
-                                   ['IRPSPBridge.c', 'IridiumConsoleSession.swift'])['objects']
+                                   ['IRPSPBridge.c', 'IridiumConsoleSession.swift', 'Existing.swift'])['objects']
         target = result['target']
         self.assertEqual(target['name'], 'Iridium')
         self.assertEqual(result['product']['path'], 'Iridium.app')
         for configuration in ('debug', 'release', 'helper-debug', 'helper-release'):
-            self.assertEqual(result[configuration]['buildSettings']['MARKETING_VERSION'], '0.2.1')
+            self.assertEqual(result[configuration]['buildSettings']['MARKETING_VERSION'], '0.3.0')
             self.assertEqual(result[configuration]['buildSettings']['CURRENT_PROJECT_VERSION'], '1')
         embeds = [result[key] for key in target['buildPhases']
                   if result[key]['isa'] == 'PBXCopyFilesBuildPhase']
-        self.assertEqual(len(embeds), 1)
-        embed = embeds[0]
+        self.assertEqual(len(embeds), 2)
+        self.assertTrue(any(p.get('name') == 'MadeiraMemoryHost' for p in result.values()))
+        embed = next(p for p in embeds if p.get('name') == 'Embed PSP component')
         self.assertEqual(embed['dstSubfolderSpec'], 10)  # App's Frameworks directory.
         self.assertEqual(embed['dstPath'], '')
         self.assertEqual(embed['runOnlyForDeploymentPostprocessing'], 0)
@@ -294,16 +365,19 @@ class FrontendImportTests(unittest.TestCase):
         for sdk in ('iphoneos', 'iphonesimulator'):
             resolved = (BUILD.OUTPUT / 'app' / component['path'].replace('$(PLATFORM_NAME)', sdk)).resolve()
             self.assertEqual(resolved, (BUILD.ROOT / '.build/ppsspp' / sdk / 'libIridiumPPSSPPNative.dylib').resolve())
-        self.assertEqual(result['frameworks']['files'], ['existing-link'])
+        self.assertIn('existing-link', result['frameworks']['files'])
+        self.assertGreater(len(result['frameworks']['files']), 1)
+        self.assertNotIn(component_ref, [result[k].get('fileRef') for k in result['frameworks']['files'] if k != 'existing-link'])
         self.assertIn(component_ref, result['group']['children'])
         resource_refs = [result[result[key]['fileRef']] for key in result['resources']['files']
                          if key != 'existing-resource']
-        self.assertEqual(resource_refs, [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
+        self.assertEqual([r for r in resource_refs if r.get('path') == 'PSP'], [{'isa': 'PBXFileReference', 'lastKnownFileType': 'folder',
                                          'path': 'PSP', 'sourceTree': '<group>'}])
+        self.assertFalse(any(r.get('path') == 'MenuAudio' for r in resource_refs))
         self.assertIn('existing-resource', result['resources']['files'])
         source_refs = [result[result[key]['fileRef']] for key in result['sources']['files']
                        if key != 'existing-source']
-        self.assertEqual({item['path']: item['lastKnownFileType'] for item in source_refs},
+        self.assertEqual({item['path']: item['lastKnownFileType'] for item in source_refs if item['path'].endswith('.swift') or item['path'] == 'IRPSPBridge.c'},
                          {'IRPSPBridge.c': 'sourcecode.c.c', 'IridiumConsoleSession.swift': 'sourcecode.swift'})
         for configuration in ('debug', 'release'):
             settings = result[configuration]['buildSettings']
@@ -317,13 +391,14 @@ class FrontendImportTests(unittest.TestCase):
         self.assertIn('-lexisting', result['debug']['buildSettings']['OTHER_LDFLAGS'])
         self.assertIn('CodeSignOnCopy', result[embed['files'][0]]['settings']['ATTRIBUTES'])
         with patch.dict(BUILD.os.environ, {'IRIDIUM_PHASE3': '1'}), \
-             patch.object(BUILD.subprocess, 'check_output', return_value=plistlib.dumps({'objects': objects})):
+             patch.object(BUILD.subprocess, 'check_output', side_effect=[plistlib.dumps({'objects': objects, 'rootObject': 'root'}), native]):
             signed = BUILD.project(pathlib.Path('/fixture/project.pbxproj'), [])['objects']
         embedded = signed['F20000000000000000000003']['files']
         self.assertEqual(len(embedded), 6)
         for item in embedded:
             self.assertIn('CodeSignOnCopy', signed[item]['settings']['ATTRIBUTES'])
-        self.assertEqual(signed['frameworks']['files'], ['existing-link'])
+        self.assertIn('existing-link', signed['frameworks']['files'])
+        self.assertEqual(signed['frameworks']['files'], result['frameworks']['files'])
 
     def test_generated_tree_refresh_is_repeatable_and_removes_only_stale_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -380,7 +455,7 @@ class FrontendImportTests(unittest.TestCase):
                 dll = upstream / 'app/Madeira/i386-windows/ntdll.dll'
                 dll.parent.mkdir(parents=True, exist_ok=True)
                 dll.write_bytes(b'built')
-            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), \
+            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), patch.object(BUILD.madeira_components, 'build'), \
                  patch.object(BUILD, 'compiler_tools', return_value={
                      'fixture compiler': {'executable': '/fixture/compiler', 'version': 'fixed version'}}), \
                  patch.object(BUILD.subprocess, 'check_output', side_effect=lambda args, **kw: '/tool/Metal.xctoolchain/usr/bin/metal\n' if kw.get('text') else b'tool version'), \
@@ -463,11 +538,11 @@ class FrontendImportTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler is required')
     def test_updated_library_preserves_per_game_storage_and_reset(self):
-        folder = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'
+        folder = BUILD.UPSTREAM / 'app/Madeira'
         if not (folder / 'Library.swift').is_file(): self.skipTest('Pinned Madeira source required')
         original = (folder / 'Library.swift').read_text()
         rendered = BUILD.overlay('Library.swift', original)
-        for start, end in [('    private func reloadBCD()', '    private func start()'),
+        for start, end in [('    private func reloadBCD()', '    /// Apply Shared Setup:'),
                            ('struct BCDGameValues {', '/// Game details')]:
             self.assertEqual(madeira_presentation.between(original, start, end),
                              madeira_presentation.between(rendered, start, end))

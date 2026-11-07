@@ -57,6 +57,9 @@ final class InputSettings { static let shared = InputSettings(); var sensRel = 1
 final class UserDefaults { static let standard = UserDefaults(); func object(forKey: String) -> Any? { nil } }
 final class HardwareInput {
     static let shared = HardwareInput()
+    struct SurfacePointerEvent { let x: Int32; let y: Int32; let flags: UInt32; let data: UInt32 }
+    var hardwareOwnsRelativeMotion: Bool { false }
+    func surfacePointerEvent(x: Int32, y: Int32, flags: UInt32, data: UInt32 = 0) -> SurfacePointerEvent? { .init(x:x, y:y, flags:flags, data:data) }
     var intercepted = false, updates = 0
     func interceptTouches(_ t: Set<UITouch>, _ event: UIEvent?, _ phase: UITouch.Phase) -> Bool { intercepted }
     func iridiumUpdateTouchPointer() { updates += 1 }

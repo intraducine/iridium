@@ -1,5 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SwiftUI
+import Security
+
+@MainActor enum OnboardingCompletion {
+    private static var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "software.iridium.setup",
+         kSecAttrAccount as String: "completed"]
+    }
+    static func load() -> Bool? {
+        var lookup = query
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(lookup as CFDictionary, &item)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else { NSLog("[setup] Completion read failed: %d", status); return nil }
+        return item as? Data == Data([1])
+    }
+    static func save() {
+        let attributes: [String: Any] = [kSecValueData as String: Data([1]),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            status = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+            if status == errSecDuplicateItem { status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary) }
+        }
+        if status != errSecSuccess { NSLog("[setup] Completion save failed: %d", status) }
+    }
+}
 
 enum OnboardingRules {
     static let revisionKey = "iridium.setup.revision"
@@ -79,8 +107,14 @@ enum OnboardingRules {
         Binding(get: { self.presented && self.presentation == owner }, set: { if !$0, self.presentation == owner { self.presented = false } })
     }
     func presentIfNeeded(owner: Presentation = .library) {
-        guard !considered else { return }; considered = true
-        guard UserDefaults.standard.integer(forKey: OnboardingRules.revisionKey) < OnboardingRules.revision else { return }
+        guard !considered else { return }
+        if UserDefaults.standard.integer(forKey: OnboardingRules.revisionKey) > 0 {
+            markCompleted(); considered = true; return
+        }
+        // A replacement install can lose preferences while keeping its Keychain.
+        guard let completed = OnboardingCompletion.load() else { return }
+        considered = true
+        if completed { UserDefaults.standard.set(OnboardingRules.revision, forKey: OnboardingRules.revisionKey); return }
         open(owner: owner)
     }
     func rerun() { open(owner: .settings) }
@@ -100,9 +134,13 @@ enum OnboardingRules {
     }
     func back() { if let previous = OnboardingRules.previous(before: step, in: steps) { go(previous) } }
     func next() { if let next = OnboardingRules.next(after: step, in: steps) { go(next) } else { finishOpeningLibrary() } }
-    func skip() { libraryAction = nil; UserDefaults.standard.set(OnboardingRules.revision, forKey: OnboardingRules.revisionKey); presented = false }
-    func finish() {
+    private func markCompleted() {
         UserDefaults.standard.set(OnboardingRules.revision, forKey: OnboardingRules.revisionKey)
+        OnboardingCompletion.save()
+    }
+    func skip() { libraryAction = nil; markCompleted(); presented = false }
+    func finish() {
+        markCompleted()
         UserDefaults.standard.removeObject(forKey: "iridium.setup.step"); step = .library; presented = false
     }
 }
@@ -203,7 +241,12 @@ struct OnboardingView: View {
                     source = nil
                 }.environment(\.setupControllerFocus, nil)
             }
-            .sheet(isPresented: $steamSignIn) { SteamSignInView().environment(\.setupControllerFocus, nil) }
+            .sheet(isPresented: $steamSignIn) {
+                IridiumStoreBrowser(startDock: { _, _ in }, open: { entry in
+                    model.recordGame(id: entry.id.uuidString, title: entry.title, platform: "windows", requiredJIT: true, optionalJIT: false)
+                    steamSignIn = false
+                }, allowDesktop: false).environment(\.setupControllerFocus, nil)
+            }
             .onAppear {
                 signIn.refresh(); dock.refresh(); mono.refresh()
                 if let entry = game?.console, entry.platform == .psp { model.setPSPMode(entry.pspJITEnabled) }
@@ -371,7 +414,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             switch step {
             case .library:
-                Text("Import games from Files or connect your Steam account.")
+                Text("Import games from Files or open a store.")
                     .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let game {
                     IridiumGameOptionsHeader(game: game)
@@ -392,15 +435,11 @@ struct OnboardingView: View {
                     Text("Supported Systems").frame(maxWidth: .infinity, alignment: .leading)
                         .setupControllerToggle("games.systems", order: 20, value: $systemsExpanded, hidesFocusOnTouch: false)
                 }.font(.subheadline).multilineTextAlignment(.leading)
-                if SteamSignIn.isEnabled {
+                Group {
                     Divider()
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Steam (Optional)").font(.headline).accessibilityAddTraits(.isHeader)
-                        if let name = signIn.accountName {
-                            Label("Connected as \(name)", systemImage: "checkmark.circle.fill")
-                                .font(.subheadline).foregroundStyle(IridiumTheme.accent)
-                        }
-                        action(signIn.accountName == nil ? "Sign In to Steam" : "Manage Steam Account", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
+                        Text("Stores").font(.headline).accessibilityAddTraits(.isHeader)
+                        action("Open Stores", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
                             model.chooseSteam(); steamSignIn = true
                         }
                     }

@@ -164,6 +164,29 @@ for (const result of [run('7000000000', 'E09'), run('E09', 'OK'), run('not-hex',
 '''
         subprocess.run(['node', '-e', harness], input=json.dumps(source), text=True, check=True, timeout=10)
 
+    def test_allocation_only_command_defers_blessing_until_the_next_stop(self):
+        source = (ROOT / 'iridium/apps/ios/App/Resources/madeira-jit.js').read_text()
+        harness = r'''
+const vm=require('vm'),assert=require('assert');
+const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
+const le=n=>Array.from({length:8},(_,i)=>Number(n>>BigInt(8*i)&255n).toString(16).padStart(2,'0')).join('');
+for(const reply of ['7000000000','E09','invalid','7000000001','0','ffffffffffffc000']) {
+ let stops=0, trace=[];
+ vm.runInNewContext(source,{get_pid:()=>42,log:()=>{},send_command:command=>{
+  trace.push(command);
+  if(command.startsWith('vAttach'))return 'T05';
+  if(command==='c')return 'T05thread:abc;20:'+le(0x100000000n)+';00:'+le(0n)+';01:'+le(0x1100000n)+';10:'+le(stops++===0?4n:0n)+';metype:6;medata:1;';
+  if(command.startsWith('m'))return 'a0013ed4';
+  if(command.startsWith('_M'))return reply;
+  return 'OK';
+ }},{timeout:1000});
+ assert.equal(trace.filter(x=>x.startsWith('M')).length,0);
+ assert(trace.includes('_M1100000,rx'));
+ assert(trace.includes('P0='+(reply==='7000000000'?'0000000070000000':'0000000000000000')+';thread:abc;'));
+}
+'''
+        subprocess.run(['node','-e',harness],input=json.dumps(source),text=True,check=True,timeout=10)
+
     def test_first_fault_tuple_exact_64bit_fields_bounds_and_one_record(self):
         harness = r'''
 const vm = require('vm');

@@ -93,11 +93,12 @@ class MultiRuntimeTests(unittest.TestCase):
     def test_play_routes_advanced_engines_to_owned_jit_without_extra_confirmation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
         launch = source[source.index('    private func launch(_ game:'):source.index('    private func options(_ game:')]
+        repair = source[source.index('    private func steamRepairID('):source.index('    private func actions(')]
         marker = '.onChange(of: jitState.enabled) { _, enabled in'
         start = source.index(marker) + len(marker)
         continuation = source[start:source.index('\n            }', start)]
         fixture = r'''import Foundation
-struct LibraryEntry { let id = UUID() }
+struct LibraryEntry { let id = UUID(); var steamAppID: Int? = nil }
 struct IridiumGame {
     var windows: LibraryEntry?
     var console: IridiumConsoleGame?
@@ -111,6 +112,17 @@ struct IridiumGame {
 }
 @MainActor final class Library { var error: String? }
 @MainActor final class JITState { var enabled = false; var showSetup = false }
+@MainActor final class Steam {
+    struct Download { enum State { case paused, failed(String), queued, active }; var state: State }
+    var downloads: [Int: Download] = [:], installed: [Int] = [], repaired: [Int] = []
+    var error: String?
+    func install(_ id: Int) { installed.append(id) }
+    func repair(_ id: Int) { repaired.append(id) }
+}
+@MainActor final class SteamGames {
+    struct Game { let id: Int; let installed: Bool }
+    var games: [Game] = []
+}
 @MainActor var nativeStarts: [UUID] = []
 @MainActor struct IridiumConsoleDriver {
     init(game: IridiumConsoleGame) throws {}
@@ -122,12 +134,15 @@ struct IridiumGame {
 }
 @MainActor final class Host {
     let consoleSession = Session(), library = Library(), jitState = JITState(), jit = JITState()
+    let steam = Steam(), steamGames = SteamGames()
     var lastLaunchNeedsSupport = false, pendingSupportGame: IridiumConsoleGame?
     var enables = 0, windows = 0
     func enableJIT() { enables += 1 }
     func play(_ game: LibraryEntry) { windows += 1 }
 LAUNCH
+STEAM_REPAIR
     func start(_ game: IridiumConsoleGame) { launch(IridiumGame(console: game)) }
+    func start(_ entry: LibraryEntry) { launch(IridiumGame(windows: entry)) }
     func enabledChanged(_ enabled: Bool) {
 CONTINUATION
     }
@@ -141,7 +156,8 @@ CONTINUATION
                 let host = Host(); host.jitState.enabled = enabled
                 let game = IridiumConsoleGame(id: UUID(), title: "Fixture", platform: platform,
                     runtimeID: runtime, fileExtension: "iso", importedAt: Date())
-                let count = nativeStarts.count; host.start(game)
+                let count = nativeStarts.count
+                host.start(game)
                 precondition(nativeStarts.count == count + 1 && nativeStarts.last == game.id)
                 precondition(host.enables == 0 && host.pendingSupportGame == nil && host.library.error == nil)
                 host.enabledChanged(true); precondition(nativeStarts.count == count + 1)
@@ -152,10 +168,18 @@ CONTINUATION
             runtimeID: "dolphin", fileExtension: "iso", importedAt: Date())
         let count = nativeStarts.count; blocked.start(game)
         precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
+        let missing = Host()
+        missing.lastLaunchNeedsSupport = true
+        missing.start(LibraryEntry(steamAppID: 220))
+        precondition(missing.steam.repaired == [220] && missing.windows == 0 && missing.enables == 0 && !missing.lastLaunchNeedsSupport)
+        let paused = Host()
+        paused.steam.downloads[220] = Steam.Download(state: .paused)
+        paused.start(LibraryEntry(steamAppID: 220))
+        precondition(paused.steam.installed == [220] && paused.windows == 0 && paused.enables == 0)
         print("PASS shipping Play: all advanced engines own JIT without duplicate launches; busy admission retained")
     }
 }
-'''.replace('LAUNCH', launch).replace('CONTINUATION', continuation)
+'''.replace('LAUNCH', launch).replace('CONTINUATION', continuation).replace('STEAM_REPAIR', repair)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); unit = folder / 'check.swift'; unit.write_text(fixture)
             binary = folder / 'check'
@@ -193,7 +217,7 @@ CONTINUATION
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for lifecycle checks')
     def test_console_launch_guards_execute_with_stopped_wine_flags(self):
         session = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
-        admission = session[session.index('    func validateLaunchAdmission() throws {'):session.index('    func start(_ game:')]
+        admission = session[session.index('    func validateLaunchAdmission('):session.index('    func start(_ game:')]
         start = session.index('            try validateLaunchAdmission()')
         end = session.index('            lock.lock(); intent =', start)
         # Execute the shipping preflight/lease acquisition, with controlled
@@ -202,8 +226,21 @@ CONTINUATION
         fixture = r'''
 import Foundation
 var wineRunning: Int32 = 0, serverRunning: Int32 = 0
+enum LibraryError: Error { case message(String) }
+final class IridiumImportCoordinator {
+    static let shared = IridiumImportCoordinator()
+    var blocksLaunch = false
+    var launchMessage = "Import in progress"
+    var contentOwner: UUID?
+    func ownsContentImport(_ owner: UUID) -> Bool { contentOwner == owner }
+}
 func wine_process_is_running() -> Int32 { wineRunning }
 func wineserver_is_running() -> Int32 { serverRunning }
+final class IridiumMadeiraRuntime {
+    static let shared=IridiumMadeiraRuntime()
+    var residentIdle=false, poisoned=false
+    var isBusy:Bool {poisoned || (!residentIdle && (wineRunning != 0 || serverRunning != 0))}
+}
 final class JITCoordinator {
     static let shared = JITCoordinator()
     var busy = false, consoleMemoryRequiresRestart = false
@@ -235,6 +272,17 @@ let preflight = Preflight()
 // Prompt-time admission never claims a lease; confirmation must recheck it.
 try preflight.validateLaunchAdmission()
 precondition(preflight.ownership.lease == nil)
+IridiumImportCoordinator.shared.blocksLaunch = true
+do { try preflight.validateLaunchAdmission(); fatalError("Storage reservation must block launch") }
+catch LibraryError.message { }
+let owner = UUID()
+do { try preflight.validateLaunchAdmission(importOwner: owner); fatalError("Foreign import must not enter maintenance") }
+catch LibraryError.message { }
+IridiumImportCoordinator.shared.contentOwner = owner
+try preflight.validateLaunchAdmission(importOwner: owner)
+IridiumImportCoordinator.shared.contentOwner = nil
+IridiumImportCoordinator.shared.blocksLaunch = false
+
 func rejects(_ expected: IridiumRuntimeError) {
     do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
     catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }
@@ -253,9 +301,11 @@ TouchControlsModel.shared.iridiumSettingsContext = UUID(); rejects(.busy)
 TouchControlsModel.shared.iridiumSettingsContext = nil
 wineRunning = 1; rejects(.busy); wineRunning = 0
 serverRunning = 1; rejects(.busy); serverRunning = 0
-// Zero liveness flags alone cannot authorize a post-Windows console launch.
-LibraryModel.sessionsThisRun = 1; rejects(.restartRequired)
-LibraryModel.sessionsThisRun = 0 // Fixture models a different, fresh process.
+// A verified idle Windows host permits a console, without clearing native admission.
+LibraryModel.sessionsThisRun = 1
+IridiumMadeiraRuntime.shared.poisoned = true; rejects(.busy)
+IridiumMadeiraRuntime.shared.poisoned = false
+wineRunning = 1; serverRunning = 1; IridiumMadeiraRuntime.shared.residentIdle = true
 let second = try preflight.acquire(game)
 preflight.ownership.release(first) // Stale stop cannot release the newer owner.
 rejects(.busy)
@@ -266,13 +316,14 @@ preflight.phase = .restartRequired; rejects(.restartRequired)
 preflight.phase = .idle
 let last = try preflight.acquire(game)
 preflight.ownership.release(last, restart: true); rejects(.restartRequired)
-print("PASS shipping preflight: active Windows/launch/server/owner, prior Windows despite zero flags, repeated clean console leases, stale stop, restart state")
+print("PASS shipping preflight: active Windows/launch/server/owner, idle resident Windows, uncertain cleanup, repeated clean console leases, stale stop, restart state")
 '''.replace('GUARDS', guards).replace('ADMISSION', admission)
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'checks'
             subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
+                            str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumCoreControls.swift'),
                             str(source), '-o', str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=20)
 

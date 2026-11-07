@@ -5,12 +5,14 @@ import UIKit
 struct IridiumMovablePlayerMenu: View {
     let action: () -> Void
     var safeAreaInsets: EdgeInsets? = nil
+    var frameChanged: (CGRect) -> Void = { _ in }
     @AppStorage("madeiraLibraryMenuX") private var x = 0.92
     @AppStorage("madeiraLibraryMenuY") private var y = 0.12
     @GestureState private var translation = CGSize.zero
     var body: some View {
         GeometryReader { geometry in
             let center = position(in: geometry, translation: translation)
+            let rect = CGRect(x: center.x - 24, y: center.y - 24, width: 48, height: 48)
             IridiumPlayerMenuButton(action: action)
                 .frame(width: 48, height: 48)
                 .highPriorityGesture(DragGesture(minimumDistance: 6, coordinateSpace: .global).updating($translation) { value, state, transaction in
@@ -22,6 +24,8 @@ struct IridiumMovablePlayerMenu: View {
                     y = end.y / max(1, geometry.size.height)
                 })
                 .position(center)
+                .onChange(of: rect, initial: true) { _, rect in frameChanged(rect) }
+                .onDisappear { frameChanged(.zero) }
         }
     }
     private func position(in geometry: GeometryProxy, translation: CGSize) -> CGPoint {
