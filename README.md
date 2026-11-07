@@ -11,7 +11,7 @@ device tests for graphics, input, audio, saves, and repeated launches.
 
 The current development version is **0.3.0**. See its
 [review notes](docs/releases/0.3.0.md) for changes and limits. This version is not
-a published release. Menu sound effects remain in a separate draft PR.
+a published release. This branch adds optional menu sounds in draft PR #94.
 
 ## Install
 

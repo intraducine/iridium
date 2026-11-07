@@ -19,6 +19,11 @@ class LibrarySelectionTests(unittest.TestCase):
         change = view[start:view.index('\n            }', start)]
         fixture = r'''import Foundation
 enum IridiumTouchHaptics { case off, light, medium; static var mode = Self.medium; static func current() -> Self { mode } }
+enum IridiumMenuSounds {
+    enum Cue { case focus, invoke, show, hide, back, next, previous }
+    static var moves = 0, invokes = 0
+    static func play(_ cue: Cue, count: Int = 1) { if cue == .focus { moves += count }; if cue == .invoke { invokes += 1 } }
+}
 final class UIImpactFeedbackGenerator {
     enum Style { case medium }
     init(style: Style = .medium) {}
@@ -50,7 +55,7 @@ SELECT
     }
     func focus(_ id: UUID) {
         let old = selection.highlightedID
-        select(id); changed(old, selection.highlightedID)
+        select(id, focused: true); changed(old, selection.highlightedID)
     }
     func changed(_ old: UUID?, _ value: UUID?) {
 CHANGE
@@ -70,7 +75,7 @@ let host = Host([a,b,c])
 host.showFocus = true; host.showHints = true
 host.touch(b)
 precondition(host.selectionFeedback.pulses == 1 && !host.showFocus && !host.showHints)
-host.touch(b); precondition(host.selectionFeedback.pulses == 1)
+host.touch(b); precondition(host.selectionFeedback.pulses == 1 && IridiumMenuSounds.invokes == 2 && IridiumMenuSounds.moves == 0)
 host.swipe(c); precondition(host.selectionFeedback.pulses == 2)
 // Model a feedback resource made unusable during a native session.
 let oldFeedback = host.selectionFeedback; oldFeedback.valid = false
@@ -79,18 +84,23 @@ precondition(host.selectionFeedback !== oldFeedback && host.selectionFeedback.pr
 host.swipe(b); host.touch(a)
 precondition(host.selectionFeedback.pulses == 2 && oldFeedback.pulses == 2)
 IridiumTouchHaptics.mode = .off
+let moves = IridiumMenuSounds.moves
 host.touch(b); host.swipe(c)
-precondition(host.selectionFeedback.pulses == 2)
+precondition(host.selectionFeedback.pulses == 2 && IridiumMenuSounds.moves == moves + 1)
 IridiumTouchHaptics.mode = .medium
 host.showFocus = true
 host.focus(b)
 precondition(host.selectionFeedback.pulses == 3)
-let before = host.selectionFeedback.pulses
+let before = IridiumMenuSounds.moves
+let beforeHaptics = host.selectionFeedback.pulses
 for i in 0..<40 { host.focus(i % 2 == 0 ? a : b) }
-precondition(host.selectionFeedback.pulses == before + 40, "Keyboard focus must retain haptics")
-let swipeBefore = host.selectionFeedback.pulses
+precondition(IridiumMenuSounds.moves == before + 40, "Every keyboard focus event must sound")
+precondition(host.selectionFeedback.pulses == beforeHaptics + 40, "Keyboard focus must retain haptics")
+let swipeBefore = IridiumMenuSounds.moves
+let hapticsBefore = host.selectionFeedback.pulses
 host.swipe(a); host.swipe(c)
-precondition(host.selectionFeedback.pulses == swipeBefore + 3, "Coalesced scrolls retain each crossed cover")
+precondition(IridiumMenuSounds.moves == swipeBefore + 3, "Coalesced scrolls retain each crossed cover")
+precondition(host.selectionFeedback.pulses == hapticsBefore + 3, "Coalesced scrolls retain each crossed cover")
 precondition(host.selectionFeedback.strength == 1)
 IridiumTouchHaptics.mode = .light
 host.touch(b); host.touch(a)

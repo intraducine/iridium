@@ -27,6 +27,7 @@ Current revisions are in [UPSTREAM-SOURCES.json](UPSTREAM-SOURCES.json).
 | Zstandard decoder | BSD-3-Clause selected |
 | Wine's bundled libxml2 and libxslt; NVAPI headers | MIT with their respective copyright notices |
 | Apple Metal Shader Converter | Apple's converter agreement; headers Apache-2.0 |
+| Menu audio | Atkey's royalty-free UI Sound Pack license, retained in `iridium/apps/ios/App/Resources/MenuAudio/Atkey-license.txt`; app use and modification allowed, standalone sound redistribution/resale prohibited |
 
 Madeira's pinned Wine branch specifies LGPL-2.1-or-later in its own
 `LICENSE-MADEIRA.md`; its older top-level GPL summary does not override that file.

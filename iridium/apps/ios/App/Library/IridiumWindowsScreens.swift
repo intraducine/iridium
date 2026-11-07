@@ -1193,6 +1193,7 @@ struct LibraryView: View {
     @Environment(\.dismiss) private var iridiumDismiss
 
     @State private var iridiumPages: [String] = []
+    @AppStorage(IridiumMenuSounds.settingsKey) private var menuSounds = true
     @State private var iridiumFocus = "Controls"
     @State private var iridiumGuided = false
     @FocusState private var iridiumKeyboard: Bool
@@ -1389,6 +1390,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
                 }
             }
             .onChange(of: iridiumPages) { old, pages in
+                if old.count != pages.count { IridiumMenuSounds.play(pages.count > old.count ? .next : .back) }
                 if !iridiumSettingsOrder.contains(iridiumFocus) { iridiumFocus = iridiumSettingsOrder.first ?? "" }
             }
             .onChange(of: iridiumFocus) { _, title in proxy.scrollTo(title, anchor: .center) }
@@ -1487,9 +1489,10 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             iridiumGuided = true
             let step = command == "up" || command == "left" ? -1 : 1
             let next = order[min(max(index + step, 0), order.count - 1)]
-            if next != iridiumFocus { iridiumFocus = next }
+            if next != iridiumFocus { IridiumMenuSounds.play(.focus); iridiumFocus = next }
         } else if command == "accept" {
-            if iridiumFocus == "Stores" { settingsSheet = .stores }
+            if iridiumFocus == "Menu sounds" { menuSounds.toggle() }
+            else if iridiumFocus == "Stores" { settingsSheet = .stores }
             else if iridiumFocus == "Import Folder" { settingsSheet = .importFolder }
             else if iridiumFocus == "Getting Started" { onboarding.rerun() }
             else { iridiumPages.append(iridiumFocus) }
@@ -1498,7 +1501,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
 
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
-        case nil: return ["Iridium", "Stores", "Import Folder", "Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case nil: return ["Iridium", "Stores", "Import Folder", "Getting Started", "Controls", "JIT & Memory", "Menu sounds", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Stores & Drives", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }
@@ -1567,6 +1570,9 @@ NavigationLink("Controls", value: "Controls").id("Controls")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Controls" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
 NavigationLink("JIT & Memory", value: "JIT & Memory").id("JIT & Memory")
                     .listRowBackground(iridiumGuided && iridiumFocus == "JIT & Memory" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+Toggle("Menu sounds", isOn: $menuSounds).id("Menu sounds")
+                    .listRowBackground(iridiumGuided && iridiumFocus == "Menu sounds" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                    .onChange(of: menuSounds) { _, enabled in if enabled { IridiumMenuSounds.play(.invoke) } else { IridiumMenuSounds.stop() } }
             }.iridiumRowSurface()
             Section("Systems") { NavigationLink("Madeira · Windows" + IridiumRuntimeRegistry.madeira.jitSuffix, value: "Madeira · Windows").id("Madeira · Windows")
                     .listRowBackground(iridiumGuided && iridiumFocus == "Madeira · Windows" ? Color.white.opacity(0.2) : Color.white.opacity(0.07))

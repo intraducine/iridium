@@ -43,7 +43,8 @@ Rotate during cold Windows JIT preparation and native loading. Confirm the stage
 timer, live RAM bar, and controls keep updating. Close to the library and check
 that no keyboard, controller, or editor controls remain there. Check the first
 and last covers at high swipe speed and the selected cover's alignment in both
-orientations. Menu sound effects must be absent in the integration build.
+orientations. The main review build must have no menu sounds; test draft audio
+separately for scrolling lag and playback at high selection speed.
 
 Test uninstall from each store, a whole folder removed in Files, partial damage,
 and a disconnected external drive separately. Confirm repair appears only where
