@@ -1,6 +1,7 @@
 """Execute launch admission and setup storage without a runtime or real Keychain."""
 from host_tests import module_cache
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,18 @@ class LaunchFeedbackTests(unittest.TestCase):
     precondition(stop(1153, warning: true))
     precondition(stop(1024) && stop(72) && stop(0))
 }}""")
+
+    def test_embedded_switch_trims_graphics_before_the_app_memory_stop(self):
+        patch = (ROOT / 'ci/engine-integrations/melonx-storage.patch').read_text()
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        stop = int(re.search(r'reserveMiB: UInt64 = memoryWarning \? (\d+)', presentation)[1])
+        trim = int(re.search(r'EmbeddedGpuTrimReserveBytes = (\d+)UL', patch)[1])
+        critical = int(re.search(r'ReportPressure\(headroom <= (\d+)UL', patch)[1])
+        self.assertGreater(trim, critical)
+        self.assertGreater(critical, stop)
+        self.assertIn('Device.Gpu.HostMemoryTrimThresholdBytes = Library.EmbeddedGpuTrimReserveBytes;', patch)
+        self.assertIn('if (available >= HostMemoryTrimThresholdBytes)', patch)
+        self.assertIn('= ComfortableHeadroomBytes;', patch)
 
     def test_controls_overlay_disappears_between_library_sessions(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()

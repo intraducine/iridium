@@ -703,7 +703,7 @@ index a64b53e..0c008e0 100644
  
                          /*
                              Device.EnableDeviceVsync,
-@@ -353,6 +355,60 @@ namespace Ryujinx.Library
+@@ -353,6 +355,61 @@ namespace Ryujinx.Library
              return true;
          }
  
@@ -716,6 +716,7 @@ index a64b53e..0c008e0 100644
 +                return true;
 +            }
 +
++            Device.Gpu.HostMemoryTrimThresholdBytes = Library.EmbeddedGpuTrimReserveBytes;
 +            _isActive = true;
 +            _chrono.Restart();
 +            InitializeWindow();
@@ -764,7 +765,7 @@ index a64b53e..0c008e0 100644
          public void Execute()
          {
              _chrono.Restart();
-@@ -377,6 +433,8 @@ namespace Ryujinx.Library
+@@ -377,6 +434,8 @@ namespace Ryujinx.Library
          public bool DisplayInputDialog(SoftwareKeyboardUIArgs args, out string userText)
          {
              userText = null;
@@ -773,7 +774,7 @@ index a64b53e..0c008e0 100644
  
              if (OperatingSystem.IsIOS())
              {
-@@ -450,6 +508,8 @@ namespace Ryujinx.Library
+@@ -450,6 +509,8 @@ namespace Ryujinx.Library
          public bool DisplayCabinetDialog(out string userText)
          {
              userText = null;
@@ -860,7 +861,7 @@ new file mode 100644
 index 0000000..ce368f3
 --- /dev/null
 +++ b/src/Ryujinx.Library/IridiumHost.cs
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,280 @@
 +using Ryujinx.Common.Configuration;
 +using Ryujinx.Common.Configuration.Hid;
 +using Ryujinx.Common.Logging;
@@ -889,6 +890,7 @@ index 0000000..ce368f3
 +        private static unsafe delegate* unmanaged[Cdecl]<nint, void> _embeddedDiagnostic;
 +        private static int _embeddedStarted, _embeddedBootError;
 +        private static long _nextHeadroomCheck;
++        internal const ulong EmbeddedGpuTrimReserveBytes = 2560UL * 1024 * 1024;
 +
 +        private static int EmbeddedBootError(string message)
 +        {
@@ -1113,11 +1115,11 @@ index 0000000..ce368f3
 +            long now = Environment.TickCount64;
 +            if (now >= _nextHeadroomCheck)
 +            {
-+                _nextHeadroomCheck = now + 2000;
++                _nextHeadroomCheck = now + 500;
 +                ulong headroom = HostMemoryBudget.AvailableBytes;
-+                const ulong MiB = 1024 * 1024;
-+                if (headroom > 0 && headroom < 640 * MiB)
-+                    MemoryPressureMonitor.ReportPressure(headroom <= 256 * MiB
++                // Allow the renderer to trim before Iridium has to stop the game.
++                if (headroom > 0 && headroom < EmbeddedGpuTrimReserveBytes)
++                    MemoryPressureMonitor.ReportPressure(headroom <= 2048UL * 1024 * 1024
 +                        ? MemoryPressureLevel.Critical : MemoryPressureLevel.Warning);
 +            }
 +
@@ -1191,3 +1193,24 @@ diff --git a/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs b/src/Ryuji
              SigAction sig = new()
              {
                  sa_handler = action,
+diff --git a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
+@@ -344,6 +344,8 @@
+ 
+         private long _lastTrimTimestamp;
+ 
++        public ulong HostMemoryTrimThresholdBytes { get; set; } = ComfortableHeadroomBytes;
++
+         /// <summary>
+         /// Evicts GPU resource caches in response to host memory pressure, in proportion to what
+         /// they are actually holding and only when this process looks like the one under pressure.
+@@ -360,7 +362,7 @@
+ 
+             if (available != 0)
+             {
+-                if (available >= ComfortableHeadroomBytes)
++                if (available >= HostMemoryTrimThresholdBytes)
+                 {
+                     Logger.Debug?.Print(LogClass.Gpu,
+                         $"Ignoring {level} host memory pressure with {available / TrimMiB} MiB still available to this process");

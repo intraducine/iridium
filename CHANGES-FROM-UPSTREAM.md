@@ -575,6 +575,8 @@ The adapter drains GPU work and releases per-game input before returning to the
 library. It preserves the current fault handlers, including those of an idle
 Windows host, and keeps MeloNX's process-wide JIT allocations reserved. The iOS
 integration uses Darwin's signal structure and flags for handler registration.
+The embedded player asks the renderer to trim GPU caches before Iridium's
+memory guard has to close the game. Standalone MeloNX keeps its own threshold.
 A slow stop keeps the launch slot until it finishes. An unverified stop needs a
 restart. When Wine starts after a console game, it reserves its V8 address range
 only if the range is free.
