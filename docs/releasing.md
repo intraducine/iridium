@@ -52,6 +52,30 @@ Keep matching source and notices at permanent versioned release URLs. Actions
 artifacts expire. Preserve old source, checksums, and data-safe recovery steps
 when issuing a fix release.
 
+## AltStore Classic
+
+After publishing a stable release, use its checked IPA to update the Stable
+source. Review the JSON change and merge it into `main`.
+
+```sh
+python3 ci/update-altstore-source.py v0.3.0 /path/to/Iridium-unsigned.ipa
+```
+
+For Nightly, use a successful manual release-mode build from `main`. Follow the
+same review and source publication steps, then publish as a GitHub prerelease
+with a unique tag such as `v0.3.0-nightly.199.1` at the build commit. Use the app
+version and build number in the tag. Include the Actions run in the notes.
+
+```sh
+python3 ci/update-altstore-source.py v0.3.0-nightly.199.1 /path/to/Iridium-unsigned.ipa --run RUN_ID
+```
+
+The updater matches the local IPA to the published size and checksum. It also
+checks the Nightly run and commit before replacing the previous Nightly entry.
+Both feeds use direct, versioned GitHub release assets. Nightly.link can share
+the outer Actions ZIP for manual download. AltStore needs the IPA inside it.
+The updater does not start a build or publish a release.
+
 ## Source and signing
 
 The source package must include the exact checkout and dependencies, patches,
