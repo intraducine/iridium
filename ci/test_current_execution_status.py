@@ -37,6 +37,7 @@ final class IridiumConsoleSession {
     enum Phase { case idle, starting, running, paused, stopping, restartRequired }
     var game: Game? = Game(), lease: Int? = 1
     var phase = Phase.starting
+    var shutdownPending = false
     var pspReady = false, pspJITVerifiedForLaunch = false
     var coreControls = IridiumCoreControls(), coreStateStatus: String?
     var coreOperationPending=false, fastForward=false, rewindEnabled=false
@@ -102,7 +103,9 @@ case "failure":
     precondition(session.executionStatus.mode == "Not running") // Native close precedes queue cleanup.
     session.ended()
     precondition(session.executionStatus == .notRunning)
-    session.begin(); session.receive(8, "JIT"); session.receive(9, "Cleanup incomplete")
+    session.begin(); session.receive(8, "JIT"); session.shutdownPending = true
+    session.receive(9, "Cleanup incomplete")
+    precondition(!session.shutdownPending && session.phase == .restartRequired)
     precondition(session.executionStatus.mode == "Unknown")
 case "phase3":
     for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.nintendo3DS, "azahar"), (.playStation2, "play"), (.dreamcast, "flycast")] {
