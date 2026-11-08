@@ -5,9 +5,11 @@ import hashlib
 import json
 import importlib.util
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import madeira_presentation
@@ -21,6 +23,27 @@ SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_melonx_bundle_requires_matching_license_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory)
+            app = source / 'Iridium.app'
+            (app / 'licenses').mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'IridiumMeloNXRevision': 'fixture'}))
+            receipt = source / 'component.json'
+            receipt.write_text('{}')
+            component = SimpleNamespace(SOURCE=source, REVISION='fixture', RECEIPT=receipt,
+                                        component_record=dict, packaged_files=tuple)
+            with patch.object(BUILD, 'melonx_component', return_value=component):
+                for name, path in BUILD.MELONX_LICENSES.items():
+                    fixture = source / path
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text(name)
+                    with self.assertRaisesRegex(ValueError, re.escape(name)):
+                        BUILD.check_bundle(app)
+                    (app / 'licenses' / name).write_text(name)
+                with self.assertRaisesRegex(ValueError, 'permission descriptions'):
+                    BUILD.check_bundle(app)
+
     def test_converter_signing_obeys_unsigned_build_setting(self):
         project = plistlib.loads((ROOT / 'iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj').read_bytes())
         script = next(value['shellScript'] for value in project['objects'].values()

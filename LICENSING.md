@@ -40,10 +40,17 @@ It grants no rights to Apple's library or unrelated components.
 | Play! | BSD-2-Clause and dependency-specific terms |
 | PPSSPP | GPL-family, including GPLv3 libkirk/xBRZ; LGPL-2.1-or-later at3_standalone; dependency-specific terms |
 | PSP MoltenVK 1.2.9 and Azahar MoltenVK 1.4.1 | Apache-2.0 and dependency-specific MIT/Khronos/BSD terms |
+| MeloNX 2.7 (optional) | Upstream declares GPLv3. Retain the Ryujinx MIT notice, MeloNX third-party notices, and the bundled libraries' terms. |
 
 Selected GPL-or-later components may use GPLv3 when combined with AGPLv3.
 Original grants remain intact. A dynamic-library boundary is not a license
 exception or a determination that components are separate works.
+
+MeloNX's pinned source revision and Iridium's build recipe and patch are listed
+in [Changes from upstream](CHANGES-FROM-UPSTREAM.md#melonx-core-bring-up). The
+bundled FFmpeg libraries identify themselves as FFmpeg n6.0 built with the
+September 3, 2023 FFmpegKit audio configuration. See the upstream
+[FFmpegKit 6.0 source list](https://github.com/arthenica/ffmpeg-kit/wiki/Source-v6.0).
 
 ## Notices and source
 

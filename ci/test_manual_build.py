@@ -207,6 +207,7 @@ class ManualBuildTests(unittest.TestCase):
         gate = steps['Check final binary audit before packaging']
         self.assertIn('if [ "$RELEASE_BUILD" = true ]', gate)
         self.assertIn('--package --test-build', gate)
+        self.assertNotIn('\n        if:', '\n' + steps['Upload sideloading IPA'])
 
     def test_source_checks_and_ipa_select_the_same_xcode_before_tools(self):
         selected = []

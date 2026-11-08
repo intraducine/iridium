@@ -38,6 +38,12 @@ REVISION = engine_pins.get('madeira')['revision']
 PSP_REVISION = engine_pins.get('ppsspp')['revision']
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
+MELONX_LICENSES = {
+    'LICENSE-MELONX.txt': 'LICENSE.txt',
+    'THIRD-PARTY-MELONX.md': 'distribution/legal/THIRDPARTY.md',
+    'LICENSE-MELONX-SDL3.txt': ('src/MeloNX/MeloNX/Dependencies/SDL3.xcframework/ios-arm64/'
+                               'SDL3.framework/Headers/SDL_copying.h'),
+}
 RUNTIME_HEADERS = '\n#import "IRJITPrepare.h"\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n#import "IRArchive.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
@@ -337,12 +343,15 @@ def prepare():
     if (os.environ.get('IRIDIUM_PHASE3') == '1'):
         data['IridiumRuntimeRevisions'].update({name: builder.PINS[engine][1]
             for engine, name in [('dolphin', 'Dolphin'), ('azahar', 'Azahar'), ('play', 'Play!'), ('flycast', 'Flycast')]})
+    licenses = app / 'Madeira/licenses'
     if melonx:
         data['IridiumMeloNXRevision'] = melonx.REVISION
         data['IridiumRuntimeRevisions']['MeloNX'] = melonx.REVISION
-        shutil.copy2(melonx.SOURCE / 'LICENSE.txt', app / 'Madeira/licenses/LICENSE-MELONX.txt')
+        for name, source in MELONX_LICENSES.items():
+            shutil.copy2(melonx.SOURCE / source, licenses / name)
     else:
-        (app / 'Madeira/licenses/LICENSE-MELONX.txt').unlink(missing_ok=True)
+        for name in MELONX_LICENSES:
+            (licenses / name).unlink(missing_ok=True)
     data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
     verify()
@@ -399,6 +408,10 @@ def check_bundle(app):
         record = json.loads(melonx.RECEIPT.read_text())
         if info['IridiumMeloNXRevision'] != melonx.REVISION or record != melonx.component_record():
             raise ValueError('MeloNX source or component receipt differs')
+        for name, source in MELONX_LICENSES.items():
+            notice = app / 'licenses' / name
+            if not notice.is_file() or notice.read_bytes() != (melonx.SOURCE / source).read_bytes():
+                raise ValueError('MeloNX packaged notice differs or is missing: ' + name)
         for source, name in melonx.packaged_files():
             binary = app / 'Frameworks' / name
             if binary.is_symlink() or not binary.is_file() or (
