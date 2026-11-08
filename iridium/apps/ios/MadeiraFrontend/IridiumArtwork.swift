@@ -417,16 +417,17 @@ struct IridiumArtworkImage: View {
     let image: UIImage?
     var position = 0.5
     var fit = false
-    var filledBacking = false
     var body: some View {
         GeometryReader { geometry in
             if let image {
                 if fit {
                     ZStack {
-                        if filledBacking {
+                        if IridiumArtworkImagePolicy.hasLetterbox(image: image.size, frame: geometry.size) {
                             Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: geometry.size.width + 36, height: geometry.size.height + 36)
+                                .clipped().blur(radius: 18)
                                 .frame(width: geometry.size.width, height: geometry.size.height)
-                                .clipped().blur(radius: 18).overlay { Color.black.opacity(0.35) }
+                                .clipped().overlay { Color.black.opacity(0.35) }
                         }
                         Image(uiImage: image).resizable().scaledToFit()
                             .frame(width: geometry.size.width, height: geometry.size.height)

@@ -5,7 +5,7 @@ import Darwin
 /// Madeira owns one Windows host. Games use separate, generation-checked jobs.
 final class IridiumMadeiraRuntime: @unchecked Sendable {
     static let shared = IridiumMadeiraRuntime()
-    enum Event: Sendable { case starting, running, ended(UInt32), blocked(String) }
+    enum Event: Sendable { case starting, running, ended(UInt32), failed(UInt32), blocked(String) }
     enum Failure: Error { case busy, invalidRequest, invalidStatus, unsafeDirectory, guestThreadsStillRunning }
     private let root: URL
     private let queue = DispatchQueue(label: "iridium.madeira.session", qos: .userInitiated)
@@ -235,7 +235,7 @@ final class IridiumMadeiraRuntime: @unchecked Sendable {
                         }
                         if drained {
                             self.owner = nil; self.drainingSince = nil
-                            event = .ended(status.result)
+                            event = status.phase == 4 ? .failed(status.result) : .ended(status.result)
                         } else {
                             if self.drainingSince == nil { self.drainingSince = now }
                             if now - self.drainingSince! > 10 { throw Failure.guestThreadsStillRunning }

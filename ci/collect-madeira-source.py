@@ -68,22 +68,37 @@ def binary_component(name):
     raise ValueError('Unmapped packaged binary: ' + name)
 
 
-def snapshot(repo, destination, revisions, *, source_root=None):
+def verified_madeira_binary(repo, name, outputs):
+    if Path(name).suffix not in {'.dll', '.exe', '.drv', '.cpl', '.acm', '.ax', '.ocx'} or name not in outputs:
+        return False
+    path = repo / name
+    return (not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(repo.resolve())
+            and build.file_digest(path) == outputs[name])
+
+
+def snapshot(repo, destination, revisions, *, source_root=None, madeira_outputs=None):
     source_root = destination if source_root is None else source_root
     relative = destination.relative_to(source_root)
     if '..' in relative.parts:
         raise ValueError('Source snapshot destination escapes its staging root')
     prefix = ['--prefix=' + relative.as_posix() + '/'] if relative.parts else []
     revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
-    if subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).strip():
-        # Generated crate notices are copied separately; source edits need a commit.
-        changed = subprocess.check_output(['git', '-C', str(repo), 'diff', '--name-only', '--ignore-submodules=all', 'HEAD'], text=True).splitlines()
-        if changed == ['deps/zlib-1.3.1/zconf.h']:
-            phase3.source_state(repo) # Verify CMake's byte-identical zconf.h.included rename.
-        elif repo in (build.UPSTREAM / 'FEX', build.UPSTREAM / 'dxmt', build.UPSTREAM / 'madeira-dock'):
-            build.verify_pin()
-        elif any(Path(name).suffix != '.a' and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt' for name in changed):
-            raise ValueError('Commit source changes before collection: ' + str(repo.relative_to(ROOT)))
+    changed = subprocess.check_output(
+        ['git', '-C', str(repo), 'diff', '--no-renames', '--name-only', '-z', '--ignore-submodules=all', 'HEAD'],
+        text=True).split('\0')[:-1]
+    if changed == ['deps/zlib-1.3.1/zconf.h']:
+        phase3.source_state(repo) # Verify CMake's byte-identical zconf.h.included rename.
+    elif changed and repo in (build.UPSTREAM / 'FEX', build.UPSTREAM / 'dxmt', build.UPSTREAM / 'madeira-dock'):
+        build.verify_pin()
+    else:
+        # The archive uses pinned Git objects. Only checked build outputs may differ in Madeira.
+        outputs = (madeira_outputs or {}) if repo == build.UPSTREAM else {}
+        unexpected = [name for name in changed if Path(name).suffix != '.a'
+                      and name != 'app/Madeira/legal/LICENSES-rppairing-crates.txt'
+                      and not verified_madeira_binary(repo, name, outputs)]
+        if unexpected:
+            raise ValueError(f'Commit source changes before collection: {repo.relative_to(ROOT)}. '
+                             f'Unexpected tracked changes: {unexpected[:8]}')
     with tempfile.TemporaryFile() as stream:
         subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', *prefix, revision], stdout=stream, check=True)
         stream.seek(0)
@@ -107,7 +122,8 @@ def snapshot(repo, destination, revisions, *, source_root=None):
         if not (child / '.git').exists(): continue
         if subprocess.check_output(['git', '-C', str(child), 'rev-parse', 'HEAD'], text=True).strip() != meta.split()[1]:
             raise ValueError('Submodule differs from its pin: ' + name)
-        snapshot(child, destination / name, revisions, source_root=source_root)
+        snapshot(child, destination / name, revisions, source_root=source_root,
+                 madeira_outputs=madeira_outputs)
 
 
 def snapshot_freetype(destination, revisions, *, source_root=None):
@@ -232,7 +248,9 @@ def exclude_unused_archives(stage):
 
 def collect(app, output, maps):
     build.verify_pin()
-    build.check_bundle(app)
+    runtime_receipts = build.check_bundle(app)
+    madeira_outputs = {f'app/Madeira/{path}': sha for receipt in runtime_receipts.values()
+                       for path, sha in receipt['files'].items()}
     output.mkdir(parents=True, exist_ok=True)
     records = audit.inventory(app)
     if not records: raise ValueError('Empty native inventory')
@@ -247,7 +265,7 @@ def collect(app, output, maps):
     with tempfile.TemporaryDirectory(dir=ROOT / '.build', prefix='madeira-source-') as folder:
         stage = Path(folder) / 'iridium'
         revisions = {}
-        snapshot(ROOT, stage, revisions)
+        snapshot(ROOT, stage, revisions, madeira_outputs=madeira_outputs)
         freetype = build.UPSTREAM / 'research/freetype'
         snapshot_freetype(stage / freetype.relative_to(ROOT), revisions, source_root=stage)
         # Locked published inputs are shared with local builds, not local signing files.
@@ -320,7 +338,6 @@ def collect(app, output, maps):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(archive, destination)
             (stage / 'PHASE3-BUILD-RECEIPTS.json').write_text(json.dumps(phase3_receipts, indent=2) + '\n')
-        runtime_receipts = build.madeira_components.verify(build.UPSTREAM, app, build.compiler_identity())
         (stage / 'MADEIRA-RUNTIME-RECEIPTS.json').write_text(json.dumps(runtime_receipts, indent=2) + '\n')
         manifest = {'madeira_runtime_receipts': 'MADEIRA-RUNTIME-RECEIPTS.json', 'psp_build_receipt': 'PPSSPP-BUILD-RECEIPT.json (before final package signature removal)',
                     'phase3_build_receipts': 'PHASE3-BUILD-RECEIPTS.json' if phase3_receipts else None,
