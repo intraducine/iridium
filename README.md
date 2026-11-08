@@ -15,14 +15,17 @@ a published release. Menu sound effects remain in a separate draft PR.
 
 ## Install
 
-Download the IPA from [Releases](https://github.com/intraducine/iridium/releases).
-Sign the app and its extensions with a compatible sideloading tool, or use
-LiveContainer. Supply your own game files.
+| Channel | IPA | AltStore / LiveContainer |
+| --- | --- | --- |
+| Stable | [Download latest IPA](https://github.com/intraducine/iridium/releases/latest/download/Iridium-unsigned.ipa) | [Stable source](https://raw.githubusercontent.com/intraducine/iridium/main/altstore/stable.json) |
+| Nightly | [Browse Nightly releases](https://github.com/intraducine/iridium/releases?q=nightly-) | [Nightly source](https://raw.githubusercontent.com/intraducine/iridium/altstore-nightly/altstore/nightly.json) |
 
-In AltStore or LiveContainer, add the [Stable source](https://raw.githubusercontent.com/intraducine/iridium/main/altstore/stable.json)
-for published releases or the [Nightly source](https://raw.githubusercontent.com/intraducine/iridium/altstore-nightly/altstore/nightly.json)
-for selected builds from `main`. Both channels use the same app ID. Choose one
-channel for updates. Nightly becomes available after the first Nightly build.
+Nightly downloads and the Nightly source become available after the first
+Nightly release. Add one source in AltStore or LiveContainer. Both channels use
+the same app ID.
+
+To install an IPA, sign the app and its extensions with a compatible sideloading
+tool, or use LiveContainer. Supply your own game files.
 
 The app requires iOS/iPadOS 18 or later. JIT requirements depend on the engine
 and installation method; see [JIT setup](iridium/docs/builtin-stikjit-ios27.md).
