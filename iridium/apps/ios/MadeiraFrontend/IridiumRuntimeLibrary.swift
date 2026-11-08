@@ -81,12 +81,14 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         importExtensions.compactMap { UTType(filenameExtension: $0, conformingTo: .data) }
     }
     @Published private(set) var games: [IridiumConsoleGame] = []
+    @Published private(set) var redundantGameIDs = Set<UUID>()
     @Published private(set) var working = false
     @Published var error: String?
     let store = IridiumConsoleStore(root: LibraryModel.documents.resolvingSymlinksInPath()
         .appendingPathComponent("IridiumRuntimes", isDirectory: true),
         gamesRoot: LibraryModel.documents.resolvingSymlinksInPath().appendingPathComponent("Games", isDirectory: true))
     private let queue = DispatchQueue(label: "software.iridium.runtime-library", qos: .userInitiated)
+    private let comparisonQueue = DispatchQueue(label: "software.iridium.library-copies", qos: .utility)
 
     private init() { reload() }
     func registerInstalled(title: String, path: String, owner: UUID, completion: @escaping @Sendable (String?) -> Void) {
@@ -100,7 +102,8 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
                     try game.validate(); games.append(game); try self.store.save(games)
                 }
                 let result = games
-                DispatchQueue.main.async { self.games = result; completion(nil) }
+                self.publishGames(result)
+                DispatchQueue.main.async { completion(nil) }
             } catch { DispatchQueue.main.async { completion(error.localizedDescription) } }
         }
     }
@@ -108,8 +111,18 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         queue.async {
             do {
                 let games = try self.store.load()
-                DispatchQueue.main.async { self.games = games }
+                self.publishGames(games)
             } catch { DispatchQueue.main.async { self.error = error.localizedDescription } }
+        }
+    }
+
+    private func publishGames(_ games: [IridiumConsoleGame]) {
+        DispatchQueue.main.async { self.games = games }
+        comparisonQueue.async {
+            let redundant = self.store.redundantGameCopies(in: games)
+            DispatchQueue.main.async {
+                if self.games == games { self.redundantGameIDs = redundant }
+            }
         }
     }
 
@@ -129,7 +142,8 @@ final class IridiumConsoleLibrary: ObservableObject, @unchecked Sendable {
         queue.async {
             do {
                 var games = try self.store.load(); edit(&games); try self.store.save(games)
-                DispatchQueue.main.async { self.games = games; self.working = false }
+                self.publishGames(games)
+                DispatchQueue.main.async { self.working = false }
             } catch {
                 DispatchQueue.main.async { self.error = error.localizedDescription; self.working = false }
             }
@@ -232,6 +246,9 @@ struct IridiumConsoleOptions: View {
                     }
                 }
                 if game.runtimeID == "dolphin" { IridiumDolphinGameOptions(game: currentGame) }
+                if resolvedRuntime?.id == "melonx" {
+                    IridiumMeloNXGameOptions(game: currentGame.id)
+                }
                 if ["ppsspp", "dolphin", "azahar", "flycast"].contains(game.runtimeID) {
                     Section("Emulator Content") {
                         NavigationLink { IridiumCoreFiles(game: currentGame) } label: {
@@ -261,5 +278,33 @@ struct IridiumConsoleOptions: View {
                     Button("Remove", role: .destructive) { library.remove(game); dismiss() }
                     Button("Cancel", role: .cancel) {}
                 } message: { Text("Game files and saves will stay on this device.") }
+    }
+}
+
+private struct IridiumMeloNXGameOptions: View {
+    let game: UUID
+    @ObservedObject private var session = IridiumConsoleSession.shared
+    @State private var options: [IridiumCoreOption]
+    init(game: UUID) {
+        self.game = game
+        _options = State(initialValue: IridiumMeloNXOptions.controls(game).options)
+    }
+
+    var body: some View {
+        Section {
+            ForEach($options) { $option in
+                Picker(option.title, selection: $option.value) {
+                    ForEach(option.choices, id: \.value) { Text($0.title).tag($0.value) }
+                }
+                .onChange(of: option.value) { _, value in
+                    IridiumCorePreferences.save(value, key: option.key, game: game)
+                }
+            }
+        } header: {
+            Text("MeloNX")
+        } footer: {
+            Text("Applies on the next launch.")
+        }
+        .disabled(session.isActive)
     }
 }

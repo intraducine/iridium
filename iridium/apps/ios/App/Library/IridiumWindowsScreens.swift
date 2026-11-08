@@ -1228,9 +1228,10 @@ struct LibraryView: View {
     @State private var tab = 0
 
     init(play: @escaping (LibraryEntry) -> Void, enableJIT: @escaping () -> Void,
-         startDock: @escaping (DockGame, Bool) -> Void = { _, _ in }, tab: Int = 0) {
+         startDock: @escaping (DockGame, Bool) -> Void = { _, _ in }, tab: Int = 0, settingsPath: [String] = []) {
         self.play = play; self.enableJIT = enableJIT; self.startDock = startDock
         _tab = State(initialValue: tab)
+        _iridiumPages = State(initialValue: settingsPath)
     }
     // The interface the next start uses (FrontendChoice).
     @State private var developerUI = !FrontendChoice.preferNew
@@ -1291,6 +1292,9 @@ struct LibraryView: View {
             .toolbar { settingsToolbar }
             .navigationDestination(for: String.self) { page in
                 switch page {
+case IridiumMeloNXSystemFiles.route:
+                    IridiumMeloNXSystemFiles(focus: iridiumGuided ? iridiumFocus : nil) { settingsSheet = .importFolder }
+                        .toolbar { settingsToolbar }
 case "JIT & Memory": IridiumCapabilitiesView().iridiumPageSurface().navigationTitle("JIT & Memory")
                     .toolbar { settingsToolbar }.navigationBarBackButtonHidden()
                     .toolbar { ToolbarItem(placement: .topBarLeading) {
@@ -1490,7 +1494,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
             if next != iridiumFocus { iridiumFocus = next }
         } else if command == "accept" {
             if iridiumFocus == "Stores" { settingsSheet = .stores }
-            else if iridiumFocus == "Import Folder" { settingsSheet = .importFolder }
+            else if ["Import Folder", IridiumMeloNXSystemFiles.importAction].contains(iridiumFocus) { settingsSheet = .importFolder }
             else if iridiumFocus == "Getting Started" { onboarding.rerun() }
             else { iridiumPages.append(iridiumFocus) }
         }
@@ -1499,6 +1503,7 @@ case "About": IridiumAboutView().iridiumPageSurface().navigationTitle("About")
     private var iridiumSettingsOrder: [String] {
         switch iridiumPages.last {
         case nil: return ["Iridium", "Stores", "Import Folder", "Getting Started", "Controls", "JIT & Memory", "Madeira · Windows"] + IridiumConsoleSystem.all.map(\.title) + ["About"]
+        case IridiumMeloNXSystemFiles.route: return [IridiumMeloNXSystemFiles.importAction]
         case "Madeira · Windows": return ["Display", "Saves & Backups", "Stores & Drives", "Windows Components", "Advanced Compatibility"]
         default:
             guard let title = iridiumPages.last, let system = IridiumConsoleSystem.system(titled: title) else { return [] }

@@ -289,9 +289,20 @@ enum IridiumArtworkMatcher {
         "english", "japanese", "french", "german", "spanish", "italian", "dutch", "portuguese", "korean", "chinese"
     ]
 
+    static func switchTitleID(_ raw: String) -> String? {
+        let leaf = filename(raw, platform: .nintendoSwitch)
+        let pattern = #"(?i)(?<![a-z0-9])01[0-9a-f]{11}000(?![a-z0-9])"#
+        let expression = try! NSRegularExpression(pattern: pattern)
+        let ids = Set(expression.matches(in: leaf, range: NSRange(leaf.startIndex..., in: leaf)).compactMap { match in
+            Range(match.range, in: leaf).map { leaf[$0].uppercased() }
+        })
+        return ids.count == 1 ? ids.first : nil
+    }
+
     static func query(_ raw: String, platform: IridiumPlatform) -> String {
         var leaf = filename(raw, platform: platform).replacingOccurrences(of: "_", with: " ")
-        while let tag = trailingTag(leaf), recognizedTag(tag.contents) {
+        while let tag = trailingTag(leaf),
+              recognizedTag(tag.contents) || (platform == .nintendoSwitch && IridiumROMInspection.isSwitchBaseTitleID(tag.contents.uppercased())) {
             leaf = String(leaf[..<tag.start]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return leaf
@@ -348,7 +359,8 @@ enum IridiumArtworkMatcher {
 
     private static func metadata(_ raw: String, platform: IridiumPlatform) -> Set<String> {
         var leaf = filename(raw, platform: platform), result = Set<String>()
-        while let tag = trailingTag(leaf), recognizedTag(tag.contents) {
+        while let tag = trailingTag(leaf),
+              recognizedTag(tag.contents) || (platform == .nintendoSwitch && IridiumROMInspection.isSwitchBaseTitleID(tag.contents.uppercased())) {
             result.formUnion(tagWords(tag.contents).map { words($0) })
             leaf = String(leaf[..<tag.start]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -371,6 +383,9 @@ enum IridiumArtworkMatcher {
         case .playStation2: extensions = ["elf", "iso", "chd"]
         case .dreamcast: extensions = ["elf", "cdi", "chd"]
         case .arcade: extensions = ["zip"]
+        case .nintendoSwitch:
+            extensions = IridiumPlatform.switchFormats
+            leaf = leaf.replacingOccurrences(of: "™", with: "").replacingOccurrences(of: "®", with: "")
         }
         if extensions.contains(suffix) { leaf = String(leaf.dropLast(suffix.count + 1)) }
         if [.wii, .gameCube].contains(platform), leaf.lowercased().hasSuffix(".nkit") { leaf = String(leaf.dropLast(5)) }

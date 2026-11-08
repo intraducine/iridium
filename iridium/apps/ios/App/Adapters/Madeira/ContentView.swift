@@ -1389,10 +1389,19 @@ struct ContentView: View {
                 }
             } message: { Text(library.cloudNotice?.message ?? "") }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                RuntimePerformanceDiagnostics.shared.setForeground(true)
                 library.refreshFlag()
                 if library.enabled && library.current == nil { MetalHostView.shared.isHidden = true }
             }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                RuntimePerformanceDiagnostics.shared.setForeground(false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                RuntimePerformanceDiagnostics.shared.record("memory-warning")
+            }
             .onAppear {
+                RuntimePerformanceDiagnostics.shared.record("app-root-appeared")
+                RuntimePerformanceDiagnostics.shared.setForeground(UIApplication.shared.applicationState == .active)
                 jit_install_trap_handler()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
@@ -2588,6 +2597,7 @@ struct ContentView: View {
     /// developer interface's buttons.
     private func launchLibraryEntry(_ entry: LibraryEntry) {
         guard library.current == nil, !library.launching, library.preparing == nil else { return }
+        RuntimePerformanceDiagnostics.shared.record("windows-play")
         library.prepare(entry)
         let preparation = library.preparationID
         // Draw the launch status before profile checks or native setup can block.
@@ -2604,7 +2614,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         // madeira-bcd: a game seen for the first time starts with Madeira's recommended
         // settings (GameRecommendationsApply.swift).
         var entry = entry
@@ -2615,7 +2625,11 @@ struct ContentView: View {
         // any library game (SteamDirectStart).
         if let appID = entry.steamAppID, !entry.startsSteamGameDirectly {
             guard let game = MadeiraDock.games(drive: MadeiraDock.drive).first(where: { $0.id == appID }) else {
-                library.error = "Steam no longer lists this game as installed. Refresh the library and try again."; return
+                let folder = LibraryModel.drive.appendingPathComponent(entry.relativePath)
+                library.error = FileManager.default.fileExists(atPath: folder.path)
+                    ? "Steam no longer lists this game as installed. Refresh the library and try again."
+                    : IridiumRuntimeError.missingGameFolder.localizedDescription
+                return
             }
             LogStore.shared.log("[steam-games] play app=\(appID)")
             // madeira-bcd: the game's own options (AVX, NVIDIA, Wine's C++ runtime, its
@@ -2634,6 +2648,12 @@ struct ContentView: View {
         }
         guard !IridiumMadeiraRuntime.shared.isBusy, library.current == nil else {
             library.error = "A session is already running."; return
+        }
+        do { if entry.desktop != true { _ = try LibraryModel.executable(entry.launchRelativePath) } }
+        catch {
+            library.error = error.localizedDescription
+            logStore.log("[launch-preflight] \(error.localizedDescription)", level: .error)
+            return
         }
         // The same precondition runWineFullSequence checks: the JIT pool is
         // taken at launch, through the debugger. Without it, Play enables JIT and
@@ -2701,7 +2721,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         // A GOG game's install-script registry values (The Witcher's launcher needs its
         // InstallFolder), for its own entry or a program added from its folder.
         guard GOGLibrary.shared.writeInstallScriptRegistry(for: entry) else {
@@ -2799,7 +2819,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID
         guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
@@ -2862,6 +2882,7 @@ struct ContentView: View {
         ws_log_quiet = 1
 
         DispatchQueue.global(qos: .userInitiated).async {
+            RuntimePerformanceDiagnostics.shared.record("wine-start")
             DeviceDiagnostics.logLaunch()
             // A library entry's launch profile (executable, arguments, x87
             // precision, frame limit).
@@ -3487,7 +3508,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         let inLibrary = library.enabled
         guard jitReadyForLaunch(inLibrary: inLibrary, entry: profile?.id,
                                 then: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }

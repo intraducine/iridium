@@ -15,6 +15,7 @@ class AppJITMemoryTests(unittest.TestCase):
     def test_one_preparation_multiple_cores_and_1100_psp_sessions(self):
         source = r'''
 #include "IRJITMemory.h"
+#include "IRJITPrepare.h"
 #include "IRPSPExecutableMemory.h"
 #include "IRSharedJITMemory.h"
 #include <cassert>
@@ -44,8 +45,19 @@ int main() {
     const auto *api = ir_jit_memory_api(); void *rx, *rw;
     assert(!api->allocate(8, &rx, &rw));
     assert(!ir_jit_memory_prepare(nullptr));
-    assert(ir_jit_memory_prepare(prepare) && ir_jit_memory_ready());
-    assert(ir_jit_memory_prepare(prepare) && preparations == 1);
+    const size_t switchPool = 544u * 1024 * 1024;
+    assert(!ir_jit_memory_prepare_sized(prepare, switchPool + 1));
+    assert(ir_jit_memory_prepare_sized(prepare, switchPool) && ir_jit_memory_ready());
+    assert(ir_jit_memory_has_capacity(switchPool) && !ir_jit_memory_has_capacity(0));
+    assert(!api->allocate(switchPool + 16384, &rx, &rw));
+    assert(api->allocate(512u * 1024 * 1024, &rx, &rw));
+    assert(!ir_jit_memory_prepare(prepare) && preparations == 1);
+    emit(rx, rw, 42);
+    assert(api->release(rx, 512u * 1024 * 1024));
+    assert(!ir_jit_memory_prepare([](void *, size_t) -> void * { return nullptr; }));
+    assert(ir_jit_memory_has_capacity(switchPool) && !ir_jit_memory_has_capacity(0));
+    assert(ir_jit_memory_prepare(prepare) && ir_jit_memory_has_capacity(0));
+    assert(ir_jit_memory_prepare_sized(prepare, switchPool) && preparations == 2);
     assert(!api->allocate(0, &rx, &rw) && !api->allocate(SIZE_MAX, &rx, &rw));
     assert(!api->allocate(1, nullptr, &rw));
     assert(ir_phase3_core_prepare_memory(api));
@@ -111,7 +123,7 @@ int main() {
     }
     assert(ir_native_psp_exec_end(1100) == 0);
     assert(api->release(large, 512u * 1024 * 1024));
-    assert(ir_jit_memory_ready() && preparations == 1);
+    assert(ir_jit_memory_ready() && preparations == 2);
 }
 '''
         dolphin = (BRIDGE / 'IRDolphin.mm').read_text()
@@ -173,8 +185,8 @@ final class Memory: @unchecked Sendable {
     func windows() -> Bool { lock.lock(); defer { lock.unlock() }; windowsAllocations += 1; windowsReady = succeeds; return windowsReady }
     func isWindowsReady() -> Bool { lock.lock(); defer { lock.unlock() }; return windowsReady }
 }
-func ir_jit_memory_ready() -> Bool { Memory.shared.isReady() }
-func ir_jit_memory_prepare(_ callback: Int) -> Bool { Memory.shared.prepared() }
+func ir_jit_memory_has_capacity(_ bytes: Int) -> Bool { Memory.shared.isReady() }
+func ir_jit_memory_prepare_sized(_ callback: Int, _ bytes: Int) -> Bool { Memory.shared.prepared() }
 enum IridiumMadeiraRuntime {
     static func prepareJITMemory() -> Bool { Memory.shared.windows() }
     static var jitMemoryReady: Bool { Memory.shared.isWindowsReady() }
@@ -182,6 +194,11 @@ enum IridiumMadeiraRuntime {
 let ir_jit_prepare_region = 1
 func isDebuggerAttached() -> Bool { true }
 @MainActor enum LogStore { static let shared = Logger(); struct Logger { func log(_ text: String) {} } }
+@MainActor final class RuntimePerformanceDiagnostics {
+    static let shared = RuntimePerformanceDiagnostics()
+    var phases: [String] = []
+    func record(_ phase: String) { phases.append(phase) }
+}
 @MainActor final class Host {
     enum CoordinatorError: Error { case setupRequired(String) }
     var enableRequest: UUID?, busy = false, status: String?, error: String?
@@ -210,6 +227,10 @@ BODY
         for _ in 0..<100 { precondition(await host.prepare()) }
         precondition(host.enables == 2 && host.detaches == 2 && Memory.shared.allocations == 1)
         precondition(Memory.shared.windowsAllocations == 1)
+        precondition(RuntimePerformanceDiagnostics.shared.phases == [
+            "jit-windows-attach", "jit-windows-prepare", "jit-windows-ready",
+            "jit-console-attach", "jit-console-prepare", "jit-console-ready",
+        ])
         Memory.shared.ready = false; Memory.shared.succeeds = false
         precondition(!(await host.prepare()) && !host.consoleMemoryRequiresRestart)
         Memory.shared.succeeds = true; host.clean = false

@@ -60,7 +60,9 @@ do{try game.validate();fatalError("unsafe installed path")}catch{}
         # The default completion closure precedes the function's body.
         body=source.index(') {',start)+2
         installer=source[start:body]+function(source[body:],'{')
-        register=function((FRONTEND/'IridiumRuntimeLibrary.swift').read_text(),'    func registerInstalled(')
+        library_source=(FRONTEND/'IridiumRuntimeLibrary.swift').read_text()
+        register=function(library_source,'    func registerInstalled(')
+        publish=function(library_source,'    private func publishGames(')
         library_error=function((ROOT/'iridium/apps/ios/App/Adapters/Madeira/IridiumWindowsLibraryService.swift').read_text(),'enum LibraryError:')
         self.compile_run(r'''
 import Foundation
@@ -71,8 +73,10 @@ final class IridiumConsoleLibrary:@unchecked Sendable {
     static let shared=IridiumConsoleLibrary()
     let store=IridiumConsoleStore(root:FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString))
     let queue=DispatchQueue(label:"test.library")
+    let comparisonQueue=DispatchQueue(label:"test.library.copies")
     var games:[IridiumConsoleGame]=[]
-'''+register+r'''
+    var redundantGameIDs=Set<UUID>()
+'''+register+'\n'+publish+r'''
 }
 func ir_phase3_azahar_install_cia(_ frameworks:String,_ user:String,_ file:String)->Int32 {
     let root=URL(fileURLWithPath:user),name=URL(fileURLWithPath:file).lastPathComponent

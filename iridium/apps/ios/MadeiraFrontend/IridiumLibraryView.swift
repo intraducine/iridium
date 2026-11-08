@@ -41,7 +41,8 @@ struct IridiumLibraryView: View {
     @State private var choosingAdd = false
     @State private var pendingAdd: IridiumAddGameSource?
     @State private var pendingSupportGame: IridiumConsoleGame?
-    @State private var lastLaunchNeedsSupport = false
+    @State private var launchRecovery: IridiumConsoleLaunchRecovery?
+    @State private var settingsPath: [String] = []
     @State private var artworkDetail: IridiumGame?
     @State private var showHints = false
     @State private var showFocus = false
@@ -56,7 +57,7 @@ struct IridiumLibraryView: View {
         let all = library.entries.filter { entry in
             entry.desktop != true && !(entry.steamAppID.map { steamGames.sharedOnlyApps.contains($0) || library.hiddenSteamApps.contains($0) } ?? false)
         }.map { IridiumGame(windows: $0) }
-            + consoles.games.map { IridiumGame(console: $0) }
+            + consoles.games.filter { !consoles.redundantGameIDs.contains($0.id) }.map { IridiumGame(console: $0) }
         let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return IridiumLibraryOrder.ordered(all.map(\.id), saved: savedOrder).compactMap { byID[$0] }
     }
@@ -74,7 +75,7 @@ struct IridiumLibraryView: View {
         IridiumSimulatorLaunch.shared.attempt(game)
         return
         #endif
-        lastLaunchNeedsSupport = false
+        launchRecovery = nil
         if let appID = game.windows?.steamAppID {
             steam.error = nil
             if let download = steam.downloads[appID] {
@@ -97,14 +98,18 @@ struct IridiumLibraryView: View {
             } else if let console = game.console {
                 try consoleSession.validateLaunchAdmission()
                 let runtime = try IridiumRuntimeRegistry.resolve(platform: console.platform, preferred: console.runtimeID)
-                lastLaunchNeedsSupport = runtime.jit == .required
                 // These drivers acquire and close their own shared JIT session.
-                if lastLaunchNeedsSupport && !console.platform.isPhase3 && !jitState.enabled {
+                if runtime.jit == .required && !console.platform.isPhase3 && !jitState.enabled {
                     pendingSupportGame = console; enableJIT(); return
                 }
                 try IridiumConsoleDriver(game: console).launch(gameID: game.id)
             }
-        } catch { library.error = error.localizedDescription }
+        } catch {
+            launchRecovery = (error as? IridiumRuntimeError)?.launchRecovery
+            if game.platform == .nintendoSwitch, error as? IridiumRuntimeError == .unavailable {
+                library.error = "This build does not include MeloNX."
+            } else { library.error = error.localizedDescription }
+        }
     }
     private func options(_ game: IridiumGame) {
         if let windows = game.windows { detail = windows }
@@ -206,8 +211,8 @@ struct IridiumLibraryView: View {
                 onboarding.presentIfNeeded()
                 services.steam.connectAndReconcile()
             }
-            .task(id: scenePhase) {
-                guard scenePhase == .active else { return }
+            .task(id: scenePhase == .active && consoleSession.game?.runtimeID != "melonx") {
+                guard scenePhase == .active, consoleSession.game?.runtimeID != "melonx" else { return }
                 imports.resume()
                 repeat {
                     await steamGames.reconcileDeletedFiles()
@@ -215,6 +220,7 @@ struct IridiumLibraryView: View {
                     await EpicLibrary.shared.reconcileDeletedFiles()
                     await EALibrary.shared.reconcileDeletedFiles()
                     await ItchLibrary.shared.reconcileDeletedFiles()
+                    guard !Task.isCancelled else { return }
                     imports.scan()
                     do { try await Task.sleep(for: .seconds(4)) } catch { return }
                 } while !Task.isCancelled
@@ -295,6 +301,10 @@ struct IridiumLibraryView: View {
                 IridiumConsoleOptions(game: game) { launch(IridiumGame(console: $0)) }
             }
             .fullScreenCover(isPresented: Binding(get: { consoleSession.presented }, set: { _ in }), onDismiss: {
+                if let error = consoleSession.takeDismissalError() {
+                    launchRecovery = consoleSession.launchRecovery
+                    library.error = error
+                }
                 // Create feedback for the returned menu after the native session has closed.
                 selectionFeedback = UIImpactFeedbackGenerator(style: .medium); selectionFeedback.prepare()
                 restoreKeyboardFocus()
@@ -315,14 +325,14 @@ struct IridiumLibraryView: View {
             }
             .sheet(isPresented: Binding(get: { features != nil }, set: { if !$0 { features = nil } }), onDismiss: {
                 if let entry = pendingDetail { detail = entry; pendingDetail = nil }
-                completeOnboardingAction(); restoreKeyboardFocus()
+                settingsPath = []; completeOnboardingAction(); restoreKeyboardFocus()
             }) {
                 if features == 0 {
                         IridiumStoreBrowser(startDock: startDock) { entry in
                             pendingDetail = entry; features = nil
                         }
                     } else {
-                        LibraryView(play: play, enableJIT: enableJIT, startDock: startDock, tab: 1)
+                        LibraryView(play: play, enableJIT: enableJIT, startDock: startDock, tab: 1, settingsPath: settingsPath)
                 }
             }
             .modifier(GameSetupInboxPresenter())
@@ -344,8 +354,16 @@ struct IridiumLibraryView: View {
                 if let problem = JITCoordinator.shared.connectionProblem, library.error == problem.message {
                     jitConnectionActions(problem, retry: enableJIT, then: { library.error = nil })
                 }
-                if lastLaunchNeedsSupport { Button("JIT Settings") { library.error = nil; jit.showSetup = true } }
-                Button("OK", role: .cancel) { library.error = nil }
+                if launchRecovery == .jit {
+                    Button("JIT Settings") { launchRecovery = nil; library.error = nil; jit.showSetup = true }
+                }
+                if launchRecovery == .switchSetup, let system = IridiumConsoleSystem.system(for: .nintendoSwitch) {
+                    Button("MeloNX Settings") {
+                        launchRecovery = nil; library.error = nil
+                        settingsPath = [system.title, IridiumMeloNXSystemFiles.route]; features = 1
+                    }
+                }
+                Button("OK", role: .cancel) { launchRecovery = nil; library.error = nil }
             } message: { Text(library.error ?? "") }
     }
 

@@ -47,7 +47,7 @@ func ir_jit_memory_api() -> Int { 1 }
 @MainActor func ir_phase3_stop() { stops += 1 }
 @MainActor final class Host {
     let queue = Queue(), owner = 1
-    var error: String?, terminalFailure = false, completions = 0
+    var dismissalError: String?, terminalFailure = false, completions = 0
     var phase3Controller: UIViewController?
     func complete(_ owner: Int) { completions += 1 }
     func open(_ controller: UnsafeMutableRawPointer?, game: Game) {
@@ -59,13 +59,13 @@ MainActor.assumeIsolated {
     for runtime in ["azahar", "play", "flycast"] {
         let failed = Host()
         failed.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: runtime))
-        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.error != nil && failed.terminalFailure)
+        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.dismissalError != nil && failed.terminalFailure)
     }
     precondition(stops == 3)
     configurationAccepted = true
     let ready = Host()
     ready.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: "play"))
-    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.error == nil)
+    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.dismissalError == nil)
     ready.phase3Controller = nil
     precondition(UIViewController.live == 0)
     let unavailable = Host()
@@ -147,13 +147,18 @@ struct IRDolphinOptions { var resolution: Int32, aspect: Int32, remote: Int32, p
 SETTINGS
 typealias IridiumRuntimeLease = Int
 struct IridiumConsoleGame { var runtimeID = "dolphin"; var id = UUID() }
+enum IridiumRuntimeRegistry {
+    struct Runtime { let id: String; let sharedJITBytes: Int }
+    static let all = [Runtime(id: "melonx", sharedJITBytes: 544 * 1024 * 1024)]
+}
 enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: String { "JIT required" } }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
     var consoleMemoryRequiresRestart = false
+    var requestedBytes = 0
     var callback: ((Result<Void, Error>) -> Void)?
-    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
-        callback = completion
+    func prepareConsoleMemory(minimumBytes: Int, completion: @escaping (Result<Void, Error>) -> Void) {
+        requestedBytes = minimumBytes; callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let saved = callback; callback = nil; saved?(result) }
 }
@@ -165,7 +170,8 @@ final class Queue { func async(execute: () -> Void) { execute() } }
     var nativeStarts = 0, completions = 0, error: String?
     let queue = Queue()
     func complete(_ owner: Int) { precondition(owner == lease); completions += 1 }
-    func fail(_ message: String, owner: Int) { error = message; complete(owner) }
+    enum Recovery { case jit }
+    func fail(_ message: String, owner: Int, recovery: Recovery? = nil) { error = message; complete(owner) }
     func requireRestart(_ owner: Int) { error = "restart" }
 LAUNCH
         nativeStarts += 1
@@ -183,8 +189,9 @@ MainActor.assumeIsolated {
     defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
     let restored = IridiumDolphinSettings.load(id)
     precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
-    for runtimeID in ["dolphin", "azahar", "play", "flycast"] {
+    for runtimeID in ["dolphin", "azahar", "play", "flycast", "melonx"] {
     let failed = Host(); failed.start(runtimeID: runtimeID)
+    precondition(JITCoordinator.shared.requestedBytes == (runtimeID == "melonx" ? 544 * 1024 * 1024 : 0))
     precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
     precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT could not start"))

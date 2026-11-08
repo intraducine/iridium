@@ -107,3 +107,85 @@ struct RuntimeMemorySnapshot {
         #endif
     }
 }
+
+#if os(iOS)
+/// Samples on a utility queue even when the main thread is stalled.
+final class RuntimePerformanceDiagnostics: @unchecked Sendable {
+    static let shared = RuntimePerformanceDiagnostics()
+
+    private let queue = DispatchQueue(label: "software.iridium.performance", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var lastSample: (time: TimeInterval, usedMiB: UInt64, thermal: Int)?
+    private var pendingPing: TimeInterval?
+    private var reportedStall = false
+
+    private init() {}
+
+    func setForeground(_ active: Bool) {
+        queue.async { [self] in
+            if active {
+                guard timer == nil else { return }
+                sample("foreground")
+                let source = DispatchSource.makeTimerSource(queue: queue)
+                source.schedule(deadline: .now() + 1, repeating: .seconds(1), leeway: .milliseconds(100))
+                source.setEventHandler { [self] in tick() }
+                timer = source
+                source.resume()
+            } else {
+                timer?.cancel()
+                timer = nil
+                pendingPing = nil
+                reportedStall = false
+            }
+        }
+    }
+
+    func record(_ phase: String) {
+        queue.async { [self] in sample(phase) }
+    }
+
+    private func tick() {
+        sample("periodic", sparse: true)
+        let now = ProcessInfo.processInfo.systemUptime
+        if let sent = pendingPing {
+            if !reportedStall && now - sent >= 1 {
+                reportedStall = true
+                sample("main-stalled", mainDelay: now - sent)
+            }
+            return
+        }
+        pendingPing = now
+        // Keep at most one ping queued while the main thread is stalled.
+        DispatchQueue.main.async { [self] in
+            let delay = ProcessInfo.processInfo.systemUptime - now
+            queue.async { [self] in
+                guard pendingPing == now else { return }
+                if reportedStall || delay >= 1 { sample("main-resumed", mainDelay: delay) }
+                pendingPing = nil
+                reportedStall = false
+            }
+        }
+    }
+
+    private func sample(_ phase: String, sparse: Bool = false, mainDelay: TimeInterval? = nil) {
+        let process = ProcessInfo.processInfo
+        let now = process.systemUptime
+        let thermal = process.thermalState.rawValue
+        let memory = RuntimeMemorySnapshot.sample()
+        let usedMiB = memory.map { $0.usedBytes >> 20 }
+        if sparse, let previous = lastSample, let usedMiB,
+           now - previous.time < 30, abs(Int64(usedMiB) - Int64(previous.usedMiB)) < 128,
+           thermal == previous.thermal { return }
+        if let usedMiB { lastSample = (now, usedMiB, thermal) }
+        else if sparse { return }
+
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let used = usedMiB.map { String($0) } ?? "unknown"
+        let remaining = memory?.availableBytes.map { String($0 >> 20) } ?? "unknown"
+        let delay = mainDelay.map { " main_delay_ms=\(Int($0 * 1000))" } ?? ""
+        RuntimeDiagnosticLogFiles.writeConsoleLine(
+            "[Perf] build=\(build) phase=\(phase) uptime_ms=\(Int(now * 1000)) footprint_mib=\(used) headroom_mib=\(remaining) thermal=\(thermal)\(delay)"
+        )
+    }
+}
+#endif

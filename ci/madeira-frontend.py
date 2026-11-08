@@ -27,6 +27,13 @@ FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
 RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
 RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
+def melonx_component():
+    spec = importlib.util.spec_from_file_location('melonx_component', ROOT / 'ci/build-melonx-core.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 REVISION = engine_pins.get('madeira')['revision']
 PSP_REVISION = engine_pins.get('ppsspp')['revision']
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
@@ -180,6 +187,19 @@ def project(source, names):
             objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder' if index == 0 else 'text.xml', path=path, sourceTree='<group>')
             objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
             resources['files'].append(build); group['children'].append(ref)
+    if os.environ.get('IRIDIUM_MELONX') == '1':
+        component = melonx_component()
+        for index, (binary, name) in enumerate(component.packaged_files()):
+            framework = '/' in name
+            source = binary.parent if framework else binary
+            ref, build = f'F500000000000000{index:08X}', f'F600000000000000{index:08X}'
+            objects[ref] = dict(isa='PBXFileReference',
+                lastKnownFileType='wrapper.framework' if framework else 'compiled.mach-o.dylib',
+                path='../../' + source.relative_to(ROOT / '.build').as_posix(), sourceTree='SOURCE_ROOT')
+            objects[build] = dict(isa='PBXBuildFile', fileRef=ref,
+                                  settings={'ATTRIBUTES': ['CodeSignOnCopy', 'RemoveHeadersOnCopy']})
+            objects[embed]['files'].append(build)
+            group['children'].append(ref)
     for config in objects[target['buildConfigurationList']]['buildConfigurations']:
         settings = objects[config]['buildSettings']
         settings['PRODUCT_NAME'] = 'Iridium'
@@ -195,6 +215,8 @@ def project(source, names):
         append('OTHER_LDFLAGS', ['-lIridiumSameBoy', '-larchive', '-framework', 'CoreFoundation'], unique=False)
         append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PPSSPP'])
         if (os.environ.get('IRIDIUM_PHASE3') == '1'): append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_PHASE3'])
+        if os.environ.get('IRIDIUM_MELONX') == '1':
+            append('SWIFT_ACTIVE_COMPILATION_CONDITIONS', ['IRIDIUM_MELONX'])
     for value in objects.values():
         if value.get('isa') == 'XCBuildConfiguration':
             value['buildSettings']['MARKETING_VERSION'] = '0.3.0'
@@ -226,6 +248,12 @@ def prepare_helper_versions(app):
 
 
 def prepare():
+    melonx = None
+    if os.environ.get('IRIDIUM_MELONX') == '1':
+        if os.environ.get('IRIDIUM_PHASE3') != '1':
+            raise ValueError('MeloNX needs the shared console player build')
+        melonx = melonx_component()
+        subprocess.run([sys.executable, '-B', str(ROOT / 'ci/build-melonx-core.py'), '--inspect'], check=True)
     import iridium_app_sources as app_sources
     import ppsspp_gl_sync_overlay as psp_gl_sync
     verify_pin()
@@ -309,6 +337,12 @@ def prepare():
     if (os.environ.get('IRIDIUM_PHASE3') == '1'):
         data['IridiumRuntimeRevisions'].update({name: builder.PINS[engine][1]
             for engine, name in [('dolphin', 'Dolphin'), ('azahar', 'Azahar'), ('play', 'Play!'), ('flycast', 'Flycast')]})
+    if melonx:
+        data['IridiumMeloNXRevision'] = melonx.REVISION
+        data['IridiumRuntimeRevisions']['MeloNX'] = melonx.REVISION
+        shutil.copy2(melonx.SOURCE / 'LICENSE.txt', app / 'Madeira/licenses/LICENSE-MELONX.txt')
+    else:
+        (app / 'Madeira/licenses/LICENSE-MELONX.txt').unlink(missing_ok=True)
     data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
     verify()
@@ -360,6 +394,20 @@ def check_psp_jit_interface(record):
 
 def check_bundle(app):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
+    if 'IridiumMeloNXRevision' in info:
+        melonx = melonx_component()
+        record = json.loads(melonx.RECEIPT.read_text())
+        if info['IridiumMeloNXRevision'] != melonx.REVISION or record != melonx.component_record():
+            raise ValueError('MeloNX source or component receipt differs')
+        for source, name in melonx.packaged_files():
+            binary = app / 'Frameworks' / name
+            if binary.is_symlink() or not binary.is_file() or (
+                melonx.digest(binary) != record['files'][name] and
+                madeira_components.unsigned_digest(binary) != madeira_components.unsigned_digest(source)
+            ):
+                raise ValueError('MeloNX packaged binary differs: ' + name)
+    elif os.environ.get('IRIDIUM_MELONX') == '1' or (app / 'Frameworks/libIridiumMeloNX.dylib').exists():
+        raise ValueError('MeloNX component metadata is missing')
     if info.get('IridiumPhase3Revisions') is not None:
         from phase3_app import check_phase3_bundle
         check_phase3_bundle(app, info['IridiumPhase3Revisions'])

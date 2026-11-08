@@ -30,7 +30,10 @@ import ImageIO
         if let store { return store.appearance(id) }
         var empty = IridiumArtworkAppearance(); empty.revision = id; return empty
     }
-    func title(_ game: IridiumGame) -> String { appearance(game.id).title ?? game.title }
+    func title(_ game: IridiumGame) -> String {
+        let item = appearance(game.id)
+        return item.title ?? (game.platform == .nintendoSwitch ? item.match?.title : nil) ?? game.title
+    }
     func key(_ game: IridiumGame) -> String {
         "\(game.id):\(appearance(game.id).revision):\(game.coverFile ?? ""):\(game.steamID ?? game.steamAppID ?? 0)"
     }
@@ -75,6 +78,9 @@ import ImageIO
             var candidate: IridiumArtworkCandidate?
             if let id = game.steamID ?? game.steamAppID, game.platform == .windows {
                 candidate = IridiumArtworkCatalog.steam(id: id, title: game.title)
+            } else if let console = game.console, console.platform == .nintendoSwitch,
+                      let id = await switchArtworkTitleID(console) {
+                candidate = try await IridiumArtworkCatalog.switchGame(id)
             } else {
                 let identity = await identify(game)
                 try Task.checkCancellation()
@@ -112,6 +118,15 @@ import ImageIO
             }
         }
     }
+    private func switchArtworkTitleID(_ game: IridiumConsoleGame) async -> String? {
+        let store = IridiumConsoleLibrary.shared.store
+        let id = await Task.detached(priority: .utility) { () -> String? in
+            guard ["nsp", "pfs0"].contains(game.fileExtension), let url = try? store.rom(game) else { return nil }
+            return (try? IridiumROMInspection.inspect(url, fileExtension: game.fileExtension))?.switchTitleID
+        }.value
+        return id ?? IridiumArtworkMatcher.switchTitleID(game.originalFilename ?? game.title)
+    }
+
     func select(_ candidate: IridiumArtworkCandidate, for game: IridiumGame) async throws {
         guard let store, let ticket = store.begin(game.id, automatic: false) else {
             throw LibraryError.message(error ?? "Artwork storage is unavailable.")
@@ -306,6 +321,10 @@ import ImageIO
             case .nintendo3DS: repository = "Nintendo_-_Nintendo_3DS"
             case .playStation2: repository = "Sony_-_PlayStation_2"
             case .dreamcast: repository = "Sega_-_Dreamcast"
+            case .nintendoSwitch:
+                let url = URL(string: "https://raw.githubusercontent.com/JigSawFr/Atlas/data/platforms/switch/names.json")!
+                let payload = try await data(url, limit: maximumIndexBytes)
+                return try await Task.detached(priority: .utility) { try decodeSwitchIndex(payload) }.value
             case .arcade: return []
             case .windows: return []
             }
@@ -330,6 +349,42 @@ import ImageIO
             throw error
         }
     }
+    static func switchGame(_ id: String) async throws -> IridiumArtworkCandidate? {
+        guard IridiumROMInspection.isSwitchBaseTitleID(id) else { return nil }
+        let root = "https://api.nlib.cc/nx/\(id)"
+        let data = try await data(URL(string: root + "?fields=name,icon,banner")!, limit: 16 * 1024)
+        return try decodeSwitchGame(data, expectedID: id)
+    }
+
+    nonisolated static func decodeSwitchGame(_ data: Data, expectedID: String) throws -> IridiumArtworkCandidate? {
+        struct Item: Decodable { let id: String; let name: String; let icon: String?; let banner: String? }
+        let item = try JSONDecoder().decode(Item.self, from: data)
+        guard item.id == expectedID, item.icon != nil || item.banner != nil else { return nil }
+        return switchCandidate(id: item.id, title: item.name, icon: item.icon != nil, banner: item.banner != nil)
+    }
+
+    nonisolated static func decodeSwitchIndex(_ data: Data) throws -> [IridiumArtworkCandidate] {
+        struct Index: Decodable { let schema: Int; let platform: String; let games: [String: String] }
+        guard data.count <= maximumIndexBytes else { throw LibraryError.message("The artwork catalog is too large.") }
+        let index = try JSONDecoder().decode(Index.self, from: data)
+        guard index.schema == 1, index.platform == "switch", index.games.count <= 100_000 else {
+            throw LibraryError.message("The Switch artwork catalog is unavailable.")
+        }
+        return index.games.sorted { $0.key < $1.key }.compactMap { switchCandidate(id: $0.key, title: $0.value) }
+    }
+
+    nonisolated private static func switchCandidate(id: String, title: String, icon: Bool = true,
+                                                  banner: Bool = true) -> IridiumArtworkCandidate? {
+        guard IridiumROMInspection.isSwitchBaseTitleID(id), !title.isEmpty, title.utf8.count <= 512 else { return nil }
+        // The catalog supplies IDs and availability. Asset URLs always use our HTTPS endpoints.
+        let root = URL(string: "https://api.nlib.cc/nx/\(id)/")!
+        let cover = icon ? root.appendingPathComponent("icon") : nil
+        let background = banner ? root.appendingPathComponent("banner") : nil
+        return IridiumArtworkCandidate(id: id, title: title, platform: .nintendoSwitch, source: "nlib",
+            coverURL: cover ?? background, backgroundURL: background,
+            coverAlternates: cover == nil ? [] : [background].compactMap { $0 })
+    }
+
     nonisolated static func boxartRevision(_ data: Data) throws -> String {
         struct Tree: Decodable {
             struct Item: Decodable { let path: String; let type: String; let sha: String }
@@ -385,7 +440,7 @@ import ImageIO
             try Task.checkCancellation()
             let host = source.host?.lowercased() ?? ""
             guard source.scheme == "https", source.user == nil, source.password == nil,
-                  ["api.github.com", "raw.githubusercontent.com"].contains(host) || host.hasSuffix(".steamstatic.com") else {
+                  ["api.github.com", "raw.githubusercontent.com", "api.nlib.cc"].contains(host) || host.hasSuffix(".steamstatic.com") else {
                 throw LibraryError.message("This artwork source is unsupported.")
             }
             guard visited.insert(source).inserted else { break }

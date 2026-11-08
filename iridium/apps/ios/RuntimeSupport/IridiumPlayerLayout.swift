@@ -6,17 +6,18 @@ import CoreGraphics
 
 /// App-owned presentation profiles. Native runtimes keep ownership of input and rendering.
 enum IridiumPlayerProfile: String, CaseIterable {
-    case windows, psp, gameBoy, console, nintendo3DS
+    case windows, psp, gameBoy, console, nintendo3DS, nintendoSwitch
     static func consoleProfile(_ platform: String?) -> Self {
         if platform == "psp" { return .psp }
         if platform == "nintendo3DS" { return .nintendo3DS }
+        if platform == "nintendoSwitch" { return .nintendoSwitch }
         return ["gameCube", "wii", "playStation2", "dreamcast", "arcade"].contains(platform ?? "") ? .console : .gameBoy
     }
     var aspectRatio: CGFloat {
         switch self {
         case .psp: return 480.0 / 272.0
         case .gameBoy: return 160.0 / 144.0
-        case .windows: return 16.0 / 9.0
+        case .windows, .nintendoSwitch: return 16.0 / 9.0
         case .console: return 4.0 / 3.0
         case .nintendo3DS: return 400.0 / 480.0
         }
@@ -111,7 +112,7 @@ enum IridiumConsoleControlMapping {
         case .psp: return ["A": UInt16(1), "B": 1 << 8, "X": 1 << 1,
                           "Y": 1 << 9, "LB": 1 << 10, "RB": 1 << 11][action]
         case .gameBoy: return ["A": UInt16(1 << 8), "B": 1][action]
-        case .console, .nintendo3DS:
+        case .console, .nintendo3DS, .nintendoSwitch:
             return ["A": UInt16(1 << 8), "B": 1, "X": 1 << 9, "Y": 1 << 1,
                     "LB": 1 << 10, "RB": 1 << 11, "LT": 1 << 12, "RT": 1 << 13,
                     "L3": 1 << 14, "R3": 1 << 15][action]
@@ -127,6 +128,8 @@ enum IridiumConsoleControlMapping {
         return ["A": "xmark", "B": "circle", "X": "square", "Y": "triangle"][action]
     }
     static func label(_ action: String, profile: IridiumPlayerProfile, platform: String? = nil, wiiRemote: Int = 0) -> String {
+        if profile == .nintendoSwitch, let label = ["LS": "Left Stick", "RS": "Right Stick",
+            "LB": "L", "RB": "R", "LT": "ZL", "RT": "ZR", "Menu": "+", "View": "−"][action] { return label }
         if platform == "dreamcast", let label = ["A": "B", "B": "A", "X": "Y", "Y": "X", "LT": "L", "RT": "R"][action] { return label }
         if platform == "playStation2", let label = ["A": "Circle", "B": "Cross", "X": "Triangle", "Y": "Square", "LB": "L1", "RB": "R1", "LT": "L2", "RT": "R2"][action] { return label }
         if platform == "wii" {
@@ -182,9 +185,10 @@ struct IridiumPlayerLayout {
         let left = bounds.minX, right = bounds.maxX, bottom = bounds.maxY
         let dpadCenter = CGPoint(x: left + 76, y: bottom - (landscape ? 132 : 166))
         dpad = Self.frame(center: dpadCenter, size: CGSize(width: 132, height: 132))
+        let stickSize: CGFloat = profile == .nintendoSwitch ? 72 : 88
         stick = profile != .gameBoy && profile != .windows ? Self.frame(
             center: CGPoint(x: landscape ? dpad.maxX + 8 + 44 : left + 76, y: bottom - 54),
-            size: CGSize(width: 88, height: 88)) : nil
+            size: CGSize(width: stickSize, height: stickSize)) : nil
         var result: [IridiumPlayerButton] = []
         func add(_ id: String, _ symbol: String? = nil, bit: UInt16, x: CGFloat, y: CGFloat, width: CGFloat = 48) {
             result.append(IridiumPlayerButton(id: id, symbol: symbol, bit: bit,
@@ -202,7 +206,7 @@ struct IridiumPlayerLayout {
         } else if profile == .gameBoy {
             add("B", bit: 1, x: right - 112, y: bottom - 148)
             add("A", bit: 1 << 8, x: right - 52, y: bottom - 172)
-        } else if profile == .console || profile == .nintendo3DS {
+        } else if profile == .console || profile == .nintendo3DS || profile == .nintendoSwitch {
             let cx = right - 76, cy = bottom - (landscape ? 132 : 166)
             add("Y", bit: 1 << 1, x: cx - 46, y: cy)
             add("X", bit: 1 << 9, x: cx, y: cy - 46)
@@ -214,7 +218,7 @@ struct IridiumPlayerLayout {
             add("L2", bit: 1 << 12, x: left + 124, y: shoulderY, width: 60)
             add("R2", bit: 1 << 13, x: right - 124, y: shoulderY, width: 60)
         }
-        let dualStick = profile == .console || profile == .nintendo3DS
+        let dualStick = profile == .console || profile == .nintendo3DS || profile == .nintendoSwitch
         let selectX = landscape ? bounds.midX - 84 : dualStick ? bounds.midX - 40 : right - 116
         let startX = landscape ? bounds.midX + 84 : dualStick ? bounds.midX + 40 : right - 44
         let systemY = landscape || dualStick ? bounds.minY + 26 : bottom - 44

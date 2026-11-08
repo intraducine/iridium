@@ -22,10 +22,14 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], cwd=ROOT, text=True)
 
 
-def dispatch(ref, expected, release_build=False):
+def dispatch(ref, expected, release_build=False, melonx=False):
     check_commit(expected, expected)
     token = uuid.uuid4().hex
+    if release_build and melonx:
+        raise ValueError("MeloNX is available for review builds.")
     fields = ["-f", "release_build=true"] if release_build else []
+    if melonx:
+        fields += ["-f", "melonx=true"]
     gh("workflow", "run", WORKFLOW, "--repo", REPO, "--ref", ref,
        "-f", f"expected_sha={expected}", "-f", f"dispatch_id={token}", *fields)
     # A unique title identifies this request, even with concurrent dispatches.
@@ -51,13 +55,15 @@ def main():
     parser.add_argument("--check", action="store_true", help="Check workflow inputs before any compilation")
     parser.add_argument("--release", action="store_true", help="Include the full source archive and release audit artifacts")
     parser.add_argument("--phase3", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--melonx", action="store_true", help="Include MeloNX in a review IPA")
     args = parser.parse_args()
     if args.check:
         check_commit(os.environ.get("EXPECTED_SHA", ""), os.environ.get("GITHUB_SHA", ""))
         return
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     ref = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    print(dispatch(ref, expected, release_build=args.release))
+    fields = {"melonx": True} if args.melonx else {}
+    print(dispatch(ref, expected, release_build=args.release, **fields))
 
 
 if __name__ == "__main__":

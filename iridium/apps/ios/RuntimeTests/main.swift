@@ -78,6 +78,26 @@ let color = try store.importROM(colorFile, into: store.load())
 check(color.platform == .gameBoyColor)
 let other = try store.importROM(input, into: store.load())
 check(game.id != other.id)
+check(store.redundantGameCopies(in: try store.load()) == [other.id])
+do {
+    let originalROM = try store.rom(game), duplicateROM = try store.rom(other)
+    let a = try FileHandle(forWritingTo: originalROM), b = try FileHandle(forWritingTo: duplicateROM)
+    defer { try? a.close(); try? b.close() }
+    let tail: UInt64 = 64 * 1024 * 1024 + 17
+    try a.truncate(atOffset: tail); try b.truncate(atOffset: tail)
+    check(store.redundantGameCopies(in: try store.load()) == [other.id])
+    try b.seek(toOffset: tail - 1)
+    try b.write(contentsOf: Data([1]))
+    check(store.redundantGameCopies(in: try store.load()).isEmpty)
+    try a.truncate(atOffset: UInt64(original.count)); try b.truncate(atOffset: UInt64(original.count))
+}
+let reused = try store.importROM(input, into: store.load(), reuseIdentical: true)
+check(reused.id == game.id)
+check(try store.load().count == 3)
+let otherSave = try store.saveDirectory(other).appendingPathComponent("other.sav")
+try Data([9]).write(to: otherSave)
+check(store.redundantGameCopies(in: try store.load()).isEmpty)
+try fm.removeItem(at: otherSave)
 check(try store.saveDirectory(game) != store.saveDirectory(other))
 let saved = try store.saveDirectory(game).appendingPathComponent("battery.sav")
 try Data([1, 2, 3]).write(to: saved)
@@ -295,6 +315,104 @@ func inspectPhase3(_ bytes: Data, _ ext: String, _ expected: IridiumPlatform?, p
     if let expected { check(try IridiumROMInspection.inspect(path, fileExtension: ext, preferredPlatform: preferred).platform == expected) }
     else { rejects { _ = try IridiumROMInspection.inspect(path, fileExtension: ext, preferredPlatform: preferred) } }
 }
+var nro = Data(repeating: 0, count: 0x3000)
+put(Array("NRO0".utf8), in: &nro, at: 0x10)
+putLE(0x3000, in: &nro, at: 0x18, bytes: 4)
+for index in 0..<3 {
+    putLE(UInt64(0x1000 * index), in: &nro, at: 0x20 + index * 8, bytes: 4)
+    putLE(0x1000, in: &nro, at: 0x24 + index * 8, bytes: 4)
+}
+try inspectPhase3(nro, "nro", .nintendoSwitch)
+let switchFile = temporary.appendingPathComponent("phase3-fixture.nro")
+let switchStore = IridiumConsoleStore(root: temporary.appendingPathComponent("switch-library"))
+#if IRIDIUM_MELONX
+let switchGame = try switchStore.importROM(switchFile, into: [])
+check(switchGame.runtimeID == "melonx")
+check(try switchStore.systemDirectory(switchGame).path.hasSuffix("/System/melonx"))
+check(try switchStore.validateROM(switchGame, forLaunch: true).pathExtension == "nro")
+rejects { _ = try IridiumRuntimeRegistry.melonx.executionMode(jitAvailable: false) }
+#else
+check(IridiumRuntimeRegistry.compatible(with: .nintendoSwitch).isEmpty)
+rejects { _ = try switchStore.importROM(switchFile, into: []) }
+#endif
+putLE(0x1001, in: &nro, at: 0x34, bytes: 4)
+try inspectPhase3(nro, "nro", nil)
+var nsp = Data(repeating: 0, count: 0x40)
+put(Array("PFS0".utf8), in: &nsp, at: 0)
+putLE(1, in: &nsp, at: 4, bytes: 4)
+putLE(9, in: &nsp, at: 8, bytes: 4)
+putLE(4, in: &nsp, at: 0x18, bytes: 8)
+put(Array("game.nca".utf8), in: &nsp, at: 0x28)
+try inspectPhase3(nsp, "nsp", .nintendoSwitch)
+try inspectPhase3(nsp, "pfs0", .nintendoSwitch)
+var ticketPackage = Data(repeating: 0, count: 0x60)
+put(Array("PFS0".utf8), in: &ticketPackage, at: 0)
+putLE(1, in: &ticketPackage, at: 4, bytes: 4)
+putLE(37, in: &ticketPackage, at: 8, bytes: 4)
+putLE(4, in: &ticketPackage, at: 0x18, bytes: 8)
+put(Array("01000000000100000000000000000000.tik".utf8), in: &ticketPackage, at: 0x28)
+let renamedNSP = temporary.appendingPathComponent("renamed.nsp")
+try ticketPackage.write(to: renamedNSP)
+check(try IridiumROMInspection.inspect(renamedNSP, fileExtension: "nsp").switchTitleID == "0100000000010000")
+#if IRIDIUM_MELONX
+let package = try switchStore.importROM(temporary.appendingPathComponent("phase3-fixture.nsp"), into: [switchGame])
+do {
+    _ = try switchStore.validateROM(package, forLaunch: true)
+    preconditionFailure("Packaged Switch games require keys")
+} catch IridiumRuntimeError.missingSwitchKeys {}
+let keyFolder = try switchStore.checked(["System", "melonx", "system"], createDirectory: true)
+try Data([1]).write(to: keyFolder.appendingPathComponent("prod.keys"))
+do {
+    _ = try switchStore.validateROM(package, forLaunch: true)
+    preconditionFailure("Packaged Switch games require installed firmware")
+} catch IridiumRuntimeError.missingSwitchFirmware {}
+let firmware = try switchStore.checked(["System", "melonx", "bis", "system", "Contents", "registered", "fixture.nca"], createDirectory: true)
+try Data([1]).write(to: firmware.appendingPathComponent("00"))
+let packagedROM = try switchStore.validateROM(package, forLaunch: true)
+try fm.removeItem(at: packagedROM)
+do {
+    _ = try switchStore.validateROM(package, forLaunch: true)
+    preconditionFailure("A missing game file needs its own error")
+} catch IridiumRuntimeError.missingGameFile {}
+try fm.removeItem(at: packagedROM.deletingLastPathComponent())
+do {
+    _ = try switchStore.validateROM(package, forLaunch: true)
+    preconditionFailure("A missing game folder needs its own error")
+} catch IridiumRuntimeError.missingGameFolder {}
+var exefs = nsp
+put(Array("main\0\0\0\0\0".utf8), in: &exefs, at: 0x28)
+let rawPath = temporary.appendingPathComponent("homebrew.pfs0")
+try exefs.write(to: rawPath)
+let homebrew = try switchStore.importROM(rawPath, into: [switchGame, package])
+try fm.removeItem(at: keyFolder.appendingPathComponent("prod.keys"))
+try fm.removeItem(at: firmware)
+check(try switchStore.validateROM(homebrew, forLaunch: true).pathExtension == "pfs0")
+#endif
+putLE(1000, in: &nsp, at: 0x18, bytes: 8)
+try inspectPhase3(nsp, "nsp", nil)
+var xci = Data(repeating: 0, count: 0x220)
+put(Array("HEAD".utf8), in: &xci, at: 0x100)
+putLE(0x200, in: &xci, at: 0x130, bytes: 8)
+putLE(0x20, in: &xci, at: 0x138, bytes: 8)
+put(Array("HFS0".utf8), in: &xci, at: 0x200)
+try inspectPhase3(xci, "xci", .nintendoSwitch)
+putLE(UInt64.max, in: &xci, at: 0x130, bytes: 8)
+try inspectPhase3(xci, "xci", nil)
+try inspectPhase3(Data(repeating: 0xab, count: 0xc00), "nca", .nintendoSwitch)
+try inspectPhase3(Data(repeating: 0, count: 0xc00), "nca", nil)
+var nso = Data(repeating: 0, count: 0x130)
+put(Array("NSO0".utf8), in: &nso, at: 0)
+for segment in 0..<3 {
+    let field = 0x10 + segment * 16
+    putLE(UInt64(0x100 + 16 * segment), in: &nso, at: field, bytes: 4)
+    putLE(UInt64(4096 * segment), in: &nso, at: field + 4, bytes: 4)
+    putLE(16, in: &nso, at: field + 8, bytes: 4)
+}
+try inspectPhase3(nso, "nso", .nintendoSwitch)
+putLE(0xfffffff0, in: &nso, at: 0x34, bytes: 4)
+try inspectPhase3(nso, "nso", nil)
+
+
 var ps2ELF = elfFixture(); putLE(0x20924001, in: &ps2ELF, at: 36, bytes: 4)
 try inspectPhase3(ps2ELF, "elf", .playStation2)
 var dcELF = elfFixture(); putLE(42, in: &dcELF, at: 18, bytes: 2)

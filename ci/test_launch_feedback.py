@@ -57,6 +57,11 @@ class LaunchFeedbackTests(unittest.TestCase):
         prepare = model[model.index('    func prepare(_ entry:'):model.index('    /// A Steam game\'s saves')]
         self.run_swift('''import Foundation
 struct LibraryEntry { let id = UUID() }
+@MainActor final class RuntimePerformanceDiagnostics {
+ static let shared = RuntimePerformanceDiagnostics()
+ var phases: [String] = []
+ func record(_ phase: String) { phases.append(phase) }
+}
 @MainActor enum TouchControlsHost { static var attachments = 0; static func attach() { attachments += 1 } }
 @MainActor final class LibraryModel {
  var preparationID = UUID()
@@ -77,6 +82,7 @@ struct LibraryEntry { let id = UUID() }
  @MainActor static func main() async throws {
   let host = Host(), entry = LibraryEntry()
   host.play(entry); host.play(entry)
+  precondition(RuntimePerformanceDiagnostics.shared.phases == ["windows-play"])
   precondition(host.library.preparing?.id == entry.id && host.launches == 0 && TouchControlsHost.attachments == 1)
   let deadline = Date().addingTimeInterval(3)
   while host.launches == 0 && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }

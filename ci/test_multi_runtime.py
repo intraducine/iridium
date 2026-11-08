@@ -89,6 +89,23 @@ class SameBoyBuildTests(unittest.TestCase):
 
 
 class MultiRuntimeTests(unittest.TestCase):
+    def test_terminal_console_error_waits_for_player_dismissal(self):
+        frontend = ROOT / 'iridium/apps/ios/MadeiraFrontend'
+        session = (frontend / 'IridiumConsoleSession.swift').read_text()
+        native_event = session.split('private func phase3Event(', 1)[1].split('case 4:', 1)[0]
+        terminal_error = native_event.split('case 3, 12:', 1)[1]
+        self.assertIn('dismissalError = message', terminal_error)
+        self.assertIn('if kind == 12 { launchRecovery = .switchSetup }', terminal_error)
+        self.assertNotIn('error = message', terminal_error)
+        complete = session.split('private func finishComplete(', 1)[1].split('private func requireRestart(', 1)[0]
+        self.assertNotIn('LibraryModel.shared.error', complete)
+        library = (frontend / 'IridiumLibraryView.swift').read_text()
+        cover = library.split('.fullScreenCover(isPresented: Binding(get: { consoleSession.presented }', 1)[1]
+        dismissal = cover.split('onDismiss: {', 1)[1].split('IridiumConsolePlayer()', 1)[0]
+        self.assertIn('consoleSession.takeDismissalError()', dismissal)
+        self.assertIn('launchRecovery = consoleSession.launchRecovery', dismissal)
+        self.assertIn('settingsPath = [system.title, IridiumMeloNXSystemFiles.route]', library)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for library launch routing')
     def test_play_routes_advanced_engines_to_owned_jit_without_extra_confirmation(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumLibraryView.swift').read_text()
@@ -105,6 +122,7 @@ struct IridiumGame {
     init(console: IridiumConsoleGame) { self.console = console }
     init(windows: LibraryEntry) { self.windows = windows }
     var id: UUID { console?.id ?? windows!.id }
+    var platform: IridiumPlatform { console?.platform ?? .windows }
 }
 @MainActor final class Session {
     var busy = false
@@ -135,7 +153,7 @@ struct IridiumGame {
 @MainActor final class Host {
     let consoleSession = Session(), library = Library(), jitState = JITState(), jit = JITState()
     let steam = Steam(), steamGames = SteamGames()
-    var lastLaunchNeedsSupport = false, pendingSupportGame: IridiumConsoleGame?
+    var launchRecovery: IridiumConsoleLaunchRecovery?, pendingSupportGame: IridiumConsoleGame?
     var enables = 0, windows = 0
     func enableJIT() { enables += 1 }
     func play(_ game: LibraryEntry) { windows += 1 }
@@ -169,9 +187,9 @@ CONTINUATION
         let count = nativeStarts.count; blocked.start(game)
         precondition(blocked.library.error != nil && blocked.enables == 0 && nativeStarts.count == count)
         let missing = Host()
-        missing.lastLaunchNeedsSupport = true
+        missing.launchRecovery = .jit
         missing.start(LibraryEntry(steamAppID: 220))
-        precondition(missing.steam.repaired == [220] && missing.windows == 0 && missing.enables == 0 && !missing.lastLaunchNeedsSupport)
+        precondition(missing.steam.repaired == [220] && missing.windows == 0 && missing.enables == 0 && missing.launchRecovery == nil)
         let paused = Host()
         paused.steam.downloads[220] = Steam.Download(state: .paused)
         paused.start(LibraryEntry(steamAppID: 220))
@@ -196,7 +214,7 @@ CONTINUATION
             self.skipTest('Pinned Madeira source not initialized')
         source = (upstream / 'ContentView.swift').read_text()
         result = overlay.overlay('ContentView.swift', source)
-        self.assertEqual(result.count('guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }'), 4)
+        self.assertEqual(result.count('if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }'), 4)
         self.assertIn('guard !IridiumConsoleSession.shared.isActive, TouchControlsModel.shared.iridiumSettingsContext == nil else { return nil }', result)
         # Upstream UI names no longer control maintained admission guards.
         self.assertEqual(result, overlay.overlay('ContentView.swift',
@@ -210,7 +228,8 @@ CONTINUATION
             executable = Path(folder) / 'runtime-test'
             # Both shipping configurations execute the same production model:
             # PSP records must survive an installation without that component.
-            for flags in ([], ['-D', 'IRIDIUM_PPSSPP'], ['-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3']):
+            for flags in ([], ['-D', 'IRIDIUM_PPSSPP'], ['-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3'],
+                          ['-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3', '-D', 'IRIDIUM_MELONX']):
                 subprocess.run(['swiftc', *flags, str(source), str(fixture), '-o', str(executable)], check=True)
                 subprocess.run([str(executable)], check=True, timeout=30)
 
@@ -239,6 +258,7 @@ func wineserver_is_running() -> Int32 { serverRunning }
 final class IridiumMadeiraRuntime {
     static let shared=IridiumMadeiraRuntime()
     var residentIdle=false, poisoned=false
+    var isResident:Bool { residentIdle }
     var isBusy:Bool {poisoned || (!residentIdle && (wineRunning != 0 || serverRunning != 0))}
 }
 final class JITCoordinator {
@@ -334,7 +354,7 @@ print("PASS shipping preflight: active Windows/launch/server/owner, idle residen
         self.assertIn('Bundle.main.privateFrameworksURL', session)
         self.assertIn('appendingPathComponent("libIridiumPPSSPPNative.dylib")', session)
         self.assertIn('appendingPathComponent("PSP/PPSSPP", isDirectory: true)', session)
-        self.assertIn('try store.validateROM(game)', session)
+        self.assertIn('try store.validateROM(game, forLaunch: true)', session)
         self.assertIn('case IR_PSP_CLOSED: complete(owner)', session)
         self.assertIn('case IR_PSP_RESTART_REQUIRED: requireRestart(owner)', session)
         self.assertIn('ir_psp_request_stop()', session)

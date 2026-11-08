@@ -1,0 +1,2 @@
+# Patch context preserves upstream end-of-line whitespace.
+melonx-storage.patch whitespace=-blank-at-eol

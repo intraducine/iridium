@@ -268,6 +268,23 @@ actor IridiumImportFiles {
         return (platforms, try IridiumGameFileDetection.needsConfirmation(source, platforms: platforms))
     }
 
+    func isSwitchFirmware(_ source: URL) throws -> Bool {
+        guard source.pathExtension.lowercased() == "zip" else { return false }
+        return try IridiumFilesAccess.read(source) { url in
+            let file = try IridiumROMInspection.checkedFile(url)
+            return ir_archive_is_switch_firmware(file.path)
+        }
+    }
+
+    func importSwitchSystemFile(_ source: URL, receipt: Receipt, firmware: Bool, store: IridiumConsoleStore,
+                                frameworks: URL?) throws {
+        try IridiumFilesAccess.read(source) { url in
+            guard try signature(url) == receipt.fingerprint else { throw IridiumFilesImport.Failure.sourceChanged }
+            try IridiumMeloNXSystemFiles.importFile(IridiumROMInspection.checkedFile(url), firmware: firmware,
+                                                 store: store, frameworks: frameworks)
+        }
+    }
+
     func hasConsoleGame(_ folder: URL) throws -> Bool {
         for source in try files(folder) where source.pathExtension.lowercased() == "cia" ||
             (IridiumConsoleSystem.all.flatMap(\.extensions).contains(source.pathExtension.lowercased()) && source.pathExtension.lowercased() != "zip") {
@@ -281,7 +298,7 @@ actor IridiumImportFiles {
 
     func importConsole(_ source: URL, receipt: Receipt, platform: IridiumPlatform, siblings: [URL], store: IridiumConsoleStore) throws -> IridiumConsoleGame {
         try IridiumFilesAccess.readGame(source, selectedFiles: siblings) { url, files in
-            try store.importROM(url, into: store.load(), preferredPlatform: platform, selectedFiles: files, gameID: receipt.id)
+            try store.importROM(url, into: store.load(), preferredPlatform: platform, selectedFiles: files, gameID: receipt.id, reuseIdentical: true)
         }
     }
 

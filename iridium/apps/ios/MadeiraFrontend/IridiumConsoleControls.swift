@@ -108,7 +108,13 @@ enum IridiumConsoleControlLayout {
         let actions = ["Cross": "A", "Circle": "B", "Square": "X", "Triangle": "Y",
                        "L": "LB", "R": "RB", "L2": "LT", "R2": "RT", "Start": "Menu", "Select": "View", "A": "A", "B": "B", "X": "X", "Y": "Y"]
         values += layout.buttons.compactMap { button in actions[button.id].map { control($0, button.frame) } }
-        if profile == .console || profile == .nintendo3DS {
+        if profile == .nintendoSwitch, let stick = layout.stick {
+            let right = CGRect(x: bounds.maxX - (stick.maxX - bounds.minX), y: stick.minY,
+                               width: stick.width, height: stick.height)
+            values.append(control("RS", right))
+            values.append(control("L3", CGRect(x: bounds.midX - 47, y: stick.midY - 22, width: 44, height: 44)))
+            values.append(control("R3", CGRect(x: bounds.midX + 3, y: stick.midY - 22, width: 44, height: 44)))
+        } else if profile == .console || profile == .nintendo3DS {
             values.append(control("RS", CGRect(x: bounds.maxX - 192, y: bounds.maxY - 98, width: 80, height: 80)))
         }
         // Keep saved custom layouts unchanged; only built-in controls follow the hardware.

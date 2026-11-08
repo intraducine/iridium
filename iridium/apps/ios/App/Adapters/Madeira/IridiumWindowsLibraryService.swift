@@ -524,10 +524,15 @@ final class LibraryModel: ObservableObject {
             throw LibraryError.message("The executable path is not valid.")
         }
         let url = drive.appendingPathComponent(relative).resolvingSymlinksInPath().standardizedFileURL
-        guard (IridiumGameStorage.windowsRelative(url, drive: drive) ?? relativeToDrive(url)) != nil, programExtensions.contains(url.pathExtension.lowercased()),
-              FileManager.default.fileExists(atPath: url.path) else {
+        guard (IridiumGameStorage.windowsRelative(url, drive: drive) ?? relativeToDrive(url)) != nil,
+              programExtensions.contains(url.pathExtension.lowercased()) else {
             throw LibraryError.message("Choose an executable (.exe, .bat or .cmd) in Iridium’s game storage.")
         }
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { throw IridiumRuntimeError.missingGameFolder }
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else { throw IridiumRuntimeError.missingGameFile }
         return url
     }
     static func inspect(_ url: URL) throws -> LibraryEntry {
@@ -817,6 +822,7 @@ final class LibraryModel: ObservableObject {
         // The first frame gives Aspect and Fill height the drawable's shape.
         if current != nil, !laidOutAfterFirstPresent, madeira_frame_count() != MetalBackedView.presentCountAtLaunch {
             laidOutAfterFirstPresent = true
+            RuntimePerformanceDiagnostics.shared.record("windows-first-present")
             MetalBackedView.refreshDisplayMode(reason: "first-present")
         }
     }

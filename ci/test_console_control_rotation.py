@@ -56,6 +56,13 @@ for platform in [IridiumPlatform.dreamcast, .arcade] {
 }
 precondition(!actions(.gameCube).contains("View") && actions(.gameCube).contains("RS"))
 precondition(actions(.psp).contains("LS") && !actions(.psp).contains("RS"))
+precondition(actions(.nintendoSwitch) == ["A", "B", "X", "Y", "DPad", "LS", "RS",
+                                       "L3", "R3", "LB", "RB", "LT", "RT", "Menu", "View"])
+let switchProfile = IridiumPlayerProfile.consoleProfile("nintendoSwitch")
+precondition(switchProfile.aspectRatio == 16.0 / 9.0)
+precondition(IridiumConsoleControlMapping.label("LT", profile: switchProfile) == "ZL")
+precondition(IridiumConsoleControlMapping.label("View", profile: switchProfile) == "−")
+
 func frame(_ control: TouchControl, screen: CGSize, scale: Double) -> CGRect {
     let size = control.action.controlSize(diameter: 64 * CGFloat(control.scale * scale))
     return CGRect(x: CGFloat(control.nx) * screen.width - size.width / 2,

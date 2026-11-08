@@ -183,17 +183,17 @@ var calls=0
 var accepts=false
 @MainActor func ir_psp_native_command(_ text:String)->Bool{calls+=1;return accepts}
 @MainActor final class Host {
-    var error:String?,stops=0
+    var dismissalError:String?,stops=0
     func stop(){stops+=1}
     func launch(_ values:[String:String]) {
 '''+launch+r'''
     }
 }
 MainActor.assumeIsolated {
-    let older=Host();older.launch([:]);precondition(calls==0&&older.error==nil&&older.stops==0)
-    older.launch(["iPSPModel":"1"]);precondition(calls==1&&older.error != nil&&older.stops==1)
+    let older=Host();older.launch([:]);precondition(calls==0&&older.dismissalError==nil&&older.stops==0)
+    older.launch(["iPSPModel":"1"]);precondition(calls==1&&older.dismissalError != nil&&older.stops==1)
     accepts=true;let current=Host();current.launch(["bSoftwareRendering":"0"])
-    precondition(calls==2&&current.error==nil&&current.stops==0)
+    precondition(calls==2&&current.dismissalError==nil&&current.stops==0)
 }
 ''', '.swift')
 
@@ -354,6 +354,94 @@ try IridiumCheat.save([],game:game)
 let empty=try IridiumCheat.load(game)
 precondition(empty.isEmpty)
 ''', '.swift', sources=(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumCoreControls.swift',))
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift required')
+    def test_melonx_options_use_per_game_preferences_and_validate_old_values(self):
+        self.compile_run(r'''
+import Foundation
+let game = UUID()
+let other = UUID()
+defer { UserDefaults.standard.removeObject(forKey: "CoreOptions.\(game)") }
+func values(_ id: UUID) -> [String: String] {
+    let options = IridiumMeloNXOptions.controls(id).options
+    precondition(options.allSatisfy { $0.restartRequired == true })
+    return Dictionary(uniqueKeysWithValues: options.map { ($0.key, $0.value) })
+}
+let defaults = values(game)
+precondition(defaults == ["melonx_resolution": "1", "melonx_mode": "handheld",
+                          "melonx_vsync": "on", "melonx_shader_cache": "off",
+                          "melonx_texture_recompression": "on"])
+IridiumCorePreferences.save("2", key: "melonx_resolution", game: game)
+IridiumCorePreferences.save("docked", key: "melonx_mode", game: game)
+IridiumCorePreferences.save("invalid", key: "melonx_shader_cache", game: game)
+precondition(values(game)["melonx_resolution"] == "2")
+precondition(values(game)["melonx_mode"] == "docked")
+precondition(values(game)["melonx_shader_cache"] == "off")
+precondition(values(other) == defaults)
+''', '.swift', sources=[ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumCoreControls.swift'])
+
+    def test_melonx_adapter_validates_and_freezes_startup_options(self):
+        source = (BRIDGE / 'IRMeloNX.mm').read_text()
+        flags = next(line for line in source.splitlines() if line.startswith('enum : unsigned'))
+        command = source[source.index('extern "C" bool ir_native_engine_command'):source.index('extern "C" int ir_melonx_install_firmware')].strip()
+        self.compile_run(r'''
+#import <Foundation/Foundation.h>
+#include <cassert>
+struct Player { bool started = false; int resolution = 1; unsigned options = 0; };
+static Player session;
+static Player *player = &session;
+FLAGS
+COMMAND
+int main() {
+    @autoreleasepool {
+        assert(ir_native_engine_command(R"({"operation":"configure","values":{
+            "melonx_resolution":"3","melonx_mode":"docked","melonx_vsync":"off",
+            "melonx_shader_cache":"on","melonx_texture_recompression":"off"}})"));
+        assert(session.resolution == 3 && session.options ==
+            (Docked | DisableVSync | ShaderCache | DisableTextureRecompression));
+        assert(!ir_native_engine_command(R"({"operation":"configure","values":[]})"));
+        assert(!ir_native_engine_command(R"({"operation":"option","values":{}})"));
+        assert(ir_native_engine_command(R"({"operation":"configure","values":{"melonx_resolution":[3]}})"));
+        assert(session.resolution == 1 && session.options == 0);
+        session.started = true;
+        assert(!ir_native_engine_command(R"({"operation":"configure","values":{"melonx_resolution":"2"}})"));
+        assert(session.resolution == 1);
+    }
+}
+'''.replace('FLAGS', flags).replace('COMMAND', command), '.mm', frameworks=['Foundation'])
+
+    @unittest.skipUnless(shutil.which('swiftc'), 'Swift required')
+    def test_melonx_key_import_preserves_existing_file_on_invalid_input(self):
+        from test_native_psp_frontend import function
+        source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumMeloNXSystemFiles.swift').read_text()
+        method = function(source, '    nonisolated private static func importKey(')
+        method = method.replace('nonisolated private static func', 'func', 1)
+        self.compile_run(r'''
+import Foundation
+enum IridiumImportFailure: LocalizedError {
+    case message(String)
+    var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
+}
+METHOD
+let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+defer { try? FileManager.default.removeItem(at: root) }
+try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+let store = IridiumConsoleStore(root: root.appendingPathComponent("library"))
+let file = root.appendingPathComponent("prod.keys")
+let fixture = Data("example = aabb\n".utf8)
+try fixture.write(to: file)
+try importKey(file, store: store)
+let destination = try store.checked(["System", "melonx", "system", "prod.keys"])
+try Data("invalid".utf8).write(to: file)
+do {
+    try importKey(file, store: store)
+    fatalError("Invalid keys were accepted")
+} catch {
+    precondition(error.localizedDescription == "The key file format is invalid.")
+}
+let original = try Data(contentsOf: destination)
+precondition(original == fixture)
+'''.replace('METHOD', method), '.swift', sources=[ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'])
 
     def compile_run(self, text, suffix='.cpp', sources=(), frameworks=()):
         with tempfile.TemporaryDirectory() as directory:

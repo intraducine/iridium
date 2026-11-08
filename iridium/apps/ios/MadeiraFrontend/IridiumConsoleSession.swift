@@ -55,9 +55,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var dolphinMonitor: Timer?
     private var dolphinControllers = [GCController?](repeating: nil, count: 4)
     @Published var error: String?
+    private var dismissalError: String?
+    private(set) var launchRecovery: IridiumConsoleLaunchRecovery?
     @Published private(set) var presented = false
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
     var isActive: Bool { game != nil }
+    var windowsAdmissionError: String? {
+        if ownership.requiresRestart || phase == .restartRequired { return IridiumRuntimeError.restartRequired.localizedDescription }
+        if dolphinMaintenance { return "Wait for the console file import to finish." }
+        return isActive ? "Stop the console runtime first." : nil
+    }
 
     private let queue = DispatchQueue(label: "software.iridium.console", qos: .userInteractive)
     private let lock = NSLock()
@@ -95,6 +102,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private var oldAudio: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+    private var oldAudioTiming: (sampleRate: Double, bufferDuration: TimeInterval)?
     private var progress = IridiumRuntimeProgress() // serial queue only
     private var progressStarted = ProcessInfo.processInfo.systemUptime
     private var lastFreshImage: Double?
@@ -134,6 +142,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         do {
             try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
+            if runtime.restartAfterStop, IridiumMadeiraRuntime.shared.isResident { throw IridiumRuntimeError.restartRequired }
             let savedCheats = try IridiumCheat.load(game.id)
             if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
@@ -141,6 +150,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             releaseButtons()
             MainActor.assumeIsolated { IridiumGameAudio.shared.begin(game.id, legacyMuted: game.runtimeID == "dolphin" && IridiumDolphinSettings.load(game.id).muted == true) }
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
+            dismissalError = nil; launchRecovery = nil
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
             phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
@@ -148,7 +158,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             dolphinCPUMode = "Waiting for JIT"
             dolphinPerformance = "Waiting for speed data"
             pspReady = false; pspStateStatus = nil; pspCPUMode = "Not reported"
-            coreControls = IridiumCoreControls(); coreStateStatus = nil; coreOperationPending = false; phase3CommandIntent = nil
+            coreControls = runtime.id == "melonx" ? IridiumMeloNXOptions.controls(game.id) : IridiumCoreControls()
+            coreStateStatus = nil; coreOperationPending = false; phase3CommandIntent = nil
             cheats = savedCheats; pendingCheats = nil; restoredCheats = false
             fastForward = false; rewindEnabled = false
             pspJITStatus = "Off — using IR interpreter"
@@ -165,12 +176,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 progress = IridiumRuntimeProgress(); progressStarted = ProcessInfo.processInfo.systemUptime
                 lastFreshImage = nil; lastChangedImage = nil
                 lastProgressPublished = 0; lastProgressLogged = 0; lastProgressPhase = ""; lastSameBoyPixels = nil
+                RuntimePerformanceDiagnostics.shared.record("console-\(runtime.id)-validate")
                 RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] launch runtime=\(runtime.id) platform=\(game.platform.rawValue)")
                 do {
-                    let url = try store.validateROM(game)
+                    let url = try store.validateROM(game, forLaunch: true)
                     let folder = try store.saveDirectory(game)
                     guard requested != .stop else { complete(owner); return }
                     try startAudioSession()
+                    if runtime.id == "melonx" { configureMeloNXAudioTiming() }
                     switch backend {
                     case .sameBoy:
                         ir_core_reset_options()
@@ -211,7 +224,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                         }
                     }
                 } catch {
-                    fail(error.localizedDescription, owner: owner)
+                    fail(error.localizedDescription, owner: owner, recovery: (error as? IridiumRuntimeError)?.launchRecovery)
                 }
             }
         } catch { self.error = error.localizedDescription }
@@ -221,7 +234,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if phase3JITReady == nil {
             if game.runtimeID == "dolphin" { dolphinSettings = .load(game.id) }
             phase3PreparingJIT = true; phase3JITRequested = true; phase3Status = "Preparing shared JIT"
-            JITCoordinator.shared.prepareConsoleMemory { result in
+            let minimumBytes = IridiumRuntimeRegistry.all.first { $0.id == game.runtimeID }?.sharedJITBytes ?? 0
+            JITCoordinator.shared.prepareConsoleMemory(minimumBytes: minimumBytes) { result in
                 self.phase3PreparingJIT = false
                 guard self.lease == owner else { return }
                 if JITCoordinator.shared.consoleMemoryRequiresRestart {
@@ -233,7 +247,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                     self.openPhase3(game: game, url: url, folder: folder, system: system, owner: owner, phase3JITReady: true)
                 case .failure(let failure):
                     let message = "JIT could not start. " + failure.localizedDescription
-                    self.queue.async { self.fail(message, owner: owner) }
+                    self.queue.async { self.fail(message, owner: owner, recovery: .jit) }
                 }
             }
             return
@@ -253,6 +267,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                         system.path.withCString { assets in
                             ir_phase3_open(runtime, binaries, content, saves, assets, ir_jit_memory_ready(),
                                 phase3Generation, { generation, kind, message in
+                                    switch kind {
+                                    case 0: RuntimePerformanceDiagnostics.shared.record("console-native-start")
+                                    case 1: RuntimePerformanceDiagnostics.shared.record("console-first-frame")
+                                    case 2: RuntimePerformanceDiagnostics.shared.record("console-native-closed")
+                                    case 3, 12: RuntimePerformanceDiagnostics.shared.record("console-native-failed")
+                                    default: break
+                                    }
                                     let text = message.map { String(cString: $0) } ?? ""
                                     DispatchQueue.main.async {
                                         IridiumConsoleSession.shared.phase3Event(generation, kind: kind, message: text)
@@ -272,13 +293,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             }
         }
         guard let controller else {
-            error = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
+            dismissalError = "The bundled \(game.runtimeID) player could not start. Its saved files have been retained."
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
         let nativeController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
         if !ir_phase3_configure_memory(ir_jit_memory_api()) {
             queue.async { self.terminalFailure = true }
-            ir_phase3_stop(); error = "The core could not configure shared JIT."; return
+            dismissalError = "The core could not configure shared JIT."
+            ir_phase3_stop(); return
         }
         if game.runtimeID == "dolphin" {
             _ = sendCoreCommand(["operation": "configure", "values": IridiumCorePreferences.load(game.id)])
@@ -290,7 +312,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 IridiumConsoleSession.shared.fillDolphinInput(player, output)
             }) else {
                 queue.async { self.terminalFailure = true }
-                ir_phase3_stop(); error = "This Dolphin component does not support the app interface."; return
+                dismissalError = "This Dolphin component does not support the app interface."
+                ir_phase3_stop(); return
             }
             dolphinMotion.start(enabled: dolphinSettings.motion)
             monitorDolphin()
@@ -313,6 +336,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private func phase3Event(_ generation: UInt64, kind: UInt32, message: String) {
         guard generation == phase3Generation, let owner = lease, game?.platform.isPhase3 == true else { return }
         if kind != 8 { RuntimeDiagnosticLogFiles.writeConsoleLine("[Console engine] " + message) }
+        if kind == 11 { return }
         if kind != 8 { phase3Status = message }
         switch kind {
         case 1:
@@ -324,8 +348,9 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             dolphinMonitor?.invalidate(); dolphinMonitor = nil; dolphinMotion.stop()
             phase3Controller = nil
             queue.async { self.complete(owner) }
-        case 3:
-            error = message
+        case 3, 12:
+            if kind == 12 { launchRecovery = .switchSetup }
+            dismissalError = message
             queue.async { self.terminalFailure = true }
             if phase3Controller != nil { stop() }
         case 4: pause()
@@ -347,6 +372,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 lock.lock(); consoleAspect = CGFloat(snapshot.aspect); lock.unlock()
                 restoreCheatsIfNeeded()
             }
+        case 9:
+            queue.async { self.requireRestart(owner) }
         default: break
         }
     }
@@ -425,7 +452,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let frameworks = Bundle.main.privateFrameworksURL,
               let resources = Bundle.main.resourceURL else {
-            error = IridiumRuntimeError.unavailable.localizedDescription
+            dismissalError = IridiumRuntimeError.unavailable.localizedDescription
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
         let component = frameworks.appendingPathComponent("libIridiumPPSSPPNative.dylib")
@@ -454,7 +481,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             }
         }
         guard let controller else {
-            error = "The full native PPSSPP component could not initialize. Its saves have been retained."
+            dismissalError = "The full native PPSSPP component could not initialize. Its saves have been retained."
             queue.async { self.terminalFailure = true; self.complete(owner) }; return
         }
         nativePSPController = Unmanaged<UIViewController>.fromOpaque(controller).takeRetainedValue()
@@ -462,7 +489,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if !values.isEmpty {
             guard let data = try? JSONSerialization.data(withJSONObject: ["operation": "startupOptions", "values": values]),
                   let text = String(data: data, encoding: .utf8), ir_psp_native_command(text) else {
-                error = "The PSP engine could not apply its launch settings."
+                dismissalError = "The PSP engine could not apply its launch settings."
                 stop(); return
             }
         }
@@ -481,7 +508,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             nativePSPController = nil
             queue.async { self.complete(owner) }
         case 2:
-            error = text
+            dismissalError = text
             queue.async { self.terminalFailure = true }
             stop()
         case 3:
@@ -857,6 +884,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     func setCoreOption(_ option: IridiumCoreOption, value: String) {
         guard let game, let owner = lease, phase == .paused, !coreOperationPending, !dolphinStatePending,
               value.utf8.count <= 4096, option.choices.isEmpty || option.choices.contains(where: { $0.value == value }) else { return }
+        if option.restartRequired == true, game.runtimeID == "melonx" {
+            IridiumCorePreferences.save(value, key: option.key, game: game.id)
+            if let index = coreControls.options.firstIndex(where: { $0.key == option.key }) {
+                coreControls.options[index].value = value
+            }
+            coreStateStatus = "Saved. Reopen Iridium to apply."
+            return
+        }
         if game.platform == .psp {
             if option.restartRequired == true {
                 IridiumCorePreferences.save(value, key: option.key, game: game.id)
@@ -1184,14 +1219,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func fail(_ message: String, owner: IridiumRuntimeLease) {
+    private func fail(_ message: String, owner: IridiumRuntimeLease, recovery: IridiumConsoleLaunchRecovery? = nil) {
         terminalFailure = true
         RuntimeDiagnosticLogFiles.writeConsoleLine("[Console] failure: \(message)")
         progress.phase = "failed"; publishProgress(owner, force: true)
         lock.lock(); intent.stop(); intentGeneration &+= 1; lock.unlock()
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
-            self.error = message; self.releaseButtons()
+            self.dismissalError = message; self.launchRecovery = recovery; self.releaseButtons()
             if self.phase != .restartRequired { self.phase = .stopping; self.watchStop(owner) }
         }
         if backend == .psp, runningGame != nil { beginStop(owner) }
@@ -1212,14 +1247,16 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @MainActor private func finishComplete(_ owner: IridiumRuntimeLease, failed: Bool) {
         guard lease == owner else { return }
         IridiumPlayerTransition.returnToLibrary()
-        self.ownership.release(owner)
+        let restart = phase3JITVerified && IridiumRuntimeRegistry.all.contains {
+            $0.id == owner.runtimeID && $0.restartAfterStop
+        }
+        self.ownership.release(owner, restart: restart)
         self.jitDiagnostic?.mark(IR_JIT_OWNER_RELEASE)
         self.jitDiagnostic = nil
         self.preparedJIT = nil; self.pspJITVerifiedForLaunch = false
         self.pspReady = false; self.pspCPUMode = "Not reported"; self.pspJITFallbackReason = nil
-        // Async drain can dismiss the player after its error observer ran.
-        // Preserve an unacknowledged launch/runtime failure at the library.
-        if failed, let error = self.error { LibraryModel.shared.error = error }
+        // The library presents failures after the player cover has closed.
+        if presented, failed, dismissalError == nil { dismissalError = error }
         self.error = nil
         self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
         self.phase = .idle
@@ -1280,8 +1317,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard phase == .restartRequired else { return }
         // Keep ownership until the worker truly finishes. Never let another
         // engine race a stuck native call, even after its surface is dismissed.
+        dismissalError = IridiumRuntimeError.restartRequired.localizedDescription
+        error = nil
         presented = false
-        LibraryModel.shared.error = IridiumRuntimeError.restartRequired.localizedDescription
+    }
+
+    @MainActor func takeDismissalError() -> String? {
+        defer { dismissalError = nil }
+        return dismissalError
     }
 
     func setButton(_ bit: UInt16, pressed: Bool, keyboard: Bool = false, source: String? = nil) {
@@ -1632,6 +1675,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         try session.setCategory(.playback, mode: .default)
         try session.setActive(true)
     }
+    private func configureMeloNXAudioTiming() {
+        let session = AVAudioSession.sharedInstance()
+        oldAudioTiming = (session.preferredSampleRate, session.preferredIOBufferDuration)
+        // Match MeloNX's iOS frontend preferences. The current route may choose other values.
+        try? session.setPreferredSampleRate(48_000)
+        try? session.setPreferredIOBufferDuration(0.005)
+        RuntimeDiagnosticLogFiles.writeConsoleLine("[MeloNX host] audio sample_rate=\(Int(session.sampleRate)) buffer_ms=\(Int(session.ioBufferDuration * 1000))")
+    }
     private func startAudio() throws {
         try startAudioSession()
         let engine = AVAudioEngine(), player = AVAudioPlayerNode()
@@ -1658,6 +1709,12 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             try? AVAudioSession.sharedInstance().setCategory(oldAudio.0, mode: oldAudio.1, options: oldAudio.2)
         }
         oldAudio = nil
+        if let oldAudioTiming {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setPreferredSampleRate(oldAudioTiming.sampleRate)
+            try? session.setPreferredIOBufferDuration(oldAudioTiming.bufferDuration)
+        }
+        oldAudioTiming = nil
     }
 
     private func deliver(_ frame: IRCoreFrame, owner: IridiumRuntimeLease) {

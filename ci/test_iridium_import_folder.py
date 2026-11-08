@@ -36,7 +36,7 @@ class ImportFolderTests(unittest.TestCase):
         sources += [IOS / 'App/Storage/ExternalStorage.swift', IOS / 'App/Steam/SteamKeyValues.swift', IOS / 'App/Steam/SteamInstall.swift', fixture]
         cls.sources = sources
         build = subprocess.run(['swiftc', '-swift-version', '6', '-warnings-as-errors',
-            '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
+            '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3', '-D', 'IRIDIUM_MELONX',
             '-module-cache-path', module_cache('macosx'), '-import-objc-header', str(IOS / 'RuntimeBridge/IRArchive.h'),
             *map(str, sources), str(obj), '-larchive', '-o', str(cls.binary)], capture_output=True, text=True, timeout=120)
         if build.returncode:
@@ -74,11 +74,19 @@ class ImportFolderTests(unittest.TestCase):
                     with zipfile.ZipFile(inbox / 'games.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
                         for file in source.iterdir():
                             archive.write(file, file.name)
+            if scenario == 'switch-system':
+                inbox = docs / 'Import'
+                inbox.mkdir(parents=True)
+                for name in ('A Firmware.zip', 'Failed.zip'):
+                    with zipfile.ZipFile(inbox / name, 'w', zipfile.ZIP_DEFLATED) as archive:
+                        archive.writestr('1234567890abcdef1234567890abcdef.cnmt.nca', b'firmware fixture')
             result = subprocess.run([str(self.binary), 'archive' if scenario == '7z' else scenario, str(docs)],
                                     capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             if scenario in ('archive', '7z'):
                 self.assertFalse(list((docs / 'Import').glob('*.zip')) + list((docs / 'Import').glob('*.7z')))
+
+    def test_switch_keys_precede_firmware_and_failed_firmware_stays(self): self.check('switch-system')
 
     def test_cia_choices_failure_retry_and_durable_consumption(self): self.check('cia')
 
@@ -124,7 +132,7 @@ extension View {
 """)
             sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
             result = subprocess.run(['swiftc', '-typecheck', '-swift-version', '6', '-warnings-as-errors',
-                '-sdk', sdk, '-target', 'arm64-apple-ios17.0', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3',
+                '-sdk', sdk, '-target', 'arm64-apple-ios17.0', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3', '-D', 'IRIDIUM_MELONX',
                 '-module-cache-path', module_cache('iphoneos'), '-import-objc-header', str(IOS / 'RuntimeBridge/IRArchive.h'),
                 *map(str, self.sources), str(extra), str(IOS / 'MadeiraFrontend/IridiumImportFolderView.swift'),
                 str(IOS / 'MadeiraFrontend/IridiumAddGameView.swift'),

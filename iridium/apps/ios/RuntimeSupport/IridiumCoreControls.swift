@@ -104,6 +104,31 @@ enum IridiumCorePreferences {
     }
 }
 
+enum IridiumMeloNXOptions {
+    static func controls(_ game: UUID) -> IridiumCoreControls {
+        let saved = IridiumCorePreferences.load(game)
+        func option(_ key: String, _ title: String, _ defaultValue: String,
+                    _ values: [(String, String)]) -> IridiumCoreOption {
+            let key = "melonx_" + key
+            let choices = values.map { IridiumCoreOption.Choice(value: $0.0, title: $0.1) }
+            let value = saved[key].flatMap { saved in choices.contains { $0.value == saved } ? saved : nil } ?? defaultValue
+            return IridiumCoreOption(key: key, title: title, info: "", category: "MeloNX",
+                value: value, defaultValue: defaultValue, choices: choices, visible: true, restartRequired: true)
+        }
+        let toggle = [("on", "On"), ("off", "Off")]
+        var controls = IridiumCoreControls()
+        controls.aspect = 16.0 / 9.0
+        controls.options = [
+            option("resolution", "Resolution", "1", [("1", "1×"), ("2", "2×"), ("3", "3×")]),
+            option("mode", "Console Mode", "handheld", [("handheld", "Handheld"), ("docked", "Docked")]),
+            option("vsync", "VSync", "on", toggle),
+            option("shader_cache", "Shader Cache", "off", toggle),
+            option("texture_recompression", "Texture Recompression", "on", toggle)
+        ]
+        return controls
+    }
+}
+
 struct IridiumConsoleStateRecord: Codable {
     let runtime: String
     let version: String

@@ -559,3 +559,29 @@ this integration; adding them remains a separate draft PR.
 Visible help uses shorter instructions for controls, imports, INI files, store
 sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button
 both use JIT Setup. Save replacement, file retention, and restart warnings remain.
+
+## MeloNX core bring-up
+
+The local [core builder](ci/build-melonx-core.py) pins
+[MeloNX 2.7](https://starforgejo.dev/projects/MeloNX/releases/tag/2.7) at
+`13700519f3abc4e6d7ed8a065b118b2cc59bcd67`. It uses the upstream registry that
+still serves LibHac 0.21.0-alpha.129. MeloNX uses Iridium's shared JIT arena,
+its threaded renderer, and an aspect-fit Metal surface capped at 720p.
+The Switch session drains GPU work before releasing the renderer.
+The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
+system data and saves in `IridiumRuntimes/System/melonx`. Reopen Iridium
+after each MeloNX session while the core's process-wide state remains loaded.
+Import your Switch's `prod.keys` and firmware ZIP from Game Options → Keys and
+Firmware. Import `title.keys` if needed.
+
+The local device build requires `IRIDIUM_PHASE3=1 IRIDIUM_MELONX=1` and the
+audited component from the core builder. For a hosted review IPA, dispatch
+`python3 ci/dispatch-build.py --melonx`. The default build omits MeloNX.
+
+Switch keys and firmware live in Settings → MeloNX → Keys & Firmware. The
+shared Import folder accepts prod.keys, title.keys and firmware ZIPs. Failed
+imports keep their input. Switch artwork looks up the title ID with Nlib and
+uses the Atlas Switch catalog for exact-name matching when no ID is available.
+Only artwork metadata and images are fetched.
+Upstream's README and license file give different license terms. Resolve those
+terms and the bundled dependency notices before distribution.

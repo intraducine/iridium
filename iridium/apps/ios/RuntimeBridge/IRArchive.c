@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +25,37 @@ extern const char *archive_entry_symlink(struct archive_entry *);
 extern const char *archive_entry_hardlink(struct archive_entry *);
 extern mode_t archive_entry_filetype(struct archive_entry *);
 extern int64_t archive_entry_size(struct archive_entry *);
+
+bool ir_archive_is_switch_firmware(const char *source) {
+    struct stat file;
+    if (stat(source, &file) != 0 || !S_ISREG(file.st_mode) || file.st_size > (1LL << 30)) return false;
+    struct archive *reader = archive_read_new();
+    if (!reader) return false;
+    bool result = false;
+    int status;
+    unsigned count = 0;
+    uint64_t total = 0;
+    archive_read_support_format_zip(reader);
+    if (archive_read_open_filename(reader, source, 64 * 1024) != 0) goto done;
+    struct archive_entry *entry;
+    while ((status = archive_read_next_header(reader, &entry)) == 0) {
+        const char *name = archive_entry_pathname_utf8(entry);
+        int64_t size = archive_entry_size(entry);
+        if (++count > 1024 || !name || strlen(name) < 32 ||
+            archive_entry_filetype(entry) != S_IFREG || archive_entry_symlink(entry) ||
+            archive_entry_hardlink(entry) || size <= 0 || size > (1LL << 28) ||
+            (uint64_t)size > (1ULL << 30) - total) goto done;
+        for (unsigned i = 0; i < 32; ++i) {
+            if (!isxdigit((unsigned char)name[i])) goto done;
+        }
+        if (strcmp(name + 32, ".nca") && strcmp(name + 32, ".cnmt.nca")) goto done;
+        total += (uint64_t)size;
+    }
+    result = status == 1 && count > 0; // ARCHIVE_EOF.
+done:
+    archive_read_free(reader);
+    return result;
+}
 
 static int entry_file(int root, const char *name, int directory) {
     if (!name || !*name || name[0] == '/' || strlen(name) >= 1024 || strchr(name, '\\') || strchr(name, ':')) return -1;

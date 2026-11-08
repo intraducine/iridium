@@ -15,6 +15,10 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Reuse matching completed runtime and console component builds
         type: boolean
         default: true
+      melonx:
+        description: Include the pinned MeloNX component in a review build
+        type: boolean
+        default: false
       release_build:
         description: Include the full source archive and release audit artifacts
         type: boolean
@@ -46,6 +50,30 @@ jobs:
           echo "DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer" >> "$GITHUB_ENV"
       - name: Prepare hosted device-build disk space
         run: python3 ci/free-build-space.py --hosted-device-build
+      - name: Build the pinned MeloNX review component
+        if: inputs.melonx
+        env:
+          RELEASE_BUILD: ${{ inputs.release_build }}
+        run: |
+          if [ "$RELEASE_BUILD" = true ]; then
+            echo "MeloNX review builds do not use the release artifact workflow."
+            exit 1
+          fi
+          test "$(uname -m)" = arm64
+          mkdir -p .build/melonx/dotnet-10.0.403
+          python3 -c 'import shutil; assert shutil.disk_usage(".build/melonx").free >= 30 * 1024**3, "MeloNX needs 20 GiB reserve plus 10 GiB working space"'
+          archive="$(mktemp .build/melonx/sdk.XXXXXX)"
+          trap 'rm -f "$archive"' EXIT
+          curl -fL --retry 3 --max-time 300 -o "$archive" https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-osx-arm64.tar.gz
+          printf '%s  %s\n' 5893c66b48ea3674c7da18501059d606e96f3672fabe4d5e41762e692c7c83df3ee0b2b9dc5a0786191da2dc413d7335158101c14c935ab217f31ac2529770f3 "$archive" | shasum -a 512 -c -
+          tar -xzf "$archive" -C .build/melonx/dotnet-10.0.403
+          rm -f "$archive"
+          git clone --depth 1 --branch 2.7 https://starforgejo.dev/projects/MeloNX.git .build/melonx/source
+          export DOTNET_CLI_HOME="$PWD/.build/melonx/dotnet-home" DOTNET_NOLOGO=1
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false
+          .build/melonx/dotnet-10.0.403/dotnet workload install mobile-librarybuilder --skip-manifest-update
+          python3 ci/build-melonx-core.py
+          echo "IRIDIUM_MELONX=1" >> "$GITHUB_ENV"
       - name: Identify pinned runtime sources
         id: runtime_sources
         run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"

@@ -35,7 +35,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
         actual = frontend.overlay('ContentView.swift', original)
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
-        guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
+        guard = '        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }\n'
         settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
         self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
         storage_guard = '        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }\n'
@@ -56,6 +56,9 @@ class WindowsChromeSourceTests(unittest.TestCase):
         diagnostic = '            DeviceDiagnostics.logLaunch()\n'
         worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
         self.assertGreater(admission.index(diagnostic), worker)
+        performance = '            RuntimePerformanceDiagnostics.shared.record("wine-start")\n'
+        self.assertGreater(admission.index(performance), worker)
+        admission = admission.replace(performance, '')
         self.assertIn('        GOGGalaxy.shared.registerService()\n', admission)
         admission = admission.replace('        GOGGalaxy.shared.registerService()\n', '')
         self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, '').replace(diagnostic, ''),
