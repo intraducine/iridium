@@ -366,6 +366,8 @@ jobs:
       - name: Prepare and audit sideloading package
         run: python3 ci/package-unsigned-ipa.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output
       - name: Upload sideloading IPA
+        # Keep the MeloNX binary on the runner until its license and dependency notices are resolved.
+        if: ${{ !inputs.melonx }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-unsigned-${{ github.sha }}

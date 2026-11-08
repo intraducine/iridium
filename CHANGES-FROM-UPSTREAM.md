@@ -571,12 +571,10 @@ The Switch session drains GPU work before releasing the renderer.
 The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
 system data and saves in `IridiumRuntimes/System/melonx`. Reopen Iridium
 after each MeloNX session while the core's process-wide state remains loaded.
-Import your Switch's `prod.keys` and firmware ZIP from Game Options → Keys and
-Firmware. Import `title.keys` if needed.
 
 The local device build requires `IRIDIUM_PHASE3=1 IRIDIUM_MELONX=1` and the
-audited component from the core builder. For a hosted review IPA, dispatch
-`python3 ci/dispatch-build.py --melonx`. The default build omits MeloNX.
+audited component from the core builder. To build and audit a hosted review IPA,
+dispatch `python3 ci/dispatch-build.py --melonx`. The default build omits MeloNX.
 
 Switch keys and firmware live in Settings → MeloNX → Keys & Firmware. The
 shared Import folder accepts prod.keys, title.keys and firmware ZIPs. Failed
@@ -584,4 +582,4 @@ imports keep their input. Switch artwork looks up the title ID with Nlib and
 uses the Atlas Switch catalog for exact-name matching when no ID is available.
 Only artwork metadata and images are fetched.
 Upstream's README and license file give different license terms. Resolve those
-terms and the bundled dependency notices before distribution.
+terms and the bundled dependency notices before enabling the binary upload.
