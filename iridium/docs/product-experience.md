@@ -2,17 +2,18 @@
 
 ## Install
 
-Choose a build from the [download links](../../README.md#install). Add its
-install feed in AltStore Classic, sign the IPA with a tool that supports app
-extensions, or import the IPA into LiveContainer.
+Choose Stable or Nightly from the [download links](../../README.md#install).
+Copy its AltStore source URL and add it under **Sources** in AltStore Classic
+or LiveContainer. For manual installation, sign the IPA with a tool that supports
+app extensions or import it into LiveContainer.
 
 When updating, back up your saves and install over the existing app or
 LiveContainer entry to keep your library and settings.
 
-### Nightly
+### Nightly AltStore source
 
-If a [Nightly build](https://github.com/intraducine/iridium/releases?q=nightly-)
-is listed, you can download its IPA or copy this install feed URL:
+Use this URL when a [Nightly build](https://github.com/intraducine/iridium/releases?q=nightly-)
+is available.
 
 ```text
 https://raw.githubusercontent.com/intraducine/iridium/altstore-nightly/altstore/nightly.json
