@@ -1,64 +1,51 @@
 # Iridium
 
-Iridium is an iPhone and iPad game launcher with Windows support through
-[Madeira](https://github.com/willfaust/Madeira) and console emulation through
-SameBoy, PPSSPP, Dolphin, Azahar, Play!, and Flycast.
-
-It provides a shared library, artwork, touch controls, controller and keyboard
-input, stores, and per-game settings. Stores include Steam, GOG, Epic Games, EA,
-and itch.io. Compatibility varies by game and device. Each engine needs its own
-device tests for graphics, input, audio, saves, and repeated launches.
-
-The current development version is **0.3.0**. See its
-[review notes](docs/releases/0.3.0.md) for changes and limits. This version is not
-a published release. Menu sound effects remain in a separate draft PR.
+Play Windows and console games on iPhone and iPad. Import games you own into one
+library and play with touch controls, a controller, or a keyboard.
 
 ## Install
 
-| Channel | IPA | AltStore / LiveContainer |
-| --- | --- | --- |
-| Stable | [Download latest IPA](https://github.com/intraducine/iridium/releases/latest/download/Iridium-unsigned.ipa) | [Stable source](https://raw.githubusercontent.com/intraducine/iridium/main/altstore/stable.json) |
-| Nightly | [Browse Nightly releases](https://github.com/intraducine/iridium/releases?q=nightly-) | [Nightly source](https://raw.githubusercontent.com/intraducine/iridium/altstore-nightly/altstore/nightly.json) |
+Requires iOS or iPadOS 18 or later.
 
-Nightly downloads and the Nightly source become available after the first
-Nightly release. Add one source in AltStore or LiveContainer. Both channels use
-the same app ID.
+- **Stable** is the regular release. [Download the Stable IPA](https://github.com/intraducine/iridium/releases/latest/download/Iridium-unsigned.ipa) · [Stable AltStore source](https://raw.githubusercontent.com/intraducine/iridium/main/altstore/stable.json)
+- **Nightly** builds are for trying recent changes. [Nightly downloads](https://github.com/intraducine/iridium/releases?q=nightly-) · [Nightly AltStore source](iridium/docs/product-experience.md#nightly-altstore-source)
 
-To install an IPA, sign the app and its extensions with a compatible sideloading
-tool, or use LiveContainer. Supply your own game files.
+To install through AltStore Classic or LiveContainer, copy the AltStore source
+URL into **Sources**. You can also download the IPA and install it manually.
 
-The app requires iOS/iPadOS 18 or later. JIT requirements depend on the engine
-and installation method; see [JIT setup](iridium/docs/builtin-stikjit-ios27.md).
-Back up saves before updating and keep the existing app data.
+## Supported systems
 
-Use **Add Game → Files and Folders** for games, archives, or pairing files.
-`Documents/Import` also accepts bulk imports. Managed game folders use
-`Documents/Games`; see [Using Iridium](iridium/docs/product-experience.md).
+Stable supports Windows games. Full builds from `main` also support the consoles and
+arcade systems below. Game compatibility varies. Windows games and many console
+games require [JIT setup](iridium/docs/builtin-stikjit-ios27.md).
 
-## Build
+| System | Powered by |
+| --- | --- |
+| Windows | [Madeira](https://github.com/willfaust/Madeira) |
+| Game Boy and Game Boy Color | [SameBoy](https://github.com/LIJI32/SameBoy) |
+| PSP | [PPSSPP](https://github.com/hrydgard/ppsspp) |
+| GameCube and Wii | [DolphiniOS](https://github.com/OatmealDome/dolphin-ios) |
+| Nintendo 3DS | [Azahar](https://github.com/azahar-emu/azahar) |
+| PlayStation 2 | [Play!](https://github.com/jpd002/Play-) |
+| Dreamcast and supported arcade systems | [Flycast](https://github.com/flyinghead/flycast) |
 
-For Windows, GB/GBC, and PSP, use an Apple Silicon Mac with Xcode 27,
-Homebrew, Python 3.11+, and Rust:
-
-```sh
-git clone https://github.com/intraducine/iridium.git
-cd iridium
-bash ci/build-madeira-ipa.sh
-```
-
-For Dolphin, Azahar, Play!, and Flycast, continue with the
-[console build steps](docs/console-engines.md#build-and-replace).
-The [build guide](docs/actions-ipa.md) also covers manual Actions builds and
-library replacement.
-
-## Documentation
+## Guides
 
 - [Using Iridium](iridium/docs/product-experience.md)
-- [0.3.0 review notes](docs/releases/0.3.0.md)
-- [Runtime integration](docs/runtime-integration.md)
-- [Console engines](docs/console-engines.md)
-- [Contributing](CONTRIBUTING.md)
-- [Release process](docs/releasing.md)
+- [Supported console file formats](docs/console-engines.md#import-and-storage)
+- [Release notes](https://github.com/intraducine/iridium/releases)
 
-Original Iridium code is AGPL-3.0-only. Third-party components keep their own
-licenses. See [LICENSING.md](LICENSING.md) and [upstream changes](CHANGES-FROM-UPSTREAM.md).
+## Source code
+
+[Browse the source on main](https://github.com/intraducine/iridium/tree/main).
+For the source used to build a specific IPA, download the source archive from
+that release’s **Assets**. [Stable release](https://github.com/intraducine/iridium/releases/latest) · [Nightly releases](https://github.com/intraducine/iridium/releases?q=nightly-)
+
+## Development
+
+- [Build an IPA](docs/actions-ipa.md)
+- [Runtime integration](docs/runtime-integration.md)
+- [Contributing](CONTRIBUTING.md)
+
+Iridium’s own code is AGPL-3.0-only. See [licenses](LICENSING.md) for
+third-party components.

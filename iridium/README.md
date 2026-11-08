@@ -1,15 +1,10 @@
 # Iridium app
 
-The maintained 0.3.0 iOS app lives in `apps/ios/App`, `MadeiraFrontend`, and
-`RuntimeBridge`. It uses pinned engines from the root `vendor` directory.
-The older Swift packages and embedded runtime remain for development and tests.
+The iOS app source is in `apps/ios/App`, `apps/ios/MadeiraFrontend`, and
+`apps/ios/RuntimeBridge`. Runtime sources are pinned in the repository’s
+`vendor` directory.
 
-- [Build and install](../docs/actions-ipa.md)
-- [Runtime boundaries](../docs/runtime-integration.md)
-- [Using the app](docs/product-experience.md)
-- [0.3.0 review notes](../docs/releases/0.3.0.md)
-- [JIT setup](docs/builtin-stikjit-ios27.md)
+- [Build an IPA](../docs/actions-ipa.md)
+- [Runtime integration](../docs/runtime-integration.md)
 - [Device testing](docs/manual-validation-runbook.md)
-
-Use the root build command. The older `scripts/generate-project.sh` path does
-not generate the complete current app.
+- [Using Iridium](docs/product-experience.md)

@@ -19,7 +19,7 @@ accounts. Preserve existing games and saves.
    JIT, and restores networking. Launch a second game without restarting where supported.
 6. Test cancellation, a failed launch, reconnects, and any required restart path.
 
-For 0.3.0 JIT timing, start with JIT disabled after an app restart. Record debugger
+To measure JIT setup, start with JIT disabled after an app restart. Record debugger
 attach, Windows preparation, console preparation, native start, and first frame
 separately. A Windows-first launch must not prepare the console arena. Then launch
 a JIT console, Windows again, and the same game twice. Check each engine's memory
@@ -43,7 +43,7 @@ Rotate during cold Windows JIT preparation and native loading. Confirm the stage
 timer, live RAM bar, and controls keep updating. Close to the library and check
 that no keyboard, controller, or editor controls remain there. Check the first
 and last covers at high swipe speed and the selected cover's alignment in both
-orientations. Menu sound effects must be absent in the integration build.
+orientations.
 
 Test uninstall from each store, a whole folder removed in Files, partial damage,
 and a disconnected external drive separately. Confirm repair appears only where
