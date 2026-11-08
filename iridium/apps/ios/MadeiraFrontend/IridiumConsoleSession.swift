@@ -57,6 +57,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     private var dolphinControllers = [GCController?](repeating: nil, count: 4)
     @Published var error: String?
     private var dismissalError: String?
+    private var memoryPressureStop = false
     private(set) var launchRecovery: IridiumConsoleLaunchRecovery?
     @Published private(set) var presented = false
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
@@ -153,6 +154,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             MainActor.assumeIsolated { IridiumGameAudio.shared.begin(game.id, legacyMuted: game.runtimeID == "dolphin" && IridiumDolphinSettings.load(game.id).muted == true) }
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             dismissalError = nil; launchRecovery = nil
+            memoryPressureStop = false
+            RuntimePerformanceDiagnostics.shared.watchGameMemory { [weak self] in
+                self?.stopForMemoryPressure(owner)
+            }
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
             phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
@@ -1087,6 +1092,13 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         resume()
     }
 
+    @MainActor func performanceFrameCount() -> UInt64 {
+        if phase3Controller != nil { return ir_phase3_frames() }
+        if nativePSPController != nil { return ir_psp_native_frames() }
+        lock.lock(); defer { lock.unlock() }
+        return displayedImageCount
+    }
+
     var hasVideo: Bool {
         if game?.platform.isPhase3 == true { return phase3Ready }
         if nativePSPController != nil { return pspReady }
@@ -1167,6 +1179,14 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 self.pauseAfterAudioFailure(owner)
             }
         }
+    }
+
+    @MainActor private func stopForMemoryPressure(_ owner: IridiumRuntimeLease) {
+        guard lease == owner, phase == .starting || phase == .running || phase == .paused else { return }
+        memoryPressureStop = true
+        dismissalError = "The game closed because Iridium was running low on memory. Lower the game’s graphics settings before trying again."
+        RuntimePerformanceDiagnostics.shared.record("console-memory-pressure-stop")
+        stop()
     }
 
     func stop() {
@@ -1251,7 +1271,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
 
     @MainActor private func finishComplete(_ owner: IridiumRuntimeLease, failed: Bool) {
         guard lease == owner else { return }
-        IridiumPlayerTransition.returnToLibrary()
+        RuntimePerformanceDiagnostics.shared.watchGameMemory(nil)
+        if !memoryPressureStop { IridiumPlayerTransition.returnToLibrary() }
         let restart = phase3JITVerified && IridiumRuntimeRegistry.all.contains {
             $0.id == owner.runtimeID && $0.restartAfterStop
         }

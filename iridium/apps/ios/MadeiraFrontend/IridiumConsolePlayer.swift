@@ -13,6 +13,8 @@ struct IridiumConsolePlayer: View {
     @FocusState private var keyboardFocus: Bool
     @FocusState private var coreValueFocus: Bool
     @AppStorage("IridiumConsoleTouchControls") private var touchEnabled = true
+    @AppStorage("iridium.console.performanceOverlay") private var performanceOverlay = false
+    private var performanceToggle: String { performanceOverlay ? "Hide Performance Overlay" : "Show Performance Overlay" }
     private var controlOpacity: Binding<Double> { Binding(get: { controls.iridiumConsoleOpacity }, set: { controls.iridiumConsoleOpacity = $0; controls.iridiumSaveConsole() }) }
     @State private var analogKeys: Set<String> = []
     @State private var inputGeneration = 0
@@ -92,6 +94,11 @@ struct IridiumConsolePlayer: View {
                 if loading { starting.allowsHitTesting(!confirmClose).accessibilityHidden(confirmClose) }
                 if (touchVisible && session.phase == .running) || controls.editing {
                     TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)
+                }
+                if performanceOverlay && session.phase == .running && !loading && !controls.editing {
+                    IridiumFloatingPerformanceOverlay(viewport: geometry.size, insets: insets, fields: OverlayStyle.consoleFields,
+                        consoleFrames: { session.performanceFrameCount() })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 if menuVisible { menu(in: geometry.size).allowsHitTesting(!confirmClose).accessibilityHidden(confirmClose) }
                 if confirmClose {
@@ -248,6 +255,9 @@ struct IridiumConsolePlayer: View {
                                         .font(.footnote).foregroundStyle(.secondary)
                                 }
                                 menuRow("Close Game", "stop.circle")
+                            } else if menuPage == "Performance" {
+                                menuRow(performanceToggle, "chart.xyaxis.line")
+                                if performanceOverlay { OverlayStyleSettings(showsFrameGraph: false) }
                             } else if menuPage == "Controls" {
                                 menuRow(controls.visible ? "Hide Touch Controls" : "Show Touch Controls", "hand.tap")
                                 if controller.isActive {
@@ -404,6 +414,8 @@ struct IridiumConsolePlayer: View {
         case remoteName where isDolphin: session.setDolphin { $0.remote = ($0.remote + 1) % 3 }
         case "Phone Motion: On", "Phone Motion: Off": session.setDolphin { $0.motion.toggle() }
         case "Volume": break
+        case performanceToggle:
+            performanceOverlay.toggle(); menuFocus = performanceToggle
         case "Players: \(session.dolphinSettings.players)": session.setDolphin { $0.players = $0.players % 4 + 1 }
         case "Dual Core: On", "Dual Core: Off": session.setDolphin { $0.dualCore.toggle() }
         case "Close Game": closeConfirmation = IridiumCloseConfirmation(); confirmClose = true
@@ -420,6 +432,7 @@ struct IridiumConsolePlayer: View {
             menuPage = title
             if title == "Controls" { menuFocus = controls.visible ? "Hide Touch Controls" : "Show Touch Controls" }
             if title == "Help" { helpSection = 0 }
+            if title == "Performance" { menuFocus = performanceToggle }
             if title == "PSP Settings" { menuFocus = "Resolution \(session.pspResolution)×" }
             if title == "Dolphin Settings" { menuFocus = "Resolution \(session.dolphinSettings.resolution)×" }
             if title == "Save States" { menuFocus = "Slot \(stateSlot + 1)" }
@@ -478,6 +491,7 @@ struct IridiumConsolePlayer: View {
             + ((session.coreControls.cheatFormats ?? []).isEmpty ? [] : ["Cheats"])
             + (isDolphin ? ["Game Patches"] : [])
             + (canChangeDisc ? ["Change Disc"] : []) + sameBoyActions + ["Close Game"]
+        case "Performance": order = [performanceToggle]
         case "Core Settings": order = coreOptions.map { $0.title + ": " + $0.selectedTitle }
         case "Core Option": order = coreOption.map { $0.choices.isEmpty ? ["Apply Setting"] : $0.choices.map(\.title) } ?? []
         case "Change Disc": order = libraryDiscChoices + (0..<session.coreControls.discCount).map { "Disc \($0 + 1)" }

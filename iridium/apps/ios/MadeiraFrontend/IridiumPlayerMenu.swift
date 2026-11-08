@@ -185,8 +185,9 @@ struct IridiumSessionMenuActions: View {
     let activate: (String) -> Void
     static func items(windows: Bool) -> [(String, String)] {
         var rows = [("Resume", "play.fill"), ("Volume", "speaker.wave.2"), ("Controls", "gamecontroller"), ("View Log", "doc.text")]
+        rows.append(("Performance", "chart.xyaxis.line"))
         if windows {
-            rows += [("Performance", "chart.xyaxis.line"), ("Advanced", "slider.horizontal.3"), ("Show Device Keyboard", "keyboard")]
+            rows += [("Advanced", "slider.horizontal.3"), ("Show Device Keyboard", "keyboard")]
         } else { rows += [("Help", "questionmark.circle")] }
         return rows
     }

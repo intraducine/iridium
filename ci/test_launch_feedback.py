@@ -21,6 +21,21 @@ class LaunchFeedbackTests(unittest.TestCase):
                             str(source), '-o', str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=15)
 
+    def test_game_memory_reserve_stops_before_process_limit(self):
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        self.run_swift(presentation + """
+@main struct Check { static func main() {
+    func stop(_ availableMiB: UInt64?, warning: Bool = false) -> Bool {
+        RuntimeMemorySnapshot(usedBytes: 0, availableBytes: availableMiB.map { $0 << 20 })
+            .shouldStopGame(memoryWarning: warning)
+    }
+    precondition(!stop(nil, warning: true))
+    precondition(!stop(2048, warning: true))
+    precondition(!stop(1153))
+    precondition(stop(1153, warning: true))
+    precondition(stop(1024) && stop(72) && stop(0))
+}}""")
+
     def test_controls_overlay_disappears_between_library_sessions(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
         start = source.index('struct TouchControlsOverlay: View')

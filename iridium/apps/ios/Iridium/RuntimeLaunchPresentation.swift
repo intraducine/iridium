@@ -81,6 +81,12 @@ struct RuntimeMemorySnapshot {
     let usedBytes: UInt64
     let availableBytes: UInt64?
 
+    func shouldStopGame(memoryWarning: Bool) -> Bool {
+        guard let availableBytes else { return false }
+        let reserveMiB: UInt64 = memoryWarning ? 1536 : 1024
+        return availableBytes <= reserveMiB << 20
+    }
+
     static func sample() -> Self? {
         #if INTERFACE_PREVIEW
         // Include the expanding RAM meter in the existing simulator layout test.
@@ -118,8 +124,13 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
     private var lastSample: (time: TimeInterval, usedMiB: UInt64, thermal: Int)?
     private var pendingPing: TimeInterval?
     private var reportedStall = false
+    private var onGameMemoryPressure: (@MainActor @Sendable () -> Void)?
 
     private init() {}
+
+    func watchGameMemory(_ onPressure: (@MainActor @Sendable () -> Void)?) {
+        queue.async { [self] in onGameMemoryPressure = onPressure }
+    }
 
     func setForeground(_ active: Bool) {
         queue.async { [self] in
@@ -172,6 +183,10 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
         let now = process.systemUptime
         let thermal = process.thermalState.rawValue
         let memory = RuntimeMemorySnapshot.sample()
+        if let stop = onGameMemoryPressure, memory?.shouldStopGame(memoryWarning: phase == "memory-warning") == true {
+            onGameMemoryPressure = nil
+            DispatchQueue.main.async { stop() }
+        }
         let usedMiB = memory.map { $0.usedBytes >> 20 }
         if sparse, let previous = lastSample, let usedMiB,
            now - previous.time < 30, abs(Int64(usedMiB) - Int64(previous.usedMiB)) < 128,
