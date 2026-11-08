@@ -364,7 +364,8 @@ jobs:
   publish-nightly:
     needs: build
     if: inputs.nightly && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    # Use the runner that handles the full Iridium source archive.
+    runs-on: xcode-27
     permissions:
       contents: write
       actions: read
@@ -375,6 +376,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Prepare hosted publishing disk space
+        run: python3 ci/free-build-space.py --hosted-device-build
       - name: Check publishing disk space
         env:
           GH_TOKEN: ${{ github.token }}
