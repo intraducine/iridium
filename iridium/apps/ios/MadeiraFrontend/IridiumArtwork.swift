@@ -80,10 +80,13 @@ import ImageIO
                 candidate = IridiumArtworkCatalog.steam(id: id, title: game.title)
             } else if let console = game.console, console.platform == .nintendoSwitch,
                       let id = await switchArtworkTitleID(console) {
+                try Task.checkCancellation()
+                guard lookupRequests[game.id] == ticket else { return }
                 candidate = try await IridiumArtworkCatalog.switchGame(id)
             } else {
                 let identity = await identify(game)
                 try Task.checkCancellation()
+                guard lookupRequests[game.id] == ticket else { return }
                 if let identity, !identity.conflict, let id = identity.manifestSteamID {
                     candidate = IridiumArtworkCatalog.steam(id: id, title: identity.metadataNames.first ?? game.title)
                 }
@@ -140,6 +143,8 @@ import ImageIO
         guard let store else { return }
         let gameID = game.id
         let legacyBackground = await legacyBackground(for: gameID)
+        try Task.checkCancellation()
+        guard lookupRequests[gameID] == ticket else { return }
         let item = appearance(gameID)
         var cover: String?, background: String?
         if IridiumArtworkSourcePolicy.needsAutomaticCover(item, legacyCover: game.coverFile), let url = candidate.coverURL {
