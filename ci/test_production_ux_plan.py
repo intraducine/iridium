@@ -170,6 +170,11 @@ precondition(IridiumArtworkImagePolicy.fitsCover(featured:false,windows:true,wid
 precondition(IridiumArtworkImagePolicy.fitsCover(featured:true,windows:false,width:600,height:900))
 precondition(IridiumArtworkImagePolicy.fitsCover(featured:true,windows:true,width:600,height:600))
 precondition(!IridiumArtworkImagePolicy.fitsCover(featured:true,windows:true,width:600,height:900))
+let poster = CGSize(width: 600, height: 900)
+precondition(!IridiumArtworkImagePolicy.hasLetterbox(image: poster, frame: CGSize(width: 100, height: 150)))
+precondition(IridiumArtworkImagePolicy.hasLetterbox(image: poster, frame: CGSize(width: 100, height: 100)))
+precondition(IridiumArtworkImagePolicy.hasLetterbox(image: CGSize(width: 600, height: 300), frame: CGSize(width: 100, height: 150)))
+precondition(!IridiumArtworkImagePolicy.hasLetterbox(image: poster, frame: CGSize(width: 0, height: 0)))
 print("PASS routes: all four destinations, exact script/PID request preserved, foreign URL rejected; portrait/console/square covers fit")
 '''
         self.compile_run(route+'\nenum IridiumArtworkImagePolicy {'+policy+checks)

@@ -90,6 +90,7 @@ enum LogSummary {
         var smallPool = false
         var poolAllocationFailed = false
         var guestWindowFailed = false
+        var wineServerCrashed = false
         var poolPeak: UInt64 = 0
         var poolTotal: UInt64 = 0
         var exhausted = 0
@@ -190,7 +191,16 @@ enum LogSummary {
                     facts.processes[index].endedAt = facts.lastTime
                 }
             }
-            if line.contains("[dll-missing]"), let path = LogSummary.quoted(line, after: "L\"") {
+            if let start = line.range(of: ":err:module:import_dll Library "),
+               let end = line.range(of: " (which is needed by L\"", range: start.upperBound..<line.endIndex),
+               line.hasSuffix("not found") {
+                let name = LogSummary.baseName(String(line[start.upperBound..<end.lowerBound])).lowercased()
+                let program = LogSummary.quoted(line, after: " (which is needed by L\"").map(LogSummary.baseName)
+                if !name.isEmpty, !facts.missing.contains(where: { $0.name == name && $0.status == "c0000135" }) {
+                    facts.sawSession = true
+                    facts.missing.append(Missing(name: name, status: "c0000135", program: program))
+                }
+            } else if line.contains("[dll-missing]"), let path = LogSummary.quoted(line, after: "L\"") {
                 let name = LogSummary.baseName(path).lowercased()
                 let status = line.range(of: "status=").map { String(line[$0.upperBound...].prefix { $0.isHexDigit }) } ?? ""
                 if LogSummary.harmlessDLLs.contains(name) && status != "c0000017" {
@@ -200,6 +210,10 @@ enum LogSummary {
                         .map { facts.processes[$0].image }
                     facts.missing.append(Missing(name: name, status: status, program: program))
                 }
+            }
+            if line.contains("wineserver crashed,") {
+                facts.sawSession = true
+                facts.wineServerCrashed = true
             }
             if let r = line.range(of: "wine: Unhandled "), let at = line.range(of: " at address ", range: r.upperBound..<line.endIndex) {
                 // "wine: Unhandled page fault on write access to 00000000 at address 00B57AA9 (thread 0108), ..."
@@ -283,6 +297,9 @@ enum LogSummary {
         }
 
         var problems: [String] = []
+        if f.wineServerCrashed {
+            problems.append("The Windows runtime server crashed. See the full log for the failure.")
+        }
         if f.poolAllocationFailed {
             problems.append("The JIT pool could not be allocated, so Wine was not started. See the JIT pool lines in the full log for the reason.")
         }
@@ -301,6 +318,9 @@ enum LogSummary {
         }
         for m in f.missing where m.status == "c0000017" {
             problems.append("\(m.name) could not be loaded: out of memory" + (m.program.map { " (in \($0))" } ?? "") + ".")
+        }
+        if f.missing.contains(where: { $0.status == "c0000135" }) {
+            problems.append("Windows could not load a required DLL. See Missing DLLs below.")
         }
         if let report = f.exitReport { problems.append("The program stopped with Windows error \(report).") }
         if f.handedToSteam, f.dock.isEmpty {
@@ -331,9 +351,7 @@ enum LogSummary {
             out.append("How it ended:")
             for p in ends {
                 let code = p.exitCode!
-                let words = code == 0 ? "exit code 0 (normal)" : code >= 0xC0000000
-                    ? String(format: "Windows error 0x%08X", code) + (LogSummary.errorMeanings[code].map { " (\($0))" } ?? "")
-                    : "exit code \(code)"
+                let words = code == 0 ? "exit code 0 (normal)" : windowsExitDescription(code)
                 out.append("  \(p.image) ended itself with \(words)" + (p.endedAt.map { " around \($0)" } ?? ""))
             }
             if let asked = f.quitAsked { out.append("  Quit game was pressed at \(asked)") }
@@ -420,14 +438,20 @@ enum LogSummary {
     static let errorMeanings: [UInt32: String] = [
         0xC0000005: "a crash: the program used memory it may not",
         0xC000001D: "an instruction this CPU lacks: try Game details > Compatibility > AVX and AVX2",
-        0xC0000135: "a DLL it needs is missing: see Missing DLLs",
+        0xC0000135: "a required DLL could not load",
         0xC0000142: "a DLL failed to start",
         0xC0000409: "the program stopped itself after finding damaged memory",
         0xC0000374: "damaged memory (heap corruption)",
         0xC00000FD: "a stack overflow",
         0xC0000017: "out of memory",
+        0xC0000018: "memory address conflict",
         0xC000041D: "a crash inside a window callback",
     ]
+
+    static func windowsExitDescription(_ code: UInt32) -> String {
+        guard code >= 0xC0000000 else { return "exit code \(code)" }
+        return String(format: "Windows error 0x%08X", code) + (errorMeanings[code].map { " (\($0))" } ?? "")
+    }
 
     static func mb(_ bytes: UInt64) -> UInt64 { (bytes >> 20) + (bytes & ((1 << 20) - 1) >= 1 << 19 ? 1 : 0) }
 

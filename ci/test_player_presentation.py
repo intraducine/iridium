@@ -104,6 +104,17 @@ class PlayerPresentationTests(unittest.TestCase):
         # Help and menu are overlays; they never participate in viewport layout.
         self.assertLess(player.index('let layout = IridiumPlayerLayout'), player.index('if menuVisible { menu'))
 
+    def test_shipping_players_offer_cancel_from_shared_loading_screen(self):
+        frontend = FRONTEND.FRONTEND
+        loading = (frontend / 'IridiumLaunchMemoryView.swift').read_text()
+        console = (frontend / 'IridiumConsolePlayer.swift').read_text()
+        windows = (frontend.parent / 'App/Library/IridiumWindowsScreens.swift').read_text()
+        self.assertIn('Button("Cancel Launch", action: cancelLaunch)', loading)
+        self.assertIn('IridiumGameLoadingView(title: game.title, cancelLaunch:', console)
+        self.assertIn('if loading { closeGame() }', console)
+        self.assertIn('private func closeGame() { confirmClose = false; releaseInput(); session.stop() }', console)
+        self.assertIn('cancelLaunch: model.cancellableLaunchID.map { id in { model.cancelLaunch(id) } }', windows)
+
 
 if __name__ == '__main__':
     unittest.main()
