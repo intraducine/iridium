@@ -48,9 +48,31 @@ review builds, but is not a release artifact or a compatibility result.
    checksums. Split source archives only for hosting limits.
 6. Verify downloads and checksums, then publish with authorization.
 
-Keep matching source and notices at permanent versioned release URLs. Actions
-artifacts expire. Preserve old source, checksums, and data-safe recovery steps
-when issuing a fix release.
+Keep matching source and notices at permanent versioned release URLs. Preserve
+old source, checksums, and data-safe recovery steps when issuing a fix release.
+
+## AltStore Classic
+
+After publishing a stable release, use its checked IPA to update the Stable
+source. Review the JSON change and merge it into `main`.
+
+```sh
+python3 ci/update-altstore-source.py v0.3.0 /path/to/Iridium-unsigned.ipa
+```
+
+For Nightly, select `main` and enable `nightly` in the manual IPA workflow. The
+workflow collects and audits matching source, then publishes the IPA and source
+as a versioned GitHub prerelease after the build passes. It splits the source
+archive into assets under 2 GiB and verifies every uploaded checksum before
+updating the separate `altstore-nightly` branch. Older releases stay available.
+
+```sh
+python3 ci/dispatch-build.py --nightly
+```
+
+The Stable updater checks the IPA against its published size and checksum.
+The Nightly feed points to a run-specific release and its matching source.
+Nightly prereleases do not replace GitHub's latest stable release.
 
 ## Source and signing
 
