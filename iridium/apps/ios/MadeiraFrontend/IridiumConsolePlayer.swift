@@ -205,7 +205,9 @@ struct IridiumConsolePlayer: View {
             if let game = session.game {
                 IridiumGameArtwork(game: IridiumGame(console: game), backdrop: true)
                     .overlay(.black.opacity(0.65)).ignoresSafeArea()
-                IridiumGameLoadingView(title: game.title) {
+                IridiumGameLoadingView(title: game.title, cancelLaunch: {
+                    if loading { closeGame() }
+                }) {
                     IridiumGameArtwork(game: IridiumGame(console: game))
                 } status: {
                     ProgressView().tint(.white)
@@ -215,7 +217,6 @@ struct IridiumConsolePlayer: View {
                     HStack(spacing: 24) {
                         if session.phase == .paused { Button("Resume", action: resume).frame(minHeight: 44) }
                         Button("View Log") { showingLogs = true }.frame(minHeight: 44)
-                        Button("Close Game") { confirmClose = true }.frame(minHeight: 44)
                     }.frame(minHeight: 44)
                 }
             }

@@ -90,6 +90,12 @@ enum IridiumArtworkBackPolicy {
 /// Regular tiles and console packaging retain the complete cover. Unusual
 /// Windows art also fits the wide tile; the usual poster keeps its featured crop.
 enum IridiumArtworkImagePolicy {
+    static func hasLetterbox(image: CGSize, frame: CGSize) -> Bool {
+        guard image.width > 0, image.height > 0, frame.width > 0, frame.height > 0 else { return false }
+        let fitScale = min(frame.width / image.width, frame.height / image.height)
+        return frame.width - image.width * fitScale > 1 || frame.height - image.height * fitScale > 1
+    }
+
     static func fitsCover(featured: Bool, windows: Bool, width: Double, height: Double) -> Bool {
         guard featured && windows else { return true }
         guard width > 0, height > 0 else { return false }

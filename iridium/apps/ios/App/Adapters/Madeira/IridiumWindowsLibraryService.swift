@@ -665,6 +665,7 @@ final class LibraryModel: ObservableObject {
     /// Play is enabling JIT before starting this entry (ContentView.jitReadyForLaunch):
     /// its Play button reads Starting JIT, with a spinner, until JIT is on or fails.
     @Published var startingJIT: UUID?
+    var launchAfterJIT: (() -> Void)?
     /// A Play still enabling JIT or getting its start ready: the starting screen is up
     /// for it before the session begins (LibraryHUD), so the press goes straight to it.
     @Published var preparing: LibraryEntry?
@@ -672,6 +673,10 @@ final class LibraryModel: ObservableObject {
     private var preparingSince = Date()
     /// The starting screen is up: a session starting, or a Play getting ready.
     var startingScreen: Bool { launching || preparing != nil }
+    var cancellableLaunchID: UUID? {
+        if preparing != nil { return preparationID }
+        return launching && current != nil && !quitRequested ? nativeLaunchID : nil
+    }
     var startingEntry: LibraryEntry? { launching ? activeEntry : preparing }
     /// When the starting screen went up, for its elapsed-time line.
     var startingSince: Date { launching ? launchStarted : preparingSince }
@@ -682,6 +687,18 @@ final class LibraryModel: ObservableObject {
         // The starting screen draws in the controls window (LibraryHUD), which otherwise
         // only comes up with the session's game view.
         TouchControlsHost.attach()
+    }
+    func cancelLaunch(_ id: UUID) {
+        guard cancellableLaunchID == id else { return }
+        if preparing != nil {
+            preparationID = UUID()
+            launchAfterJIT = nil
+            startingJIT = nil
+            cloudRetry = nil
+            preparing = nil
+        } else {
+            requestQuit()
+        }
     }
     /// A Steam game's saves may not be the latest (SteamOwnedLibrary.cloudHold):
     /// the alert Play shows before starting it.
@@ -786,13 +803,19 @@ final class LibraryModel: ObservableObject {
                 case .running:
                     self.sawProcess = true
                     if self.sessionMessage == "Starting…" { self.sessionMessage = "" }
-                case .ended(let status):
+                case .ended(let status), .failed(let status):
                     let requestedQuit = self.quitRequested
                     let closedBeforeVideo = self.startingScreen
                     self.finish()
                     if !requestedQuit {
-                        if status != 0 { self.error = "The Windows game ended with code \(status)." }
-                        else if closedBeforeVideo && self.error == nil { self.error = "The Windows game closed before it displayed video. Open View Log for details." }
+                        if case .failed = event {
+                            self.error = status == 0 ? "Windows could not start the game. Open View Log for details."
+                                : "Windows could not start the game (code \(status)). Open View Log for details."
+                        } else if status != 0 {
+                            self.error = "The game ended with \(LogSummary.windowsExitDescription(status)). Open View Log for details."
+                        } else if closedBeforeVideo && self.error == nil {
+                            self.error = "The Windows game closed before it displayed video. Open View Log for details."
+                        }
                     }
                 case .blocked(let message):
                     self.timer?.invalidate(); self.timer = nil
@@ -839,6 +862,7 @@ final class LibraryModel: ObservableObject {
     /// removal of a scrolling view with live content could leave the starting
     /// screen up (and unresponsive) while the game was already presenting.
     func showGameView(reason: String = "button") {
+        guard !launching || !quitRequested else { return }
         if launching && !launchDismissLogged {
             launchDismissLogged = true
             fputs("[launch-view] dismissed reason=\(reason) logs=\(launchLogs ? 1 : 0)\n", stderr)
@@ -888,7 +912,9 @@ final class LibraryModel: ObservableObject {
     }
     func requestQuit() {
         LibraryKeyboard.hide()
-        if quitRequested, IridiumMadeiraRuntime.shared.isResident {
+        if launching || (quitRequested && IridiumMadeiraRuntime.shared.isResident) {
+            quitRequested = true
+            if quitRequestedAt == nil { quitRequestedAt = Date() }
             IridiumMadeiraRuntime.shared.requestStop(nativeLaunchID)
             sessionMessage = "Ending the remaining game processes…"
             menu = false
@@ -940,8 +966,10 @@ final class LibraryModel: ObservableObject {
     }
     private func finish() {
         MainActor.assumeIsolated { IridiumPlayerTransition.returnToLibrary() }
-        if sawProcess, let next = steamRunRequest() { restartNotice = next }
-        else if sawProcess, let report = exitReport() { error = report }
+        if sawProcess && !(launching && quitRequested) {
+            if let next = steamRunRequest() { restartNotice = next }
+            else if let report = exitReport() { error = report }
+        }
         timer?.invalidate(); timer = nil
         saveCurrentProfile()
         controllerMode = nil

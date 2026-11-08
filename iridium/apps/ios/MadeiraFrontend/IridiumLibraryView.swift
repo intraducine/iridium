@@ -171,7 +171,7 @@ struct IridiumLibraryView: View {
                                             description: Text("Add favorites through Game Options."))
                                     } else {
                                         ContentUnavailableView("Add your first game", systemImage: "gamecontroller",
-                                            description: Text("Choose files, stores, or a 3DS CIA from Add Game (+). Games appear together in this library."))
+                                            description: Text("Use Add Game (+) to add games to your library."))
                                     }
                                 }.frame(maxWidth: .infinity, minHeight: layout.freeSpace)
                             }

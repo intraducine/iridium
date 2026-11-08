@@ -88,6 +88,10 @@ class WindowsChromeSourceTests(unittest.TestCase):
                 a = before.index(start); b = before.index('\n    }', a)+6
                 original = before[a:b]
                 a = after.index(start); actual = after[a:after.index('\n    }', a)+6]
+                # A late frame must not dismiss the loading screen during cancellation.
+                signature, guard, dismissal = actual.split('\n', 2)
+                self.assertEqual(guard, '        guard !launching || !quitRequested else { return }')
+                actual = f'{signature}\n{dismissal}'
             else:
                 original = before[before.index(start):before.index(end)]
                 actual = after[after.index(start):after.index(end)]

@@ -163,8 +163,7 @@ struct IridiumGameArtwork: View {
             IridiumArtworkImage(image: image,
                 position: backdrop ? artwork.appearance(game.id).backgroundY : artwork.appearance(game.id).coverY,
                 fit: !backdrop && !forceCrop && IridiumArtworkImagePolicy.fitsCover(featured: featured, windows: game.windows != nil,
-                    width: Double(image?.size.width ?? 0), height: Double(image?.size.height ?? 0)),
-                filledBacking: featured && !backdrop)
+                    width: Double(image?.size.width ?? 0), height: Double(image?.size.height ?? 0)))
             if image == nil && !backdrop {
                 VStack(spacing: 12) {
                     Image(systemName: "gamecontroller").font(.largeTitle)

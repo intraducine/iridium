@@ -14,6 +14,10 @@ runtime adapters. Frozen build-43 overlays remain test fixtures only.
 Library and Settings navigation do not play UI sounds or activate an audio
 session. Game audio and touch haptics remain owned by their existing systems.
 
+The built-in JIT helper and source-built StikJIT framework target iOS 18.
+The older OS uses imported pairing and manual LocalDevVPN setup. The owned
+helper and executable-memory checks still gate runtime launch.
+
 The library uses lazy cover views and changes focus only at cover boundaries.
 Backdrop transitions retain an opaque outgoing image and at most two layers.
 Landscape portrait covers grow with their scroll position toward the left slot,
