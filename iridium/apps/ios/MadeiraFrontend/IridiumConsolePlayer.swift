@@ -226,7 +226,9 @@ struct IridiumConsolePlayer: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
                             if session.phase == .restartRequired {
-                                Text("The runtime is still closing. Restart Iridium before playing another game.")
+                                Text(session.shutdownPending
+                                     ? "The game is still closing. Wait before starting another game."
+                                     : "Restart Iridium before playing another game.")
                                 IridiumPlayerMenuRow(title: "Library", symbol: "square.grid.2x2") { session.returnToLibraryAfterTimeout() }
                             } else if menuPage == "Session" {
                                 IridiumSessionMenuActions(focused: menuGuided ? menuFocus : nil, activate: activate)

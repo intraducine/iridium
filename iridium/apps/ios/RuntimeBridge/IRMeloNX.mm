@@ -2,8 +2,9 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
-#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <signal.h>
@@ -57,10 +58,17 @@ static IRMeloNXPlayer *player;
 // The core keeps the cache and generated fault handler across games.
 static const IRJITMemoryAPI *hostMemory;
 static std::mutex allocationLock;
+static std::condition_variable allocationReleased;
 static std::map<uintptr_t, size_t> liveAllocations, retainedAllocations;
 static const int faultSignals[] = {SIGSEGV, SIGBUS};
-static struct sigaction previousFaults[2], melonxFaults[2];
-static bool haveMeloNXFaults;
+struct FaultHandlers { struct sigaction actions[2]; };
+// Fault handlers can outlive a handoff on another thread. Keep published snapshots immutable.
+static FaultHandlers predecessors[8];
+static unsigned predecessorCount;
+static std::atomic<const FaultHandlers *> predecessor;
+static_assert(decltype(predecessor)::is_always_lock_free);
+static struct sigaction scopedFaults[2];
+static void (*melonxFaultHandler)(int, siginfo_t *, void *);
 enum : unsigned { Docked = 1, DisableVSync = 2, ShaderCache = 4, DisableTextureRecompression = 8 };
 static void diagnostic(const char *message) {
     if (message) player->event(player->generation, 0, message);
@@ -83,6 +91,7 @@ static uint8_t release(void *rx, size_t bytes) {
     if (allocation == liveAllocations.end() || allocation->second != bytes ||
         !hostMemory->release(rx, bytes)) return false;
     liveAllocations.erase(allocation);
+    allocationReleased.notify_one();
     return true;
 }
 
@@ -105,29 +114,59 @@ static bool setFaults(const struct sigaction (&actions)[2]) {
     return segv && bus;
 }
 
-static bool beginFaultScope() {
-    struct sigaction current[2]{};
-    if (!readFaults(current)) return false;
-    if (!haveMeloNXFaults) {
-        std::copy_n(current, 2, previousFaults);
-        return true;
+static void forwardFault(int signal, siginfo_t *info, void *context) {
+    const auto *handlers = predecessor.load(std::memory_order_acquire);
+    const auto &action = handlers->actions[signal == SIGSEGV ? 0 : 1];
+    if (action.sa_handler == SIG_IGN) return;
+    if (action.sa_handler == SIG_DFL) {
+        sigaction(signal, &action, nullptr);
+        raise(signal);
+    } else if (action.sa_flags & SA_SIGINFO) {
+        action.sa_sigaction(signal, info, context);
+    } else {
+        action.sa_handler(signal);
     }
-    // The generated trampoline still points to the handler from the first launch.
-    if (!sameFaults(current, previousFaults)) return false;
-    if (setFaults(melonxFaults)) return true;
-    setFaults(previousFaults);
+}
+
+static bool installFaultScope() {
+    const auto &previous = predecessor.load(std::memory_order_acquire)->actions;
+    for (unsigned i = 0; i < 2; ++i) {
+        scopedFaults[i] = previous[i];
+        scopedFaults[i].sa_flags |= SA_SIGINFO;
+        scopedFaults[i].sa_sigaction = melonxFaultHandler ? melonxFaultHandler : forwardFault;
+    }
+    if (setFaults(scopedFaults)) return true;
+    setFaults(previous);
     return false;
+}
+
+static bool beginFaultScope() {
+    FaultHandlers current{};
+    if (!readFaults(current.actions)) return false;
+    for (const auto &action : current.actions) {
+        if ((action.sa_flags & SA_RESETHAND) || action.sa_sigaction == forwardFault ||
+            (melonxFaultHandler && action.sa_sigaction == melonxFaultHandler)) return false;
+    }
+    unsigned index = 0;
+    while (index < predecessorCount && !sameFaults(current.actions, predecessors[index].actions)) ++index;
+    if (index == predecessorCount) {
+        if (index == sizeof predecessors / sizeof *predecessors) return false;
+        predecessors[predecessorCount++] = current;
+    }
+    predecessor.store(&predecessors[index], std::memory_order_release);
+    // The core records this relay once. Each session can then use the app's current handlers.
+    return installFaultScope();
 }
 
 static uint8_t checkpointJIT() {
     struct sigaction current[2]{};
     if (!readFaults(current)) return false;
     std::lock_guard<std::mutex> lock(allocationLock);
-    if (haveMeloNXFaults) return sameFaults(current, melonxFaults) && liveAllocations == retainedAllocations;
+    if (melonxFaultHandler) return sameFaults(current, scopedFaults) && liveAllocations == retainedAllocations;
     auto handler = reinterpret_cast<uintptr_t>(current[0].sa_sigaction);
     auto allocation = liveAllocations.upper_bound(handler);
     if (!(current[0].sa_flags & SA_SIGINFO) || !(current[1].sa_flags & SA_SIGINFO) ||
-        current[0].sa_sigaction != current[1].sa_sigaction || sameFaults(current, previousFaults) ||
+        current[0].sa_sigaction != current[1].sa_sigaction || current[0].sa_sigaction == forwardFault ||
         allocation == liveAllocations.begin()) return false;
     --allocation;
     if (handler - allocation->first >= allocation->second) return false;
@@ -136,21 +175,20 @@ static uint8_t checkpointJIT() {
     } catch (...) {
         return false;
     }
-    std::copy_n(current, 2, melonxFaults);
-    haveMeloNXFaults = true;
-    return true;
+    melonxFaultHandler = current[0].sa_sigaction;
+    return installFaultScope();
 }
 
 static bool endFaultScope() {
     struct sigaction current[2]{};
     if (!readFaults(current)) return false;
-    {
-        std::lock_guard<std::mutex> lock(allocationLock);
-        if (liveAllocations != retainedAllocations) return false;
-    }
-    if (!haveMeloNXFaults) return sameFaults(current, previousFaults);
-    return sameFaults(current, melonxFaults) && setFaults(previousFaults) &&
-           readFaults(current) && sameFaults(current, previousFaults);
+    const auto &previous = predecessor.load(std::memory_order_acquire)->actions;
+    if (!sameFaults(current, scopedFaults) || !setFaults(previous) ||
+        !readFaults(current) || !sameFaults(current, previous)) return false;
+    // Workers have stopped. Give deferred releases a bounded chance to finish.
+    std::unique_lock<std::mutex> lock(allocationLock);
+    return allocationReleased.wait_for(lock, std::chrono::seconds(1),
+        [] { return liveAllocations == retainedAllocations; });
 }
 
 static bool probe(const IRJITMemoryAPI *memory) {

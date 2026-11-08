@@ -278,6 +278,7 @@ final class TouchControlsModel {
 final class Preflight {
     enum Phase { case idle, restartRequired }
     var phase = Phase.idle
+    var shutdownPending = false
     var dolphinMaintenance = false
     var ownership = IridiumRuntimeOwnership()
 ADMISSION
@@ -303,8 +304,8 @@ try preflight.validateLaunchAdmission(importOwner: owner)
 IridiumImportCoordinator.shared.contentOwner = nil
 IridiumImportCoordinator.shared.blocksLaunch = false
 
-func rejects(_ expected: IridiumRuntimeError) {
-    do { _ = try preflight.acquire(game); fatalError("Unexpected launch") }
+func rejects(_ expected: IridiumRuntimeError, for target: IridiumConsoleGame = game) {
+    do { _ = try preflight.acquire(target); fatalError("Unexpected launch") }
     catch let actual as IridiumRuntimeError { precondition(String(describing: actual) == String(describing: expected)) }
     catch { fatalError("Unexpected error") }
 }
@@ -326,11 +327,16 @@ LibraryModel.sessionsThisRun = 1
 IridiumMadeiraRuntime.shared.poisoned = true; rejects(.busy)
 IridiumMadeiraRuntime.shared.poisoned = false
 wineRunning = 1; serverRunning = 1; IridiumMadeiraRuntime.shared.residentIdle = true
-let second = try preflight.acquire(game)
+let switchGame = IridiumConsoleGame(id: UUID(), title: "Switch fixture", platform: .nintendoSwitch,
+    runtimeID: "melonx", fileExtension: "nro", importedAt: Date())
+let second = try preflight.acquire(switchGame)
 preflight.ownership.release(first) // Stale stop cannot release the newer owner.
-rejects(.busy)
+rejects(.busy, for: switchGame)
+preflight.phase = .restartRequired; preflight.shutdownPending = true
+rejects(.busy, for: switchGame)
 preflight.ownership.release(second)
-let third = try preflight.acquire(game)
+preflight.phase = .idle; preflight.shutdownPending = false
+let third = try preflight.acquire(switchGame)
 preflight.ownership.release(third)
 preflight.phase = .restartRequired; rejects(.restartRequired)
 preflight.phase = .idle
@@ -341,7 +347,8 @@ print("PASS shipping preflight: active Windows/launch/server/owner, idle residen
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory); source = folder / 'main.swift'; source.write_text(fixture)
             binary = folder / 'checks'
-            subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-module-cache-path', module_cache('macosx'),
+            subprocess.run(['swiftc', '-D', 'IRIDIUM_PPSSPP', '-D', 'IRIDIUM_PHASE3', '-D', 'IRIDIUM_MELONX',
+                            '-module-cache-path', module_cache('macosx'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumRuntime.swift'),
                             str(ROOT / 'iridium/apps/ios/RuntimeSupport/IridiumCoreControls.swift'),
                             str(source), '-o', str(binary)], check=True)

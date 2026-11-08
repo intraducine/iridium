@@ -11,6 +11,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     enum Phase { case idle, starting, running, paused, stopping, restartRequired }
     @Published private(set) var game: IridiumConsoleGame?
     @Published private(set) var phase = Phase.idle
+    @Published private(set) var shutdownPending = false
     @Published private(set) var image: UIImage?
     @Published private(set) var nativePSPController: UIViewController?
     @Published private(set) var phase3Controller: UIViewController?
@@ -61,6 +62,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var diagnostics = IridiumRuntimeProgress()
     var isActive: Bool { game != nil }
     var windowsAdmissionError: String? {
+        if shutdownPending { return "Wait for the console game to close." }
         if ownership.requiresRestart || phase == .restartRequired { return IridiumRuntimeError.restartRequired.localizedDescription }
         if dolphinMaintenance { return "Wait for the console file import to finish." }
         return isActive ? "Stop the console runtime first." : nil
@@ -131,6 +133,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         }
         guard !jit.restart else { throw IridiumRuntimeError.restartRequired }
         guard !jit.busy else { throw IridiumRuntimeError.busy }
+        guard !shutdownPending else { throw IridiumRuntimeError.busy }
         guard phase != .restartRequired, !ownership.requiresRestart else { throw IridiumRuntimeError.restartRequired }
         guard LibraryModel.shared.current == nil, !LibraryModel.shared.launching,
               !IridiumMadeiraRuntime.shared.isBusy else { throw IridiumRuntimeError.busy }
@@ -142,8 +145,6 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         do {
             try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
-            // MeloNX's generated handler cannot adopt a resident Windows predecessor.
-            if runtime.id == "melonx", IridiumMadeiraRuntime.shared.isResident { throw IridiumRuntimeError.restartRequired }
             let savedCheats = try IridiumCheat.load(game.id)
             if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
@@ -429,6 +430,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             guard let self, self.lease == owner else { return }
             switch outcome {
             case .restart(let message):
+                self.shutdownPending = false
                 self.phase = .restartRequired; self.error = message
                 self.pspJITStatus = message; self.diagnostics.phase = "JIT restart required"
                 return // Retain admission/context/journal around any uncertain worker.
@@ -526,6 +528,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             if kind == 6 { error = text }
         case 7: pause()
         case 9:
+            shutdownPending = false
             phase = .restartRequired; error = text; diagnostics.phase = "native JIT cleanup incomplete"
         case 10:
             if let data = text.data(using: .utf8), let snapshot = try? JSONDecoder().decode(IridiumCoreControls.self, from: data) {
@@ -1190,9 +1193,10 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         let attempt = UUID(); stopWatch = attempt
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             guard self.lease == owner, self.stopWatch == attempt, self.phase == .stopping else { return }
+            self.shutdownPending = true
             self.phase = .restartRequired
             self.diagnostics.phase = "stop timed out"
-            self.error = "The runtime has not stopped. You can return to the library, but fully close and reopen Iridium before launching another game."
+            self.error = "The game is still closing. You can return to the library while it finishes."
         }
     }
 
@@ -1260,6 +1264,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         if presented, failed, dismissalError == nil { dismissalError = error }
         self.error = nil
         self.lease = nil; self.game = nil; self.image = nil; self.nativePSPController = nil; self.phase3Controller = nil
+        self.shutdownPending = false
         self.phase = .idle
         var transition = Transaction(); transition.disablesAnimations = true
         withTransaction(transition) { self.presented = false }
@@ -1272,6 +1277,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         DispatchQueue.main.async {
             guard self.lease == owner else { return }
             // Keep the lease and native ownership: this bridge did not close.
+            self.shutdownPending = false
             self.phase = .restartRequired; self.releaseButtons()
             self.error = "The runtime cannot safely unload. Fully close and reopen Iridium before launching another game."
         }
@@ -1318,7 +1324,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard phase == .restartRequired else { return }
         // Keep ownership until the worker truly finishes. Never let another
         // engine race a stuck native call, even after its surface is dismissed.
-        if dismissalError == nil { dismissalError = IridiumRuntimeError.restartRequired.localizedDescription }
+        if !shutdownPending, dismissalError == nil { dismissalError = IridiumRuntimeError.restartRequired.localizedDescription }
         error = nil
         presented = false
     }

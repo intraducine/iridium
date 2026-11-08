@@ -31,22 +31,38 @@ class Phase3Tests(unittest.TestCase):
         state = source[source.index('static std::mutex allocationLock;'):source.index('enum : unsigned')]
         operations = source[source.index('static bool readFaults('):source.index('static bool probe(')]
         fixture = r'''
-#include <algorithm>
+#include <atomic>
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <mutex>
 #include <signal.h>
+#include <thread>
 STATE
 OPERATIONS
-static void testHandler(int, siginfo_t *, void *) {}
+static volatile sig_atomic_t oldSegv, newSegv, newBus;
+static void oldHandler(int, siginfo_t *, void *) { oldSegv = 1; }
+static void windowsHandler(int signal, siginfo_t *, void *) {
+    if (signal == SIGSEGV) newSegv = 1;
+    else newBus = 1;
+}
+static void testHandler(int signal, siginfo_t *info, void *context) { forwardFault(signal, info, context); }
 int main() {
-    struct sigaction baseline[2]{}, current[2]{}, installed[2]{};
+    struct sigaction baseline[2]{}, current[2]{}, installed[2]{}, idleWindows[2]{};
     assert(readFaults(baseline));
     assert(beginFaultScope());
     // A stop before core initialization has nothing to restore.
     assert(endFaultScope());
+    for (auto &action : idleWindows) {
+        action.sa_sigaction = oldHandler;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+    }
+    assert(setFaults(idleWindows));
     assert(beginFaultScope());
+    assert(readFaults(current) && current[0].sa_sigaction == forwardFault);
     for (auto &action : installed) {
         action.sa_sigaction = testHandler;
         action.sa_flags = SA_SIGINFO;
@@ -56,14 +72,36 @@ int main() {
     assert(!checkpointJIT());
     liveAllocations.emplace(reinterpret_cast<uintptr_t>(testHandler), 1);
     assert(checkpointJIT());
+    assert(raise(SIGSEGV) == 0 && oldSegv);
     assert(endFaultScope());
-    assert(readFaults(current) && sameFaults(current, baseline));
+    assert(readFaults(current) && sameFaults(current, idleWindows));
+    for (auto &action : idleWindows) {
+        action.sa_sigaction = windowsHandler;
+        action.sa_flags |= SA_ONSTACK;
+    }
+    sigaddset(&idleWindows[0].sa_mask, SIGUSR1);
+    assert(setFaults(idleWindows));
     assert(beginFaultScope());
     assert(checkpointJIT());
+    assert(readFaults(current) && current[0].sa_mask == idleWindows[0].sa_mask &&
+           (current[0].sa_flags & SA_ONSTACK));
+    assert(raise(SIGSEGV) == 0 && newSegv);
+    assert(raise(SIGBUS) == 0 && newBus);
+    liveAllocations.emplace(1, 1);
+    std::thread deferred([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        std::lock_guard<std::mutex> lock(allocationLock);
+        liveAllocations.erase(1);
+        allocationReleased.notify_one();
+    });
+    assert(endFaultScope());
+    deferred.join();
+    assert(readFaults(current) && sameFaults(current, idleWindows));
+    assert(beginFaultScope() && checkpointJIT());
     liveAllocations.emplace(1, 1);
     assert(!endFaultScope());
+    assert(readFaults(current) && sameFaults(current, idleWindows));
     liveAllocations.erase(1);
-    assert(endFaultScope());
     assert(setFaults(installed));
     assert(!beginFaultScope());
     assert(setFaults(baseline));
