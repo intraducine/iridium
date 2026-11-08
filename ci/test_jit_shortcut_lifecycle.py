@@ -174,8 +174,10 @@ precondition(outcomes == [true, false] && !expired.isValid)
     def test_single_flight_failure_cleanup_and_stale_callbacks(self):
         network = lifecycle.apply('JITNetwork.swift', (upstream() / 'JITNetwork.swift').read_text())
         setup = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
+        shipping_network = (ROOT / 'iridium/apps/ios/App/JIT/JITNetwork.swift').read_text()
         # Exact production methods. Replace only the platform/network endpoints.
-        methods = network[network.index('    func start(completion:'):network.index('    /// At launch:')]
+        methods = shipping_network[shipping_network.index('    var canStart:'):shipping_network.index('    enum Outcome')]
+        methods += network[network.index('    func start(completion:'):network.index('    /// At launch:')]
         methods += network[network.index('    private func run('):].rsplit('\n}', 1)[0]
         enable = setup[setup.index('    func enable(requiresAttachedDebugger:'):setup.index('    /// PSP owns a distinct script')]
         enable += setup[setup.index('    private func ensureLoopback('):setup.index('    /// JIT setup\'s connect action')]
@@ -208,6 +210,7 @@ import CoreFoundation
 @MainActor var debuggerAttached = true
 @MainActor func isDebuggerAttached() -> Bool { debuggerAttached }
 func jit_arm_trap_fallback() { fatalError("fixture has no debugger") }
+enum JITShortcutFile { static var supported = true }
 @MainActor final class JITNetworkShortcut {
     enum Outcome { case done(String), failed(String) }
     static let shared = JITNetworkShortcut()
@@ -223,6 +226,8 @@ NETWORK_METHODS
 }
 @MainActor final class JITCoordinator {
     private var enableRequest: UUID?
+    enum Method { case builtIn, stikDebug }
+    var resolvedMethod = Method.builtIn
     var busy = false
     var consoleMemoryBusy = false
     var error: String?
@@ -352,6 +357,21 @@ foreign.start(requested: true, activate: { callback in
 }, validate: { $0(.success(())) }, cleanup: { foreignRelease($0) }) { foreignLaunched = $0 }
 precondition(foreignLaunched && coordinator.enables == foreignBefore && !coordinator.busy)
 StikJITHelper.ready = false
+// A saved preference must not launch a Shortcut on a system without support.
+JITShortcutFile.supported = false
+let manual = JITCoordinator()
+let beforeManual = app.urls.count
+manual.enable(requiresAttachedDebugger: true) { precondition((try? $0.get()) != nil) }
+LoopbackProbe.pending?(LoopbackProbe.Probe(reachable: false))
+precondition(manual.enables == 1 && app.urls.count == beforeManual)
+manual.resolved?(.success(()))
+JITShortcutFile.supported = true
+let external = JITCoordinator()
+external.resolvedMethod = .stikDebug
+external.enable(requiresAttachedDebugger: true) { precondition((try? $0.get()) != nil) }
+LoopbackProbe.pending?(LoopbackProbe.Probe(reachable: false))
+precondition(external.enables == 1 && app.urls.count == beforeManual)
+external.resolved?(.success(()))
 func awaitCleanupURL(_ count: Int) {
     let deadline = Date().addingTimeInterval(3)
     while app.urls.count < count && Date() < deadline {

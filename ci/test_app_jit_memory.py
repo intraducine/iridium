@@ -181,9 +181,12 @@ enum IridiumMadeiraRuntime {
 }
 let ir_jit_prepare_region = 1
 func isDebuggerAttached() -> Bool { true }
+enum MadeiraBuiltInJIT { static let unavailableReason: String? = nil }
 @MainActor enum LogStore { static let shared = Logger(); struct Logger { func log(_ text: String) {} } }
 @MainActor final class Host {
     enum CoordinatorError: Error { case setupRequired(String) }
+    enum Method { case builtIn, stikDebug }
+    var resolvedMethod = Method.builtIn
     var enableRequest: UUID?, busy = false, status: String?, error: String?
     var builtInHelper: UUID? = UUID(), builtInHelperReleased: Bool?
     var enables = 0, detaches = 0, clean = true
@@ -201,19 +204,27 @@ BODY
 }
 @main struct Check {
     @MainActor static func main() async {
+        let external = Host()
+        external.resolvedMethod = .stikDebug
+        let rejectedExternal = await external.prepare()
+        precondition(!rejectedExternal && external.enables == 0 && external.error != nil)
         let host = Host()
+        precondition(!host.windowsMemoryPrepared && !host.consoleMemoryPrepared)
         let windows = await host.windows(); precondition(windows)
+        precondition(host.windowsMemoryPrepared && !host.consoleMemoryPrepared)
         precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.allocations == 0)
         for _ in 0..<100 { let reused = await host.windows(); precondition(reused) }
         precondition(host.enables == 1 && host.detaches == 1)
         precondition(await host.prepare())
         for _ in 0..<100 { precondition(await host.prepare()) }
         precondition(host.enables == 2 && host.detaches == 2 && Memory.shared.allocations == 1)
+        precondition(host.windowsMemoryPrepared && host.consoleMemoryPrepared)
         precondition(Memory.shared.windowsAllocations == 1)
         Memory.shared.ready = false; Memory.shared.succeeds = false
         precondition(!(await host.prepare()) && !host.consoleMemoryRequiresRestart)
         Memory.shared.succeeds = true; host.clean = false
         precondition(!(await host.prepare()) && host.consoleMemoryRequiresRestart && host.error != nil)
+        precondition(!host.windowsMemoryPrepared && !host.consoleMemoryPrepared)
         let attempts = host.enables
         precondition(!(await host.prepare()) && host.enables == attempts)
         Memory.shared.ready = false; Memory.shared.windowsReady = false

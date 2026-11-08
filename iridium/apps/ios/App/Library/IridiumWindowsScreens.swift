@@ -3478,12 +3478,14 @@ struct GraphicsSettings: View {
 
     /// A menu picker over `choices`; a stored value that is not one of them stays selectable as itself.
     private func choicePicker(_ title: String, key: String, value: Binding<String>, choices: [(String, String)],
+                              unavailable: String? = nil,
                               other: (String) -> String = { "Other (\($0))" }) -> some View {
         Picker(title, selection: Binding(get: { value.wrappedValue }, set: { choice in
+            guard choice != unavailable else { return }
             value.wrappedValue = choice
             write(key, choice.isEmpty ? nil : choice)
         })) {
-            ForEach(choices, id: \.0) { Text($0.1).tag($0.0) }
+            ForEach(choices, id: \.0) { Text($0.1).tag($0.0).disabled($0.0 == unavailable) }
             if !choices.contains(where: { $0.0 == value.wrappedValue }) { Text(other(value.wrappedValue)).tag(value.wrappedValue) }
         }
     }
@@ -3525,6 +3527,13 @@ struct GraphicsSettings: View {
         }
     }
 
+    private var kosmicKrispUnavailableReason: String? {
+        if !Self.hasKosmicKrisp { return L("KosmicKrisp is not in this build (no gl/libvulkan_kosmickrisp.dylib).") }
+        if #unavailable(iOS 26.0) { return L("KosmicKrisp requires iOS 26 or later.") }
+        if !Self.metal4 { return L("This device has no Metal 4 GPU, so KosmicKrisp cannot start on it.") }
+        return nil
+    }
+
     var body: some View {
         Section {
             choicePicker(L("Direct3D 9"), key: "d3d9", value: $d3d9, choices: Self.d3d9Choices)
@@ -3550,14 +3559,13 @@ struct GraphicsSettings: View {
             note(d3d12Note)
             if !Self.hasVkd3d { note(L("vkd3d-proton is not in this build."), warning: d3d12 == "vkd3d") }
 
-            choicePicker(L("Vulkan driver"), key: "vulkan", value: $vulkan,
-                         choices: Self.hasKosmicKrisp || vulkan == "kosmickrisp" ? Self.vulkanChoices : Array(Self.vulkanChoices.prefix(2)),
+            let kosmicKrispProblem = kosmicKrispUnavailableReason
+            choicePicker(L("Vulkan driver"), key: "vulkan", value: $vulkan, choices: Self.vulkanChoices,
+                         unavailable: kosmicKrispProblem == nil ? nil : "kosmickrisp",
                          other: { $0 == "off" || $0 == "0" ? L("Off") : L("Custom library") })
             note(vulkanNote)
-            if !Self.hasKosmicKrisp {
-                note(L("KosmicKrisp is not in this build (no gl/libvulkan_kosmickrisp.dylib)."), warning: vulkan == "kosmickrisp")
-            } else if !Self.metal4 {
-                note(L("This device has no Metal 4 GPU, so KosmicKrisp cannot start on it."), warning: vulkan == "kosmickrisp")
+            if let kosmicKrispProblem {
+                note(kosmicKrispProblem, warning: vulkan == "kosmickrisp")
             }
 
             Button("Reset to defaults") {

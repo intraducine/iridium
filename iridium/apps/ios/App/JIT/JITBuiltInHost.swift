@@ -40,6 +40,7 @@ import Foundation
 @MainActor
 enum MadeiraBuiltInJIT {
     static let helperFile = "MadeiraJITHelper.appex"
+    private static let missingHelperMessage = "Iridium’s JIT helper is missing. Reinstall Iridium with its app extensions."
 
     /// Requests that have started and not finished, kept alive until they do.
     private static var running: [HelperRequest] = []
@@ -54,6 +55,7 @@ enum MadeiraBuiltInJIT {
         if getenv("LC_HOME_PATH") != nil {
             return "The built-in JIT helper needs a standalone installation. In LiveContainer, use the JIT launch route in global settings."
         }
+        if helperIdentifier == nil { return missingHelperMessage }
         return nil
 #endif
     }
@@ -106,12 +108,12 @@ enum MadeiraBuiltInJIT {
             completion(.failure(NSError(domain: "MadeiraBuiltInJIT", code: code,
                                         userInfo: [NSLocalizedDescriptionKey: message])))
         }
-        guard unavailableReason == nil else {
-            fail(1, unavailableReason ?? "Built-in JIT is unavailable.")
+        if let reason = unavailableReason {
+            fail(1, reason)
             return
         }
         guard let identifier = helperIdentifier else {
-            fail(2, "Madeira's JIT helper is missing from this installation. Reinstall Madeira, and keep its app extensions if your sideloader asks.")
+            fail(2, missingHelperMessage)
             return
         }
         if NSClassFromString("NSExtension") == nil {

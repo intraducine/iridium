@@ -19,6 +19,15 @@ enum JITMethod: String, CaseIterable, Identifiable {
         case .builtIn: return "Built-in StikJIT"
         }
     }
+
+    func selectable(builtInAvailable: Bool) -> Self {
+        self == .builtIn && !builtInAvailable ? .stikDebug : self
+    }
+
+    func resolved(builtInAvailable: Bool) -> Self {
+        if self == .automatic { return builtInAvailable ? .builtIn : .stikDebug }
+        return selectable(builtInAvailable: builtInAvailable)
+    }
 }
 
 /// Where Built-in StikJIT's pairing file came from.
@@ -213,15 +222,22 @@ final class JITCoordinator: ObservableObject {
             .flatMap(JITMethod.init(rawValue:)) ?? .automatic
     }
 
+    var selectableMethod: JITMethod {
+        get { method.selectable(builtInAvailable: MadeiraBuiltInJIT.isAvailable) }
+        set { method = newValue.selectable(builtInAvailable: MadeiraBuiltInJIT.isAvailable) }
+    }
+
+    var availableMethods: [JITMethod] {
+        MadeiraBuiltInJIT.isAvailable ? JITMethod.allCases : [.automatic, .stikDebug]
+    }
+
     var resolvedMethod: JITMethod {
-        guard method == .automatic else { return method }
-        return StikJITHelper.isAvailable ? .stikDebug : .builtIn
+        method.resolved(builtInAvailable: MadeiraBuiltInJIT.isAvailable)
     }
 
     var automaticDescription: String {
-        StikJITHelper.isAvailable
-            ? "The selected StikDebug route is detected."
-            : "The selected StikDebug route was not detected. Automatic will use the built-in helper."
+        if resolvedMethod == .builtIn { return "Automatic uses Built-in StikJIT." }
+        return StikJITHelper.isAvailable ? "Automatic uses StikDebug." : "Install StikDebug to enable JIT."
     }
 
     func refreshPairingStatus() {
@@ -232,6 +248,12 @@ final class JITCoordinator: ObservableObject {
     private var consoleMemoryFailed = false
     private var consoleMemoryBusy = false
     var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
+    var windowsMemoryPrepared: Bool {
+        !consoleMemoryFailed && !consoleMemoryBusy && IridiumMadeiraRuntime.jitMemoryReady
+    }
+    var consoleMemoryPrepared: Bool {
+        !consoleMemoryFailed && !consoleMemoryBusy && ir_jit_memory_ready()
+    }
     func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
         prepareMemory(windows: false, completion: completion)
     }
@@ -243,6 +265,13 @@ final class JITCoordinator: ObservableObject {
             completion(.failure(CoordinatorError.setupRequired("JIT memory is busy or needs an app restart."))); return
         }
         if windows ? IridiumMadeiraRuntime.jitMemoryReady : ir_jit_memory_ready() { completion(.success(())); return }
+        guard resolvedMethod == .builtIn else {
+            let message = MadeiraBuiltInJIT.unavailableReason
+                ?? "Choose Built-in StikJIT in JIT Setup to prepare shared memory."
+            error = message
+            completion(.failure(CoordinatorError.setupRequired(message)))
+            return
+        }
         enable(requiresAttachedDebugger: true) { result in
             guard case .success = result else {
                 self.consoleMemoryBusy = false; completion(result); return
@@ -270,7 +299,8 @@ final class JITCoordinator: ObservableObject {
                         self.consoleMemoryBusy = false
                         self.consoleMemoryFailed = !clean
                         if prepared && clean {
-                            self.status = "JIT is ready."; self.error = nil
+                            self.status = windows ? "Windows JIT memory is prepared." : "Console JIT memory is prepared."
+                            self.error = nil
                             completion(.success(()))
                         }
                         else {
@@ -424,7 +454,8 @@ final class JITCoordinator: ObservableObject {
                                        probe.reachable ? "reachable" : "unreachable", probe.milliseconds,
                                        vpnWasUp ? 1 : 0, probe.detail))
             self?.loopbackAnswered = probe.reachable
-            guard let self, !probe.reachable, JITNetworkShortcut.shared.enabled else { proceed(false); return }
+            guard let self, !probe.reachable, resolvedMethod == .builtIn,
+                  JITNetworkShortcut.shared.canStart else { proceed(false); return }
             status = "Running the \(JITNetworkShortcut.name) shortcut…"
             JITNetworkShortcut.shared.start { [weak self] outcome in
                 if case .failed(let why) = outcome {
@@ -748,7 +779,7 @@ enum LocalDevVPN {
                 else { JITCoordinator.shared.showSetup = true }
             }
         }
-        if JITNetworkShortcut.shared.enabled {
+        if JITNetworkShortcut.shared.canStart {
             Button("Connect with \(JITNetworkShortcut.name)") {
                 dismiss()
                 if let retry { retry() } else { JITCoordinator.shared.connectWithShortcut() }
@@ -759,14 +790,23 @@ enum LocalDevVPN {
     }
 }
 
+struct JITMemoryPreparationStatus: View {
+    @ObservedObject private var coordinator = JITCoordinator.shared
+
+    var body: some View {
+        LabeledContent("Windows JIT memory", value: coordinator.windowsMemoryPrepared ? "Prepared" : "Not prepared")
+        LabeledContent("Console JIT memory", value: coordinator.consoleMemoryPrepared ? "Prepared" : "Not prepared")
+    }
+}
+
 struct JITSettingsSection: View {
     @ObservedObject private var coordinator = JITCoordinator.shared
     @ObservedObject private var pairing = OnDevicePairing.shared
 
     var body: some View {
         Section {
-            Picker("Connection method", selection: $coordinator.method) {
-                ForEach(JITMethod.allCases) { method in
+            Picker("Connection method", selection: $coordinator.selectableMethod) {
+                ForEach(coordinator.availableMethods) { method in
                     Text(method.title).tag(method)
                 }
             }.disabled(coordinator.busy || pairing.active)
@@ -775,14 +815,17 @@ struct JITSettingsSection: View {
             } label: {
                 Label("JIT Settings", systemImage: "bolt.badge.clock")
             }
-            if coordinator.method == .automatic {
+            if coordinator.selectableMethod == .automatic {
                 Text(coordinator.automaticDescription)
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if let reason = MadeiraBuiltInJIT.unavailableReason {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
             }
         } header: {
             Text("JIT · Faster Execution")
         }
-        JITShortcutSetupContent(inline: false)
+        if JITShortcutFile.supported { JITShortcutSetupContent(inline: false) }
     }
 }
 
@@ -820,6 +863,7 @@ enum JITInstallation: String {
 struct JITSetupContent: View {
     @ObservedObject private var coordinator = JITCoordinator.shared
     @ObservedObject private var pairing = OnDevicePairing.shared
+    @ObservedObject private var jit = LibraryJITState.shared
     @State private var importing = false
     @State private var importError: String?
     @State private var alternateContainerExpanded = false
@@ -831,12 +875,10 @@ struct JITSetupContent: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
     private let inline: Bool
-    private let includeShortcut: Bool
 
-    init(inline: Bool = true, modalPresented: Binding<Bool> = .constant(false), includeShortcut: Bool = false) {
+    init(inline: Bool = true, modalPresented: Binding<Bool> = .constant(false)) {
         self.inline = inline
         _modalPresented = modalPresented
-        self.includeShortcut = includeShortcut
     }
 
     private var detectedInstallation: JITInstallation { .detected() }
@@ -890,6 +932,10 @@ struct JITSetupContent: View {
     }
 
     @ViewBuilder private var sections: some View {
+        if jit.enabled {
+            Label("JIT active", systemImage: "bolt.fill")
+        }
+        if MadeiraBuiltInJIT.isAvailable { JITMemoryPreparationStatus() }
         JITSetupGroup(inline: inline) {
             installationLayout {
                 Text("Installation: \(installation.title)")
@@ -915,7 +961,7 @@ struct JITSetupContent: View {
             liveContainerSetup
         } else {
             standaloneSetup
-            if includeShortcut { JITShortcutSetupContent(inline: inline) }
+            if JITShortcutFile.supported { JITShortcutSetupContent(inline: inline) }
         }
     }
 
@@ -957,7 +1003,7 @@ struct JITSetupContent: View {
 
     @ViewBuilder private var standaloneSetup: some View {
         connectionMethod
-        if coordinator.method != .builtIn {
+        if coordinator.selectableMethod != .builtIn {
             JITSetupGroup("StikDebug Location", footer: IridiumStikDebugRoute.current == .standalone
                           ? nil : "Install StikDebug inside the selected container.", inline: inline) {
                 Picker("Open StikDebug In", selection: $iridiumStikRoute) {
@@ -973,10 +1019,10 @@ struct JITSetupContent: View {
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
                     .setupControllerTarget("jit.check", order: 80, action: { coordinator.prepareBuiltIn() })
                     .disabled(coordinator.busy || pairing.active || !coordinator.pairingImported)
-                Button("Enable JIT") { coordinator.enable { _ in } }
+                Button("Prepare Console JIT") { coordinator.prepareConsoleMemory { _ in } }
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
-                    .setupControllerTarget("jit.enable", order: 90, action: { coordinator.enable { _ in } })
-                    .disabled(coordinator.busy || pairing.active || !coordinator.pairingImported)
+                    .setupControllerTarget("jit.enable", order: 90, action: { coordinator.prepareConsoleMemory { _ in } })
+                    .disabled(coordinator.busy || pairing.active || !coordinator.pairingImported || coordinator.consoleMemoryPrepared)
                 Button("Reset Developer Disk Image", role: .destructive) {
                     coordinator.resetDDI()
                 }.modifier(IridiumFloatingActionStyle(enabled: inline)).setupControllerTarget("jit.resetDDI", order: 100, action: { coordinator.resetDDI() })
@@ -989,28 +1035,21 @@ struct JITSetupContent: View {
     }
 
     private var connectionMethod: some View {
-        JITSetupGroup("Connection method", footer: inline ? nil :
-                        "Automatic opens the selected StikDebug route when detected. Otherwise, it uses the built-in helper.",
-                      inline: inline) {
-            Picker("Method", selection: $coordinator.method) {
-                ForEach(JITMethod.allCases) { method in Text(method.title).tag(method) }
-            }.setupControllerValue("jit.method", order: 20, selection: $coordinator.method, values: JITMethod.allCases)
+        JITSetupGroup("Connection method", inline: inline) {
+            Picker("Method", selection: $coordinator.selectableMethod) {
+                ForEach(coordinator.availableMethods) { method in Text(method.title).tag(method) }
+            }.setupControllerValue("jit.method", order: 20, selection: $coordinator.selectableMethod, values: coordinator.availableMethods)
                 .disabled(coordinator.busy || pairing.active)
-            if coordinator.method == .automatic {
-                Text(inline
-                     ? (coordinator.resolvedMethod == .stikDebug ? "Automatic uses StikDebug." : "Automatic uses Built-in StikJIT.")
-                     : coordinator.automaticDescription)
+            if coordinator.selectableMethod == .automatic {
+                Text(coordinator.automaticDescription)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if inline {
-                if coordinator.resolvedMethod == .builtIn, !MadeiraBuiltInJIT.isAvailable {
-                    Text(MadeiraBuiltInJIT.unavailableReason ?? "Built-in StikJIT is unavailable.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-            } else {
+            if let reason = MadeiraBuiltInJIT.unavailableReason {
+                Text(reason).font(.subheadline).foregroundStyle(.secondary)
+            }
+            if !inline {
                 LabeledContent(IridiumStikDebugRoute.current == .standalone ? "StikDebug" : "Container",
                                value: StikJITHelper.isAvailable ? "Detected" : "Not detected")
-                LabeledContent("Built-in helper", value: MadeiraBuiltInJIT.isAvailable ? "Available" : "Unavailable")
             }
         }
     }
@@ -1040,8 +1079,8 @@ struct JITSetupContent: View {
                 .disabled(coordinator.busy || pairing.active)
             SetupControllerLink("How to create a pairing file", destination: URL(string: "https://github.com/StikDebug/StikDebug-Guide/blob/main/pairing_file.md")!, id: "jit.builtIn.guide", order: 60)
                 .modifier(IridiumFloatingActionStyle(enabled: inline))
-            Text(inline ? "Then connect LocalDevVPN and enable JIT."
-                 : "2. Connect LocalDevVPN, then check setup and enable JIT.").font(.subheadline)
+            Text(inline ? "Then connect LocalDevVPN."
+                 : "2. Connect LocalDevVPN, then check setup.").font(.subheadline)
             Button(LocalDevVPN.actionTitle) { LocalDevVPN.open() }
                 .modifier(IridiumFloatingActionStyle(enabled: inline))
                 .setupControllerTarget("jit.builtIn.vpn", order: 70, action: LocalDevVPN.open)
@@ -1050,13 +1089,15 @@ struct JITSetupContent: View {
 
     private var stikDebugSetup: some View {
         JITSetupGroup("StikDebug", footer: inline ? nil : "Iridium sends its own JIT script automatically.", inline: inline) {
-            Text(inline ? "Import this device’s pairing file into StikDebug, then connect LocalDevVPN."
-                 : "Set up this device’s pairing file in StikDebug, connect LocalDevVPN, then enable JIT.")
+            Text("Import this device’s pairing file into StikDebug, then connect LocalDevVPN.")
                 .font(.subheadline)
+            Text("A StikDebug attachment does not prepare shared JIT memory.")
+                .font(.footnote).foregroundStyle(.secondary)
             if StikJITHelper.isAvailable {
-                Button("Enable JIT with StikDebug") { coordinator.enable() { _ in } }
+                let attach = { coordinator.enable(requiresAttachedDebugger: true) { _ in } }
+                Button("Attach with StikDebug", action: attach)
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
-                    .setupControllerTarget("jit.stik.enable", order: 90, action: { coordinator.enable { _ in } })
+                    .setupControllerTarget("jit.stik.enable", order: 90, action: attach)
                     .disabled(coordinator.busy || pairing.active)
             } else if IridiumStikDebugRoute.current == .standalone {
                 SetupControllerLink("Install StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!, id: "jit.stik.install", order: 40)
@@ -1104,7 +1145,7 @@ struct JITSetupContent: View {
                         }
                     }
                     // Already in setup: recover here instead of opening another setup sheet.
-                    if JITNetworkShortcut.shared.enabled {
+                    if JITNetworkShortcut.shared.canStart {
                         Button("Connect with \(JITNetworkShortcut.name)") { coordinator.connectWithShortcut() }
                             .modifier(IridiumFloatingActionStyle(enabled: inline))
                             .setupControllerTarget("jit.connection.retry", order: 120, action: { coordinator.connectWithShortcut() })
@@ -1178,24 +1219,17 @@ struct JITShortcutSetupContent: View {
                         inline ? "Connects LocalDevVPN through Shortcuts. Without Wi-Fi, it temporarily turns off cellular data, then restores cellular data and your previous VPN after launch."
                         : "The shortcut briefly opens Shortcuts to connect LocalDevVPN. On cellular without Wi-Fi, it temporarily turns off cellular data. After launch it restores cellular data and the previous VPN connection.",
                       inline: inline) {
-            if JITShortcutFile.supported {
-                if !inline { Text("Add the shortcut in Shortcuts, then turn it on here.").font(.subheadline) }
-                Button(action: addShortcut) {
-                    Label("Add the \(JITNetworkShortcut.name) shortcut", systemImage: "plus.square.on.square")
-                }.modifier(IridiumFloatingActionStyle(enabled: inline)).setupControllerTarget("jit.shortcut.online", order: 130, action: addShortcut)
-                if let url = JITShortcutFile.url {
-                    SetupControllerShare(title: inline ? "Add local copy (offline)" : "No internet connection? Add local copy",
-                                         url: url, id: "jit.shortcut.offline", order: 140)
-                        .modifier(IridiumFloatingActionStyle(enabled: inline))
-                }
-            } else {
-                Text(inline ? "Requires iOS 27. Connect LocalDevVPN manually."
-                     : "This shortcut needs iOS 27 or later. Connect LocalDevVPN manually on this version.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+            if !inline { Text("Add the shortcut in Shortcuts, then turn it on here.").font(.subheadline) }
+            Button(action: addShortcut) {
+                Label("Add the \(JITNetworkShortcut.name) shortcut", systemImage: "plus.square.on.square")
+            }.modifier(IridiumFloatingActionStyle(enabled: inline)).setupControllerTarget("jit.shortcut.online", order: 130, action: addShortcut)
+            if let url = JITShortcutFile.url {
+                SetupControllerShare(title: inline ? "Add local copy (offline)" : "No internet connection? Add local copy",
+                                     url: url, id: "jit.shortcut.offline", order: 140)
+                    .modifier(IridiumFloatingActionStyle(enabled: inline))
             }
             Toggle("Use \(JITNetworkShortcut.name) shortcut", isOn: $shortcut.enabled)
                 .setupControllerToggle("jit.shortcut.use", order: 150, value: $shortcut.enabled)
-                .disabled(!JITShortcutFile.supported && !shortcut.enabled)
         }
     }
 }
@@ -1242,7 +1276,6 @@ struct JITSetupView: View {
         NavigationStack {
             Form {
                 JITSetupContent(inline: false)
-                JITShortcutSetupContent(inline: false).iridiumRowSurface()
             }
             .iridiumPageSurface().navigationTitle("JIT Setup")
             .navigationBarTitleDisplayMode(.inline)
