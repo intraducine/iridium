@@ -552,17 +552,3 @@ prepare only the shared console arena. Both arenas remain reusable for the app's
 lifetime under the existing owned-helper and cleanup rules. Runtime pins and the
 version 1 runtime memory interface are unchanged. App preparation checks a separate
 helper source/binary receipt, so a runtime update cannot reuse a stale transport.
-
-## Iridium 0.3.0 review version
-
-The owned app project, maintained project generator, and retained XcodeGen
-configuration use 0.3.0 for the app and helpers. CI still supplies a unique build
-number. This changes Iridium's app version, not Madeira's 0.2.0 engine pin or the
-other modular runtime pins. The current user, storage, JIT, build, runtime, and
-validation guides describe the integrated implementation. Historical release
-evidence retains its original versions. Menu sound effects are not packaged in
-this integration; adding them remains a separate draft PR.
-
-Visible help uses shorter instructions for controls, imports, INI files, store
-sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button
-both use JIT Setup. Save replacement, file retention, and restart warnings remain.

@@ -1,46 +1,38 @@
-# JIT Setup
+# Set up JIT
 
-Windows, GameCube/Wii, 3DS, PS2, Dreamcast, and arcade games need JIT.
-PSP can use JIT or its interpreter. GB/GBC do not need JIT.
+Windows, GameCube, Wii, 3DS, PS2, Dreamcast, and arcade games need JIT.
+PSP can use JIT or its interpreter. Game Boy and Game Boy Color do not need JIT.
 
-## Standalone with the built-in helper
+## Standalone Iridium
 
-1. Sign Iridium and its helper extension with debugging permission (`get-task-allow`).
-2. Open **Settings → JIT & Memory → JIT Setup** and choose **Automatic** or
-   **Built-in StikJIT**. Import this device’s pairing file there or through Add Game.
-3. Connect LocalDevVPN and start the game.
+1. Sign Iridium and its JIT helper with debugging permission
+   (`get-task-allow`). For extended memory, include the increased memory entitlement in
+   the app’s signing profile and final signature.
+2. Open **Settings → JIT & Memory → JIT Setup**. Choose **Automatic** or
+   **Built-in StikJIT**. Import a pairing file made for this device. On iOS 27 or
+   later, **Pair in Iridium** can create one for you.
+3. Connect LocalDevVPN and start the game. On iOS 27 or later, you can also use
+   the optional VPN Shortcut in JIT Setup.
 
-The app and helper target iOS 18 or later. On iOS 27 or later, you can also
-pair inside Iridium and use the optional LocalDevVPN Shortcut.
-
-StikDebug can attach a debugger when the built-in helper is unavailable. Shared
-JIT memory preparation requires the built-in helper.
-
-Verify increased-memory-limit in the final app signature and provisioning
-profile. The packaged anonymous carrier grants no installation or memory rights.
-Pairing files stay protected and excluded from backups; do not share them in logs.
-
-Windows and console memory prepare separately. JIT & Memory shows which pools
-are prepared. You can prepare console memory there. Windows memory prepares
-when you start a Windows game. The pools persist until Iridium exits.
-The [checked transport](../apps/ios/JITSupport/README.md) reduces debugger requests
-during preparation.
+**JIT & Memory** shows which memory pools are prepared. Use
+**Prepare Console JIT** to prepare console memory before launch. Windows
+prepares its memory when you start a Windows game. The prepared memory lasts
+until Iridium closes.
 
 ## LiveContainer
 
-Use the external JIT route in JIT Setup. Automatic tries LiveContainer2,
-StikDebug, LiveContainer, then a LiveContainer3 fallback. The built-in extension
-requires standalone installation. Hosted execution uses the container's rights.
-External debugger attachment alone cannot replace the owned helper required by
-Iridium's shared-memory preparation.
+Select **LiveContainer** in **JIT Setup** and follow the steps there to set up
+StikDebug and save the JIT script. Connect LocalDevVPN, then close Iridium and
+reopen it from LiveContainer.
 
-## Recovery
+LiveContainer supplies the signing permissions for hosted apps. Iridium’s
+built-in helper requires a standalone installation. StikDebug can attach a
+debugger, but a debugger attachment alone cannot prepare Iridium’s shared
+memory pools.
 
-Follow the app's pairing, VPN, permission, or restart error. Do not force-stop a
-helper that can own a stopped app thread. Shared cleanup waits for its owned
-helper, debugger release, and network restoration. Uncertain cleanup requires
-an app restart before another launch.
+## If JIT fails
 
-For build and package checks, use the [build guide](../../docs/actions-ipa.md).
-Device tests must cover game execution, resume, close, and another launch.
-Retain the [StikJIT notices](../apps/ios/BuiltinJIT/StikJITNotices/SOURCES.md).
+Follow the recovery message in the app. Check the pairing file, LocalDevVPN,
+and the permissions on the installed app. If cleanup fails and Iridium asks
+you to restart, close and reopen the app before launching another game. Do not
+force-close the helper while setup is running. Keep pairing files private.

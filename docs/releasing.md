@@ -11,11 +11,6 @@ After 1.0, breaking public contracts require a major version. Keep the numeric
 app version and unique CI build number consistent across the app and extensions.
 Never reuse a released tag or silently replace its assets.
 
-The current development version is **0.3.0**, with
-[unpublished review notes](releases/0.3.0.md). Its app version is independent of
-the pinned Madeira 0.2.0 runtime. A version increase and a review build do not
-authorize a tag, release, or publication.
-
 Copy [TEMPLATE.md](releases/TEMPLATE.md) to `releases/VERSION.md`. Keep its headings
 and evidence fields. Lead with installation and user-visible changes. Keep source
 and build details collapsed. Validate with:
@@ -25,12 +20,9 @@ python3 ci/check-standards.py
 python3 ci/check-standards.py --release VERSION
 ```
 
-Use the reviewed file as the release body. Historical notes describe their
-original artifacts; do not apply current compatibility claims to old releases.
-For an unpublished draft, label earlier source/run fields as baseline evidence.
-Before publication, replace them with the exact verified release source and run,
-plus matching artifact versions and checksums. A linked PR can track pending
-review builds, but is not a release artifact or a compatibility result.
+Use the reviewed file as the release body. Record the exact source commit and
+build run, verified artifact versions and checksums, and what was tested.
+Keep historical notes tied to their original artifacts.
 
 ## Publish
 
@@ -57,7 +49,7 @@ After publishing a stable release, use its checked IPA to update the Stable
 source. Review the JSON change and merge it into `main`.
 
 ```sh
-python3 ci/update-altstore-source.py v0.3.0 /path/to/Iridium-unsigned.ipa
+python3 ci/update-altstore-source.py vMAJOR.MINOR.PATCH /path/to/Iridium-unsigned.ipa
 ```
 
 For Nightly, select `main` and enable `nightly` in the manual IPA workflow. The
