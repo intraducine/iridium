@@ -70,7 +70,7 @@ class AltStoreSourceTests(unittest.TestCase):
         self.responses[f"releases/tags/{tag}"] = release
         return release
 
-    def test_stable_retains_versions_and_reindexing_is_idempotent(self):
+    def test_stable_keeps_latest_and_reindexing_is_idempotent(self):
         tag = "v0.3.0"
         release = self.make_release(tag, False)
         ALTSTORE.index(tag, self.ipa, None)
@@ -78,9 +78,9 @@ class AltStoreSourceTests(unittest.TestCase):
         ALTSTORE.index(tag, self.ipa, None)
         self.assertEqual(self.source("stable"), expected)
         app = expected["apps"][0]
-        self.assertEqual([v["version"] for v in app["versions"]], ["0.3.0", "0.2.0"])
+        self.assertEqual([v["version"] for v in app["versions"]], ["0.3.0"])
         self.assertEqual(app["versions"][0]["sha256"], release["assets"][0]["digest"].split(":")[1])
-        self.assertIn("NSLocalNetworkUsageDescription", app["appPermissions"]["privacy"])
+        self.assertNotIn("NSLocalNetworkUsageDescription", app["appPermissions"]["privacy"])
         self.assertEqual(self.source("nightly")["apps"], [])
 
     def test_nightly_indexes_only_the_verified_main_build(self):
@@ -118,3 +118,13 @@ class AltStoreSourceTests(unittest.TestCase):
             stream.write(b"changed")
         with self.assertRaisesRegex(ValueError, "size or SHA-256"):
             ALTSTORE.index(tag, self.ipa, None)
+
+    def test_stable_rejects_an_older_release(self):
+        tag = "v0.3.0"
+        self.make_release(tag, False)
+        source = self.source("stable")
+        source["apps"][0]["versions"][0]["version"] = "0.4.0"
+        (self.root / "altstore/stable.json").write_text(json.dumps(source))
+        with self.assertRaisesRegex(ValueError, "older version"):
+            ALTSTORE.index(tag, self.ipa, None)
+        self.assertEqual(self.source("stable"), source)

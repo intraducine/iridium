@@ -86,7 +86,7 @@ def index(tag, path, run_id):
         (ROOT / "altstore/stable.json").read_text())["apps"][0]
     versions = app["versions"] if source["apps"] else []
     permissions = app["appPermissions"]
-    permissions["privacy"] = privacy if nightly else {**permissions["privacy"], **privacy}
+    permissions["privacy"] = privacy
     entry = {
         "version": version, "buildVersion": build, "date": release["published_at"],
         "downloadURL": f"https://github.com/{REPO}/releases/download/{tag}/{IPA}",
@@ -101,8 +101,9 @@ def index(tag, path, run_id):
         app["name"] = "Iridium Nightly"
         app["versions"] = [entry]
     else:
-        app["versions"] = sorted([entry, *(v for v in versions if v != entry)],
-                                 key=lambda v: numbers(v["version"]), reverse=True)
+        if versions and numbers(versions[0]["version"]) > numbers(version):
+            raise ValueError("Refusing to replace Stable with an older version")
+        app["versions"] = [entry]
     source["apps"] = [app]
     with tempfile.TemporaryDirectory(dir=source_path.parent) as temp:
         staged = Path(temp) / source_path.name
