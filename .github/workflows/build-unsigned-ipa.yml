@@ -27,9 +27,6 @@ permissions:
   contents: read
   actions: read
   pull-requests: read
-concurrency:
-  group: unsigned-ipa-${{ github.ref }}
-  cancel-in-progress: false
 jobs:
   build:
     runs-on: xcode-27

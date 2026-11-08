@@ -198,10 +198,15 @@ class PublicSigningFixtureTests(unittest.TestCase):
         native_inventory = {'schema': 1, 'files': {'vendor/Madeira/build/build.sh': '100644'},
                             'revisions': {'vendor/Madeira': 'test revision'}}
 
-        def snapshot(repo, destination, revisions):
+        runtime_path = 'arm64ec-windows/wine.dll'
+        runtime_hash = hashlib.sha256(b'fixture runtime output').hexdigest()
+        runtime_receipts = {'windows': {'files': {runtime_path: runtime_hash}}}
+
+        def snapshot(repo, destination, revisions, *, madeira_outputs=None):
             destination.mkdir(parents=True, exist_ok=True)
             revisions[repo.relative_to(self.root).as_posix()] = 'test revision'
             if repo == self.root:
+                self.assertEqual(madeira_outputs, {'app/Madeira/' + runtime_path: runtime_hash})
                 self.write(destination)
                 self.write(destination, 'vendor/PPSSPP/libretro/libretro.cpp', b'upstream core')
                 self.write(destination, 'vendor/Madeira/build/build.sh', b'# fixture build recipe\n')
@@ -221,10 +226,8 @@ class PublicSigningFixtureTests(unittest.TestCase):
                 patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
                 patch.object(COLLECT.build, 'verify_pin'), \
                 patch.object(COLLECT.build, 'native_source_inventory', return_value=native_inventory), \
-                patch.object(COLLECT.build, 'check_bundle'), \
-                patch.object(COLLECT.build, 'compiler_identity', return_value='fixture'), \
+                patch.object(COLLECT.build, 'check_bundle', return_value=runtime_receipts), \
                 patch.object(COLLECT.build.madeira_components, 'source_inventory', return_value={'schema': 1, 'files': [], 'pins': {}}), \
-                patch.object(COLLECT.build.madeira_components, 'verify', return_value={}), \
                 patch.object(COLLECT.audit, 'inventory', return_value=[{'path': 'Iridium'}]), \
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[
                     {'archive': 'libntdll_unix.a'}, {'archive': 'libIridiumSameBoy.a'}]), \
@@ -246,6 +249,8 @@ class PublicSigningFixtureTests(unittest.TestCase):
                              manifest)
             self.assertEqual(json.load(archive.extractfile('iridium/MADEIRA-NATIVE-SOURCES.json')),
                              native_inventory)
+            self.assertEqual(json.load(archive.extractfile('iridium/MADEIRA-RUNTIME-RECEIPTS.json')),
+                             runtime_receipts)
 
 
 if __name__ == '__main__': unittest.main()

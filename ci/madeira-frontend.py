@@ -444,9 +444,10 @@ def check_bundle(app):
 
     import stikjit_frontend
     stikjit_frontend.verify(app / "Frameworks/StikJIT.framework")
-    madeira_components.verify(UPSTREAM, app, compiler_identity())
+    receipts = madeira_components.verify(UPSTREAM, app, compiler_identity())
     import madeira_session
     madeira_session.verify(app / 'aarch64-windows')
+    return receipts
 
 
 def compiler_tools():
