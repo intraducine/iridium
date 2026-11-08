@@ -233,10 +233,13 @@ NETWORK_METHODS
     var loopbackAnswered: Bool?
     var enables = 0
     var resolved: ((Result<Void, Error>) -> Void)?
-    func enableResolved(_ callback: @escaping (Result<Void, Error>) -> Void) { enables += 1; resolved = callback }
+    func enableResolved(builtInOnly: Bool, _ callback: @escaping (Result<Void, Error>) -> Void) { enables += 1; resolved = callback }
     // This fixture exercises activation/network ownership; arena reuse is tested separately.
-    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+    func prepareOfflineMemory(completion: @escaping (Result<Void, Error>) -> Void) {
         enable(requiresAttachedDebugger: true, completion: completion)
+    }
+    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        prepareOfflineMemory(completion: completion)
     }
 COORDINATOR_METHODS
 }

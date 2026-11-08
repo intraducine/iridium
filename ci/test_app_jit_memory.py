@@ -16,6 +16,7 @@ class AppJITMemoryTests(unittest.TestCase):
         source = r'''
 #include "IRJITMemory.h"
 #include "IRJITPrepare.h"
+#include "IRJITReadiness.h"
 #include "IRPSPExecutableMemory.h"
 #include "IRSharedJITMemory.h"
 #include <cassert>
@@ -58,6 +59,14 @@ int main() {
     assert(ir_jit_memory_has_capacity(switchPool) && !ir_jit_memory_has_capacity(0));
     assert(ir_jit_memory_prepare(prepare) && ir_jit_memory_has_capacity(0));
     assert(ir_jit_memory_prepare_sized(prepare, switchPool) && preparations == 2);
+    assert(ir_jit_verify_console_memory());
+    void *otherRX, *otherRW;
+    assert(api->allocate(8, &rx, &rw) && api->allocate(8, &otherRX, &otherRW));
+    emit(rx, rw, 42);
+    assert(!ir_jit_verify_aliases(rx, otherRW)); // The original code already returns 42.
+    assert(*(uint64_t *)otherRW == 0 && ((unsigned (*)())rx)() == 42);
+    assert(ir_jit_verify_aliases(rx, rw) && ((unsigned (*)())rx)() == 42);
+    assert(api->release(rx, 8) && api->release(otherRX, 8));
     assert(!api->allocate(0, &rx, &rw) && !api->allocate(SIZE_MAX, &rx, &rw));
     assert(!api->allocate(1, nullptr, &rw));
     assert(ir_phase3_core_prepare_memory(api));
@@ -132,10 +141,15 @@ int main() {
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             (folder / 'main.cpp').write_text(source)
-            subprocess.run(['clang', '-std=c11', '-I', str(BRIDGE), '-c', str(BRIDGE / 'IRJITMemory.c'), '-o', str(folder / 'pool.o')], check=True, timeout=30)
+            objects = []
+            for name in ('IRJITMemory', 'IRJITReadiness', 'IRJITExecutionProbe'):
+                obj = str(folder / (name + '.o'))
+                subprocess.run(['clang', '-std=c11', '-I', str(BRIDGE), '-c',
+                                str(BRIDGE / (name + '.c')), '-o', obj], check=True, timeout=30)
+                objects.append(obj)
             subprocess.run(['clang++', '-std=c++17', '-I', str(BRIDGE), str(folder / 'main.cpp'),
                             str(BRIDGE / 'IRPSPExecutableMemory.cpp'), str(BRIDGE / 'IRSharedJITMemory.cpp'),
-                            str(folder / 'pool.o'), '-o', str(folder / 'check')], check=True, timeout=60)
+                            *objects, '-o', str(folder / 'check')], check=True, timeout=60)
             subprocess.run([str(folder / 'check')], check=True, timeout=90)
 
 
@@ -146,8 +160,18 @@ class AppJITCoordinatorTests(unittest.TestCase):
         text = (ROOT / 'iridium/apps/ios/App/JIT/StikJITHelper.swift').read_text()
         body = text[text.index('    private static let poolLock'):text.index('    private static func createPool(')]
         fixture = """import Foundation
+        func ir_jit_verify_aliases(_ rx: UnsafeMutableRawPointer, _ rw: UnsafeMutableRawPointer) -> Bool {
+            let address = Int(bitPattern: rx)
+            Pool.verifiedAddresses.append(address)
+            return Int(bitPattern: rw) - address == 4096 && address != Pool.failedAddress
+        }
         enum Pool {
             static var calls=0
+            static var poolHole: (off: Int, end: Int)? = (32, 64)
+            static var poolHole2: (off: Int, end: Int)? = (96, 128)
+            static var poolLow: (rx: Int, size: Int)? = (2048, 512)
+            static var verifiedAddresses: [Int] = []
+            static var failedAddress = 4224
             static func createPool(poolSize:Int)->(rx:UnsafeMutableRawPointer,rw:UnsafeMutableRawPointer,size:Int)?{
                 calls += 1
                 if calls == 1{return nil}
@@ -161,7 +185,12 @@ class AppJITCoordinatorTests(unittest.TestCase):
             let next=Pool.allocatePool(poolSize:512)!
             precondition(next.rx==first.rx && next.rw==first.rw && next.size==256)
         }
-        precondition(Pool.calls==2)
+        precondition(Pool.calls==2 && !Pool.poolExecutionVerified)
+        precondition(!Pool.verifyPreparedPool() && !Pool.poolExecutionVerified)
+        Pool.verifiedAddresses.removeAll()
+        Pool.failedAddress = 0
+        precondition(Pool.verifyPreparedPool() && Pool.poolExecutionVerified)
+        precondition(Pool.verifiedAddresses == [4096, 4160, 4224, 2048])
         """.replace('BODY', body)
         with tempfile.TemporaryDirectory() as folder:
             folder=Path(folder);(folder/'main.swift').write_text(fixture)
@@ -175,24 +204,40 @@ class AppJITCoordinatorTests(unittest.TestCase):
         body = text[text.index('    private var consoleMemoryFailed'):text.index('    func enable(requiresAttachedDebugger:')]
         fixture = r'''
 import Foundation
+import Combine
 final class Memory: @unchecked Sendable {
     static let shared = Memory()
     let lock = NSLock()
-    var ready = false, windowsReady = false, succeeds = true
+    var ready = false, windowsReady = false, windowsVerified = false, succeeds = true
+    var attached = false, consoleCheckPasses = true
     var allocations = 0, windowsAllocations = 0
     func prepared() -> Bool { lock.lock(); defer { lock.unlock() }; allocations += 1; ready = succeeds; return ready }
     func isReady() -> Bool { lock.lock(); defer { lock.unlock() }; return ready }
     func windows() -> Bool { lock.lock(); defer { lock.unlock() }; windowsAllocations += 1; windowsReady = succeeds; return windowsReady }
     func isWindowsReady() -> Bool { lock.lock(); defer { lock.unlock() }; return windowsReady }
+    func verifyWindows() -> Bool {
+        precondition(!attached)
+        windowsVerified = isWindowsReady()
+        return windowsVerified
+    }
 }
 func ir_jit_memory_has_capacity(_ bytes: Int) -> Bool { Memory.shared.isReady() }
 func ir_jit_memory_prepare_sized(_ callback: Int, _ bytes: Int) -> Bool { Memory.shared.prepared() }
 enum IridiumMadeiraRuntime {
     static func prepareJITMemory() -> Bool { Memory.shared.windows() }
-    static var jitMemoryReady: Bool { Memory.shared.isWindowsReady() }
+    static let shared = Idle()
+    struct Idle { let isBusy = false }
+    static var jitMemoryPrepared: Bool { Memory.shared.isWindowsReady() }
+    static var jitMemoryReady: Bool { Memory.shared.windowsVerified }
+    static func verifyJITMemory() -> Bool { Memory.shared.verifyWindows() }
 }
 let ir_jit_prepare_region = 1
-func isDebuggerAttached() -> Bool { true }
+func isDebuggerAttached() -> Bool { Memory.shared.attached }
+func ir_jit_verify_console_memory() -> Bool {
+    precondition(!isDebuggerAttached())
+    return Memory.shared.isReady() && Memory.shared.consoleCheckPasses
+}
+enum IridiumConsoleSession { static let shared = Idle(); struct Idle { let isActive = false } }
 @MainActor enum LogStore { static let shared = Logger(); struct Logger { func log(_ text: String) {} } }
 @MainActor final class RuntimePerformanceDiagnostics {
     static let shared = RuntimePerformanceDiagnostics()
@@ -201,14 +246,23 @@ func isDebuggerAttached() -> Bool { true }
 }
 @MainActor final class Host {
     enum CoordinatorError: Error { case setupRequired(String) }
-    var enableRequest: UUID?, busy = false, status: String?, error: String?
+    var enableRequest: UUID?, busy = false, status: String?, error: String?, connectionProblem: String?
     var builtInHelper: UUID? = UUID(), builtInHelperReleased: Bool?
     var enables = 0, detaches = 0, clean = true
 BODY
-    func enable(requiresAttachedDebugger: Bool, completion: (Result<Void, Error>) -> Void) {
-        precondition(requiresAttachedDebugger); enables += 1; completion(.success(()))
+    func enable(requiresAttachedDebugger: Bool, builtInOnly: Bool, completion: (Result<Void, Error>) -> Void) {
+        precondition(requiresAttachedDebugger && builtInOnly); enables += 1
+        Memory.shared.attached = true
+        completion(.success(()))
     }
-    func releaseAttachedDebugger(completion: (Bool) -> Void) { detaches += 1; completion(clean) }
+    func releaseAttachedDebugger(completion: (Bool) -> Void) {
+        detaches += 1
+        if clean { Memory.shared.attached = false }
+        completion(clean)
+    }
+    func offline() async -> Bool {
+        await withCheckedContinuation { c in prepareOfflineMemory { c.resume(returning: (try? $0.get()) != nil) } }
+    }
     func windows() async -> Bool {
         await withCheckedContinuation { c in prepareWindowsMemory { c.resume(returning: (try? $0.get()) != nil) } }
     }
@@ -237,13 +291,26 @@ BODY
         precondition(!(await host.prepare()) && host.consoleMemoryRequiresRestart && host.error != nil)
         let attempts = host.enables
         precondition(!(await host.prepare()) && host.enables == attempts)
-        Memory.shared.ready = false; Memory.shared.windowsReady = false
+        Memory.shared.ready = false; Memory.shared.windowsReady = false; Memory.shared.windowsVerified = false
+        Memory.shared.attached = false
         let consoleFirst = Host()
         let consoleReady = await consoleFirst.prepare(); precondition(consoleReady)
         precondition(Memory.shared.windowsAllocations == 1)
         let windowsReady = await consoleFirst.windows(); precondition(windowsReady)
         precondition(consoleFirst.enables == 2 && consoleFirst.detaches == 2)
         precondition(Memory.shared.windowsAllocations == 2)
+        Memory.shared.ready = false; Memory.shared.windowsReady = false; Memory.shared.windowsVerified = false
+        Memory.shared.consoleCheckPasses = false
+        let offline = Host()
+        let partial = await offline.offline()
+        precondition(!partial && !offline.offlineMemoryReady && !offline.consoleMemoryRequiresRestart)
+        precondition(offline.enables == 1 && offline.detaches == 1 && Memory.shared.windowsVerified)
+        Memory.shared.consoleCheckPasses = true
+        let verified = await offline.offline()
+        precondition(verified && offline.offlineMemoryReady)
+        let windowsAfterConsole = await offline.windows()
+        let consoleAfterWindows = await offline.prepare()
+        precondition(windowsAfterConsole && consoleAfterWindows && offline.enables == 1 && offline.detaches == 1)
     }
 }
 '''.replace('BODY', body)

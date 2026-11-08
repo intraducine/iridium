@@ -292,6 +292,7 @@ enum StikJITHelper {
     /// The debugger stays attached so Wine can use BRK to prepare PE code pages.
     private static let poolLock = NSLock()
     private static var cachedPool: (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)?
+    private static var poolVerified = false
     private static var poolPreparing = false
     static func allocatePool(poolSize requestedPoolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
         poolLock.lock()
@@ -305,6 +306,23 @@ enum StikJITHelper {
     static var poolReady: Bool {
         poolLock.lock(); defer { poolLock.unlock() }
         return cachedPool != nil
+    }
+    static var poolExecutionVerified: Bool {
+        poolLock.lock(); defer { poolLock.unlock() }
+        return poolVerified
+    }
+    /// Called before the Windows host can take ownership of the prepared pool.
+    static func verifyPreparedPool() -> Bool {
+        poolLock.lock(); defer { poolLock.unlock() }
+        guard let cachedPool else { return false }
+        if poolVerified { return true }
+        // Optional Windows layouts can map several disjoint ranges at the same alias offset.
+        let offsets = [0, poolHole?.end, poolHole2?.end,
+                       poolLow.map { $0.rx - Int(bitPattern: cachedPool.rx) }].compactMap { $0 }
+        poolVerified = offsets.allSatisfy {
+            ir_jit_verify_aliases(cachedPool.rx + $0, cachedPool.rw + $0)
+        }
+        return poolVerified
     }
     private static func createPool(poolSize requestedPoolSize: Int) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
         var poolSize = requestedPoolSize      // ml1036: may shrink to fit, see the hole census below

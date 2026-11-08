@@ -2,7 +2,9 @@
 import Foundation
 
 extension IridiumMadeiraRuntime {
-    static var jitMemoryReady: Bool { StikJITHelper.poolReady }
+    static var jitMemoryReady: Bool { StikJITHelper.poolExecutionVerified }
+    static var jitMemoryPrepared: Bool { StikJITHelper.poolReady }
+    static func verifyJITMemory() -> Bool { StikJITHelper.verifyPreparedPool() }
 
     /// The adapter owns Madeira's placement rules and host-lifetime arena size.
     static func prepareJITMemory() -> Bool {

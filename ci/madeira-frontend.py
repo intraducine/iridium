@@ -281,14 +281,16 @@ def prepare():
     stikjit_frontend.stage(app)
     prepare_helper_versions(app)
     sources = sorted(p for p in RUNTIME_BRIDGE.glob('*.c')
-        if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c', 'IRJITExecutionProbe.c'))
+        if p.name not in ('IRPSPBridge.c', 'IRPPSSPPCodecCheck.c'))
     for source in sources:
         shutil.copy2(source, app / 'Madeira' / source.name)
         names.append(source.name)
     for name in ('IridiumCoreBridge.h', 'IRArchive.h', 'IRCoreOptions.h', 'IRCheats.h', 'IRWindowsThreads.h', 'IRPSPNativeBridge.h', 'IRJITDiagnostic.h', 'IRPSPExecutableMemory.h', 'IRPSPTeardownObservation.h', 'IRPhase3.h', 'IRDolphinAPI.h', 'IRAudioVolume.h', 'IRJITMemory.h', 'IRJITPrepare.h'):
         shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
+    for name in ('IRJITReadiness.h', 'IRJITExecutionProbe.h'):
+        shutil.copy2(RUNTIME_BRIDGE / name, app / 'Madeira' / name)
     header = app / 'Madeira/Madeira-Bridging-Header.h'
-    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n')
+    header.write_text(header.read_text() + RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n#import "IRJITReadiness.h"\n')
     import madeira_session
     for name in ('iridium-session.exe', 'iridium-session.json', 'iridium-session-notices.txt'):
         legacy = app / 'Madeira/arm64ec-windows' / name
@@ -363,7 +365,7 @@ def verify():
         if path.name == 'WiniosGamepad.c': continue  # Maintained input adapter.
         generated = OUTPUT / 'app/Madeira' / path.relative_to(UPSTREAM / 'app/Madeira')
         expected = path.read_bytes()
-        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n').encode()
+        if path.name == 'Madeira-Bridging-Header.h': expected += (RUNTIME_HEADERS + '\n#import "IRJITMemory.h"\n#import "IRPhase3.h"\n#import "IRDolphinAPI.h"\n#import "IRAudioVolume.h"\n#import "IRWindowsThreads.h"\n#import "IRJITReadiness.h"\n').encode()
         if not generated.is_file() or generated.read_bytes() != expected:
             raise ValueError('Staged native input differs from its pinned source: ' + str(path))
     print('Iridium-owned app sources verified; pinned native inputs match their source.')

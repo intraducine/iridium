@@ -42,7 +42,8 @@ final class JITCoordinator {
     var resolvedMethod: JITMethod {
         method == .automatic ? (StikJITHelper.isAvailable ? .stikDebug : .builtIn) : method
     }
-    func prepareConsoleMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
+    var offlineMemoryReady: Bool { StikJITHelper.ready }
+    func prepareOfflineMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
 }
 final class OnDevicePairing {
     static let shared = OnDevicePairing()
@@ -74,8 +75,7 @@ for method in JITMethod.allCases {
                     StikJITHelper.ready = ready
                     JITPairingFileStore.isImported = imported
                     settings.enableJIT()
-                    let effective = method == .automatic ? (available ? JITMethod.stikDebug : .builtIn) : method
-                    let needsSetup = !ready && ((effective == .builtIn && !imported) || (effective == .stikDebug && !available))
+                    let needsSetup = !ready && !imported
                     precondition(settings.showingJITSetup == (!busy && needsSetup))
                     precondition(settings.coordinator.enables == (!busy && !needsSetup ? 1 : 0))
                     precondition(!settings.coordinator.showSetup)

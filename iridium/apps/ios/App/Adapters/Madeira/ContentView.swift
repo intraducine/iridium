@@ -2449,14 +2449,15 @@ struct ContentView: View {
         jitStatus = .testing
         logStore.log("Requesting JIT with \(jitCoordinator.resolvedMethod.title)...")
 
-        jitCoordinator.prepareWindowsMemory { result in
+        let completion: (Result<Void, Error>) -> Void = { result in
             switch result {
             case .success:
                 jitStatus = .available
-                logStore.log("Shared JIT memory is ready.", level: .success)
+                logStore.log(jitCoordinator.status ?? "JIT memory is ready.", level: .success)
                 launchAfterJITEnded(started: true)
             case .failure(let failure):
                 launchAfterJITEnded(started: false)
+                if library.enabled { library.error = failure.localizedDescription }
                 if let coordinatorError = failure as? JITCoordinator.CoordinatorError,
                    case .setupRequired = coordinatorError {
                     jitStatus = .unknown
@@ -2464,14 +2465,17 @@ struct ContentView: View {
                 }
                 jitStatus = .unavailable
                 logStore.log("Failed to enable JIT: \(failure.localizedDescription)", level: .error)
-                if library.enabled { library.error = failure.localizedDescription }
             }
+        }
+        if launchAfterJIT == nil {
+            jitCoordinator.prepareOfflineMemory(completion: completion)
+        } else {
+            jitCoordinator.prepareWindowsMemory(completion: completion)
         }
     }
 
-    /// Enable JIT finished: a Play that waited for it starts its game, only when the
-    /// debugger is attached (so the start cannot ask for JIT again) and nothing else
-    /// started meanwhile. A failure drops it: a later Enable JIT starts no game.
+    /// Start a waiting game after Windows memory is verified and the helper has closed.
+    /// A failure drops the pending launch.
     private func launchAfterJITEnded(started: Bool) {
         guard let launch = launchAfterJIT else { return }
         launchAfterJIT = nil
@@ -2810,9 +2814,7 @@ struct ContentView: View {
     }
 
     /// Full sequence: allocate JIT pool, start wineserver, start Wine.
-    /// Debugger stays attached during PE loading so mprotect_exec can use BRK
-    /// to prepare code pages. Detach happens after Wine finishes + recovery.
-    /// `profile` is a library entry whose launch profile applies to this run.
+    /// Start Wine with the verified Windows arena prepared before launch.
     private func runWineFullSequence(profile: LibraryEntry? = nil) {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
@@ -2822,8 +2824,12 @@ struct ContentView: View {
         if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID
         guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {
-            logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
+            let message = jitCoordinator.consoleMemoryRequiresRestart
+                ? "JIT cleanup did not finish. Close and reopen Iridium, then enable JIT while connected."
+                : "Windows JIT is not ready. Use Enable JIT while connected, then try Play again."
+            logStore.log(message, level: .error)
             if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }
+            library.error = message
             return
         }
         // Steam downloads wait for the session, and the app's own Steam connection closes

@@ -52,7 +52,18 @@ class WindowsChromeSourceTests(unittest.TestCase):
         admission = admission.replace(resident, '')
         ready_guard = 'guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {'
         self.assertIn(ready_guard, admission)
-        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
+        recovery = """            let message = jitCoordinator.consoleMemoryRequiresRestart
+                ? "JIT cleanup did not finish. Close and reopen Iridium, then enable JIT while connected."
+                : "Windows JIT is not ready. Use Enable JIT while connected, then try Play again."
+            logStore.log(message, level: .error)
+            if profile != nil { LibraryModel.shared.launchFailed() }
+            library.error = message
+"""
+        self.assertIn(recovery, admission)
+        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {').replace(
+            recovery, '''            logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
+            if profile != nil { LibraryModel.shared.launchFailed() }
+''')
         diagnostic = '            DeviceDiagnostics.logLaunch()\n'
         worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
         self.assertGreater(admission.index(diagnostic), worker)

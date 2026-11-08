@@ -1140,3 +1140,54 @@ index 0000000..ce368f3
 +        }
 +    }
 +}
+diff --git a/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs b/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
+--- a/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
++++ b/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
+@@ -18,6 +18,37 @@
+             public SigSet sa_mask;
+             public int sa_flags;
+             public nint sa_restorer;
++        }
++
++        // The iOS host uses Darwin's 16-byte sigaction, not the Linux layout above.
++        [StructLayout(LayoutKind.Sequential)]
++        private struct DarwinSigAction
++        {
++            public nint Handler;
++            public uint Mask;
++            public int Flags;
++        }
++
++        private const int DarwinSigInfo = 0x0040;
++
++        [LibraryImport("libc", EntryPoint = "sigaction", SetLastError = true)]
++        private static partial int DarwinSigaction(int signum, in DarwinSigAction action, out DarwinSigAction oldAction);
++
++        private static SigAction RegisterDarwinExceptionHandler(nint action)
++        {
++            DarwinSigAction signal = new() { Handler = action, Flags = DarwinSigInfo };
++            int result = DarwinSigaction(SIGSEGV, in signal, out DarwinSigAction old);
++            if (result != 0)
++                throw new InvalidOperationException($"Could not register Darwin SIGSEGV sigaction. Error: {result}");
++            result = DarwinSigaction(SIGBUS, in signal, out _);
++            if (result != 0)
++            {
++                DarwinSigaction(SIGSEGV, in old, out _);
++                throw new InvalidOperationException($"Could not register Darwin SIGBUS sigaction. Error: {result}");
++            }
++
++            // The generated handler uses the legacy flag to select the predecessor's call signature.
++            return new SigAction { sa_handler = old.Handler, sa_flags = (old.Flags & DarwinSigInfo) != 0 ? SA_SIGINFO : 0 };
+         }
+ 
+         private const int SIGSEGV = 11;
+@@ -47,6 +78,9 @@
+ 
+         public static SigAction RegisterExceptionHandler(nint action)
+         {
++            if (OperatingSystem.IsIOS())
++                return RegisterDarwinExceptionHandler(action);
++
+             SigAction sig = new()
+             {
+                 sa_handler = action,

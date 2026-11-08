@@ -231,66 +231,136 @@ final class JITCoordinator: ObservableObject {
 
     private var consoleMemoryFailed = false
     private var consoleMemoryBusy = false
+    @Published private(set) var consoleMemoryVerified = false
     var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
+    var offlineMemoryReady: Bool {
+        !consoleMemoryFailed && IridiumMadeiraRuntime.jitMemoryReady &&
+            consoleMemoryVerified && ir_jit_memory_has_capacity(0)
+    }
+
+    func prepareOfflineMemory(completion: @escaping (Result<Void, Error>) -> Void) {
+        if !offlineMemoryReady, IridiumConsoleSession.shared.isActive || IridiumMadeiraRuntime.shared.isBusy {
+            let failure = CoordinatorError.setupRequired("Close the current game before preparing JIT for offline play.")
+            error = failure.localizedDescription
+            completion(.failure(failure))
+            return
+        }
+        prepareMemory(windows: true, consoleBytes: 0, completion: completion)
+    }
+
     func prepareConsoleMemory(minimumBytes: Int = 0, completion: @escaping (Result<Void, Error>) -> Void) {
         prepareMemory(windows: false, consoleBytes: minimumBytes, completion: completion)
     }
+
     func prepareWindowsMemory(completion: @escaping (Result<Void, Error>) -> Void) {
-        prepareMemory(windows: true, completion: completion)
+        prepareMemory(windows: true, consoleBytes: nil, completion: completion)
     }
-    private func prepareMemory(windows: Bool, consoleBytes: Int = 0, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard !consoleMemoryFailed, !consoleMemoryBusy, enableRequest == nil, !busy else {
-            completion(.failure(CoordinatorError.setupRequired("JIT memory is busy or needs an app restart."))); return
+
+    private func prepareMemory(windows: Bool, consoleBytes: Int?, completion: @escaping (Result<Void, Error>) -> Void) {
+        let fail: (String) -> Void = { message in
+            self.status = nil; self.error = message
+            completion(.failure(CoordinatorError.setupRequired(message)))
         }
-        if windows ? IridiumMadeiraRuntime.jitMemoryReady : ir_jit_memory_has_capacity(consoleBytes) { completion(.success(())); return }
-        let target = windows ? "windows" : "console"
+        guard !consoleMemoryFailed else {
+            fail("JIT cleanup did not finish. Close and reopen Iridium, then enable JIT before going offline.")
+            return
+        }
+        guard !consoleMemoryBusy, enableRequest == nil, !busy else {
+            completion(.failure(CoordinatorError.setupRequired("Wait for the current JIT request to finish."))); return
+        }
+
+        let needWindows = windows && !IridiumMadeiraRuntime.jitMemoryReady
+        let consolePrepared = consoleBytes.map { ir_jit_memory_has_capacity($0) } ?? true
+        let needConsole = consoleBytes != nil && (!consoleMemoryVerified || !consolePrepared)
+        let target = windows && consoleBytes != nil ? "offline" : windows ? "windows" : "console"
+        let readyMessage = target == "offline" ? "Windows and console JIT are ready for this app session." : "JIT is ready."
+        guard needWindows || needConsole else {
+            if target == "offline" { status = readyMessage; error = nil; connectionProblem = nil }
+            completion(.success(())); return
+        }
+
+        let prepareWindows = needWindows && !IridiumMadeiraRuntime.jitMemoryPrepared
+        let prepareConsole = needConsole && !consolePrepared
+        let verify: (Bool, Bool) -> Void = { windowsAllocated, consoleAllocated in
+            self.busy = true
+            self.status = "Verifying JIT with the helper disconnected…"
+            DispatchQueue.global(qos: .userInitiated).async {
+                let windowsVerified = !needWindows || (windowsAllocated && IridiumMadeiraRuntime.verifyJITMemory())
+                let consoleVerified = !needConsole || (consoleAllocated && ir_jit_verify_console_memory())
+                DispatchQueue.main.async {
+                    if needConsole { self.consoleMemoryVerified = consoleVerified }
+                    self.consoleMemoryBusy = false; self.busy = false
+                    let passed = windowsVerified && consoleVerified
+                    RuntimePerformanceDiagnostics.shared.record("jit-\(target)-\(passed ? "ready" : "failed")")
+                    guard passed else {
+                        let failed = [windowsVerified ? nil : "Windows", consoleVerified ? nil : "console"].compactMap { $0 }
+                        let names = failed.joined(separator: " and ")
+                        if !windowsAllocated || !consoleAllocated {
+                            fail("Could not prepare \(names) JIT memory. Close other games and try Enable JIT again while connected. If memory is still unavailable, reopen Iridium and enable JIT before playing.")
+                        } else {
+                            fail("Could not verify \(names) JIT after disconnecting the helper. Try Enable JIT again. If it still fails, reopen Iridium while connected.")
+                        }
+                        return
+                    }
+                    self.status = readyMessage; self.error = nil
+                    completion(.success(()))
+                }
+            }
+        }
+
+        // A failed check can be retried using the existing mappings without a helper.
+        if !prepareWindows && !prepareConsole {
+            guard !isDebuggerAttached() else {
+                fail("Disconnect the debugger, then try Enable JIT again."); return
+            }
+            consoleMemoryBusy = true; error = nil; connectionProblem = nil
+            verify(true, true)
+            return
+        }
+
         RuntimePerformanceDiagnostics.shared.record("jit-\(target)-attach")
-        enable(requiresAttachedDebugger: true) { result in
+        enable(requiresAttachedDebugger: true, builtInOnly: true) { result in
             guard case .success = result else {
-                self.consoleMemoryBusy = false; completion(result); return
+                if case .failure(let failure) = result { self.status = nil; self.error = failure.localizedDescription }
+                completion(result); return
             }
             guard self.builtInHelper != nil, self.builtInHelperReleased == nil, isDebuggerAttached() else {
                 self.consoleMemoryFailed = self.builtInHelperReleased == false
-                let message = self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
-                    : self.builtInHelper != nil ? "The JIT helper stopped. Try again."
-                    : "Shared JIT needs the built-in helper. Disconnect any external debugger and choose Built-in StikJIT in JIT Setup."
-                self.error = message
-                completion(.failure(CoordinatorError.setupRequired(message))); return
+                fail(self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
+                    : self.builtInHelper != nil ? "The JIT helper stopped. Reconnect LocalDevVPN and try Enable JIT again."
+                    : "Disconnect the external debugger, then use Enable JIT with the built-in helper.")
+                return
             }
             self.consoleMemoryBusy = true; self.busy = true
-            self.status = windows ? "Preparing Windows JIT memory…" : "Preparing console JIT memory…"
+            if prepareConsole { self.consoleMemoryVerified = false }
+            self.status = target == "offline" ? "Preparing Windows and console JIT memory…"
+                : windows ? "Preparing Windows JIT memory…" : "Preparing console JIT memory…"
             RuntimePerformanceDiagnostics.shared.record("jit-\(target)-prepare")
-            let preparationStarted = ProcessInfo.processInfo.systemUptime
+            let started = ProcessInfo.processInfo.systemUptime
             DispatchQueue.global(qos: .userInitiated).async {
-                // Prepare only the requested arena; both persist for later launches.
-                let prepared = windows ? IridiumMadeiraRuntime.prepareJITMemory()
-                    : ir_jit_memory_prepare_sized(ir_jit_prepare_region, consoleBytes)
+                let windowsAllocated = !prepareWindows || (isDebuggerAttached() && IridiumMadeiraRuntime.prepareJITMemory())
+                let consoleAllocated = !prepareConsole ||
+                    (isDebuggerAttached() && ir_jit_memory_prepare_sized(ir_jit_prepare_region, consoleBytes ?? 0))
                 DispatchQueue.main.async {
-                    let milliseconds = Int((ProcessInfo.processInfo.systemUptime - preparationStarted) * 1000)
-                    LogStore.shared.log("[jit-memory] target=\(windows ? "windows" : "console") ms=\(milliseconds) prepared=\(prepared ? 1 : 0)")
+                    let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
+                    LogStore.shared.log("[jit-memory] target=\(target) ms=\(elapsed) windows=\(windowsAllocated) console=\(consoleAllocated)")
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
-                        RuntimePerformanceDiagnostics.shared.record(prepared && clean ? "jit-\(target)-ready" : "jit-\(target)-failed")
-                        self.consoleMemoryBusy = false
-                        self.consoleMemoryFailed = !clean
-                        if prepared && clean {
-                            self.status = "JIT is ready."; self.error = nil
-                            completion(.success(()))
+                        guard clean else {
+                            RuntimePerformanceDiagnostics.shared.record("jit-\(target)-failed")
+                            self.consoleMemoryBusy = false; self.consoleMemoryFailed = true
+                            fail("The JIT helper did not close. Close and reopen Iridium, then enable JIT before going offline.")
+                            return
                         }
-                        else {
-                            let message = clean ? "JIT memory could not be prepared. Try again."
-                                : "The JIT helper did not close. Close and reopen Iridium."
-                            self.error = message; self.status = nil
-                            completion(.failure(CoordinatorError.setupRequired(message)))
-                        }
+                        verify(windowsAllocated, consoleAllocated)
                     }
                 }
             }
         }
     }
 
-    func enable(requiresAttachedDebugger: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
-        if !requiresAttachedDebugger { prepareConsoleMemory(completion: completion); return }
+    func enable(requiresAttachedDebugger: Bool = false, builtInOnly: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
+        if !requiresAttachedDebugger { prepareOfflineMemory(completion: completion); return }
         guard enableRequest == nil, !busy, !consoleMemoryBusy,
               !requiresAttachedDebugger || builtInHelper == nil || builtInHelperReleased == true || isDebuggerAttached() else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")
@@ -322,7 +392,7 @@ final class JITCoordinator: ObservableObject {
         connectionProblem = nil
         var resultReceived = false
         ensureLoopback(then: { [weak self] restoreOnFailure in
-            self?.enableResolved { result in
+            self?.enableResolved(builtInOnly: builtInOnly) { result in
                 guard !resultReceived else { return }
                 resultReceived = true
                 // Nothing will hold the network open now: put back what the shortcut changed.
@@ -348,7 +418,7 @@ final class JITCoordinator: ObservableObject {
     /// PSP holds admission through validation and network restoration. A stale
     /// subscriber can release only the activation it actually acquired.
     func enableForPSP(completion: @escaping (Result<Void, Error>, @escaping IridiumJITCleanup) -> Void) {
-        enable { [weak self] result in
+        prepareConsoleMemory { [weak self] result in
             guard let self, case .success = result else { completion(result, { $0() }); return }
             let owner = UUID()
             enableRequest = owner; busy = true
@@ -478,8 +548,8 @@ final class JITCoordinator: ObservableObject {
         }
     }
 
-    private func enableResolved(_ completion: @escaping (Result<Void, Error>) -> Void) {
-        switch resolvedMethod {
+    private func enableResolved(builtInOnly: Bool, _ completion: @escaping (Result<Void, Error>) -> Void) {
+        switch builtInOnly ? JITMethod.builtIn : resolvedMethod {
         case .automatic:
             assertionFailure("Automatic must resolve to a concrete JIT method")
         case .stikDebug:
@@ -1058,9 +1128,9 @@ struct JITSetupContent: View {
                  : "Set up this device’s pairing file in StikDebug, connect LocalDevVPN, then enable JIT.")
                 .font(.subheadline)
             if StikJITHelper.isAvailable {
-                Button("Enable JIT with StikDebug") { coordinator.enable() { _ in } }
+                Button("Use Built-in StikJIT") { coordinator.method = .builtIn }
                     .modifier(IridiumFloatingActionStyle(enabled: inline))
-                    .setupControllerTarget("jit.stik.enable", order: 90, action: { coordinator.enable { _ in } })
+                    .setupControllerTarget("jit.stik.enable", order: 90, action: { coordinator.method = .builtIn })
                     .disabled(coordinator.busy || pairing.active)
             } else if IridiumStikDebugRoute.current == .standalone {
                 SetupControllerLink("Install StikDebug", destination: URL(string: "https://github.com/StikDebug/StikDebug/releases/latest")!, id: "jit.stik.install", order: 40)
@@ -1088,7 +1158,7 @@ struct JITSetupContent: View {
                     .disabled(coordinator.busy || pairing.active)
             }
         }
-        if coordinator.busy {
+        if coordinator.busy && coordinator.error == nil {
             JITSetupGroup(inline: inline) { IridiumJITProgress(status: coordinator.status) }
         } else if let error = coordinator.error {
             JITSetupGroup(inline: inline) {

@@ -540,11 +540,11 @@ and checks every response. It drains queued responses after a rejected page and
 stops issuing commands after a transport error. Older external helpers retain
 the checked per-page fallback; Iridium never calls their unchecked batch bridge.
 
-Windows launches prepare only Madeira's adapter-owned arena. Console JIT launches
-prepare only the shared console arena. Both arenas remain reusable for the app's
-lifetime under the existing owned-helper and cleanup rules. Runtime pins and the
-version 1 runtime memory interface are unchanged. App preparation checks a separate
-helper source/binary receipt, so a runtime update cannot reuse a stale transport.
+Enable JIT prepares the Windows and console arenas in one built-in helper
+connection. Iridium checks that both can execute code after the helper detaches.
+The verified arenas stay available until the app closes. A game launched before
+setup prepares only the arena it needs. App preparation checks a separate helper
+source and binary receipt.
 
 ## Iridium 0.3.0 review version
 
@@ -569,8 +569,10 @@ still serves LibHac 0.21.0-alpha.129. MeloNX uses Iridium's shared JIT arena,
 its threaded renderer, and an aspect-fit Metal surface capped at 720p.
 The adapter drains GPU work and releases per-game input before returning to the
 library. It preserves the current fault handlers, including those of an idle
-Windows host, and keeps MeloNX's process-wide JIT allocations reserved. A slow
-stop keeps the launch slot until it finishes. An unverified stop needs a restart.
+Windows host, and keeps MeloNX's process-wide JIT allocations reserved. The iOS
+integration uses Darwin's signal structure and flags for handler registration.
+A slow stop keeps the launch slot until it finishes. An unverified stop needs a
+restart.
 The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
 system data and saves in `IridiumRuntimes/System/melonx`.
 
