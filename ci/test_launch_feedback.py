@@ -61,6 +61,9 @@ struct LibraryEntry { let id = UUID() }
 @MainActor final class LibraryModel {
  var preparationID = UUID()
  var current: UUID?, preparing: LibraryEntry?, preparingSince = Date(), launching = false
+ var launchAfterJIT: (() -> Void)?, startingJIT: UUID?, cloudRetry: (() -> Void)?
+ var cancellableLaunchID: UUID? { preparing == nil ? nil : preparationID }
+ func requestQuit() { fatalError("Preflight cancellation tried to stop a native job") }
 ''' + prepare + '''
 }
 @MainActor final class Host {
@@ -86,7 +89,17 @@ struct LibraryEntry { let id = UUID() }
   try await Task.sleep(for: .milliseconds(250))
   precondition(host.launches == 1)
   host.library.preparing = nil
-  host.play(entry); host.library.preparing = nil; host.play(entry)
+  host.play(entry)
+  let cancelled = host.library.preparationID
+  host.library.launchAfterJIT = { fatalError("Cancelled JIT callback") }
+  host.library.startingJIT = entry.id
+  host.library.cloudRetry = { fatalError("Cancelled Cloud callback") }
+  host.library.cancelLaunch(cancelled)
+  precondition(host.library.preparing == nil && host.library.launchAfterJIT == nil)
+  precondition(host.library.startingJIT == nil && host.library.cloudRetry == nil)
+  host.play(entry)
+  host.library.cancelLaunch(cancelled)
+  precondition(host.library.preparing?.id == entry.id)
   try await Task.sleep(for: .milliseconds(250))
   precondition(host.launches == 2, "a cancelled request must not start the same game again")
   host.library.preparing = nil; host.library.current = UUID()
@@ -103,13 +116,13 @@ struct LibraryEntry { let id = UUID() }
 struct LibraryEntry { let id: UUID }
 @MainActor final class LibraryModel {
  var startingJIT: UUID?, preparing: LibraryEntry?, current: UUID?, error: String?
+ var launchAfterJIT: (() -> Void)?
 }
 @MainActor enum StikJITHelper { static var ready = false }
 @MainActor final class IridiumMadeiraRuntime { static let shared = IridiumMadeiraRuntime(); var isBusy = false }
 struct LogStore { func log(_ text: String) {} }
 @MainActor final class Host {
  let library = LibraryModel(), logStore = LogStore()
- var launchAfterJIT: (() -> Void)?
  func finish(_ started: Bool) { launchAfterJITEnded(started: started) }
 ''' + callback + '''
 }
@@ -118,18 +131,18 @@ struct LogStore { func log(_ text: String) {} }
   let host = Host(), request = UUID(), newer = UUID()
   var launches = 0
   host.library.startingJIT = request; host.library.preparing = .init(id: request)
-  host.launchAfterJIT = { launches += 1 }; host.finish(false)
+  host.library.launchAfterJIT = { launches += 1 }; host.finish(false)
   precondition(host.library.preparing == nil && host.library.startingJIT == nil && launches == 0)
   host.library.startingJIT = request; host.library.preparing = .init(id: newer)
-  host.launchAfterJIT = { launches += 1 }; host.finish(false)
+  host.library.launchAfterJIT = { launches += 1 }; host.finish(false)
   precondition(host.library.preparing?.id == newer && launches == 0)
   host.library.startingJIT = request; host.library.preparing = .init(id: request)
-  host.launchAfterJIT = { launches += 1 }; StikJITHelper.ready = true; host.finish(true)
+  host.library.launchAfterJIT = { launches += 1 }; StikJITHelper.ready = true; host.finish(true)
   precondition(launches == 1 && host.library.preparing?.id == request)
   host.finish(true); precondition(launches == 1)
   IridiumMadeiraRuntime.shared.isBusy = true
   host.library.startingJIT = request; host.library.preparing = .init(id: request)
-  host.launchAfterJIT = { launches += 1 }; host.finish(true)
+  host.library.launchAfterJIT = { launches += 1 }; host.finish(true)
   precondition(launches == 1 && host.library.preparing == nil)
 
  }

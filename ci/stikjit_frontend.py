@@ -15,6 +15,7 @@ OUTPUT = ROOT / '.build/stikjit-frontend'
 FRAMEWORK = OUTPUT / 'StikJIT.framework'
 RUNNER = ROOT / 'iridium/apps/ios/JITSupport/ScriptRunner.swift'
 FEATURES = 'full,ring'
+MINIMUM_IOS = '18.0'
 
 
 def digest(path):
@@ -58,6 +59,9 @@ def verify(framework=FRAMEWORK):
         raise ValueError('The checked JIT helper inputs changed; rebuild it')
     if json.loads((framework / 'IridiumJITTransport.json').read_text()) != record:
         raise ValueError('The packaged JIT transport receipt differs')
+    metadata = plistlib.loads((framework / 'Info.plist').read_bytes())
+    if metadata.get('MinimumOSVersion') != MINIMUM_IOS:
+        raise ValueError('The checked JIT framework has the wrong iOS deployment target')
     for name, expected in record['files'].items():
         path = framework / name
         if path.is_symlink() or not path.is_file() or digest(path) != expected:
@@ -142,7 +146,7 @@ def build():
     sources = [str(p) for p in sorted((source / 'Sources').glob('*.swift')) if p.name != 'ScriptRunner.swift']
     command = ['xcrun', 'swiftc', '-swift-version', '5', '-O', '-parse-as-library',
                '-emit-library', '-emit-module', '-enable-library-evolution', '-module-name', 'StikJIT',
-               '-target', 'arm64-apple-ios26.0', '-sdk', sdk,
+               '-target', f'arm64-apple-ios{MINIMUM_IOS}', '-sdk', sdk,
                '-module-cache-path', str(OUTPUT / 'module-cache'),
                '-I', str(headers), '-I', str(source / 'iokit'),
                '-L', str(headers), '-Xlinker', '-hidden-lidevice_ffi',
@@ -164,7 +168,7 @@ def build():
         'CFBundleIdentifier': 'software.iridium.vendor.StikJIT', 'CFBundleName': 'StikJIT',
         'CFBundleExecutable': 'StikJIT', 'CFBundlePackageType': 'FMWK',
         'CFBundleShortVersionString': '1.9.0', 'CFBundleVersion': '10',
-        'CFBundleSupportedPlatforms': ['iPhoneOS'], 'MinimumOSVersion': '26.0'}))
+        'CFBundleSupportedPlatforms': ['iPhoneOS'], 'MinimumOSVersion': MINIMUM_IOS}))
     write_notices(ffi, FRAMEWORK / 'LICENSES-idevice.txt')
     record = {'inputs': expected, 'files': {name: digest(FRAMEWORK / name)
                for name in ('StikJIT', 'universal.js', 'legacy.js', 'LICENSES-idevice.txt')}}

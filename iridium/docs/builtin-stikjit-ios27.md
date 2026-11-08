@@ -6,13 +6,16 @@ PSP can use JIT or its interpreter. GB/GBC do not need JIT.
 ## Standalone app
 
 1. Sign Iridium and its helper extension with debugging permission (`get-task-allow`).
-2. Open **Settings → JIT & Memory → JIT Setup** and import a valid remote-pairing
-   file. Files and Folders or Import Folder can also import that file.
+2. Open **Settings → JIT & Memory → JIT Setup** and select **Built-in StikJIT**.
+   Import a valid remote-pairing file there or through Add Game.
 3. Connect LocalDevVPN and start the game.
 
-The app targets iOS 18+. Built-in JIT requires iOS 26+; use an external JIT
-provider in JIT Setup on earlier supported systems. A debugger attachment
-alone is insufficient on devices that require executable-region preparation.
+The app and built-in JIT helper now target iOS 18 or later. This requires a new
+IPA. On iOS 18, use a pairing file made on a computer and connect LocalDevVPN
+manually. On-device pairing and the VPN shortcut require iOS 27 or later.
+
+The built-in helper prepares Iridium's executable memory before launch.
+An external debugger attachment alone cannot prepare the shared memory pools.
 
 Verify increased-memory-limit in the final app signature and provisioning
 profile. The packaged anonymous carrier grants no installation or memory rights.
