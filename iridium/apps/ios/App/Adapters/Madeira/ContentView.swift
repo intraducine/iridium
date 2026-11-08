@@ -2466,7 +2466,7 @@ struct ContentView: View {
                 logStore.log("Failed to enable JIT: \(failure.localizedDescription)", level: .error)
             }
         }
-        if launchAfterJIT == nil {
+        if library.launchAfterJIT == nil {
             jitCoordinator.prepareOfflineMemory(completion: completion)
         } else {
             jitCoordinator.prepareWindowsMemory(completion: completion)

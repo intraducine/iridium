@@ -129,6 +129,28 @@ struct LibraryEntry { let id = UUID() }
 }
 ''')
 
+    def test_jit_preparation_uses_the_pending_library_launch(self):
+        source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
+        tail = source.split('jitCoordinator.prepareOfflineMemory(completion: completion)', 1)
+        start = tail[0].rindex('        if ')
+        selection = source[start:source.index('    /// Start a waiting game', start)]
+        self.run_swift('''import Foundation
+struct Library { var launchAfterJIT: (() -> Void)? }
+final class Coordinator {
+    var prepared = [String]()
+    func prepareOfflineMemory(completion: () -> Void) { prepared.append("both") }
+    func prepareWindowsMemory(completion: () -> Void) { prepared.append("windows") }
+}
+func prepare(library: Library, jitCoordinator: Coordinator) {
+    let completion = {}
+''' + selection + '''
+@main struct Check { static func main() {
+    let coordinator = Coordinator()
+    prepare(library: Library(), jitCoordinator: coordinator)
+    prepare(library: Library(launchAfterJIT: {}), jitCoordinator: coordinator)
+    precondition(coordinator.prepared == ["both", "windows"])
+}}''')
+
     def test_failed_jit_closes_only_its_own_loading_screen(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
         start = source.index('    private func launchAfterJITEnded(')
