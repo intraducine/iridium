@@ -13,12 +13,13 @@ struct IridiumCapabilitiesView: View {
 
             Section {
                 LabeledContent("JIT", value: state.enabled ? "Active" : "Not active")
+                if MadeiraBuiltInJIT.isAvailable { JITMemoryPreparationStatus() }
                 Text("Required for Windows, GameCube, Wii, Nintendo 3DS, PlayStation 2, Dreamcast and arcade games.")
                     .font(.footnote).foregroundStyle(.secondary)
                 Button("JIT Setup", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)
-                if !state.enabled {
-                    Button("Enable JIT", action: enableJIT).disabled(coordinator.busy)
+                if MadeiraBuiltInJIT.isAvailable && !coordinator.consoleMemoryPrepared {
+                    Button("Prepare Console JIT", action: enableJIT).disabled(coordinator.busy)
                 }
                 if coordinator.busy { IridiumJITProgress(status: coordinator.status) }
                 if let error = coordinator.error {
@@ -28,7 +29,8 @@ struct IridiumCapabilitiesView: View {
                     }
                 }
             } header: { Text("JIT") } footer: {
-                Text("Shared JIT needs the built-in helper. Prepared memory lasts until the app closes.")
+                Text(MadeiraBuiltInJIT.unavailableReason
+                     ?? "Windows memory is prepared when you launch a Windows game. Prepared memory lasts until the app closes.")
             }
             #if !targetEnvironment(simulator)
             Section {
@@ -50,15 +52,9 @@ struct IridiumCapabilitiesView: View {
 
     private func enableJIT() {
         guard !coordinator.busy else { return }
-        if !StikJITHelper.ready {
-            if coordinator.resolvedMethod == .builtIn, !JITPairingFileStore.isImported {
-                showingJITSetup = true
-                return
-            }
-            if coordinator.resolvedMethod == .stikDebug, !StikJITHelper.isAvailable {
-                showingJITSetup = true
-                return
-            }
+        guard coordinator.resolvedMethod == .builtIn, JITPairingFileStore.isImported else {
+            showingJITSetup = true
+            return
         }
         coordinator.prepareConsoleMemory { _ in }
     }

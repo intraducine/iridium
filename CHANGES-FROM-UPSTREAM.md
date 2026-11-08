@@ -284,6 +284,9 @@ overlap; quit uploads can still run while a game is open.
 
 ## Shared JIT and controls
 
+JIT setup uses StikDebug when the built-in helper is unavailable. In-app pairing
+and the LocalDevVPN Shortcut appear on iOS 27 and later.
+
 The app owns a prepared executable-memory pool through `IRJITMemoryAPI` version 1.
 Shared allocations use the process address limits, not the older PSP helper
 protocol's 64 GiB wire limit. Legacy helper validation remains unchanged.

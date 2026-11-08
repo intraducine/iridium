@@ -150,8 +150,6 @@ struct OnboardingView: View {
     @ObservedObject private var signIn = SteamSignInModel.shared
     @ObservedObject private var dock = MadeiraDockModel.shared
     @ObservedObject private var mono = WineMonoModel.shared
-    @ObservedObject private var jit = LibraryJITState.shared
-    @ObservedObject private var jitCoordinator = JITCoordinator.shared
     @ObservedObject private var pairing = OnDevicePairing.shared
     @ObservedObject private var library = LibraryModel.shared
     @ObservedObject private var consoles = IridiumConsoleLibrary.shared
@@ -451,10 +449,7 @@ struct OnboardingView: View {
                 Divider()
                 wineMono
             case .jit:
-                if jit.enabled {
-                    Label("JIT Enabled", systemImage: "checkmark.circle.fill").foregroundStyle(IridiumTheme.accent)
-                }
-                JITSetupContent(modalPresented: $showingJITImporter, includeShortcut: true)
+                JITSetupContent(modalPresented: $showingJITImporter)
                 DisclosureGroup(isExpanded: $jitSystemsExpanded) {
                     VStack(alignment: .leading, spacing: 16) {
                         note("Required", systems(using: .required))

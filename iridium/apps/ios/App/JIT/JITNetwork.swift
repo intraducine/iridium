@@ -210,6 +210,8 @@ enum JITShortcutFile {
         }
     }
 
+    var canStart: Bool { enabled && JITShortcutFile.supported }
+
     enum Outcome { case done(String), failed(String) }
 
     /// Cellular data is carrying traffic and there is no Wi-Fi: the case LocalDevVPN's
