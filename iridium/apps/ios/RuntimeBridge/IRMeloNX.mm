@@ -2,7 +2,11 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#include <algorithm>
 #include <atomic>
+#include <map>
+#include <mutex>
+#include <signal.h>
 #include <libkern/OSCacheControl.h>
 #include "IRPhase3.h"
 #include "IRJITExecutionProbe.h"
@@ -12,7 +16,9 @@ int iridium_melonx_install_firmware(const char *root, const char *frameworks, co
 int iridium_melonx_initialize(const char *root, const char *frameworks, void (*diagnostic)(const char *));
 int iridium_melonx_run(const char *game, void *layer,
     uint8_t (*allocate)(size_t, void **, void **), uint8_t (*release)(void *, size_t),
-    void (*frame)(void), void (*input)(void), int resolution, unsigned flags);
+    uint8_t (*jitReady)(void), void (*frame)(void), void (*input)(void), int resolution, unsigned flags);
+uint8_t iridium_melonx_reset_session();
+uint8_t iridium_melonx_session_closed();
 void iridium_melonx_set_state(uint8_t stop, uint8_t pause, float volume);
 void *attach_gamepad(const char *, void *, int, int);
 void set_gamepad_button_state(void *, int, uint8_t);
@@ -38,6 +44,8 @@ void set_gamepad_stick_axis(void *, int, float, float);
     uint64_t lastReportedFrame;
     void *pad;
     bool started, ended, paused, stopping;
+    std::mutex controlLock;
+    bool stateReady;
     float volume;
     int resolution;
     unsigned options;
@@ -45,17 +53,104 @@ void set_gamepad_stick_axis(void *, int, float, float);
 - (void)finish:(int)status enteredRuntime:(BOOL)entered;
 @end
 
-// MeloNX keeps executable signal handlers and its translation cache until exit.
 static IRMeloNXPlayer *player;
+// The core keeps the cache and generated fault handler across games.
+static const IRJITMemoryAPI *hostMemory;
+static std::mutex allocationLock;
+static std::map<uintptr_t, size_t> liveAllocations, retainedAllocations;
+static const int faultSignals[] = {SIGSEGV, SIGBUS};
+static struct sigaction previousFaults[2], melonxFaults[2];
+static bool haveMeloNXFaults;
 enum : unsigned { Docked = 1, DisableVSync = 2, ShaderCache = 4, DisableTextureRecompression = 8 };
 static void diagnostic(const char *message) {
     if (message) player->event(player->generation, 0, message);
 }
 static uint8_t allocate(size_t bytes, void **rx, void **rw) {
-    return player->memory->allocate(bytes, rx, rw);
+    std::lock_guard<std::mutex> lock(allocationLock);
+    if (!hostMemory->allocate(bytes, rx, rw)) return false;
+    try {
+        liveAllocations.emplace(reinterpret_cast<uintptr_t>(*rx), bytes);
+    } catch (...) {
+        hostMemory->release(*rx, bytes);
+        *rx = *rw = nullptr;
+        return false;
+    }
+    return true;
 }
 static uint8_t release(void *rx, size_t bytes) {
-    return player->memory->release(rx, bytes);
+    std::lock_guard<std::mutex> lock(allocationLock);
+    auto allocation = liveAllocations.find(reinterpret_cast<uintptr_t>(rx));
+    if (allocation == liveAllocations.end() || allocation->second != bytes ||
+        !hostMemory->release(rx, bytes)) return false;
+    liveAllocations.erase(allocation);
+    return true;
+}
+
+static bool readFaults(struct sigaction (&actions)[2]) {
+    return sigaction(faultSignals[0], nullptr, &actions[0]) == 0 &&
+           sigaction(faultSignals[1], nullptr, &actions[1]) == 0;
+}
+
+static bool sameFaults(const struct sigaction (&left)[2], const struct sigaction (&right)[2]) {
+    for (unsigned i = 0; i < 2; ++i) {
+        if (left[i].sa_flags != right[i].sa_flags || left[i].sa_mask != right[i].sa_mask ||
+            left[i].sa_sigaction != right[i].sa_sigaction) return false;
+    }
+    return true;
+}
+
+static bool setFaults(const struct sigaction (&actions)[2]) {
+    bool segv = sigaction(faultSignals[0], &actions[0], nullptr) == 0;
+    bool bus = sigaction(faultSignals[1], &actions[1], nullptr) == 0;
+    return segv && bus;
+}
+
+static bool beginFaultScope() {
+    struct sigaction current[2]{};
+    if (!readFaults(current)) return false;
+    if (!haveMeloNXFaults) {
+        std::copy_n(current, 2, previousFaults);
+        return true;
+    }
+    // The generated trampoline still points to the handler from the first launch.
+    if (!sameFaults(current, previousFaults)) return false;
+    if (setFaults(melonxFaults)) return true;
+    setFaults(previousFaults);
+    return false;
+}
+
+static uint8_t checkpointJIT() {
+    struct sigaction current[2]{};
+    if (!readFaults(current)) return false;
+    std::lock_guard<std::mutex> lock(allocationLock);
+    if (haveMeloNXFaults) return sameFaults(current, melonxFaults) && liveAllocations == retainedAllocations;
+    auto handler = reinterpret_cast<uintptr_t>(current[0].sa_sigaction);
+    auto allocation = liveAllocations.upper_bound(handler);
+    if (!(current[0].sa_flags & SA_SIGINFO) || !(current[1].sa_flags & SA_SIGINFO) ||
+        current[0].sa_sigaction != current[1].sa_sigaction || sameFaults(current, previousFaults) ||
+        allocation == liveAllocations.begin()) return false;
+    --allocation;
+    if (handler - allocation->first >= allocation->second) return false;
+    try {
+        retainedAllocations = liveAllocations;
+    } catch (...) {
+        return false;
+    }
+    std::copy_n(current, 2, melonxFaults);
+    haveMeloNXFaults = true;
+    return true;
+}
+
+static bool endFaultScope() {
+    struct sigaction current[2]{};
+    if (!readFaults(current)) return false;
+    {
+        std::lock_guard<std::mutex> lock(allocationLock);
+        if (liveAllocations != retainedAllocations) return false;
+    }
+    if (!haveMeloNXFaults) return sameFaults(current, previousFaults);
+    return sameFaults(current, melonxFaults) && setFaults(previousFaults) &&
+           readFaults(current) && sameFaults(current, previousFaults);
 }
 
 static bool probe(const IRJITMemoryAPI *memory) {
@@ -134,14 +229,25 @@ static void input() {
             self->event(self->generation, 0, "Starting MeloNX.");
             status = iridium_melonx_initialize(self->root.fileSystemRepresentation, self->frameworks.fileSystemRepresentation, diagnostic);
             if (status == 0) {
+                {
+                    std::lock_guard<std::mutex> lock(self->controlLock);
+                    self->stateReady = iridium_melonx_reset_session();
+                    if (self->stateReady)
+                        iridium_melonx_set_state(self->stopping, self->paused, self->volume);
+                }
                 // A nonzero opaque token is required by the upstream virtual pad.
-                self->pad = attach_gamepad("Iridium", (void *)1, 0, 1);
-                if (self->pad)
-                    status = iridium_melonx_run(self->game.fileSystemRepresentation, (__bridge void *)layer,
-                        allocate, release, frame, input, self->resolution, self->options);
-                else {
+                if (self->stateReady) self->pad = attach_gamepad("Iridium", (void *)1, 0, 1);
+                if (!self->pad) {
                     diagnostic("MeloNX could not attach its virtual controller.");
                     status = -5;
+                } else if (beginFaultScope()) {
+                    status = iridium_melonx_run(self->game.fileSystemRepresentation, (__bridge void *)layer,
+                        allocate, release, checkpointJIT, frame, input, self->resolution, self->options);
+                    if (status == 0 && (!iridium_melonx_session_closed() || !endFaultScope()))
+                        status = -4;
+                } else {
+                    diagnostic("MeloNX could not take ownership of its executable fault handlers.");
+                    status = -4;
                 }
             } else {
                 status = -5;
@@ -172,9 +278,12 @@ static void input() {
     } else if (!stopping && frames.load() == 0) {
         event(generation, 3, "MeloNX exited before producing video.");
     }
-    event(generation, 2, entered ? "MeloNX stopped. Reopen Iridium before starting another game." : "MeloNX launch ended.");
-    // Cancellation or a failed probe before initialization leaves no resident core.
-    if (!entered) player = nil;
+    if (entered && status != 0) {
+        event(generation, 9, "MeloNX could not verify shutdown. Reopen Iridium.");
+        return;
+    }
+    player = nil;
+    event(generation, 2, entered ? "MeloNX stopped. Session released." : "MeloNX launch ended.");
 }
 @end
 
@@ -197,26 +306,33 @@ extern "C" void *ir_native_engine_create(const char *, const char *, const char 
 }
 
 extern "C" bool ir_phase3_core_prepare_memory(const IRJITMemoryAPI *api) {
-    if (!player || !api || api->version != 1 || api->size < sizeof *api || !api->allocate || !api->release)
+    if (!player || !api || api->version != 1 || api->size < sizeof *api || !api->allocate || !api->release ||
+        (hostMemory && hostMemory != api))
         return false;
+    if (!hostMemory) hostMemory = api;
     player->memory = api;
     return true;
 }
 extern "C" void ir_native_engine_pause(bool pause) {
     if (!player || player->ended) return;
+    std::lock_guard<std::mutex> lock(player->controlLock);
     player->paused = pause;
-    iridium_melonx_set_state(player->stopping, pause, player->volume);
+    if (player->stateReady) iridium_melonx_set_state(player->stopping, pause, player->volume);
 }
 extern "C" void ir_native_engine_stop() {
     if (!player || player->ended) return;
-    player->stopping = true;
+    {
+        std::lock_guard<std::mutex> lock(player->controlLock);
+        player->stopping = true;
+        if (player->stateReady) iridium_melonx_set_state(1, 0, player->volume);
+    }
     if (!player->started) [player finish:0 enteredRuntime:NO];
-    else iridium_melonx_set_state(1, 0, player->volume);
 }
 extern "C" void ir_native_engine_set_volume(float volume) {
     if (!player || player->ended) return;
+    std::lock_guard<std::mutex> lock(player->controlLock);
     player->volume = volume;
-    iridium_melonx_set_state(player->stopping, player->paused, volume);
+    if (player->stateReady) iridium_melonx_set_state(player->stopping, player->paused, volume);
 }
 extern "C" uint64_t ir_native_engine_frames() { return player ? player->frames.load() : 0; }
 

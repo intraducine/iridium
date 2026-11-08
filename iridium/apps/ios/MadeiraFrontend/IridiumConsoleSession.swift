@@ -142,7 +142,8 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         do {
             try validateLaunchAdmission()
             let runtime = try IridiumRuntimeRegistry.resolve(platform: game.platform, preferred: game.runtimeID)
-            if runtime.restartAfterStop, IridiumMadeiraRuntime.shared.isResident { throw IridiumRuntimeError.restartRequired }
+            // MeloNX's generated handler cannot adopt a resident Windows predecessor.
+            if runtime.id == "melonx", IridiumMadeiraRuntime.shared.isResident { throw IridiumRuntimeError.restartRequired }
             let savedCheats = try IridiumCheat.load(game.id)
             if !game.platform.isPhase3 { _ = try runtime.executionMode(jitAvailable: false) }
             let owner = try ownership.acquire(runtime)
@@ -1317,7 +1318,7 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
         guard phase == .restartRequired else { return }
         // Keep ownership until the worker truly finishes. Never let another
         // engine race a stuck native call, even after its surface is dismissed.
-        dismissalError = IridiumRuntimeError.restartRequired.localizedDescription
+        if dismissalError == nil { dismissalError = IridiumRuntimeError.restartRequired.localizedDescription }
         error = nil
         presented = false
     }

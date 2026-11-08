@@ -25,6 +25,57 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 class Phase3Tests(unittest.TestCase):
 
+    @unittest.skipUnless(shutil.which('clang++'), 'Clang required for fault-handler ownership checks')
+    def test_melonx_restores_fault_handlers_and_refuses_leaked_allocations(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRMeloNX.mm').read_text()
+        state = source[source.index('static std::mutex allocationLock;'):source.index('enum : unsigned')]
+        operations = source[source.index('static bool readFaults('):source.index('static bool probe(')]
+        fixture = r'''
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <signal.h>
+STATE
+OPERATIONS
+static void testHandler(int, siginfo_t *, void *) {}
+int main() {
+    struct sigaction baseline[2]{}, current[2]{}, installed[2]{};
+    assert(readFaults(baseline));
+    assert(beginFaultScope());
+    // A stop before core initialization has nothing to restore.
+    assert(endFaultScope());
+    assert(beginFaultScope());
+    for (auto &action : installed) {
+        action.sa_sigaction = testHandler;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+    }
+    assert(setFaults(installed));
+    assert(!checkpointJIT());
+    liveAllocations.emplace(reinterpret_cast<uintptr_t>(testHandler), 1);
+    assert(checkpointJIT());
+    assert(endFaultScope());
+    assert(readFaults(current) && sameFaults(current, baseline));
+    assert(beginFaultScope());
+    assert(checkpointJIT());
+    liveAllocations.emplace(1, 1);
+    assert(!endFaultScope());
+    liveAllocations.erase(1);
+    assert(endFaultScope());
+    assert(setFaults(installed));
+    assert(!beginFaultScope());
+    assert(setFaults(baseline));
+}
+'''.replace('STATE', state).replace('OPERATIONS', operations)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / 'faults.cpp').write_text(fixture)
+            subprocess.run(['clang++', '-std=c++17', str(path / 'faults.cpp'), '-o', str(path / 'check')],
+                           check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for player ownership checks')
     def test_failed_jit_configuration_releases_retained_player(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()

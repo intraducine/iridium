@@ -70,7 +70,7 @@ enum IridiumRuntimeRegistry {
         jit: .required, supportsPause: true, restartAfterStop: false)
     // MeloNX uses a 512 MiB code cache. Leave room for small executable allocations.
     static let melonx = IridiumRuntimeDescriptor(id: "melonx", name: "MeloNX", platforms: [.nintendoSwitch],
-        jit: .required, supportsPause: true, restartAfterStop: true, sharedJITBytes: 544 * 1024 * 1024)
+        jit: .required, supportsPause: true, restartAfterStop: false, sharedJITBytes: 544 * 1024 * 1024)
     #if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
     #if IRIDIUM_MELONX
     static let all = [madeira, sameBoy, ppsspp, dolphin, azahar, play, flycast, melonx]

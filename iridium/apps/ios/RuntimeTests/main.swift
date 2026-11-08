@@ -2,6 +2,7 @@
 import Foundation
 
 precondition(!IridiumRuntimeRegistry.madeira.restartAfterStop)
+precondition(!IridiumRuntimeRegistry.melonx.restartAfterStop)
 func check(_ value: Bool, line: UInt = #line) { precondition(value, "Check failed at line \(line)") }
 
 func rejects(_ block: () throws -> Void) {

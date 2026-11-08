@@ -24,6 +24,13 @@ packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
 
 class ManualBuildTests(unittest.TestCase):
+    def test_melonx_opt_in_is_local_to_the_app_build_step(self):
+        workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        steps = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)', workflow, re.M | re.S))
+        self.assertEqual([name for name, step in steps.items() if 'IRIDIUM_MELONX' in step],
+                         ['Build without signing'])
+        self.assertIn("IRIDIUM_MELONX: ${{ inputs.melonx && '1' || '0' }}", steps['Build without signing'])
+
     def test_native_and_windows_compile_do_not_nest_fex_compiler_caches(self):
         import os
         import subprocess

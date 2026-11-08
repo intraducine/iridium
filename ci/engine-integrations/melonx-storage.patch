@@ -344,7 +344,7 @@ index 57aa9c6..149c9b5 100644
              }
  
 diff --git a/src/Ryujinx.Library/Library.cs b/src/Ryujinx.Library/Library.cs
-index b95d4ec..1ce18e1 100644
+index b95d4ec..2205ef7 100644
 --- a/src/Ryujinx.Library/Library.cs
 +++ b/src/Ryujinx.Library/Library.cs
 @@ -70,7 +70,7 @@ using Ryujinx.HLE.Utilities;
@@ -365,7 +365,7 @@ index b95d4ec..1ce18e1 100644
  
          [UnmanagedCallersOnly(EntryPoint = "main_ryujinx_sdl")]
          public static unsafe int MainExternal(OptionsNative* nativeOptions)
-@@ -112,7 +114,68 @@ namespace Ryujinx.Library
+@@ -112,7 +114,85 @@ namespace Ryujinx.Library
          public static unsafe void Initialize()
          {
              AppDataManager.Initialize(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
@@ -376,7 +376,24 @@ index b95d4ec..1ce18e1 100644
 +        // The host supplies an existing, private directory it has validated.
 +        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_initialize")]
 +        public static unsafe int InitializeEmbedded(nint dataRootUtf8, nint frameworksUtf8,
-+            delegate* unmanaged[Cdecl]<nint, void> diagnostic) => InitializeHost(dataRootUtf8, frameworksUtf8, diagnostic);
++            delegate* unmanaged[Cdecl]<nint, void> diagnostic)
++        {
++            int result = InitializeHost(dataRootUtf8, frameworksUtf8, diagnostic);
++            if (result != 0)
++                return result;
++            try
++            {
++                // Each embedded launch owns a fresh input driver and button state.
++                _inputManager = new InputManager(null, new NativeGamepadDriver());
++                _inputConfiguration = new List<InputConfig>();
++                return 0;
++            }
++            catch (Exception e)
++            {
++                EmbeddedReport($"MeloNX input initialization failed: {e.GetType().Name}.");
++                return -3;
++            }
++        }
 +
 +        private static unsafe int InitializeHost(nint dataRootUtf8, nint frameworksUtf8,
 +            delegate* unmanaged[Cdecl]<nint, void> diagnostic)
@@ -396,7 +413,7 @@ index b95d4ec..1ce18e1 100644
 +                {
 +                    return -1;
 +                }
-+
+ 
 +                string frameworks = Marshal.PtrToStringUTF8(frameworksUtf8);
 +                if (string.IsNullOrEmpty(frameworks) || !Path.IsPathFullyQualified(frameworks))
 +                    return -1;
@@ -427,14 +444,14 @@ index b95d4ec..1ce18e1 100644
 +                return -3;
 +            }
 +        }
- 
++
 +        private static void InitializeCore(bool embedded, ref string stage)
 +        {
 +            stage = "virtual file system";
              Silk.NET.Core.Loader.SearchPathContainer.Platform = Silk.NET.Core.Loader.UnderlyingPlatform.MacOS;
  
              if (_virtualFileSystem == null)
-@@ -120,6 +183,7 @@ namespace Ryujinx.Library
+@@ -120,6 +200,7 @@ namespace Ryujinx.Library
                  _virtualFileSystem = VirtualFileSystem.CreateInstance();
              }
  
@@ -442,7 +459,7 @@ index b95d4ec..1ce18e1 100644
              if (_libHacHorizonManager == null)
              {
                  _libHacHorizonManager = new LibHacHorizonManager();
-@@ -134,18 +198,25 @@ namespace Ryujinx.Library
+@@ -134,13 +215,18 @@ namespace Ryujinx.Library
                  _contentManager = new ContentManager(_virtualFileSystem);
              }
              
@@ -454,25 +471,16 @@ index b95d4ec..1ce18e1 100644
  
 -            // :3
 -            NativeLibrary.SetDllImportResolver(typeof(SDL3Type).Assembly, (_, assembly, path) => NativeLibrary.Load("@rpath/SDL3.framework/SDL3", assembly, path));
-+            stage = "controller input";
-+            if (!embedded)
-+                NativeLibrary.SetDllImportResolver(typeof(SDL3Type).Assembly, (_, assembly, path) =>
-+                    NativeLibrary.Load("@rpath/SDL3.framework/SDL3", assembly, path));
- 
--            _inputManager = new InputManager(new SDL3KeyboardDriver(), new NativeGamepadDriver());
-+            // Iridium supplies keyboard and touch through its virtual gamepad.
-+            _inputManager = new InputManager(embedded ? null : new SDL3KeyboardDriver(), new NativeGamepadDriver());
-             _inputConfiguration = new List<InputConfig>();
--            _enableKeyboard = true;
-+            _enableKeyboard = !embedded;
-             _enableMouse = false;
-+
 +            if (embedded)
 +                return;
-             
-             AutoResetEvent invoked = new(false);
++
++            stage = "controller input";
++            NativeLibrary.SetDllImportResolver(typeof(SDL3Type).Assembly, (_, assembly, path) =>
++                NativeLibrary.Load("@rpath/SDL3.framework/SDL3", assembly, path));
  
-@@ -759,7 +830,7 @@ namespace Ryujinx.Library
+             _inputManager = new InputManager(new SDL3KeyboardDriver(), new NativeGamepadDriver());
+             _inputConfiguration = new List<InputConfig>();
+@@ -759,7 +845,7 @@ namespace Ryujinx.Library
  
          private static void EnsureKeyboardFallback()
          {
@@ -481,7 +489,7 @@ index b95d4ec..1ce18e1 100644
                  return;
  
              _inputConfiguration ??= new List<InputConfig>();
-@@ -781,7 +852,7 @@ namespace Ryujinx.Library
+@@ -781,7 +867,7 @@ namespace Ryujinx.Library
                  return null;
              }
  
@@ -490,7 +498,7 @@ index b95d4ec..1ce18e1 100644
              bool isKeyboard = true;
  
              if (gamepad == null)
-@@ -794,7 +865,9 @@ namespace Ryujinx.Library
+@@ -794,7 +880,9 @@ namespace Ryujinx.Library
                      Logger.Error?.Print(LogClass.Application, $"{index} gamepad not found (\"{inputId}\")");
  
                      inputId = "0";
@@ -501,16 +509,64 @@ index b95d4ec..1ce18e1 100644
                      isKeyboard = true;
                  }
              }
-@@ -898,7 +971,7 @@ namespace Ryujinx.Library
+@@ -898,15 +986,18 @@ namespace Ryujinx.Library
              return config;
          }
          
 -        static void Load(Options option)
 +        static bool Load(Options option)
          {
-             _libHacHorizonManager = new LibHacHorizonManager();
-             _libHacHorizonManager.InitializeFsServer(_virtualFileSystem);
-@@ -954,18 +1027,23 @@ namespace Ryujinx.Library
+-            _libHacHorizonManager = new LibHacHorizonManager();
+-            _libHacHorizonManager.InitializeFsServer(_virtualFileSystem);
+-            _libHacHorizonManager.InitializeArpServer();
+-            _libHacHorizonManager.InitializeBcatServer();
+-            _libHacHorizonManager.InitializeSystemClients();
++            if (!EmbeddedRun)
++            {
++                _libHacHorizonManager = new LibHacHorizonManager();
++                _libHacHorizonManager.InitializeFsServer(_virtualFileSystem);
++                _libHacHorizonManager.InitializeArpServer();
++                _libHacHorizonManager.InitializeBcatServer();
++                _libHacHorizonManager.InitializeSystemClients();
+ 
+-            _accountManager = new AccountManager(_libHacHorizonManager.RyujinxClient, option.UserProfile);
++                _accountManager = new AccountManager(_libHacHorizonManager.RyujinxClient, option.UserProfile);
++            }
+             _userChannelPersistence = new UserChannelPersistence();
+ 
+             GraphicsConfig.EnableMacroJit = false;
+@@ -932,18 +1023,21 @@ namespace Ryujinx.Library
+             Logger.SetEnable(LogLevel.AccessLog, option.LoggingEnableFsAccessLog);
+ 
+ 
+-            AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
++            if (!EmbeddedRun)
+             {
+-                var ex = e.ExceptionObject as Exception;
+-                var trace = new System.Diagnostics.StackTrace(ex, true);
+-                var frame = trace.GetFrame(0);
+-                var file = frame?.GetFileName();
+-                var line = frame?.GetFileLineNumber();
++                AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
++                {
++                    var ex = e.ExceptionObject as Exception;
++                    var trace = new System.Diagnostics.StackTrace(ex, true);
++                    var frame = trace.GetFrame(0);
++                    var file = frame?.GetFileName();
++                    var line = frame?.GetFileLineNumber();
+ 
+-                Logger.Info?.Print(LogClass.Application,
+-                    $"Unhandled exception: {ex}\nFile: {file}\nLine: {line}");
++                    Logger.Info?.Print(LogClass.Application,
++                        $"Unhandled exception: {ex}\nFile: {file}\nLine: {line}");
+ 
+-            };
++                };
++            }
+ 
+             if (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS())
+             {
+@@ -954,26 +1048,33 @@ namespace Ryujinx.Library
                  }
              }
  
@@ -536,9 +592,12 @@ index b95d4ec..1ce18e1 100644
 -            }
 +            } while (!EmbeddedRun);
  
-             _inputManager.Dispose();
+-            _inputManager.Dispose();
++            if (!EmbeddedRun)
++                _inputManager.Dispose();
  
-@@ -974,6 +1052,7 @@ namespace Ryujinx.Library
+             GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+ 
              GC.WaitForPendingFinalizers();
              
              GC.Collect();
@@ -546,7 +605,7 @@ index b95d4ec..1ce18e1 100644
          }
          
          private static WindowBase CreateWindow(Options options)
-@@ -1005,7 +1084,7 @@ namespace Ryujinx.Library
+@@ -1005,7 +1106,7 @@ namespace Ryujinx.Library
                  if (window is MoltenVKWindow mvulkanWindow)
                      return new VulkanRenderer(api,
                          (instance, vk) => new SurfaceKHR((ulong)(mvulkanWindow.CreateWindowSurface(instance.Handle))),
@@ -555,7 +614,7 @@ index b95d4ec..1ce18e1 100644
              }
  
              return new OpenGLRenderer();
-@@ -1108,13 +1187,26 @@ namespace Ryujinx.Library
+@@ -1108,13 +1209,26 @@ namespace Ryujinx.Library
              if (OperatingSystem.IsWindows())
                  _windowsMultimediaTimerResolution = new WindowsMultimediaTimerResolution(1);
  
@@ -603,7 +662,7 @@ index cf25273..8242a76 100644
      }
  }
 diff --git a/src/Ryujinx.Library/Window/WindowBase.cs b/src/Ryujinx.Library/Window/WindowBase.cs
-index a64b53e..3669602 100644
+index a64b53e..0c008e0 100644
 --- a/src/Ryujinx.Library/Window/WindowBase.cs
 +++ b/src/Ryujinx.Library/Window/WindowBase.cs
 @@ -84,7 +84,7 @@ namespace Ryujinx.Library
@@ -699,7 +758,7 @@ index a64b53e..3669602 100644
 +            }
 +            if (renderError != null)
 +                Library.EmbeddedReport($"MeloNX rendering failed: {renderError.GetType().Name}.");
-+            return renderError == null || (Library.EmbeddedStop && renderError is OperationCanceledException);
++            return renderError == null;
 +        }
 +
          public void Execute()
@@ -798,10 +857,10 @@ index 161408e..9699848 100644
              }
 diff --git a/src/Ryujinx.Library/IridiumHost.cs b/src/Ryujinx.Library/IridiumHost.cs
 new file mode 100644
-index 0000000..4bd5600
+index 0000000..ce368f3
 --- /dev/null
 +++ b/src/Ryujinx.Library/IridiumHost.cs
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,279 @@
 +using Ryujinx.Common.Configuration;
 +using Ryujinx.Common.Configuration.Hid;
 +using Ryujinx.Common.Logging;
@@ -914,18 +973,23 @@ index 0000000..4bd5600
 +        public static unsafe int RunEmbedded(nint file, nint layer,
 +            delegate* unmanaged[Cdecl]<nuint, nint*, nint*, byte> allocate,
 +            delegate* unmanaged[Cdecl]<nint, nuint, byte> release,
-+            delegate* unmanaged[Cdecl]<void> frame, delegate* unmanaged[Cdecl]<void> input, int resolution, uint flags)
++            delegate* unmanaged[Cdecl]<byte> jitReady, delegate* unmanaged[Cdecl]<void> frame,
++            delegate* unmanaged[Cdecl]<void> input, int resolution, uint flags)
 +        {
-+            if (!embeddedInitializationAttempted || layer == 0 || allocate == null ||
-+                release == null || frame == null || input == null ||
++            if (!embeddedInitialized || layer == 0 || allocate == null ||
++                release == null || jitReady == null || frame == null || input == null ||
 +                Interlocked.Exchange(ref _embeddedStarted, 1) != 0)
 +                return -1;
 +
++            bool clean = false;
 +            try
 +            {
 +                EmbeddedRun = true;
 +                if (EmbeddedStop)
++                {
++                    clean = true;
 +                    return 0;
++                }
 +                string path = Marshal.PtrToStringUTF8(file);
 +                if (!File.Exists(path))
 +                    return -1;
@@ -937,6 +1001,9 @@ index 0000000..4bd5600
 +                    EmbeddedReport("MeloNX could not initialize its executable cache.");
 +                    return -2;
 +                }
++
++                if (jitReady() == 0)
++                    return -4;
 +
 +                nativeMetalLayer = layer;
 +                _embeddedFrame = frame;
@@ -968,7 +1035,10 @@ index 0000000..4bd5600
 +                    LoggingEnableError = true
 +                });
 +                if (loaded)
++                {
++                    clean = true;
 +                    return 0;
++                }
 +                int error = Volatile.Read(ref _embeddedBootError);
 +                return error != 0 ? error : -3;
 +            }
@@ -987,7 +1057,39 @@ index 0000000..4bd5600
 +                nativeMetalLayer = 0;
 +                _embeddedFrame = null;
 +                _embeddedInput = null;
++                if (clean)
++                {
++                    try
++                    {
++                        _inputManager.Dispose();
++                        _inputManager = null;
++                        _inputConfiguration = null;
++                        _embeddedDiagnostic = null;
++                        EmbeddedRun = false;
++                        Volatile.Write(ref _embeddedStarted, 0);
++                    }
++                    catch (Exception e)
++                    {
++                        EmbeddedReport($"MeloNX input cleanup failed: {e.GetType().Name}.");
++                    }
++                }
 +            }
++        }
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_session_closed")]
++        public static byte IsEmbeddedSessionClosed() => Volatile.Read(ref _embeddedStarted) == 0 ? (byte)1 : (byte)0;
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_reset_session")]
++        public static byte ResetEmbeddedSession()
++        {
++            if (Volatile.Read(ref _embeddedStarted) != 0)
++                return 0;
++            EmbeddedStop = false;
++            EmbeddedPaused = false;
++            _embeddedVolume = 1f;
++            _embeddedBootError = 0;
++            _nextHeadroomCheck = 0;
++            return 1;
 +        }
 +
 +        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_set_state")]
@@ -999,7 +1101,12 @@ index 0000000..4bd5600
 +            _embeddedVolume = volume;
 +        }
 +
-+        internal static unsafe void EmbeddedFrame() => _embeddedFrame();
++        internal static unsafe void EmbeddedFrame()
++        {
++            var frame = _embeddedFrame;
++            if (frame != null)
++                frame();
++        }
 +
 +        internal static unsafe void UpdateEmbedded(WindowBase window)
 +        {
@@ -1027,8 +1134,9 @@ index 0000000..4bd5600
 +            float volume = _embeddedVolume;
 +            if (window.Device.GetVolume() != volume)
 +                window.Device.SetVolume(volume);
-+            if (!paused)
-+                _embeddedInput();
++            var input = _embeddedInput;
++            if (!paused && input != null)
++                input();
 +        }
 +    }
 +}

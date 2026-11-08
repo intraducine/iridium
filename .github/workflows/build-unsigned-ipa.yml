@@ -70,7 +70,6 @@ jobs:
           export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_GENERATE_ASPNET_CERTIFICATE=false
           .build/melonx/dotnet-10.0.403/dotnet workload install mobile-librarybuilder --skip-manifest-update
           python3 ci/build-melonx-core.py
-          echo "IRIDIUM_MELONX=1" >> "$GITHUB_ENV"
       - name: Identify pinned runtime sources
         id: runtime_sources
         run: echo "key=$(git ls-tree -r HEAD vendor | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
@@ -323,6 +322,7 @@ jobs:
         env:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           IRIDIUM_PHASE3: "1"
+          IRIDIUM_MELONX: ${{ inputs.melonx && '1' || '0' }}
         run: python3 ci/madeira-frontend.py app --reuse-psp-component
       - name: Report compiler cache
         if: always()

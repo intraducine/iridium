@@ -567,10 +567,12 @@ The local [core builder](ci/build-melonx-core.py) pins
 `13700519f3abc4e6d7ed8a065b118b2cc59bcd67`. It uses the upstream registry that
 still serves LibHac 0.21.0-alpha.129. MeloNX uses Iridium's shared JIT arena,
 its threaded renderer, and an aspect-fit Metal surface capped at 720p.
-The Switch session drains GPU work before releasing the renderer.
+The adapter drains GPU work and releases per-game input before returning to the
+library. It restores the app's fault handlers and keeps MeloNX's process-wide
+JIT allocations reserved. It requires a restart if it cannot verify cleanup.
 The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
-system data and saves in `IridiumRuntimes/System/melonx`. Reopen Iridium
-after each MeloNX session while the core's process-wide state remains loaded.
+system data and saves in `IridiumRuntimes/System/melonx`. Starting MeloNX after a
+resident Windows session still requires a restart.
 
 The local device build requires `IRIDIUM_PHASE3=1 IRIDIUM_MELONX=1` and the
 audited component from the core builder. To build and audit a hosted review IPA,

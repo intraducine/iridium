@@ -102,7 +102,9 @@ def inspect(binary):
     if re.findall(r'platform\s+(\w+)', build) != ['IOS']:
         raise ValueError('MeloNX must target physical iOS devices')
     symbols = set(output('xcrun', 'nm', '-gUj', binary).splitlines())
-    required = {'iridium_melonx_initialize', 'iridium_melonx_run', 'iridium_melonx_set_state', 'iridium_melonx_install_firmware', 'main_ryujinx_sdl', 'set_native_window', 'stop_emulation',
+    required = {'iridium_melonx_initialize', 'iridium_melonx_run', 'iridium_melonx_set_state',
+                'iridium_melonx_reset_session', 'iridium_melonx_session_closed',
+                'iridium_melonx_install_firmware', 'main_ryujinx_sdl', 'set_native_window', 'stop_emulation',
                 'toggle_pause_emulation', 'attach_gamepad', 'detach_gamepad',
                 'set_gamepad_button_state', 'set_gamepad_stick_axis', 'load_keyset',
                 'install_firmware', 'installed_firmware_version', 'init_dualmapping'}
