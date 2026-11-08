@@ -572,7 +572,8 @@ library. It preserves the current fault handlers, including those of an idle
 Windows host, and keeps MeloNX's process-wide JIT allocations reserved. The iOS
 integration uses Darwin's signal structure and flags for handler registration.
 A slow stop keeps the launch slot until it finishes. An unverified stop needs a
-restart.
+restart. When Wine starts after a console game, it reserves its V8 address range
+only if the range is free.
 The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
 system data and saves in `IridiumRuntimes/System/melonx`.
 

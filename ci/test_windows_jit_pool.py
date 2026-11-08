@@ -11,6 +11,13 @@ HEADER = ROOT / 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h'
 
 
 class WindowsJITPoolTests(unittest.TestCase):
+    def test_wine_startup_cage_cannot_replace_host_mappings(self):
+        original = (ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
+        source = madeira_threads.apply_virtual(original)
+        cage = '( (void *)(uintptr_t)IOS_CAGE_BASE, IOS_CAGE_REAL_SIZE, PROT_NONE, 0 )'
+        self.assertIn('anon_mmap_tryfixed' + cage, source)
+        self.assertNotIn('anon_mmap_fixed' + cage, source)
+
     def test_native_allocation_retirement_and_source_changes(self):
         original = (ROOT / 'vendor/Madeira/build/ntdll-unix/virtual_ios.c').read_text()
         source = madeira_threads.apply_virtual(original)

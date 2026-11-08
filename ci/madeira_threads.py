@@ -278,6 +278,10 @@ static bool ir_windows_image_live(size_t offset, size_t size)
 
 
 def apply_virtual(text, pool_header=None):
+    # Wine can start after other runtimes have mapped memory in the guest range.
+    marker = "anon_mmap_fixed( (void *)(uintptr_t)IOS_CAGE_BASE, IOS_CAGE_REAL_SIZE, PROT_NONE, 0 )"
+    if text.count(marker) != 1: raise ValueError('Madeira startup cage reservation changed')
+    text = text.replace(marker, marker.replace('anon_mmap_fixed', 'anon_mmap_tryfixed'))
     marker = 'static volatile int32_t ios_jit_next_slot = 0;  /* Next slot to allocate */'
     if text.count(marker) != 1: raise ValueError('Madeira trampoline slot state changed')
     text = text.replace(marker, 'extern int ir_windows_thread_slot(void);')
