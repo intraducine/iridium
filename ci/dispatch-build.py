@@ -22,10 +22,14 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], cwd=ROOT, text=True)
 
 
-def dispatch(ref, expected, release_build=False):
+def dispatch(ref, expected, release_build=False, nightly=False):
     check_commit(expected, expected)
     token = uuid.uuid4().hex
     fields = ["-f", "release_build=true"] if release_build else []
+    if nightly:
+        if ref != "main":
+            raise ValueError("Nightly builds require main")
+        fields += ["-f", "nightly=true"]
     gh("workflow", "run", WORKFLOW, "--repo", REPO, "--ref", ref,
        "-f", f"expected_sha={expected}", "-f", f"dispatch_id={token}", *fields)
     # A unique title identifies this request, even with concurrent dispatches.
@@ -50,6 +54,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Check workflow inputs before any compilation")
     parser.add_argument("--release", action="store_true", help="Include the full source archive and release audit artifacts")
+    parser.add_argument("--nightly", action="store_true", help="Publish a Nightly build from main")
     parser.add_argument("--phase3", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.check:
@@ -57,7 +62,10 @@ def main():
         return
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     ref = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    print(dispatch(ref, expected, release_build=args.release))
+    if args.nightly:
+        print(dispatch(ref, expected, release_build=args.release, nightly=True))
+    else:
+        print(dispatch(ref, expected, release_build=args.release))
 
 
 if __name__ == "__main__":

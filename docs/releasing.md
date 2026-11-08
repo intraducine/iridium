@@ -48,9 +48,9 @@ review builds, but is not a release artifact or a compatibility result.
    checksums. Split source archives only for hosting limits.
 6. Verify downloads and checksums, then publish with authorization.
 
-Keep matching source and notices at permanent versioned release URLs. Actions
-artifacts expire. Preserve old source, checksums, and data-safe recovery steps
-when issuing a fix release.
+Keep matching source and notices at permanent versioned release URLs for stable
+releases. Nightly builds use the time-limited distribution described below.
+Preserve old source, checksums, and data-safe recovery steps for stable releases.
 
 ## AltStore Classic
 
@@ -61,20 +61,19 @@ source. Review the JSON change and merge it into `main`.
 python3 ci/update-altstore-source.py v0.3.0 /path/to/Iridium-unsigned.ipa
 ```
 
-For Nightly, use a successful manual release-mode build from `main`. Follow the
-same review and source publication steps, then publish as a GitHub prerelease
-with a unique tag such as `v0.3.0-nightly.199.1` at the build commit. Use the app
-version and build number in the tag. Include the Actions run in the notes.
+For Nightly, select `main` and enable `nightly` in the manual IPA workflow. The
+workflow collects and audits matching source, uploads the IPA as a direct ZIP
+artifact, and updates the separate `altstore-nightly` branch after the build
+passes. The source feed links the exact IPA and matching source artifacts.
 
 ```sh
-python3 ci/update-altstore-source.py v0.3.0-nightly.199.1 /path/to/Iridium-unsigned.ipa --run RUN_ID
+python3 ci/dispatch-build.py --nightly
 ```
 
-The updater matches the local IPA to the published size and checksum. It also
-checks the Nightly run and commit before replacing the previous Nightly entry.
-Both feeds use direct, versioned GitHub release assets. Nightly.link can share
-the outer Actions ZIP for manual download. AltStore needs the IPA inside it.
-The updater does not start a build or publish a release.
+The Stable updater checks the IPA against its published size and checksum.
+Nightly IPA artifacts expire after 89 days and matching source artifacts after
+90 days. The feed may point to expired artifacts until a new Nightly passes. Stable releases remain available
+at permanent versioned URLs. Nightly publication does not create a release tag.
 
 ## Source and signing
 

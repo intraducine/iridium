@@ -28,19 +28,7 @@ class AltStoreSourceTests(unittest.TestCase):
         self.enterContext(patch.object(ALTSTORE, "ROOT", self.root))
         self.ipa = self.root / ALTSTORE.IPA
         self.revision = "a" * 40
-        self.run = {
-            "path": ".github/workflows/build-unsigned-ipa.yml", "event": "workflow_dispatch",
-            "conclusion": "success", "head_branch": "main",
-            "head_repository": {"full_name": ALTSTORE.REPO}, "head_sha": self.revision,
-            "run_number": 199, "run_attempt": 2,
-        }
-        self.responses = {
-            "commits/v0.3.0-nightly.199.2": {"sha": self.revision},
-            "actions/runs/42/attempts/2": self.run,
-            f"actions/runs/42/artifacts?name=Iridium-source-{self.revision}": {
-                "artifacts": [{"name": f"Iridium-source-{self.revision}"}],
-            },
-        }
+        self.responses = {}
         self.enterContext(patch.object(ALTSTORE, "api", side_effect=self.responses.__getitem__))
 
     def source(self, channel):
@@ -73,9 +61,9 @@ class AltStoreSourceTests(unittest.TestCase):
     def test_stable_keeps_latest_and_reindexing_is_idempotent(self):
         tag = "v0.3.0"
         release = self.make_release(tag, False)
-        ALTSTORE.index(tag, self.ipa, None)
+        ALTSTORE.index(tag, self.ipa)
         expected = self.source("stable")
-        ALTSTORE.index(tag, self.ipa, None)
+        ALTSTORE.index(tag, self.ipa)
         self.assertEqual(self.source("stable"), expected)
         app = expected["apps"][0]
         self.assertEqual([v["version"] for v in app["versions"]], ["0.3.0"])
@@ -83,41 +71,16 @@ class AltStoreSourceTests(unittest.TestCase):
         self.assertNotIn("NSLocalNetworkUsageDescription", app["appPermissions"]["privacy"])
         self.assertEqual(self.source("nightly")["apps"], [])
 
-    def test_nightly_indexes_only_the_verified_main_build(self):
-        tag = "v0.3.0-nightly.199.2"
-        self.make_release(tag, True)
-        stable = self.source("stable")
-        ALTSTORE.index(tag, self.ipa, 42)
-        app = self.source("nightly")["apps"][0]
-        self.assertEqual(app["bundleIdentifier"], "software.iridium")
-        self.assertEqual(app["versions"][0]["buildVersion"], "199.2")
-        self.assertTrue(app["versions"][0]["downloadURL"].endswith(f"/{tag}/{ALTSTORE.IPA}"))
-        self.assertEqual(set(app["appPermissions"]["privacy"]), {
-            "NSCameraUsageDescription", "NSMicrophoneUsageDescription",
-        })
-        self.assertEqual(self.source("stable"), stable)
-
-    def test_nightly_rejects_non_main_build_and_missing_release_mode_evidence(self):
-        tag = "v0.3.0-nightly.199.2"
-        self.make_release(tag, True)
-        with patch.dict(self.run, head_branch="codex/topic"):
-            with self.assertRaisesRegex(ValueError, "successful main build"):
-                ALTSTORE.index(tag, self.ipa, 42)
-        self.responses[f"actions/runs/42/artifacts?name=Iridium-source-{self.revision}"]["artifacts"] = []
-        with self.assertRaisesRegex(ValueError, "release-mode source"):
-            ALTSTORE.index(tag, self.ipa, 42)
-        self.assertEqual(self.source("nightly")["apps"], [])
-
     def test_stable_rejects_changed_ipa_and_drafts(self):
         tag = "v0.3.0"
         release = self.make_release(tag, False)
         with patch.dict(release, draft=True):
             with self.assertRaisesRegex(ValueError, "published release"):
-                ALTSTORE.index(tag, self.ipa, None)
+                ALTSTORE.index(tag, self.ipa)
         with self.ipa.open("ab") as stream:
             stream.write(b"changed")
         with self.assertRaisesRegex(ValueError, "size or SHA-256"):
-            ALTSTORE.index(tag, self.ipa, None)
+            ALTSTORE.index(tag, self.ipa)
 
     def test_stable_rejects_an_older_release(self):
         tag = "v0.3.0"
@@ -126,5 +89,5 @@ class AltStoreSourceTests(unittest.TestCase):
         source["apps"][0]["versions"][0]["version"] = "0.4.0"
         (self.root / "altstore/stable.json").write_text(json.dumps(source))
         with self.assertRaisesRegex(ValueError, "older version"):
-            ALTSTORE.index(tag, self.ipa, None)
+            ALTSTORE.index(tag, self.ipa)
         self.assertEqual(self.source("stable"), source)

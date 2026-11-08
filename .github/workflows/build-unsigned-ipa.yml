@@ -15,6 +15,10 @@ run-name: Manual sideloading IPA · ${{ github.ref_name }} · ${{ inputs.dispatc
         description: Reuse matching completed runtime and console component builds
         type: boolean
         default: true
+      nightly:
+        description: Publish a Nightly source from this main build
+        type: boolean
+        default: false
       release_build:
         description: Include the full source archive and release audit artifacts
         type: boolean
@@ -27,6 +31,8 @@ jobs:
   build:
     runs-on: xcode-27
     timeout-minutes: 360
+    outputs:
+      nightly_feed: ${{ steps.nightly_feed.outputs.feed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,6 +43,9 @@ jobs:
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: python3 ci/dispatch-build.py --check
+      - name: Verify Nightly branch
+        if: inputs.nightly
+        run: test "$GITHUB_REF" = refs/heads/main
       - name: Select pinned Xcode
         run: |
           test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
@@ -300,10 +309,10 @@ jobs:
         if: always()
         run: command -v ccache >/dev/null && ccache --show-stats || true
       - name: Record app binaries for final audit
-        if: inputs.release_build
+        if: inputs.release_build || inputs.nightly
         run: python3 ci/collect-app-link-audit.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/app-link-audit/binaries.json --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain app link maps for final audit
-        if: always() && inputs.release_build && steps.app_build.outcome == 'success'
+        if: always() && (inputs.release_build || inputs.nightly) && steps.app_build.outcome == 'success'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-link-audit-${{ github.sha }}
@@ -313,10 +322,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Collect matching source and component records
-        if: inputs.release_build
+        if: inputs.release_build || inputs.nightly
         run: python3 ci/collect-madeira-source.py .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app .build/ipa-output --link-maps .build/madeira-frontend-derived/Build/Intermediates.noindex
       - name: Retain source archive for release audit
-        if: inputs.release_build
+        id: source_artifact
+        if: inputs.release_build || inputs.nightly
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Iridium-source-${{ github.sha }}
@@ -325,10 +335,10 @@ jobs:
             .build/ipa-output/SOURCE-SHA256SUMS
             .build/ipa-output/COMPONENT-MANIFEST.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ inputs.nightly && 90 || 14 }}
       - name: Check final binary audit before packaging
         env:
-          RELEASE_BUILD: ${{ inputs.release_build }}
+          RELEASE_BUILD: ${{ inputs.release_build || inputs.nightly }}
         run: |
           if [ "$RELEASE_BUILD" = true ]; then
             python3 ci/check-ipa-prerequisites.py --profile madeira-frontend --package
@@ -347,3 +357,41 @@ jobs:
             .build/ipa-output/ipa-signature-audit.json
           if-no-files-found: error
           retention-days: 14
+      - name: Prepare direct Nightly artifact
+        if: inputs.nightly
+        run: ln .build/ipa-output/Iridium-unsigned.ipa .build/ipa-output/Iridium-nightly.zip
+      - name: Upload direct Nightly IPA
+        if: inputs.nightly
+        id: nightly_ipa
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: .build/ipa-output/Iridium-nightly.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 89
+      - name: Prepare Nightly source
+        if: inputs.nightly
+        id: nightly_feed
+        env:
+          NIGHTLY_IPA_ID: ${{ steps.nightly_ipa.outputs.artifact-id }}
+          NIGHTLY_IPA_DIGEST: ${{ steps.nightly_ipa.outputs.artifact-digest }}
+          NIGHTLY_SOURCE_ID: ${{ steps.source_artifact.outputs.artifact-id }}
+        run: python3 ci/publish-nightly.py prepare .build/ipa-output/Iridium-unsigned.ipa
+  publish-nightly:
+    needs: build
+    if: inputs.nightly && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: altstore-nightly-feed
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publish Nightly source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_FEED: ${{ needs.build.outputs.nightly_feed }}
+        run: python3 ci/publish-nightly.py publish

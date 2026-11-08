@@ -1,7 +1,7 @@
 {
   "name": "Iridium Nightly",
   "identifier": "software.iridium.nightly",
-  "subtitle": "Approved prereleases built from main",
+  "subtitle": "Nightly builds from main",
   "websiteURL": "https://github.com/intraducine/iridium/releases",
   "apps": []
 }
