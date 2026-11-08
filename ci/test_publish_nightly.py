@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import plistlib
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -24,7 +25,7 @@ class NightlyTests(unittest.TestCase):
         self.revision = "a" * 40
         self.env = {"GITHUB_REPOSITORY": NIGHTLY.REPO, "GITHUB_REF": "refs/heads/main",
                     "GITHUB_SHA": self.revision, "GITHUB_RUN_NUMBER": "199", "GITHUB_RUN_ATTEMPT": "2",
-                    "NIGHTLY_IPA_ID": "42", "NIGHTLY_SOURCE_ID": "43", "GH_TOKEN": "test"}
+                    "GITHUB_RUN_ID": "42", "GH_TOKEN": "test"}
         self.temp = self.enterContext(tempfile.TemporaryDirectory())
         self.ipa = Path(self.temp) / "test.ipa"
         self.info = {"CFBundleIdentifier": "software.iridium", "CFBundleVersion": "199.2",
@@ -36,15 +37,14 @@ class NightlyTests(unittest.TestCase):
     def write_ipa(self):
         with zipfile.ZipFile(self.ipa, "w") as archive:
             archive.writestr(NIGHTLY.APP + "Info.plist", plistlib.dumps(self.info))
-        self.env["NIGHTLY_IPA_DIGEST"] = hashlib.sha256(self.ipa.read_bytes()).hexdigest()
 
-    def test_feed_uses_exact_ipa_and_source_artifacts(self):
+    def test_feed_uses_exact_ipa_and_source_release(self):
         result = NIGHTLY.prepare(self.ipa, self.env)
         app = result["apps"][0]
         entry = app["versions"][0]
         self.assertEqual(entry["buildVersion"], "199.2")
-        self.assertTrue(entry["downloadURL"].endswith("/actions/artifacts/42.zip"))
-        self.assertIn("/actions/artifacts/43.zip", app["localizedDescription"])
+        self.assertTrue(entry["downloadURL"].endswith("/nightly-42-2/Iridium-unsigned.ipa"))
+        self.assertIn("/releases/tag/nightly-42-2", app["localizedDescription"])
         self.assertEqual(entry["size"], self.ipa.stat().st_size)
         self.assertEqual(app["appPermissions"]["privacy"], {"NSMicrophoneUsageDescription": "Microphone"})
 
@@ -57,10 +57,59 @@ class NightlyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not match"):
             NIGHTLY.prepare(self.ipa, self.env)
 
-    def test_prepare_rejects_changed_artifact(self):
-        self.env["NIGHTLY_IPA_DIGEST"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "differs from the checked IPA"):
-            NIGHTLY.prepare(self.ipa, self.env)
+    def test_release_uploads_and_verifies_each_asset_before_publish(self):
+        feed = NIGHTLY.prepare(self.ipa, self.env)
+        root = Path(self.temp) / "release"
+        (root / "ipa").mkdir(parents=True)
+        (root / "source").mkdir()
+        shutil.copyfile(self.ipa, root / "ipa/Iridium-unsigned.ipa")
+        archive = root / "source/Iridium-corresponding-source.tar.gz"
+        archive.write_bytes(b"source")
+        (root / "source/SOURCE-SHA256SUMS").write_text(hashlib.sha256(b"source").hexdigest() + "  " + archive.name + "\n")
+        (root / "source/COMPONENT-MANIFEST.json").write_text("{}")
+        record = {"id": 1, "tag_name": "nightly-42-2", "target_commitish": self.revision,
+                  "draft": True, "prerelease": True, "assets": []}
+
+        def call_api(method, path, token, data=None):
+            if path.startswith("releases?"):
+                return [record]
+            if path.startswith("commits/"):
+                return {"sha": self.revision}
+            if method == "PATCH":
+                record["draft"] = False
+            return record
+
+        def run(command, **kwargs):
+            path = Path(command[command.index("--input") + 1])
+            record["assets"].append({"name": path.name, "digest": "sha256:" + NIGHTLY.file_digest(path), "state": "uploaded"})
+
+        with patch.object(NIGHTLY, "api", side_effect=call_api), patch.object(NIGHTLY.subprocess, "run", side_effect=run) as cli:
+            NIGHTLY.release(feed, root, self.env)
+        self.assertEqual(len(record["assets"]), 5)
+        self.assertEqual(cli.call_count, 5)
+        self.assertFalse(record["draft"])
+
+    def test_release_rejects_ipa_changed_after_build(self):
+        feed = NIGHTLY.prepare(self.ipa, self.env)
+        root = Path(self.temp) / "release"
+        (root / "ipa").mkdir(parents=True)
+        (root / "ipa/Iridium-unsigned.ipa").write_bytes(b"changed")
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            NIGHTLY.release(feed, root, self.env)
+
+    def test_release_rejects_source_checksum_mismatch(self):
+        feed = NIGHTLY.prepare(self.ipa, self.env)
+        root = Path(self.temp) / "release"
+        (root / "ipa").mkdir(parents=True)
+        (root / "source").mkdir()
+        shutil.copyfile(self.ipa, root / "ipa/Iridium-unsigned.ipa")
+        archive = root / "source/Iridium-corresponding-source.tar.gz"
+        archive.write_bytes(b"source")
+        (root / "source/SOURCE-SHA256SUMS").write_text("0" * 64 + "  " + archive.name + "\n")
+        with patch.object(NIGHTLY, "api") as api:
+            with self.assertRaisesRegex(ValueError, "source archive checksum"):
+                NIGHTLY.release(feed, root, self.env)
+        api.assert_not_called()
 
     def test_publication_never_replaces_a_newer_build(self):
         proposed = NIGHTLY.prepare(self.ipa, self.env)
@@ -92,11 +141,12 @@ class NightlyTests(unittest.TestCase):
         self.assertEqual(api.call_args_list[1].args[3]["sha"], self.revision)
         self.assertEqual(api.call_args_list[3].args[1], "contents/altstore/nightly.json")
 
-    def test_workflow_keeps_direct_artifacts_and_source_in_same_run(self):
+    def test_workflow_keeps_ipa_and_source_in_same_run(self):
         workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
-        self.assertIn("archive: false", workflow)
-        self.assertIn("NIGHTLY_SOURCE_ID: ${{ steps.source_artifact.outputs.artifact-id }}", workflow)
-        self.assertIn("NIGHTLY_IPA_ID: ${{ steps.nightly_ipa.outputs.artifact-id }}", workflow)
+        self.assertIn("name: Iridium-source-${{ github.sha }}", workflow)
+        self.assertIn("name: Iridium-unsigned-${{ github.sha }}", workflow)
+        self.assertLess(workflow.index("python3 ci/publish-nightly.py release"),
+                        workflow.index("python3 ci/publish-nightly.py publish"))
         self.assertIn("needs: build", workflow)
 
     def test_dispatch_rejects_a_non_main_nightly(self):

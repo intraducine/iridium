@@ -335,7 +335,7 @@ jobs:
             .build/ipa-output/SOURCE-SHA256SUMS
             .build/ipa-output/COMPONENT-MANIFEST.json
           if-no-files-found: error
-          retention-days: ${{ inputs.nightly && 90 || 14 }}
+          retention-days: 14
       - name: Check final binary audit before packaging
         env:
           RELEASE_BUILD: ${{ inputs.release_build || inputs.nightly }}
@@ -357,25 +357,9 @@ jobs:
             .build/ipa-output/ipa-signature-audit.json
           if-no-files-found: error
           retention-days: 14
-      - name: Prepare direct Nightly artifact
-        if: inputs.nightly
-        run: ln .build/ipa-output/Iridium-unsigned.ipa .build/ipa-output/Iridium-nightly.zip
-      - name: Upload direct Nightly IPA
-        if: inputs.nightly
-        id: nightly_ipa
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          path: .build/ipa-output/Iridium-nightly.zip
-          archive: false
-          if-no-files-found: error
-          retention-days: 89
       - name: Prepare Nightly source
         if: inputs.nightly
         id: nightly_feed
-        env:
-          NIGHTLY_IPA_ID: ${{ steps.nightly_ipa.outputs.artifact-id }}
-          NIGHTLY_IPA_DIGEST: ${{ steps.nightly_ipa.outputs.artifact-digest }}
-          NIGHTLY_SOURCE_ID: ${{ steps.source_artifact.outputs.artifact-id }}
         run: python3 ci/publish-nightly.py prepare .build/ipa-output/Iridium-unsigned.ipa
   publish-nightly:
     needs: build
@@ -383,6 +367,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     concurrency:
       group: altstore-nightly-feed
       cancel-in-progress: false
@@ -390,6 +375,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check publishing disk space
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 ci/publish-nightly.py check-space
+      - name: Download audited IPA
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: Iridium-unsigned-${{ github.sha }}
+          path: .build/nightly/ipa
+      - name: Download matching source
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: Iridium-source-${{ github.sha }}
+          path: .build/nightly/source
+      - name: Publish Nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_FEED: ${{ needs.build.outputs.nightly_feed }}
+        run: python3 ci/publish-nightly.py release .build/nightly
       - name: Publish Nightly source
         env:
           GH_TOKEN: ${{ github.token }}
