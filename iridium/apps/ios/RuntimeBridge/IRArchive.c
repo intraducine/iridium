@@ -42,16 +42,19 @@ bool ir_archive_is_switch_firmware(const char *source) {
         const char *name = archive_entry_pathname_utf8(entry);
         int64_t size = archive_entry_size(entry);
         if (++count > 1024 || !name || strlen(name) < 32 ||
-            archive_entry_filetype(entry) != S_IFREG || archive_entry_symlink(entry) ||
-            archive_entry_hardlink(entry) || size <= 0 || size > (1LL << 28) ||
-            (uint64_t)size > (1ULL << 30) - total) goto done;
+            archive_entry_symlink(entry) || archive_entry_hardlink(entry)) goto done;
         for (unsigned i = 0; i < 32; ++i) {
             if (!isxdigit((unsigned char)name[i])) goto done;
         }
-        if (strcmp(name + 32, ".nca") && strcmp(name + 32, ".cnmt.nca")) goto done;
+        const char *suffix = name + 32;
+        mode_t type = archive_entry_filetype(entry);
+        if (type == S_IFDIR && !strcmp(suffix, ".nca/")) continue;
+        if (type != S_IFREG || size <= 0 || size > (1LL << 28) ||
+            (uint64_t)size > (1ULL << 30) - total ||
+            (strcmp(suffix, ".nca") && strcmp(suffix, ".cnmt.nca") && strcmp(suffix, ".nca/00"))) goto done;
         total += (uint64_t)size;
     }
-    result = status == 1 && count > 0; // ARCHIVE_EOF.
+    result = status == 1 && total > 0; // ARCHIVE_EOF.
 done:
     archive_read_free(reader);
     return result;

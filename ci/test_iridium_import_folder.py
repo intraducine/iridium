@@ -80,6 +80,8 @@ class ImportFolderTests(unittest.TestCase):
                 for name in ('A Firmware.zip', 'Failed.zip'):
                     with zipfile.ZipFile(inbox / name, 'w', zipfile.ZIP_DEFLATED) as archive:
                         archive.writestr('1234567890abcdef1234567890abcdef.cnmt.nca', b'firmware fixture')
+                        archive.writestr('abcdef1234567890abcdef1234567890.nca/', b'')
+                        archive.writestr('abcdef1234567890abcdef1234567890.nca/00', b'fragmented firmware fixture')
             result = subprocess.run([str(self.binary), 'archive' if scenario == '7z' else scenario, str(docs)],
                                     capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
