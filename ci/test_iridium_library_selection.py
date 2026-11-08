@@ -32,13 +32,16 @@ func withAnimation(_ animation: Animation?, _ body: () -> Void) { body() }
 enum Anchor { case leading }
 struct Position { mutating func scrollTo(id: UUID, anchor: Anchor) {} }
 struct Game { let id: UUID }
+enum LaunchRecovery { case switchSetup }
 final class ConsoleSession {
     var failure: String?
+    var launchRecovery: LaunchRecovery?
     func takeDismissalError() -> String? { defer { failure = nil }; return failure }
 }
 final class Library { var error: String? }
 final class Host {
     let consoleSession = ConsoleSession(), library = Library()
+    var launchRecovery: LaunchRecovery?
     var selectionFeedback = UIImpactFeedbackGenerator()
     var selection = IridiumLibrarySelection(), carouselPosition = Position()
     var selectedID: UUID?, selected: Game?, pageArtwork = ""
@@ -81,8 +84,10 @@ host.swipe(c); precondition(host.selectionFeedback.pulses == 2)
 // Model a feedback resource made unusable during a native session.
 let oldFeedback = host.selectionFeedback; oldFeedback.valid = false
 host.consoleSession.failure = "Launch failed"
+host.consoleSession.launchRecovery = .switchSetup
 host.dismissed()
 precondition(host.library.error == "Launch failed" && host.consoleSession.failure == nil)
+precondition(host.launchRecovery == .switchSetup)
 precondition(host.selectionFeedback !== oldFeedback && host.selectionFeedback.preparations == 1 && host.focusRestores == 1)
 host.swipe(b); host.touch(a)
 precondition(host.selectionFeedback.pulses == 2 && oldFeedback.pulses == 2)
