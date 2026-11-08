@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+import iridium_app_sources
 from unittest.mock import patch
 import madeira_presentation
 import madeira_jit_lifecycle
@@ -33,8 +34,8 @@ class FrontendImportTests(unittest.TestCase):
             receipt.write_text('{}')
             component = SimpleNamespace(SOURCE=source, REVISION='fixture', RECEIPT=receipt,
                                         component_record=dict, packaged_files=tuple)
-            with patch.object(BUILD, 'melonx_component', return_value=component):
-                for name, path in BUILD.MELONX_LICENSES.items():
+            with patch.object(iridium_app_sources, 'melonx_component', return_value=component):
+                for name, path in iridium_app_sources.MELONX_LICENSES.items():
                     fixture = source / path
                     fixture.parent.mkdir(parents=True, exist_ok=True)
                     fixture.write_text(name)

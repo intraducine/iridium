@@ -27,23 +27,10 @@ FRONTEND = ROOT / 'iridium/apps/ios/MadeiraFrontend'
 RUNTIME_SUPPORT = ROOT / 'iridium/apps/ios/RuntimeSupport'
 RUNTIME_BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 OUTPUT = ROOT / '.build/madeira-frontend'
-def melonx_component():
-    spec = importlib.util.spec_from_file_location('melonx_component', ROOT / 'ci/build-melonx-core.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 REVISION = engine_pins.get('madeira')['revision']
 PSP_REVISION = engine_pins.get('ppsspp')['revision']
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
 PSP_OUTPUT = ROOT / '.build/ppsspp/iphoneos'
-MELONX_LICENSES = {
-    'LICENSE-MELONX.txt': 'LICENSE.txt',
-    'THIRD-PARTY-MELONX.md': 'distribution/legal/THIRDPARTY.md',
-    'LICENSE-MELONX-SDL3.txt': ('src/MeloNX/MeloNX/Dependencies/SDL3.xcframework/ios-arm64/'
-                               'SDL3.framework/Headers/SDL_copying.h'),
-}
 RUNTIME_HEADERS = '\n#import "IRJITPrepare.h"\n#import "IridiumCoreBridge.h"\n#import "IRPSPNativeBridge.h"\n#import "IRArchive.h"\n'
 CRYPTO_LIBRARIES = ('gnutls', 'hogweed', 'nettle', 'gmp')
 PSP_PRIVACY_DESCRIPTIONS = {
@@ -194,6 +181,7 @@ def project(source, names):
             objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
             resources['files'].append(build); group['children'].append(ref)
     if os.environ.get('IRIDIUM_MELONX') == '1':
+        from iridium_app_sources import melonx_component
         component = melonx_component()
         for index, (binary, name) in enumerate(component.packaged_files()):
             framework = '/' in name
@@ -254,13 +242,13 @@ def prepare_helper_versions(app):
 
 
 def prepare():
+    import iridium_app_sources as app_sources
     melonx = None
     if os.environ.get('IRIDIUM_MELONX') == '1':
         if os.environ.get('IRIDIUM_PHASE3') != '1':
             raise ValueError('MeloNX needs the shared console player build')
-        melonx = melonx_component()
+        melonx = app_sources.melonx_component()
         subprocess.run([sys.executable, '-B', str(ROOT / 'ci/build-melonx-core.py'), '--inspect'], check=True)
-    import iridium_app_sources as app_sources
     import ppsspp_gl_sync_overlay as psp_gl_sync
     verify_pin()
     subprocess.run([sys.executable, str(ROOT / 'ci/check-engine-upgrade.py'),
@@ -347,10 +335,10 @@ def prepare():
     if melonx:
         data['IridiumMeloNXRevision'] = melonx.REVISION
         data['IridiumRuntimeRevisions']['MeloNX'] = melonx.REVISION
-        for name, source in MELONX_LICENSES.items():
+        for name, source in app_sources.MELONX_LICENSES.items():
             shutil.copy2(melonx.SOURCE / source, licenses / name)
     else:
-        for name in MELONX_LICENSES:
+        for name in app_sources.MELONX_LICENSES:
             (licenses / name).unlink(missing_ok=True)
     data.update(PSP_PRIVACY_DESCRIPTIONS)
     info.write_bytes(plistlib.dumps(data))
@@ -404,6 +392,7 @@ def check_psp_jit_interface(record):
 def check_bundle(app):
     info = plistlib.loads((app / 'Info.plist').read_bytes())
     if 'IridiumMeloNXRevision' in info:
+        from iridium_app_sources import MELONX_LICENSES, melonx_component
         melonx = melonx_component()
         record = json.loads(melonx.RECEIPT.read_text())
         if info['IridiumMeloNXRevision'] != melonx.REVISION or record != melonx.component_record():

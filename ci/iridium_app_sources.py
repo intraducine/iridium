@@ -1,5 +1,6 @@
 """Stage Iridium-owned application code independently of an engine's UI tree."""
 from pathlib import Path
+import importlib.util
 import json
 import shutil
 
@@ -7,6 +8,20 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = Path('iridium/apps/ios/App')
 PROJECT = Path('iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj')
 IMPORT_MARKER = '// IRIDIUM-OWNED-UNIT\n'
+
+MELONX_LICENSES = {
+    'LICENSE-MELONX.txt': 'LICENSE.txt',
+    'THIRD-PARTY-MELONX.md': 'distribution/legal/THIRDPARTY.md',
+    'LICENSE-MELONX-SDL3.txt': ('src/MeloNX/MeloNX/Dependencies/SDL3.xcframework/ios-arm64/'
+                               'SDL3.framework/Headers/SDL_copying.h'),
+}
+
+
+def melonx_component():
+    spec = importlib.util.spec_from_file_location('melonx_component', ROOT / 'ci/build-melonx-core.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def ownership(root=ROOT):
