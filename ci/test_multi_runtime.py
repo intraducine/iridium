@@ -206,7 +206,7 @@ CONTINUATION
             subprocess.run([str(binary)], check=True, timeout=10)
 
     def test_live_target_includes_core_sources_and_guards(self):
-        spec = importlib.util.spec_from_file_location('runtime_overlay', ROOT / 'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('runtime_overlay', ROOT / 'ci/madeira_app.py')
         overlay = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(overlay)
         upstream = ROOT / 'ci/fixtures/madeira-build43/app/Madeira'

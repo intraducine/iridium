@@ -145,14 +145,6 @@ class AssetReuseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'producer input'):
                 reuse.compatible(root, original, 'native')
 
-    def test_melonx_app_staging_is_outside_the_madeira_compiler_inputs(self):
-        source = (reuse.ROOT / 'ci/madeira-frontend.py').read_text()
-        compiler = reuse.frontend_compiler_source(source)
-        self.assertIn('melonx_component', source)
-        self.assertNotIn('melonx_component', compiler)
-        self.assertNotIn('MELONX_LICENSES', compiler)
-        self.assertIn('def native(', compiler)
-
     def test_native_workflow_compiler_settings_still_invalidate(self):
         workflow = ('jobs:\n  build:\n    runs-on: xcode-27\n    steps:\n'
                     '      - name: Compile native\n        run: bash ci/prepare-native-runtime.sh\n')

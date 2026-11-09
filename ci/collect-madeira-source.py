@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 import ppsspp_atlas_resources as atlas
+import madeira_app
 
 ROOT = Path(__file__).resolve().parents[1]
 FREETYPE_REVISION = engine_pins.get('madeira')['buildDependencies']['freetype']['revision']
@@ -248,7 +249,7 @@ def exclude_unused_archives(stage):
 
 def collect(app, output, maps):
     build.verify_pin()
-    runtime_receipts = build.check_bundle(app)
+    runtime_receipts = madeira_app.check_bundle(app)
     madeira_outputs = {f'app/Madeira/{path}': sha for receipt in runtime_receipts.values()
                        for path, sha in receipt['files'].items()}
     output.mkdir(parents=True, exist_ok=True)
@@ -287,7 +288,7 @@ def collect(app, output, maps):
         component_sources = build.madeira_components.source_inventory(build.UPSTREAM)
         component_sources['gitSources'] = graphics_sources
         (stage / 'vendor/Madeira/iridium-runtime-sources.json').write_text(json.dumps(component_sources, indent=2) + '\n')
-        psp_receipt = json.loads((build.PSP_OUTPUT / 'component.json').read_text())
+        psp_receipt = json.loads((madeira_app.PSP_OUTPUT / 'component.json').read_text())
         psp_atlases = atlas.collect_inputs(stage, psp_receipt, ROOT)
         psp_external = json.loads((ROOT / engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs']).read_text())
         if not psp_external or psp_external != psp_receipt.get('moltenVK', {}).get('sourceInputs'):

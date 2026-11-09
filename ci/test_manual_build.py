@@ -172,7 +172,7 @@ class ManualBuildTests(unittest.TestCase):
         self.assertEqual(re.findall(r'^  ([a-z_]+):', trigger, re.M), ['workflow_dispatch'])
         self.assertNotIn("secrets.", text)
         self.assertNotIn("allowProvisioningUpdates", text)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira-frontend.py').read_text())
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira_app.py').read_text())
         self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("ci/madeira-frontend.py app"))
 
     def test_workflow_always_initializes_builds_and_bundles_console_engines(self):

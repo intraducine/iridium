@@ -13,7 +13,7 @@ CONTROLS = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleControls.swift
 
 
 def production_geometry():
-    spec = importlib.util.spec_from_file_location('opacity_rotation_frontend', ROOT / 'ci/madeira-frontend.py')
+    spec = importlib.util.spec_from_file_location('opacity_rotation_frontend', ROOT / 'ci/madeira_app.py')
     frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
     upstream = frontend.overlay('ContentView.swift', UPSTREAM.read_text())
     # Use the actual normalized model and action-specific dimensions rather
@@ -147,7 +147,7 @@ class ConsoleControlRotationTests(unittest.TestCase):
         self.assertIn('TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)', source)
 
     def test_projection_and_editor_hit_surface_use_shipping_canvas(self):
-        spec = importlib.util.spec_from_file_location('rotation_frontend', ROOT / 'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('rotation_frontend', ROOT / 'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(frontend)
         generated = frontend.overlay('ContentView.swift', UPSTREAM.read_text())

@@ -23,7 +23,7 @@ BASE = 'db860fd0555488b497ca84a6bb3a1e629d960d22'
 
 class WindowsChromeSourceTests(unittest.TestCase):
     def test_controller_producers_and_launch_admission_match_pinned_upstream(self):
-        spec = importlib.util.spec_from_file_location('chrome_input_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_input_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, relative in [('GamepadInput.swift', 'GamepadInput.swift'),
                                ('TouchGamepad.swift', 'TouchGamepad.swift'),
@@ -77,7 +77,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
                              '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', '').replace('        DeviceDiagnostics.logLaunch()\n', ''))
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
-        spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, start, end in [('ContentView.swift', 'enum TouchControlsHost {', 'struct TouchControlsOverlay: View {'),
                                  ('Library.swift', '    func showGameView(reason:', '    /// The hotkey')]:
@@ -102,7 +102,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
 class WindowsChromeLifecycleTests(unittest.TestCase):
     def test_generated_launch_order_and_real_host_menu_on_handoff(self):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
-        spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         upstream = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         current = frontend.overlay('ContentView.swift', upstream)

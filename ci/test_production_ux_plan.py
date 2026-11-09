@@ -189,7 +189,7 @@ class DisplayPresentationOwnershipTests(unittest.TestCase):
     def test_settings_root_owns_its_per_game_display_sheet(self):
         import importlib.util, sys
         sys.path.insert(0, str(ROOT / "ci"))
-        spec = importlib.util.spec_from_file_location("display_frontend", ROOT / "ci/madeira-frontend.py")
+        spec = importlib.util.spec_from_file_location("display_frontend", ROOT / "ci/madeira_app.py")
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         generated = frontend.overlay("Library.swift", (ROOT / "ci/fixtures/madeira-build43/app/Madeira/Library.swift").read_text())
         settings = generated[generated.index("struct LibraryView: View"):generated.index("private func iridiumNavigate", generated.index("struct LibraryView: View"))]

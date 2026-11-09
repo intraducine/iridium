@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class TouchOverlayLifecycleTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_generated_registration_keeps_same_id_a_and_stick_controls_working(self):
-        spec = importlib.util.spec_from_file_location('overlay_lifecycle_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('overlay_lifecycle_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         text = frontend.overlay('ContentView.swift', (ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift').read_text())
         self.assertIn('@Published var iridiumConsoleScope: UUID?', text)
