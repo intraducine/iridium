@@ -234,15 +234,10 @@ final class JITCoordinator: ObservableObject {
         case windows
         case console(minimumBytes: Int)
 
-        var includesWindows: Bool {
-            if case .console = self { return false }
-            return true
-        }
-
-        var consoleBytes: Int? {
+        var minimumBytes: Int {
             switch self {
             case .offline: return 0
-            case .windows: return nil
+            case .windows: return 16 * 1024 // Madeira's registered regions set the actual minimum.
             case .console(let minimumBytes): return minimumBytes
             }
         }
@@ -252,14 +247,6 @@ final class JITCoordinator: ObservableObject {
             case .offline: return "offline"
             case .windows: return "windows"
             case .console: return "console"
-            }
-        }
-
-        var preparingMessage: String {
-            switch self {
-            case .offline: return "Preparing Windows and console JIT memory…"
-            case .windows: return "Preparing Windows JIT memory…"
-            case .console: return "Preparing console JIT memory…"
             }
         }
     }
@@ -304,10 +291,10 @@ final class JITCoordinator: ObservableObject {
             completion(.failure(CoordinatorError.setupRequired("Wait for the current JIT request to finish."))); return
         }
 
-        let needWindows = target.includesWindows && !IridiumMadeiraRuntime.jitMemoryReady
-        let consoleBytes = target.consoleBytes
-        let consolePrepared = consoleBytes.map { ir_jit_memory_has_capacity($0) } ?? true
-        let needConsole = consoleBytes != nil && (!consoleMemoryVerified || !consolePrepared)
+        let needWindows = !IridiumMadeiraRuntime.jitMemoryReady
+        let consoleBytes = target.minimumBytes
+        let consolePrepared = ir_jit_memory_has_capacity(consoleBytes)
+        let needConsole = !consoleMemoryVerified || !consolePrepared
         let readyMessage: String
         switch target {
         case .offline: readyMessage = "Windows and console JIT are ready for this app session."
@@ -318,7 +305,7 @@ final class JITCoordinator: ObservableObject {
             completion(.success(())); return
         }
 
-        let prepareWindows = needWindows && !IridiumMadeiraRuntime.jitMemoryPrepared
+        let prepareWindows = needWindows && (!IridiumMadeiraRuntime.jitMemoryPrepared || !consolePrepared)
         let prepareConsole = needConsole && !consolePrepared
         let verify: (Bool, Bool) -> Void = { windowsAllocated, consoleAllocated in
             self.busy = true
@@ -372,13 +359,13 @@ final class JITCoordinator: ObservableObject {
             }
             self.memoryPreparationInProgress = true; self.busy = true
             if prepareConsole { self.consoleMemoryVerified = false }
-            self.status = target.preparingMessage
+            self.status = "Preparing shared JIT memory…"
             RuntimePerformanceDiagnostics.shared.record("jit-\(target.name)-prepare")
             let started = ProcessInfo.processInfo.systemUptime
             DispatchQueue.global(qos: .userInitiated).async {
                 let windowsAllocated = !prepareWindows || (isDebuggerAttached() && IridiumMadeiraRuntime.prepareJITMemory())
                 let consoleAllocated = !prepareConsole ||
-                    (isDebuggerAttached() && ir_jit_memory_prepare_sized(ir_jit_prepare_region, consoleBytes ?? 0))
+                    (windowsAllocated && isDebuggerAttached() && ir_jit_memory_prepare_sized(ir_jit_prepare_region, consoleBytes))
                 DispatchQueue.main.async {
                     let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
                     LogStore.shared.log("[jit-memory] target=\(target.name) ms=\(elapsed) windows=\(windowsAllocated) console=\(consoleAllocated)")

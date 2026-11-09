@@ -277,6 +277,75 @@ static bool ir_windows_image_live(size_t offset, size_t size)
     return text
 
 
+def apply_shared_jit(text):
+    def change(old, new):
+        nonlocal text
+        if text.count(old) != 1:
+            raise ValueError('Madeira shared JIT allocation site changed: ' + old.splitlines()[0])
+        text = text.replace(old, new)
+
+    change('record_allocation:\n    if (off != (size_t)-1)', '''record_allocation:
+    if (off != (size_t)-1 &&
+        !ir_jit_windows_claim((void *)((uintptr_t)ios_jit_rx_base_global + off), alloc_size, false))
+        off = (size_t)-1;
+    if (off != (size_t)-1)''')
+    change('                size_t got = ios_tail_carves[best].size;\n                int was_retired', '''                size_t got = ios_tail_carves[best].size;
+                if (!ir_jit_windows_claim(jit_rx, got, true))
+                {
+                    pthread_mutex_unlock( &ios_tail_carve_lock );
+                    return STATUS_NO_MEMORY;
+                }
+                int was_retired''')
+    change('                void *jit_rx = (void *)(ios_jit_low_rx_global + loff);', '''                void *jit_rx = (void *)(ios_jit_low_rx_global + loff);
+                if (!ir_jit_windows_claim(jit_rx, alloc_size, true))
+                {
+                    __sync_bool_compare_and_swap( &ios_jit_low_reserved, loff + alloc_size, loff );
+                    return STATUS_NO_MEMORY;
+                }''')
+    change('            *ret = jit_rx;\n            *size_ptr = alloc_size;', '''            if (!ir_jit_windows_claim(jit_rx, alloc_size, true))
+            {
+                ios_pool_tail_unreserve( &ios_jit_tail_reserved, reserve_offset + alloc_size, tail_added,
+                                         ios_jit_hole_end > ios_jit_hole_off );
+                return STATUS_NO_MEMORY;
+            }
+            *ret = jit_rx;
+            *size_ptr = alloc_size;''')
+    change('            ios_tail_carves[i].free = 1;\n            ios_tail_carves[i].freed_at = time( NULL );', '''            ios_tail_carves[i].free = 1;
+            ios_tail_carves[i].freed_at = time( NULL );
+            if (!ios_tail_carve_scan( base, ios_tail_carves[i].size, 1 ))
+                ir_jit_windows_release_code( base, ios_tail_carves[i].size );''')
+    # Wine's view guards must protect the other aliases of the same pages.
+    change('    if (!sz) return 0;\n    if (rx && a < rx + sz && e > rx) return 1;',
+           '    if (ir_jit_memory_intersects(addr, size)) return 1;\n'
+           '    if (!sz) return 0;\n    if (rx && a < rx + sz && e > rx) return 1;')
+    change('                ios_jit_pool_size_global = jit_pool_size;',
+           '                ios_jit_pool_size_global = jit_pool_size;\n'
+           '                ir_jit_memory_set_windows_reclaimer(ir_windows_release_retired_code);')
+    # Jobs can exit without freeing their final translation buffers.
+    change('void ir_windows_reclaim_completed( void )', '''static void ir_windows_release_retired_code( void )
+{
+    time_t now = time( NULL );
+    pthread_mutex_lock( &ios_tail_carve_lock );
+    for (unsigned i = 0; i < ios_tail_carve_n; ++i)
+    {
+        const struct ios_tail_carve *carve = ios_tail_carves + i;
+        if (!ios_tail_carve_ready( carve, now )) continue;
+        void *rx = (void *)((uintptr_t)ios_jit_rx_base_global + carve->off);
+        if (!ios_tail_carve_scan( rx, carve->size, 1 ))
+            ir_jit_windows_release_code( rx, carve->size );
+    }
+    pthread_mutex_unlock( &ios_tail_carve_lock );
+}
+
+void ir_windows_reclaim_completed( void )''')
+    return ('#include <stddef.h>\n#include <stdbool.h>\n'
+            'static void ir_windows_release_retired_code(void);\n'
+            'extern void ir_jit_memory_set_windows_reclaimer(void (*)(void));\n'
+            'extern bool ir_jit_memory_intersects(const void *, size_t);\n'
+            'extern bool ir_jit_windows_claim(void *, size_t, bool);\n'
+            'extern void ir_jit_windows_release_code(void *, size_t);\n' + text)
+
+
 def apply_virtual(text, pool_header=None):
     # Wine can start after other runtimes have mapped memory in the guest range.
     marker = "anon_mmap_fixed( (void *)(uintptr_t)IOS_CAGE_BASE, IOS_CAGE_REAL_SIZE, PROT_NONE, 0 )"
@@ -541,7 +610,7 @@ void ir_windows_keep_view( void *base, size_t size )
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 }
 '''
-    return apply_image_pool(text, pool_header or Path(__file__).resolve().parents[1] / 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h')
+    return apply_shared_jit(apply_image_pool(text, pool_header or Path(__file__).resolve().parents[1] / 'iridium/apps/ios/RuntimeBridge/IRWindowsJITPool.h'))
 
 
 def apply_dc(text):

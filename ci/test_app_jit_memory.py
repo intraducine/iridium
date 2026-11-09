@@ -30,8 +30,9 @@ class AppJITMemoryTests(unittest.TestCase):
 extern "C" bool ir_phase3_core_prepare_memory(const IRJITMemoryAPI *);
 DOLPHIN_ADAPTER
 static unsigned preparations;
+static size_t lastPrepared;
 static void *prepare(void *p, size_t bytes) {
-    assert(!p); ++preparations;
+    assert(!p); ++preparations; lastPrepared = bytes;
     void *rx = mmap((void *)0x7000000000ULL, bytes, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
     assert((uintptr_t)rx >= (1ULL << 36)); // Same high placement observed on the phone.
     return rx;
@@ -42,7 +43,53 @@ static void emit(void *rx, void *rw, unsigned value) {
     sys_dcache_flush(rw, sizeof words); sys_icache_invalidate(rx, sizeof words);
     assert(((unsigned (*)())rx)() == value);
 }
-int main() {
+static void shared() {
+    const size_t page = getpagesize();
+    IRJITWindowsRegion region[2];
+    for (auto &r : region) {
+        r.bytes = 4 * page;
+        r.bootstrap = &r == region;
+        r.rx = prepare(nullptr, r.bytes);
+        vm_address_t alias = 0;
+        vm_prot_t current, maximum;
+        assert(vm_remap(mach_task_self(), &alias, r.bytes, 0, VM_FLAGS_ANYWHERE,
+            mach_task_self(), (vm_address_t)r.rx, false, &current, &maximum, VM_INHERIT_NONE) == KERN_SUCCESS);
+        assert(vm_protect(mach_task_self(), alias, r.bytes, false, VM_PROT_READ | VM_PROT_WRITE) == KERN_SUCCESS);
+        r.rw = (void *)alias;
+    }
+    assert(ir_jit_memory_register_windows(region, 2));
+    const size_t service = 16 * 1024 * 1024;
+    assert(ir_jit_memory_prepare_sized(prepare, 8 * page) && preparations == 3 && lastPrepared == service);
+    assert(ir_jit_memory_prepare_sized(prepare, service + 12 * page) && preparations == 4 && lastPrepared == 4 * page);
+    static unsigned probes;
+    assert(ir_jit_memory_verify([](void *rx, void *rw) -> bool {
+        ++probes;
+        return ir_jit_verify_aliases(rx, rw);
+    }) && probes == 3);
+    const auto *api = ir_jit_memory_api();
+    auto wRX = (char *)region[1].rx + 3 * page;
+    auto wRW = (char *)region[1].rw + 3 * page;
+    void *rx, *rw, *reserve, *reserveWrite;
+    assert(api->allocate(service + 4 * page, &reserve, &reserveWrite));
+    assert(api->allocate(page, &rx, &rw));
+    emit(rx, rw, 42);
+    assert(((unsigned (*)())wRX)() == 42);
+    assert(!ir_jit_windows_claim(wRX, page, true));
+    assert(api->release(rx, page));
+    assert(ir_jit_windows_claim(wRX, page, true));
+    emit(wRX, wRW, 7);
+    void *otherRX, *otherRW;
+    assert(api->allocate(page, &otherRX, &otherRW) && otherRX != rx);
+    assert(((unsigned (*)())rx)() == 7);
+    ir_jit_windows_release_code(wRX, page);
+    assert(api->allocate(page, &otherRX, &otherRW) && otherRX == rx && *(unsigned *)otherRW == 0);
+    assert(api->release(rx, page));
+    assert(ir_jit_windows_claim(wRX, page, false));
+    ir_jit_windows_release_code(wRX, page);
+    assert(api->allocate(page, &otherRX, &otherRW) && otherRX != rx);
+}
+int main(int argc, char **) {
+    if (argc > 1) { shared(); return 0; }
     const auto *api = ir_jit_memory_api(); void *rx, *rw;
     assert(!api->allocate(8, &rx, &rw));
     assert(!ir_jit_memory_prepare(nullptr));
@@ -150,6 +197,7 @@ int main() {
             subprocess.run(['clang++', '-std=c++17', '-I', str(BRIDGE), str(folder / 'main.cpp'),
                             str(BRIDGE / 'IRPSPExecutableMemory.cpp'), str(BRIDGE / 'IRSharedJITMemory.cpp'),
                             *objects, '-o', str(folder / 'check')], check=True, timeout=60)
+            subprocess.run([str(folder / 'check'), 'shared'], check=True, timeout=30)
             subprocess.run([str(folder / 'check')], check=True, timeout=90)
 
 
@@ -215,12 +263,15 @@ final class Memory: @unchecked Sendable {
     var ready = false, windowsReady = false, windowsVerified = false, succeeds = true
     var attached = false, consoleCheckPasses = true
     var allocations = 0, windowsAllocations = 0, lastConsoleBytes: Int?
+    var capacity: Int { lastConsoleBytes == 0 ? Int.max : lastConsoleBytes ?? 0 }
     func prepared(bytes: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
         lastConsoleBytes = bytes
         allocations += 1; ready = succeeds; return ready
     }
-    func isReady() -> Bool { lock.lock(); defer { lock.unlock() }; return ready }
+    func isReady(_ bytes: Int = 16 * 1024) -> Bool {
+        lock.lock(); defer { lock.unlock() }; return ready && (bytes == 0 ? capacity == Int.max : capacity >= bytes)
+    }
     func windows() -> Bool { lock.lock(); defer { lock.unlock() }; windowsAllocations += 1; windowsReady = succeeds; return windowsReady }
     func isWindowsReady() -> Bool { lock.lock(); defer { lock.unlock() }; return windowsReady }
     func verifyWindows() -> Bool {
@@ -229,7 +280,7 @@ final class Memory: @unchecked Sendable {
         return windowsVerified
     }
 }
-func ir_jit_memory_has_capacity(_ bytes: Int) -> Bool { Memory.shared.isReady() }
+func ir_jit_memory_has_capacity(_ bytes: Int) -> Bool { Memory.shared.isReady(bytes) }
 func ir_jit_memory_prepare_sized(_ callback: Int, _ bytes: Int) -> Bool { Memory.shared.prepared(bytes: bytes) }
 enum IridiumMadeiraRuntime {
     static func prepareJITMemory() -> Bool { Memory.shared.windows() }
@@ -284,12 +335,12 @@ BODY
     @MainActor static func main() async {
         let host = Host()
         let windows = await host.windows(); precondition(windows)
-        precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.allocations == 0)
+        precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.allocations == 1)
         for _ in 0..<100 { let reused = await host.windows(); precondition(reused) }
         precondition(host.enables == 1 && host.detaches == 1)
         precondition(await host.prepare())
         for _ in 0..<100 { precondition(await host.prepare()) }
-        precondition(host.enables == 2 && host.detaches == 2 && Memory.shared.allocations == 1)
+        precondition(host.enables == 2 && host.detaches == 2 && Memory.shared.allocations == 2)
         precondition(Memory.shared.windowsAllocations == 1)
         precondition(RuntimePerformanceDiagnostics.shared.phases == [
             "jit-windows-attach", "jit-windows-prepare", "jit-windows-ready",
@@ -306,9 +357,9 @@ BODY
         let consoleFirst = Host()
         let minimumBytes = 544 * 1024 * 1024
         let consoleReady = await consoleFirst.prepare(bytes: minimumBytes); precondition(consoleReady)
-        precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.lastConsoleBytes == minimumBytes)
+        precondition(Memory.shared.windowsAllocations == 2 && Memory.shared.lastConsoleBytes == minimumBytes)
         let windowsReady = await consoleFirst.windows(); precondition(windowsReady)
-        precondition(consoleFirst.enables == 2 && consoleFirst.detaches == 2)
+        precondition(consoleFirst.enables == 1 && consoleFirst.detaches == 1)
         precondition(Memory.shared.windowsAllocations == 2)
         Memory.shared.ready = false; Memory.shared.windowsReady = false; Memory.shared.windowsVerified = false
         Memory.shared.consoleCheckPasses = false

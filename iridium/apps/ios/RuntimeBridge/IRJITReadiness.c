@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 #include "IRJITReadiness.h"
 #include "IRJITExecutionProbe.h"
-#include "IRJITMemory.h"
+#include "IRJITPrepare.h"
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <string.h>
@@ -39,9 +39,5 @@ bool ir_jit_verify_aliases(void *rx, void *rw) {
 }
 
 bool ir_jit_verify_console_memory(void) {
-    const IRJITMemoryAPI *memory = ir_jit_memory_api();
-    void *rx = 0, *rw = 0;
-    if (!memory->allocate(8, &rx, &rw)) return false;
-    bool ran = ir_jit_verify_aliases(rx, rw);
-    return memory->release(rx, 8) && ran;
+    return ir_jit_memory_verify(ir_jit_verify_aliases);
 }

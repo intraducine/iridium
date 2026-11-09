@@ -39,6 +39,70 @@ index 050ef99..476b122 100644
  
          private class MemoryCache : IDisposable
          {
+@@ -91,20 +91,40 @@
+         private readonly Translator _translator;
+         private MemoryCache _sharedCache;
+         private static DualMappedJitAllocator _sharedCacheAlloc;
++        private static readonly Lock _sharedCacheLock = new();
++        private static int _embeddedUsers;
++        private bool _embeddedLease;
+         private readonly Lock _lock = new();
+ 
+         public DualMappedNoWxCache(Translator translator)
+         {
+             _translator = translator;
+-            _sharedCache = new(_sharedCacheAlloc, SharedCacheSize);
++            lock (_sharedCacheLock)
++            {
++                _sharedCache = new(_sharedCacheAlloc, SharedCacheSize);
++                if (DualMappedJitAllocator.UsesHostMemory)
++                {
++                    _embeddedLease = true;
++                    _embeddedUsers++;
++                }
++            }
+         }
+ 
+         public static void InitMemoryCache() 
+         {
+-            if (_sharedCacheAlloc != null)
+-                return;
+-
+-            _sharedCacheAlloc = new(SharedCacheSize);
++            lock (_sharedCacheLock)
++                _sharedCacheAlloc ??= new(SharedCacheSize);
++        }
++
++        internal static void ReleaseEmbeddedCache()
++        {
++            lock (_sharedCacheLock)
++            {
++                if (_embeddedUsers != 0)
++                    throw new InvalidOperationException("MeloNX still has live translation caches.");
++                _sharedCacheAlloc?.Dispose();
++                _sharedCacheAlloc = null;
++            }
+         }
+ 
+         public unsafe nint Map(ReadOnlySpan<byte> code, ulong guestAddress, ulong guestSize)
+@@ -183,6 +203,17 @@
+ 
+         protected virtual void Dispose(bool disposing)
+         {
++            if (!disposing)
++                return;
++
++            lock (_sharedCacheLock)
++            {
++                if (_embeddedLease)
++                {
++                    _embeddedLease = false;
++                    _embeddedUsers--;
++                }
++            }
+         }
+ 
+         public void Dispose()
 diff --git a/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs b/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs
 index 0d2490a..f5da191 100644
 --- a/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs
@@ -861,7 +925,7 @@ new file mode 100644
 index 0000000..ce368f3
 --- /dev/null
 +++ b/src/Ryujinx.Library/IridiumHost.cs
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,282 @@
 +using Ryujinx.Common.Configuration;
 +using Ryujinx.Common.Configuration.Hid;
 +using Ryujinx.Common.Logging;
@@ -998,14 +1062,15 @@ index 0000000..ce368f3
 +
 +                DualMappedJitAllocator.HostAllocate = allocate;
 +                DualMappedJitAllocator.HostRelease = release;
++                DualMappedMemory.PrepareEmbeddedFaultHandler();
++                if (jitReady() == 0)
++                    return -4;
++
 +                if (!DualMappedMemory.InitMemoryCache())
 +                {
 +                    EmbeddedReport("MeloNX could not initialize its executable cache.");
 +                    return -2;
 +                }
-+
-+                if (jitReady() == 0)
-+                    return -4;
 +
 +                nativeMetalLayer = layer;
 +                _embeddedFrame = frame;
@@ -1063,6 +1128,7 @@ index 0000000..ce368f3
 +                {
 +                    try
 +                    {
++                        DualMappedMemory.ReleaseEmbeddedCache();
 +                        _inputManager.Dispose();
 +                        _inputManager = null;
 +                        _inputConfiguration = null;
@@ -1214,3 +1280,39 @@ diff --git a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/G
                  {
                      Logger.Debug?.Print(LogClass.Gpu,
                          $"Ignoring {level} host memory pressure with {available / TrimMiB} MiB still available to this process");
+diff --git a/src/Ryujinx.Cpu/LightningJit/Translator.cs b/src/Ryujinx.Cpu/LightningJit/Translator.cs
+--- a/src/Ryujinx.Cpu/LightningJit/Translator.cs
++++ b/src/Ryujinx.Cpu/LightningJit/Translator.cs
+@@ -18,12 +18,23 @@
+     {
+         private static bool initialized = false;
+ 
++        public static void PrepareEmbeddedFaultHandler()
++        {
++            NativeSignalHandler.InitializeSignalHandler();
++        }
++
++        public static void ReleaseEmbeddedCache()
++        {
++            if (DualMappedJitAllocator.UsesHostMemory)
++                DualMappedNoWxCache.ReleaseEmbeddedCache();
++        }
++
+         public static bool InitMemoryCache()
+         {
+             if (!MemoryBlock.DualMappedEnabled()) 
+                 return true;
+ 
+-            if (initialized)
++            if (initialized && !DualMappedJitAllocator.UsesHostMemory)
+                 return true;
+ 
+             try 
+@@ -33,6 +44,6 @@
+                 
+                 initialized = true;
+                 return true;
+-            } catch { return initialized; } 
++            } catch { return initialized && !DualMappedJitAllocator.UsesHostMemory; }
+         }
+     }

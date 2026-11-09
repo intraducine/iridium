@@ -564,6 +564,14 @@ Visible help uses shorter instructions for controls, imports, INI files, store
 sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button
 both use JIT Setup. Save replacement, file retention, and restart warnings remain.
 
+## Shared executable memory
+
+Iridium prepares a single budget for Windows and console JIT code. Madeira's
+address layout stays in place. Console views map the same pages and the helper
+prepares only the difference between the Windows layout and the shared budget.
+Wine claims pages before using them and returns translation buffers after its
+thread checks. Image pages and runtime code that can still run stay reserved.
+
 ## MeloNX core bring-up
 
 The local [core builder](ci/build-melonx-core.py) pins
@@ -573,7 +581,8 @@ still serves LibHac 0.21.0-alpha.129. MeloNX uses Iridium's shared JIT arena,
 its threaded renderer, and an aspect-fit Metal surface capped at 720p.
 The adapter drains GPU work and releases per-game input before returning to the
 library. It preserves the current fault handlers, including those of an idle
-Windows host, and keeps MeloNX's process-wide JIT allocations reserved. The iOS
+Windows host. A clean stop returns the game's translation cache and retains
+only the fault handler's executable pages. The iOS
 integration uses Darwin's signal structure and flags for handler registration.
 The embedded player asks the renderer to trim GPU caches before Iridium's
 memory guard has to close the game. Standalone MeloNX keeps its own threshold.
