@@ -322,7 +322,7 @@ def apply_shared_jit(text):
            '                ios_jit_pool_size_global = jit_pool_size;\n'
            '                ir_jit_memory_set_windows_reclaimer(ir_windows_release_retired_code);')
     # Jobs can exit without freeing their final translation buffers.
-    change('void ir_windows_reclaim_completed( void )', '''static void ir_windows_release_retired_code( void )
+    change('static void ios_tail_carves_owner_died( void *peb )', '''static void ir_windows_release_retired_code( void )
 {
     time_t now = time( NULL );
     pthread_mutex_lock( &ios_tail_carve_lock );
@@ -337,7 +337,7 @@ def apply_shared_jit(text):
     pthread_mutex_unlock( &ios_tail_carve_lock );
 }
 
-void ir_windows_reclaim_completed( void )''')
+static void ios_tail_carves_owner_died( void *peb )''')
     return ('#include <stddef.h>\n#include <stdbool.h>\n'
             'static void ir_windows_release_retired_code(void);\n'
             'extern void ir_jit_memory_set_windows_reclaimer(void (*)(void));\n'
