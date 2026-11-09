@@ -65,7 +65,7 @@ static void shared() {
     assert(ir_jit_memory_verify([](void *rx, void *rw) -> bool {
         ++probes;
         return ir_jit_verify_aliases(rx, rw);
-    }) && probes == 3);
+    }) && probes == 5);
     const auto *api = ir_jit_memory_api();
     auto wRX = (char *)region[1].rx + 3 * page;
     auto wRW = (char *)region[1].rw + 3 * page;

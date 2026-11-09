@@ -91,10 +91,14 @@ static bool reserve_view(vm_address_t *address, size_t bytes) {
 static bool alias(void *source, vm_address_t target, size_t bytes, vm_prot_t protection) {
     vm_prot_t current = 0, maximum = 0;
     vm_address_t requested = target;
-    return vm_remap(mach_task_self(), &target, bytes, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
-                    mach_task_self(), (vm_address_t)source, false, &current, &maximum,
-                    VM_INHERIT_NONE) == KERN_SUCCESS && target == requested &&
-           vm_protect(mach_task_self(), target, bytes, false, protection) == KERN_SUCCESS;
+    if (vm_remap(mach_task_self(), &target, bytes, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+                 mach_task_self(), (vm_address_t)source, false, &current, &maximum,
+                 VM_INHERIT_NONE) != KERN_SUCCESS || target != requested) return false;
+    // A remap drops the debugger association. Transition the new view to RX
+    // while attached so the kernel can associate it without copying pages.
+    if ((protection & VM_PROT_EXECUTE) &&
+        vm_protect(mach_task_self(), target, bytes, false, VM_PROT_READ) != KERN_SUCCESS) return false;
+    return vm_protect(mach_task_self(), target, bytes, false, protection) == KERN_SUCCESS;
 }
 
 bool ir_jit_memory_register_windows(const IRJITWindowsRegion *regions, size_t count) {
@@ -251,11 +255,20 @@ bool ir_jit_memory_prepare_sized(void *(*prepare)(void *, size_t), size_t bytes)
     pthread_mutex_unlock(&mutex);
     return ready;
 }
-static bool verify_region(size_t start, size_t end, bool (*probe)(void *, void *)) {
+static bool verify_region(size_t start, size_t end, void *windows_rx, bool (*probe)(void *, void *)) {
     for (size_t i = start / PAGE_BYTES; i < end / PAGE_BYTES; ++i) {
         if (leases[i] || windows_pages[i]) continue;
         size_t offset = i * PAGE_BYTES;
-        return probe((char *)read_view + offset, (char *)write_view + offset);
+        void *rw = (char *)write_view + offset;
+        if (!probe((char *)read_view + offset, rw)) {
+            fprintf(stderr, "[JIT memory] shared RX verification failed at offset=%zu\n", offset);
+            return false;
+        }
+        if (windows_rx && !probe((char *)windows_rx + offset - start, rw)) {
+            fprintf(stderr, "[JIT memory] Windows RX does not verify through shared RW at offset=%zu\n", offset);
+            return false;
+        }
+        return true;
     }
     return false;
 }
@@ -275,11 +288,11 @@ bool ir_jit_memory_verify(bool (*probe)(void *, void *)) {
         size_t offset = 0;
         for (size_t i = 0; ready && i < windows_count; ++i) {
             size_t end = offset + windows_regions[i].bytes;
-            if (end > verified_bytes) ready = verify_region(offset, end, probe);
+            if (end > verified_bytes) ready = verify_region(offset, end, windows_regions[i].rx, probe);
             offset = end;
         }
         if (offset < verified_bytes) offset = verified_bytes;
-        if (ready && offset < prepared_bytes) ready = verify_region(offset, prepared_bytes, probe);
+        if (ready && offset < prepared_bytes) ready = verify_region(offset, prepared_bytes, NULL, probe);
         if (ready) verified_bytes = prepared_bytes;
     }
     pthread_mutex_unlock(&mutex);
