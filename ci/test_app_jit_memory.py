@@ -158,7 +158,7 @@ class AppJITCoordinatorTests(unittest.TestCase):
     def test_windows_arena_retry_and_process_lifetime_reuse(self):
         from host_tests import module_cache
         text = (ROOT / 'iridium/apps/ios/App/JIT/StikJITHelper.swift').read_text()
-        body = text[text.index('    private static let poolLock'):text.index('    private static func createPool(')]
+        body = text[text.index('    struct PreparedPool'):text.index('    private static func createPool(')]
         fixture = """import Foundation
         func ir_jit_verify_aliases(_ rx: UnsafeMutableRawPointer, _ rw: UnsafeMutableRawPointer) -> Bool {
             let address = Int(bitPattern: rx)
@@ -167,15 +167,15 @@ class AppJITCoordinatorTests(unittest.TestCase):
         }
         enum Pool {
             static var calls=0
-            static var poolHole: (off: Int, end: Int)? = (32, 64)
-            static var poolHole2: (off: Int, end: Int)? = (96, 128)
-            static var poolLow: (rx: Int, size: Int)? = (2048, 512)
             static var verifiedAddresses: [Int] = []
             static var failedAddress = 4224
-            static func createPool(poolSize:Int)->(rx:UnsafeMutableRawPointer,rw:UnsafeMutableRawPointer,size:Int)?{
+            static func createPool(poolSize: Int) -> PreparedPool? {
                 calls += 1
                 if calls == 1{return nil}
-                return (UnsafeMutableRawPointer(bitPattern:4096)!,UnsafeMutableRawPointer(bitPattern:8192)!,poolSize)
+                return PreparedPool(rx: UnsafeMutableRawPointer(bitPattern: 4096)!,
+                                    rw: UnsafeMutableRawPointer(bitPattern: 8192)!,
+                                    firstRegionBytes: 32, additionalRegions: [64..<96, 128..<poolSize],
+                                    low: (2048, 512))
             }
         BODY
         }
@@ -184,6 +184,7 @@ class AppJITCoordinatorTests(unittest.TestCase):
         for _ in 0..<1000{
             let next=Pool.allocatePool(poolSize:512)!
             precondition(next.rx==first.rx && next.rw==first.rw && next.size==256)
+            precondition(next.holes == [32..<64, 96..<128] && next.low?.rx == 2048 && next.low?.size == 512)
         }
         precondition(Pool.calls==2 && !Pool.poolExecutionVerified)
         precondition(!Pool.verifyPreparedPool() && !Pool.poolExecutionVerified)
@@ -191,6 +192,9 @@ class AppJITCoordinatorTests(unittest.TestCase):
         Pool.failedAddress = 0
         precondition(Pool.verifyPreparedPool() && Pool.poolExecutionVerified)
         precondition(Pool.verifiedAddresses == [4096, 4160, 4224, 2048])
+        let adjacent = Pool.PreparedPool(rx: first.rx, rw: first.rw, firstRegionBytes: 32,
+                                         additionalRegions: [32..<96, 128..<256], low: nil)
+        precondition(adjacent.holes == [96..<128] && adjacent.executableOffsets == [0, 32, 128])
         """.replace('BODY', body)
         with tempfile.TemporaryDirectory() as folder:
             folder=Path(folder);(folder/'main.swift').write_text(fixture)
@@ -201,7 +205,7 @@ class AppJITCoordinatorTests(unittest.TestCase):
     def test_preparation_detach_reuse_and_failed_cleanup(self):
         from host_tests import module_cache
         text = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
-        body = text[text.index('    private var consoleMemoryFailed'):text.index('    func enable(requiresAttachedDebugger:')]
+        body = text[text.index('    private enum MemoryTarget'):text.index('    func enable(requiresAttachedDebugger:')]
         fixture = r'''
 import Foundation
 import Combine
@@ -210,8 +214,12 @@ final class Memory: @unchecked Sendable {
     let lock = NSLock()
     var ready = false, windowsReady = false, windowsVerified = false, succeeds = true
     var attached = false, consoleCheckPasses = true
-    var allocations = 0, windowsAllocations = 0
-    func prepared() -> Bool { lock.lock(); defer { lock.unlock() }; allocations += 1; ready = succeeds; return ready }
+    var allocations = 0, windowsAllocations = 0, lastConsoleBytes: Int?
+    func prepared(bytes: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        lastConsoleBytes = bytes
+        allocations += 1; ready = succeeds; return ready
+    }
     func isReady() -> Bool { lock.lock(); defer { lock.unlock() }; return ready }
     func windows() -> Bool { lock.lock(); defer { lock.unlock() }; windowsAllocations += 1; windowsReady = succeeds; return windowsReady }
     func isWindowsReady() -> Bool { lock.lock(); defer { lock.unlock() }; return windowsReady }
@@ -222,7 +230,7 @@ final class Memory: @unchecked Sendable {
     }
 }
 func ir_jit_memory_has_capacity(_ bytes: Int) -> Bool { Memory.shared.isReady() }
-func ir_jit_memory_prepare_sized(_ callback: Int, _ bytes: Int) -> Bool { Memory.shared.prepared() }
+func ir_jit_memory_prepare_sized(_ callback: Int, _ bytes: Int) -> Bool { Memory.shared.prepared(bytes: bytes) }
 enum IridiumMadeiraRuntime {
     static func prepareJITMemory() -> Bool { Memory.shared.windows() }
     static let shared = Idle()
@@ -266,8 +274,10 @@ BODY
     func windows() async -> Bool {
         await withCheckedContinuation { c in prepareWindowsMemory { c.resume(returning: (try? $0.get()) != nil) } }
     }
-    func prepare() async -> Bool {
-        await withCheckedContinuation { c in prepareConsoleMemory { c.resume(returning: (try? $0.get()) != nil) } }
+    func prepare(bytes: Int = 0) async -> Bool {
+        await withCheckedContinuation { c in
+            prepareConsoleMemory(minimumBytes: bytes) { c.resume(returning: (try? $0.get()) != nil) }
+        }
     }
 }
 @main struct Check {
@@ -294,8 +304,9 @@ BODY
         Memory.shared.ready = false; Memory.shared.windowsReady = false; Memory.shared.windowsVerified = false
         Memory.shared.attached = false
         let consoleFirst = Host()
-        let consoleReady = await consoleFirst.prepare(); precondition(consoleReady)
-        precondition(Memory.shared.windowsAllocations == 1)
+        let minimumBytes = 544 * 1024 * 1024
+        let consoleReady = await consoleFirst.prepare(bytes: minimumBytes); precondition(consoleReady)
+        precondition(Memory.shared.windowsAllocations == 1 && Memory.shared.lastConsoleBytes == minimumBytes)
         let windowsReady = await consoleFirst.windows(); precondition(windowsReady)
         precondition(consoleFirst.enables == 2 && consoleFirst.detaches == 2)
         precondition(Memory.shared.windowsAllocations == 2)
@@ -304,6 +315,7 @@ BODY
         let offline = Host()
         let partial = await offline.offline()
         precondition(!partial && !offline.offlineMemoryReady && !offline.consoleMemoryRequiresRestart)
+        precondition(Memory.shared.lastConsoleBytes == 0)
         precondition(offline.enables == 1 && offline.detaches == 1 && Memory.shared.windowsVerified)
         Memory.shared.consoleCheckPasses = true
         let verified = await offline.offline()

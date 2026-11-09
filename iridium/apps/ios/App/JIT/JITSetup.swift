@@ -229,12 +229,47 @@ final class JITCoordinator: ObservableObject {
         pairingSource = JITPairingFileStore.source
     }
 
-    private var consoleMemoryFailed = false
-    private var consoleMemoryBusy = false
+    private enum MemoryTarget {
+        case offline
+        case windows
+        case console(minimumBytes: Int)
+
+        var includesWindows: Bool {
+            if case .console = self { return false }
+            return true
+        }
+
+        var consoleBytes: Int? {
+            switch self {
+            case .offline: return 0
+            case .windows: return nil
+            case .console(let minimumBytes): return minimumBytes
+            }
+        }
+
+        var name: String {
+            switch self {
+            case .offline: return "offline"
+            case .windows: return "windows"
+            case .console: return "console"
+            }
+        }
+
+        var preparingMessage: String {
+            switch self {
+            case .offline: return "Preparing Windows and console JIT memory…"
+            case .windows: return "Preparing Windows JIT memory…"
+            case .console: return "Preparing console JIT memory…"
+            }
+        }
+    }
+
+    private var memoryCleanupFailed = false
+    private var memoryPreparationInProgress = false
     @Published private(set) var consoleMemoryVerified = false
-    var consoleMemoryRequiresRestart: Bool { consoleMemoryFailed }
+    var consoleMemoryRequiresRestart: Bool { memoryCleanupFailed }
     var offlineMemoryReady: Bool {
-        !consoleMemoryFailed && IridiumMadeiraRuntime.jitMemoryReady &&
+        !memoryCleanupFailed && IridiumMadeiraRuntime.jitMemoryReady &&
             consoleMemoryVerified && ir_jit_memory_has_capacity(0)
     }
 
@@ -245,37 +280,41 @@ final class JITCoordinator: ObservableObject {
             completion(.failure(failure))
             return
         }
-        prepareMemory(windows: true, consoleBytes: 0, completion: completion)
+        prepareMemory(for: .offline, completion: completion)
     }
 
     func prepareConsoleMemory(minimumBytes: Int = 0, completion: @escaping (Result<Void, Error>) -> Void) {
-        prepareMemory(windows: false, consoleBytes: minimumBytes, completion: completion)
+        prepareMemory(for: .console(minimumBytes: minimumBytes), completion: completion)
     }
 
     func prepareWindowsMemory(completion: @escaping (Result<Void, Error>) -> Void) {
-        prepareMemory(windows: true, consoleBytes: nil, completion: completion)
+        prepareMemory(for: .windows, completion: completion)
     }
 
-    private func prepareMemory(windows: Bool, consoleBytes: Int?, completion: @escaping (Result<Void, Error>) -> Void) {
+    private func prepareMemory(for target: MemoryTarget, completion: @escaping (Result<Void, Error>) -> Void) {
         let fail: (String) -> Void = { message in
             self.status = nil; self.error = message
             completion(.failure(CoordinatorError.setupRequired(message)))
         }
-        guard !consoleMemoryFailed else {
+        guard !memoryCleanupFailed else {
             fail("JIT cleanup did not finish. Close and reopen Iridium, then enable JIT before going offline.")
             return
         }
-        guard !consoleMemoryBusy, enableRequest == nil, !busy else {
+        guard !memoryPreparationInProgress, enableRequest == nil, !busy else {
             completion(.failure(CoordinatorError.setupRequired("Wait for the current JIT request to finish."))); return
         }
 
-        let needWindows = windows && !IridiumMadeiraRuntime.jitMemoryReady
+        let needWindows = target.includesWindows && !IridiumMadeiraRuntime.jitMemoryReady
+        let consoleBytes = target.consoleBytes
         let consolePrepared = consoleBytes.map { ir_jit_memory_has_capacity($0) } ?? true
         let needConsole = consoleBytes != nil && (!consoleMemoryVerified || !consolePrepared)
-        let target = windows && consoleBytes != nil ? "offline" : windows ? "windows" : "console"
-        let readyMessage = target == "offline" ? "Windows and console JIT are ready for this app session." : "JIT is ready."
+        let readyMessage: String
+        switch target {
+        case .offline: readyMessage = "Windows and console JIT are ready for this app session."
+        case .windows, .console: readyMessage = "JIT is ready."
+        }
         guard needWindows || needConsole else {
-            if target == "offline" { status = readyMessage; error = nil; connectionProblem = nil }
+            if case .offline = target { status = readyMessage; error = nil; connectionProblem = nil }
             completion(.success(())); return
         }
 
@@ -289,9 +328,9 @@ final class JITCoordinator: ObservableObject {
                 let consoleVerified = !needConsole || (consoleAllocated && ir_jit_verify_console_memory())
                 DispatchQueue.main.async {
                     if needConsole { self.consoleMemoryVerified = consoleVerified }
-                    self.consoleMemoryBusy = false; self.busy = false
+                    self.memoryPreparationInProgress = false; self.busy = false
                     let passed = windowsVerified && consoleVerified
-                    RuntimePerformanceDiagnostics.shared.record("jit-\(target)-\(passed ? "ready" : "failed")")
+                    RuntimePerformanceDiagnostics.shared.record("jit-\(target.name)-\(passed ? "ready" : "failed")")
                     guard passed else {
                         let failed = [windowsVerified ? nil : "Windows", consoleVerified ? nil : "console"].compactMap { $0 }
                         let names = failed.joined(separator: " and ")
@@ -313,29 +352,28 @@ final class JITCoordinator: ObservableObject {
             guard !isDebuggerAttached() else {
                 fail("Disconnect the debugger, then try Enable JIT again."); return
             }
-            consoleMemoryBusy = true; error = nil; connectionProblem = nil
+            memoryPreparationInProgress = true; error = nil; connectionProblem = nil
             verify(true, true)
             return
         }
 
-        RuntimePerformanceDiagnostics.shared.record("jit-\(target)-attach")
+        RuntimePerformanceDiagnostics.shared.record("jit-\(target.name)-attach")
         enable(requiresAttachedDebugger: true, builtInOnly: true) { result in
             guard case .success = result else {
                 if case .failure(let failure) = result { self.status = nil; self.error = failure.localizedDescription }
                 completion(result); return
             }
             guard self.builtInHelper != nil, self.builtInHelperReleased == nil, isDebuggerAttached() else {
-                self.consoleMemoryFailed = self.builtInHelperReleased == false
-                fail(self.consoleMemoryFailed ? "The JIT helper did not close. Close and reopen Iridium."
+                self.memoryCleanupFailed = self.builtInHelperReleased == false
+                fail(self.memoryCleanupFailed ? "The JIT helper did not close. Close and reopen Iridium."
                     : self.builtInHelper != nil ? "The JIT helper stopped. Reconnect LocalDevVPN and try Enable JIT again."
                     : "Disconnect the external debugger, then use Enable JIT with the built-in helper.")
                 return
             }
-            self.consoleMemoryBusy = true; self.busy = true
+            self.memoryPreparationInProgress = true; self.busy = true
             if prepareConsole { self.consoleMemoryVerified = false }
-            self.status = target == "offline" ? "Preparing Windows and console JIT memory…"
-                : windows ? "Preparing Windows JIT memory…" : "Preparing console JIT memory…"
-            RuntimePerformanceDiagnostics.shared.record("jit-\(target)-prepare")
+            self.status = target.preparingMessage
+            RuntimePerformanceDiagnostics.shared.record("jit-\(target.name)-prepare")
             let started = ProcessInfo.processInfo.systemUptime
             DispatchQueue.global(qos: .userInitiated).async {
                 let windowsAllocated = !prepareWindows || (isDebuggerAttached() && IridiumMadeiraRuntime.prepareJITMemory())
@@ -343,12 +381,12 @@ final class JITCoordinator: ObservableObject {
                     (isDebuggerAttached() && ir_jit_memory_prepare_sized(ir_jit_prepare_region, consoleBytes ?? 0))
                 DispatchQueue.main.async {
                     let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
-                    LogStore.shared.log("[jit-memory] target=\(target) ms=\(elapsed) windows=\(windowsAllocated) console=\(consoleAllocated)")
+                    LogStore.shared.log("[jit-memory] target=\(target.name) ms=\(elapsed) windows=\(windowsAllocated) console=\(consoleAllocated)")
                     self.busy = false
                     self.releaseAttachedDebugger { clean in
                         guard clean else {
-                            RuntimePerformanceDiagnostics.shared.record("jit-\(target)-failed")
-                            self.consoleMemoryBusy = false; self.consoleMemoryFailed = true
+                            RuntimePerformanceDiagnostics.shared.record("jit-\(target.name)-failed")
+                            self.memoryPreparationInProgress = false; self.memoryCleanupFailed = true
                             fail("The JIT helper did not close. Close and reopen Iridium, then enable JIT before going offline.")
                             return
                         }
@@ -361,7 +399,7 @@ final class JITCoordinator: ObservableObject {
 
     func enable(requiresAttachedDebugger: Bool = false, builtInOnly: Bool = false, completion: @escaping (Result<Void, Error>) -> Void) {
         if !requiresAttachedDebugger { prepareOfflineMemory(completion: completion); return }
-        guard enableRequest == nil, !busy, !consoleMemoryBusy,
+        guard enableRequest == nil, !busy, !memoryPreparationInProgress,
               !requiresAttachedDebugger || builtInHelper == nil || builtInHelperReleased == true || isDebuggerAttached() else {
             LogStore.shared.log("[jit-request] ignored overlapping enable request")
             completion(.failure(NSError(domain: "MadeiraJIT", code: 15,

@@ -45,7 +45,7 @@ enum StikJITHelper {
 @MainActor final class JITCoordinator {
     var enableRequest: UUID?
     var busy = false
-    var consoleMemoryBusy = false
+    var memoryPreparationInProgress = false
     var builtInHelper: UUID?
     var builtInHelperReleased: Bool?
     var builtInHelperReturned: (() -> Void)?
@@ -133,7 +133,8 @@ dispatchMain()
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required')
     def test_fresh_helper_readiness_requires_live_attachment(self):
         source = (ROOT / 'iridium/apps/ios/App/JIT/StikJITHelper.swift').read_text()
-        method = source[source.index('    static func waitForDebugger('):source.index('    /// Allocate a JIT memory pool')]
+        start = source.index('    static func waitForDebugger(')
+        method = source[start:source.index('\n    }\n', start) + len('\n    }')]
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
             main = folder / 'main.swift'
@@ -224,7 +225,7 @@ NETWORK_METHODS
 @MainActor final class JITCoordinator {
     private var enableRequest: UUID?
     var busy = false
-    var consoleMemoryBusy = false
+    var memoryPreparationInProgress = false
     var error: String?
     var status: String?
     var connectionProblem: String?
