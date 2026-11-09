@@ -4,6 +4,7 @@
 #include "IRJITPrepare.h"
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
+#include <stdio.h>
 #include <string.h>
 #include <TargetConditionals.h>
 
@@ -23,15 +24,17 @@ bool ir_jit_verify_aliases(void *rx, void *rw) {
         return false;
     sys_dcache_flush(rw, sizeof code);
     sys_icache_invalidate(rx, sizeof code);
-    bool ran = vm_read_overwrite(mach_task_self(), (vm_address_t)rx, sizeof executable,
+    bool coherent = vm_read_overwrite(mach_task_self(), (vm_address_t)rx, sizeof executable,
                                  (vm_address_t)executable, &size) == KERN_SUCCESS &&
-        size == sizeof executable && !memcmp(executable, code, sizeof code) &&
-        ir_jit_probe_execute(rx, sizeof code, expected);
+        size == sizeof executable && !memcmp(executable, code, sizeof code);
+    bool ran = coherent && ir_jit_probe_execute(rx, sizeof code, expected);
     bool restored = vm_write(mach_task_self(), (vm_address_t)rw, (vm_offset_t)original, sizeof original) == KERN_SUCCESS;
     if (restored) {
         sys_dcache_flush(rw, sizeof original);
         sys_icache_invalidate(rx, sizeof original);
     }
+    if (!ran || !restored)
+        fprintf(stderr, "[JIT memory] probe coherent=%d executed=%d restored=%d\n", coherent, ran, restored);
     return ran && restored;
 #else
     return false;

@@ -32,7 +32,8 @@ DOLPHIN_ADAPTER
 static unsigned preparations;
 static size_t lastPrepared;
 static void *prepare(void *p, size_t bytes) {
-    assert(!p); ++preparations; lastPrepared = bytes;
+    ++preparations; lastPrepared = bytes;
+    if (p) return p;
     void *rx = mmap((void *)0x7000000000ULL, bytes, PROT_READ | PROT_EXEC, MAP_ANON | MAP_PRIVATE, -1, 0);
     assert((uintptr_t)rx >= (1ULL << 36)); // Same high placement observed on the phone.
     return rx;
@@ -59,8 +60,8 @@ static void shared() {
     }
     assert(ir_jit_memory_register_windows(region, 2));
     const size_t service = 16 * 1024 * 1024;
-    assert(ir_jit_memory_prepare_sized(prepare, 8 * page) && preparations == 3 && lastPrepared == service);
-    assert(ir_jit_memory_prepare_sized(prepare, service + 12 * page) && preparations == 4 && lastPrepared == 4 * page);
+    assert(ir_jit_memory_prepare_sized(prepare, 8 * page) && preparations == 5 && lastPrepared == service);
+    assert(ir_jit_memory_prepare_sized(prepare, service + 12 * page) && preparations == 6 && lastPrepared == 4 * page);
     static unsigned probes;
     assert(ir_jit_memory_verify([](void *rx, void *rw) -> bool {
         ++probes;

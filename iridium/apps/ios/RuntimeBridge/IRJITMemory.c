@@ -94,10 +94,6 @@ static bool alias(void *source, vm_address_t target, size_t bytes, vm_prot_t pro
     if (vm_remap(mach_task_self(), &target, bytes, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
                  mach_task_self(), (vm_address_t)source, false, &current, &maximum,
                  VM_INHERIT_NONE) != KERN_SUCCESS || target != requested) return false;
-    // A remap drops the debugger association. Transition the new view to RX
-    // while attached so the kernel can associate it without copying pages.
-    if ((protection & VM_PROT_EXECUTE) &&
-        vm_protect(mach_task_self(), target, bytes, false, VM_PROT_READ) != KERN_SUCCESS) return false;
     return vm_protect(mach_task_self(), target, bytes, false, protection) == KERN_SUCCESS;
 }
 
@@ -216,25 +212,24 @@ bool ir_jit_memory_prepare_sized(void *(*prepare)(void *, size_t), size_t bytes)
     if (!existing) {
         for (size_t i = 0; ready && i < windows_count; ++i) {
             const IRJITWindowsRegion *r = windows_regions + i;
-            ready = alias(r->rx, rx + cursor, r->bytes, VM_PROT_READ | VM_PROT_EXECUTE) &&
-                    alias(r->rw, rw + cursor, r->bytes, VM_PROT_READ | VM_PROT_WRITE);
+            void *executable = (void *)(rx + cursor);
+            // Prepare at the final execute address. A remap does not inherit
+            // the debugger's authorization from the Windows execute view.
+            ready = alias(r->rw, rx + cursor, r->bytes, VM_PROT_READ | VM_PROT_EXECUTE) &&
+                    alias(r->rw, rw + cursor, r->bytes, VM_PROT_READ | VM_PROT_WRITE) &&
+                    prepare(executable, r->bytes) == executable;
             cursor += r->bytes;
         }
     }
 
     if (ready && cursor < bytes) {
         size_t added = bytes - cursor;
-        // The helper must not stop the app while the allocator lock is held.
-        void *backing = prepare(NULL, added);
-        task_vm_info_data_t map = {0};
-        mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-        bool valid = backing && backing != MAP_FAILED && !((uintptr_t)backing & (PAGE_BYTES - 1)) &&
-            task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&map, &count) == KERN_SUCCESS &&
-            (uintptr_t)backing >= map.min_address && (uintptr_t)backing < map.max_address &&
-            added <= map.max_address - (uintptr_t)backing;
-        ready = valid && alias(backing, rx + cursor, added, VM_PROT_READ | VM_PROT_EXECUTE) &&
-                         alias(backing, rw + cursor, added, VM_PROT_READ | VM_PROT_WRITE);
-        if (valid) vm_deallocate(mach_task_self(), (vm_address_t)backing, added);
+        void *executable = (void *)(rx + cursor);
+        // Prepare the remaining pages in place, with no temporary execute view.
+        ready = vm_protect(mach_task_self(), rx + cursor, added, false,
+                           VM_PROT_READ | VM_PROT_EXECUTE) == KERN_SUCCESS &&
+                prepare(executable, added) == executable &&
+                alias(executable, rw + cursor, added, VM_PROT_READ | VM_PROT_WRITE);
     }
 
     if (!ready && !existing) {
