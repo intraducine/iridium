@@ -255,7 +255,8 @@ def verify_producer(root, run_id, stage, branch):
     jobs = api(path + '/jobs?filter=all&per_page=100')['jobs']
     other_branch = run.get('head_branch') not in ('main', branch)
     revision = validate(run, jobs, stage, branch, allow_other_branch=other_branch)
-    if other_branch and not linux.producer_revision_is_in_history(root, revision):
+    if other_branch and not linux.producer_revision_is_in_history(
+            root, revision, include_main=stage in COMPONENT_INPUTS):
         raise ValueError('Producer revision is not in trusted merged history')
     name = artifact_name(stage)
     artifacts = api(path + '/artifacts?per_page=100')['artifacts']

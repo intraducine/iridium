@@ -199,6 +199,24 @@ class AssetReuseTests(unittest.TestCase):
             self.assertEqual(reuse.select(Path('.'), 'media', 'feature'), '123')
             verify.assert_called_once_with(Path('.'), '123', 'media', 'feature')
 
+    def test_compiler_provenance_and_input_match_are_independent(self):
+        revision, fingerprint = 'a' * 40, 'b' * 64
+        stage = 'madeira-native'
+        run = {'event': 'workflow_dispatch', 'head_branch': 'merged-on-main',
+               'head_sha': revision, 'path': reuse.WORKFLOW,
+               'head_repository': {'full_name': reuse.REPO}}
+        jobs = {'jobs': [{'name': 'build', 'steps': [
+            {'name': f'Retain {stage} compilation', 'conclusion': 'success'}]}]}
+        artifacts = {'artifacts': [{'name': f'compiled-{stage}-{fingerprint}', 'expired': False}]}
+        with patch.dict(os.environ, {'NATIVE_TOOLCHAIN': fingerprint}), \
+             patch.object(reuse, 'api', side_effect=[run, jobs, artifacts]), \
+             patch.object(reuse.linux, 'producer_revision_is_in_history', return_value=True) as trust, \
+             patch.object(reuse, 'compatible', side_effect=ValueError('Changed producer input')) as inputs:
+            with self.assertRaisesRegex(ValueError, 'Changed producer input'):
+                reuse.verify_producer(Path('.'), '123', stage, 'review')
+            trust.assert_called_once_with(Path('.'), revision, include_main=True)
+            inputs.assert_called_once_with(Path('.'), revision, stage)
+
     def test_rerun_can_select_same_run_media_from_prior_attempt(self):
         runs = {'artifacts': [{'expired': False, 'workflow_run': {'id': 123}}], 'total_count': 1}
         env = {'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}

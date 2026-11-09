@@ -65,6 +65,17 @@ toolchain, platform, workspace paths, receipts, and output hashes. App-only edit
 can reuse matching engine builds. Set `reuse_assets=false` for a fresh hosted run.
 Compiler caches can reuse unchanged units after a component cache miss.
 
+Madeira compiler inputs are in `ci/madeira-frontend.py`. App staging, linking,
+and bundle checks live in `ci/madeira_app.py`, outside the compiler cache key.
+Each retained component still requires matching source, recipes, toolchain,
+and checksums.
+
+A successful manual build from `main` can supply matching components to review
+branches without a rebase. A producer on another branch can also qualify when
+its commit lands on `main` or that exact branch head is squash-merged into
+`main`. Unmerged sibling branches still need trusted history in the consumer
+checkout. Builds remain manual.
+
 The checked JIT framework is built from pinned StikJIT Swift and idevice sources.
 Its separate source/binary receipt includes the maintained runner and dependency
 notices. Runtime component reuse does not bypass that check. The app packages it

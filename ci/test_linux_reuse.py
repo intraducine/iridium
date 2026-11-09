@@ -74,6 +74,40 @@ class LinuxReuseTests(unittest.TestCase):
                           side_effect=[current, comparison, json.dumps([pull]), comparison]):
             self.assertFalse(reuse.producer_revision_is_in_history(Path('.'), revision))
 
+    def test_compiled_producer_can_use_exact_merge_on_main_outside_consumer_history(self):
+        revision, current, main, merge = (digit * 40 for digit in 'abcd')
+        pull = {
+            'merged_at': '2026-11-08T00:00:00Z', 'merge_commit_sha': merge,
+            'head': {'sha': revision, 'repo': {'full_name': reuse.REPO}},
+            'base': {'ref': 'main', 'repo': {'full_name': reuse.REPO}},
+        }
+
+        def verify(candidate, direct=False, merge_on_main=True):
+            def api(args, **kwargs):
+                if args[0] == 'git':
+                    return current
+                path = args[-1].removeprefix(f'repos/{reuse.REPO}/')
+                if path == 'git/ref/heads/main':
+                    return json.dumps({'object': {'sha': main}})
+                if path == f'commits/{revision}/pulls':
+                    return json.dumps([candidate])
+                approved = ({f'compare/{revision}...{main}': revision} if direct else
+                            {f'compare/{merge}...{main}': merge} if merge_on_main else {})
+                return json.dumps({'merge_base_commit': {'sha': approved.get(path, 'e' * 40)}})
+            with patch.object(reuse.subprocess, 'check_output', side_effect=api):
+                self.assertFalse(reuse.producer_revision_is_in_history(Path('.'), revision))
+                return reuse.producer_revision_is_in_history(Path('.'), revision, include_main=True)
+
+        self.assertTrue(verify({}, direct=True))
+        self.assertTrue(verify(pull))
+        self.assertFalse(verify(pull, merge_on_main=False))
+        for rejected in (dict(pull, merged_at=None),
+                         dict(pull, head=dict(pull['head'], sha='e' * 40)),
+                         dict(pull, base=dict(pull['base'], ref='another-branch')),
+                         dict(pull, head=dict(pull['head'], repo={'full_name': 'fork/repo'}))):
+            with self.subTest(rejected=rejected):
+                self.assertFalse(verify(rejected))
+
 
 class UserlandStageTests(unittest.TestCase):
     def test_archive_extracts_atomically_and_rejects_escape_or_overwrite(self):

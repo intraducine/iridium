@@ -21,26 +21,35 @@ def fetch_revision(root, revision):
                     'fetch', '--quiet', '--depth=1', 'origin', revision], check=True)
 
 
-def producer_revision_is_in_history(root, revision):
+def producer_revision_is_in_history(root, revision, *, include_main=False):
     current = subprocess.check_output(
         ['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-    def is_ancestor(commit):
-        comparison = json.loads(subprocess.check_output(
-            ['gh', 'api', f'repos/{REPO}/compare/{commit}...{current}'], text=True))
-        return comparison.get('merge_base_commit', {}).get('sha') == commit
 
-    if is_ancestor(revision):
+    def get(path):
+        return json.loads(subprocess.check_output(
+            ['gh', 'api', f'repos/{REPO}/{path}'], text=True))
+
+    def is_ancestor(commit, target):
+        return get(f'compare/{commit}...{target}').get('merge_base_commit', {}).get('sha') == commit
+
+    if is_ancestor(revision, current):
+        return True
+    main = get('git/ref/heads/main')['object']['sha'] if include_main else ''
+    if main and is_ancestor(revision, main):
         return True
     # A squash merge retains the reviewed source, but not the producer commits.
-    pulls = json.loads(subprocess.check_output(
-        ['gh', 'api', f'repos/{REPO}/commits/{revision}/pulls'], text=True))
-    for pull in pulls:
+    for pull in get(f'commits/{revision}/pulls'):
         merged = pull.get('merge_commit_sha')
-        head = (pull.get('head') or {}).get('repo') or {}
-        base = (pull.get('base') or {}).get('repo') or {}
-        if (pull.get('merged_at') and re.fullmatch(r'[0-9a-f]{40}', merged or '')
-                and head.get('full_name') == REPO and base.get('full_name') == REPO
-                and is_ancestor(merged)):
+        head, base = pull.get('head') or {}, pull.get('base') or {}
+        if (not pull.get('merged_at') or not re.fullmatch(r'[0-9a-f]{40}', merged or '')
+                or (head.get('repo') or {}).get('full_name') != REPO
+                or (base.get('repo') or {}).get('full_name') != REPO):
+            continue
+        if is_ancestor(merged, current):
+            return True
+        # A separate review branch may predate the merge into main. Trust only
+        # the exact reviewed head for this additional cross-branch path.
+        if main and base.get('ref') == 'main' and head.get('sha') == revision and is_ancestor(merged, main):
             return True
     return False
 
