@@ -412,8 +412,6 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 20) {
             switch step {
             case .library:
-                Text("Import games from Files or open a store.")
-                    .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let game {
                     IridiumGameOptionsHeader(game: game)
                     Label("Added to Library", systemImage: "checkmark").font(.subheadline).foregroundStyle(IridiumTheme.accent)
@@ -433,18 +431,11 @@ struct OnboardingView: View {
                     Text("Supported Systems").frame(maxWidth: .infinity, alignment: .leading)
                         .setupControllerToggle("games.systems", order: 20, value: $systemsExpanded, hidesFocusOnTouch: false)
                 }.font(.subheadline).multilineTextAlignment(.leading)
-                Group {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Stores").font(.headline).accessibilityAddTraits(.isHeader)
-                        action("Open Stores", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
-                            model.chooseSteam(); steamSignIn = true
-                        }
-                    }
+                Divider()
+                action("Open Stores", "", symbol: "person.crop.circle", id: "games.steam", order: 30) {
+                    model.chooseSteam(); steamSignIn = true
                 }
             case .downloads:
-                Text("Install additional components for Windows games.")
-                    .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 steamComponents
                 Divider()
                 wineMono

@@ -41,14 +41,16 @@ struct IridiumControlsSettingsView: View {
                             target = .init(platform: platform, title: platform.title)
                         })
                     }
-                } header: { Text("Default Touch Layouts") } footer: { Text("Set a layout for a system, or save reusable profiles. Games can have their own controls.") }
+                } header: { Text("Default Touch Layouts") }
                 Section {
                     Button("Game Overrides", systemImage: "gamecontroller") { pickingGame = true }
                         .id("controls.games")
                         .setupControllerTarget("controls.games", order: 100, action: { pickingGame = true })
                 }
                 Section {
-                    if devices.connectedDevices.isEmpty { Text("No devices connected").foregroundStyle(.secondary) }
+                    if devices.connectedDevices.isEmpty {
+                        Text("Connect a controller, keyboard, or mouse.").foregroundStyle(.secondary)
+                    }
                     ForEach(devices.connectedDevices) { device in
                         LabeledContent {
                             #if targetEnvironment(simulator)
@@ -60,7 +62,7 @@ struct IridiumControlsSettingsView: View {
                             Label(device.name, systemImage: device.symbol)
                         }
                     }
-                } header: { Text("Connected Devices") } footer: { Text("Connect a controller, keyboard or mouse to use it here.") }
+                } header: { Text("Connected Devices") }
                 Section("Controller Mapping") {
                     Button { mapping = true } label: {
                         HStack { Text("Windows Games"); Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
@@ -210,7 +212,7 @@ struct IridiumWindowsControllerSettings: View {
                 if library.entries.filter({ $0.desktop != true }).isEmpty {
                     Text("Add a Windows game to customize its controller mapping.").foregroundStyle(.secondary)
                 }
-            } header: { Text("Windows Games") } footer: { Text("Windows games support gamepad and keyboard mappings.") }
+            } header: { Text("Windows Games") }
 
                 }.iridiumRowSurface()
 }.iridiumPageSurface().navigationTitle("Controller Mapping")
