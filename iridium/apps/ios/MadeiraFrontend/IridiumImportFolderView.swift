@@ -23,7 +23,7 @@ struct IridiumImportFolderView: View {
                 Section {
                     Button("Choose Files") { choosingFiles = true }.disabled(!automaticallyScan)
                         .listRowBackground(highlight(":files"))
-                    Text("Add files here or put them in Iridium’s Import folder.")
+                    Text("In the Files app, place items in Iridium’s Import folder.")
                     Text("Games move to Games. Pairing files use secure storage.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.iridiumRowSurface()
@@ -32,7 +32,6 @@ struct IridiumImportFolderView: View {
                     if imports.isWorking { ProgressView("Importing files") }
                     else if let error = imports.migrationError { Text(error).foregroundStyle(.red) }
                     else { Text(imports.imported == 0 ? "Ready to import" : "Imported: \(imports.imported)") }
-                    if !imports.choices.isEmpty { Text("Some files need a choice below.").foregroundStyle(.secondary) }
                 }.iridiumRowSurface()
                 ForEach(imports.choices.values.sorted { $0.receipt.path < $1.receipt.path }) { choice in
                     Section {
@@ -64,7 +63,7 @@ struct IridiumImportFolderView: View {
                     Section("Files left in Import") {
                         ForEach(Array(imports.remaining.prefix(200)), id: \.self) { Text($0) }
                         if imports.remaining.count > 200 { Text("\(imports.remaining.count - 200) more files").foregroundStyle(.secondary) }
-                        Text("Files stay here until import succeeds. Other files stay here for you to keep or remove.")
+                        Text("Files stay here until import succeeds.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }.iridiumRowSurface()
                 }
