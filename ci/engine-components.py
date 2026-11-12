@@ -26,7 +26,8 @@ phase3 = load('build-phase3')
 PSP = '.build/ppsspp/iphoneos/'
 BRIDGE = 'iridium/apps/ios/RuntimeBridge/'
 PATHS = {
-    'psp': (PSP + 'libIridiumPPSSPPNative.dylib', PSP + 'component.json', PSP + 'assets', PSP + 'licenses',
+    'psp': (PSP + 'libIridiumPPSSPPNative.dylib', PSP + 'libIridiumPPSSPPNative.dylib.dSYM',
+            PSP + 'component.json', PSP + 'assets', PSP + 'licenses',
             '.build/psp-atlas-fonts') + tuple('.build/runtime-downloads/' + item['sha256'] + '.tar'
                 for item in json.loads((ROOT / engine_pins.get('ppsspp')['buildDependencies']['moltenVK']['inputs']).read_text())),
     'sameboy': tuple('.build/sameboy/iphoneos/' + name for name in
@@ -54,7 +55,7 @@ for engine in ('host', *phase3.PINS):
               'flycast': 'flycast_libretro.dylib'}[engine]
     PATHS[engine] = (folder + binary, folder + 'component.json')
     if engine != 'host':
-        PATHS[engine] += tuple(folder + name for name in ('assets', 'licenses', 'embedding'))
+        PATHS[engine] += tuple(folder + name for name in (binary + '.dSYM', 'assets', 'licenses', 'embedding'))
     if engine == 'azahar':
         PATHS[engine] += tuple('.build/phase3-downloads/' + name for name in phase3.AZAHAR_DOWNLOADS)
         PATHS[engine] += ('.build/phase3-downloads/' + phase3.azahar_module().source_archive().removesuffix('.tar.xz'),

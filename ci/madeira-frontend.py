@@ -175,7 +175,7 @@ def project(source, names):
         objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='Phase3', sourceTree='<group>')
         objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
         resources['files'].append(build); group['children'].append(ref)
-        for index, path in enumerate(('Phase3/dolphin/Sys', 'GameConfig.xml')):
+        for index, path in enumerate(('Sys', 'GameConfig.xml')):
             ref, build = f'F300000000000001{index:08X}', f'F400000000000001{index:08X}'
             objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder' if index == 0 else 'text.xml', path=path, sourceTree='<group>')
             objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
@@ -434,6 +434,7 @@ def windows():
     stamp = UPSTREAM / '.build/iridium-i386.json'
     key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode()
                          + inspect.getsource(run_checked_recipe).encode() + recipe.read_bytes()
+                         + madeira_components.windows_symbol_recipe()
                          + compiler_identity().encode()
                          + subprocess.check_output([str(UPSTREAM / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/i686-w64-mingw32-clang'), '--version'])).hexdigest()
     def digest(path):
@@ -454,6 +455,7 @@ def windows():
     outputs = sorted(path for path in (UPSTREAM / 'app/Madeira/i386-windows').glob('*')
                      if path.is_file() and not path.name.startswith('.'))
     if not outputs: raise ValueError('Madeira built no i386 runtime files')
+    madeira_components.trim_windows_symbols(UPSTREAM, outputs)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps(dict(key=key, completed=time.time(),
                                     outputs={str(path.relative_to(UPSTREAM)): digest(path) for path in outputs}), indent=2) + '\n')
@@ -991,14 +993,25 @@ def app(reuse_psp):
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',
                '-derivedDataPath', str(ROOT / '.build/madeira-frontend-derived'),
                'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'DEVELOPMENT_TEAM=',
-               'ENABLE_DEBUG_DYLIB=NO', 'LD_GENERATE_MAP_FILE=YES']
+               'ENABLE_DEBUG_DYLIB=NO', 'LD_GENERATE_MAP_FILE=YES',
+               'DEBUG_INFORMATION_FORMAT=dwarf-with-dsym']
     if os.environ.get('IRIDIUM_BUILD_NUMBER'):
         value = os.environ['IRIDIUM_BUILD_NUMBER']
         if not all(part.isdigit() for part in value.split('.')): raise ValueError('Invalid build number')
         command.append('CURRENT_PROJECT_VERSION=' + value)
     subprocess.run(command + ['build'], cwd=ROOT, check=True)
+    bundle = ROOT / '.build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app'
+    # Xcode's incremental resource copy can leave a directory removed from the input.
+    duplicate = bundle / 'Phase3/dolphin/Sys'
+    if duplicate.is_symlink() or any(p.is_symlink() for p in duplicate.parents):
+        raise ValueError('Stale Dolphin resource path contains a symbolic link')
+    if duplicate.exists():
+        shutil.rmtree(duplicate)
+    if not (bundle.with_suffix('.app.dSYM') / 'Contents/Resources/DWARF/Iridium').is_file():
+        raise ValueError('Missing Iridium debug symbols')
+    subprocess.run(['xcrun', '--sdk', 'iphoneos', 'strip', '-x', bundle / 'Iridium'], check=True)
     verify()
-    check_bundle(ROOT / '.build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app')
+    check_bundle(bundle)
 
 
 if __name__ == '__main__':

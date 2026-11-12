@@ -399,6 +399,9 @@ class FrontendImportTests(unittest.TestCase):
             self.assertIn('CodeSignOnCopy', signed[item]['settings']['ATTRIBUTES'])
         self.assertIn('existing-link', signed['frameworks']['files'])
         self.assertEqual(signed['frameworks']['files'], result['frameworks']['files'])
+        resource_paths = [signed[signed[item]['fileRef']].get('path') for item in signed['resources']['files']]
+        self.assertEqual(resource_paths.count('Sys'), 1)
+        self.assertNotIn('Phase3/dolphin/Sys', resource_paths)
 
     def test_generated_tree_refresh_is_repeatable_and_removes_only_stale_outputs(self):
         with tempfile.TemporaryDirectory() as folder:
