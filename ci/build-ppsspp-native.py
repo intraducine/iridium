@@ -275,9 +275,12 @@ def build(source, destination, sdk, jobs):
     header_audit = gl_sync_headers(destination)
     codeblock_audit = codeblock_headers(destination)
     binary = destination / 'build/lib/libIridiumPPSSPPNative.dylib'
-    boundary = audit(binary, sdk)
     delivered = destination / binary.name
     shutil.copy2(binary, delivered)
+    if sdk == 'iphoneos':
+        run('xcrun', 'dsymutil', '-o', delivered.with_suffix('.dylib.dSYM'), binary)
+        run('xcrun', '--sdk', sdk, 'strip', '-x', delivered)
+    boundary = audit(delivered, sdk)
     hashes = assets(source, destination / 'assets')
     support.notices(source, destination / 'licenses')
     shutil.copy2(source / 'ffmpeg/LICENSE.md', destination / 'licenses/LICENSE-PSP-FFMPEG.md')

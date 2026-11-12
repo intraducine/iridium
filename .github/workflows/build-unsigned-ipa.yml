@@ -305,6 +305,16 @@ jobs:
           IRIDIUM_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
           IRIDIUM_PHASE3: "1"
         run: python3 ci/madeira-frontend.py app --reuse-psp-component
+      - name: Retain debug symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Iridium-debug-symbols-${{ github.sha }}
+          path: |
+            .build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app.dSYM/
+            .build/ppsspp/iphoneos/*.dSYM/
+            .build/phase3/*/iphoneos/*.dSYM/
+          if-no-files-found: error
+          retention-days: 14
       - name: Report compiler cache
         if: always()
         run: command -v ccache >/dev/null && ccache --show-stats || true
