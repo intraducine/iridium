@@ -437,7 +437,7 @@ final class JITCoordinator: ObservableObject {
         status = nil
         connectionProblem = nil
         var resultReceived = false
-        ensureLoopback(then: { [weak self] restoreOnFailure in
+        ensureLoopback(builtInOnly: builtInOnly, then: { [weak self] restoreOnFailure in
             self?.enableResolved(builtInOnly: builtInOnly) { result in
                 guard !resultReceived else { return }
                 resultReceived = true
@@ -537,14 +537,16 @@ final class JITCoordinator: ObservableObject {
     /// off without Wi-Fi and connects LocalDevVPN, and the loopback is checked again
     /// while the VPN settles. Either way JIT is then attempted, so a failure still gets
     /// the usual explanation. `proceed`'s argument: the shortcut ran.
-    private func ensureLoopback(then proceed: @escaping (Bool) -> Void, stopped: @escaping (String) -> Void) {
+    private func ensureLoopback(builtInOnly: Bool = true, then proceed: @escaping (Bool) -> Void,
+                                stopped: @escaping (String) -> Void) {
         let vpnWasUp = LoopbackProbe.vpnInterfaceUp
         LoopbackProbe.check { [weak self] probe in
             LogStore.shared.log(String(format: "[jit-loopback] %@ in %.0f ms (vpn-interface=%d, %@)",
                                        probe.reachable ? "reachable" : "unreachable", probe.milliseconds,
                                        vpnWasUp ? 1 : 0, probe.detail))
             self?.loopbackAnswered = probe.reachable
-            guard let self, !probe.reachable, JITNetworkShortcut.shared.enabled else { proceed(false); return }
+            guard let self, !probe.reachable, builtInOnly || resolvedMethod == .builtIn,
+                  JITNetworkShortcut.shared.canStart else { proceed(false); return }
             status = "Running the \(JITNetworkShortcut.name) shortcut…"
             JITNetworkShortcut.shared.start { [weak self] outcome in
                 if case .failed(let why) = outcome {
