@@ -134,7 +134,7 @@ def project(source, names):
         objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder', path='Phase3', sourceTree='<group>')
         objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
         resources['files'].append(build); group['children'].append(ref)
-        for index, path in enumerate(('Phase3/dolphin/Sys', 'GameConfig.xml')):
+        for index, path in enumerate(('Sys', 'GameConfig.xml')):
             ref, build = f'F300000000000001{index:08X}', f'F400000000000001{index:08X}'
             objects[ref] = dict(isa='PBXFileReference', lastKnownFileType='folder' if index == 0 else 'text.xml', path=path, sourceTree='<group>')
             objects[build] = dict(isa='PBXBuildFile', fileRef=ref)
@@ -407,14 +407,25 @@ def app(reuse_psp):
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',
                '-derivedDataPath', str(ROOT / '.build/madeira-frontend-derived'),
                'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'DEVELOPMENT_TEAM=',
-               'ENABLE_DEBUG_DYLIB=NO', 'LD_GENERATE_MAP_FILE=YES']
+               'ENABLE_DEBUG_DYLIB=NO', 'LD_GENERATE_MAP_FILE=YES',
+               'DEBUG_INFORMATION_FORMAT=dwarf-with-dsym']
     if os.environ.get('IRIDIUM_BUILD_NUMBER'):
         value = os.environ['IRIDIUM_BUILD_NUMBER']
         if not all(part.isdigit() for part in value.split('.')): raise ValueError('Invalid build number')
         command.append('CURRENT_PROJECT_VERSION=' + value)
     subprocess.run(command + ['build'], cwd=ROOT, check=True)
+    bundle = ROOT / '.build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app'
+    # Xcode can retain a removed folder in an incremental app bundle.
+    duplicate = bundle / 'Phase3/dolphin/Sys'
+    if duplicate.is_symlink() or any(p.is_symlink() for p in duplicate.parents):
+        raise ValueError('Stale Dolphin resource path contains a symbolic link')
+    if duplicate.exists():
+        shutil.rmtree(duplicate)
+    if not (bundle.with_suffix('.app.dSYM') / 'Contents/Resources/DWARF/Iridium').is_file():
+        raise ValueError('Missing Iridium debug symbols')
+    subprocess.run(['xcrun', '--sdk', 'iphoneos', 'strip', '-x', bundle / 'Iridium'], check=True)
     verify()
-    check_bundle(ROOT / '.build/madeira-frontend-derived/Build/Products/Debug-iphoneos/Iridium.app')
+    check_bundle(bundle)
 
 
 def main():

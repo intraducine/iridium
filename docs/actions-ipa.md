@@ -4,10 +4,9 @@ Use an Apple Silicon Mac, full Xcode 27 with Metal tools, Homebrew, Python 3.11+
 and Rust. Run commands from the repository root. Set `DEVELOPER_DIR` to select
 Xcode. The main app targets iOS 18+; helper requirements are in the [JIT guide](../iridium/docs/builtin-stikjit-ios27.md).
 
-The current app version is **0.3.0**. The maintained project generator applies it
-to all app and helper configurations. The source project and retained XcodeGen
-configuration carry the same version. CI supplies a unique numeric build number;
-verify both values in the packaged app, JIT helper, and memory helper.
+Keep the app version consistent across the project generator, source project,
+and retained XcodeGen configuration. CI supplies a unique numeric build number.
+Verify that the packaged app and both helpers report the same version and build.
 
 ## Local build
 

@@ -1,16 +1,87 @@
 """Build pinned Madeira runtime modules with receipts, without duplicate binary caches."""
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import re
 from pathlib import Path
 import shutil
 import shlex
+import struct
 import subprocess
 import tempfile
 
 EXTRA = ('windows', 'moltenvk', 'zink', 'mesa-d3d12', 'vulkan-pe', 'kosmickrisp')
+
+
+def strip_pe_symbols(data, objcopy):
+    if len(data) < 64 or data[:2] != b'MZ':
+        return data
+    pe = struct.unpack_from('<I', data, 60)[0]
+    if pe < 64 or pe + 26 > len(data) or data[pe:pe + 4] != b'PE\0\0':
+        return data
+    sections = struct.unpack_from('<H', data, pe + 6)[0]
+    fields = pe + 12
+    symbols, count = struct.unpack_from('<II', data, fields)
+    optional_size = struct.unpack_from('<H', data, pe + 20)[0]
+    directories = {0x10b: 96, 0x20b: 112}.get(struct.unpack_from('<H', data, pe + 24)[0])
+    if directories is None or optional_size < directories + 5 * 8:
+        return data
+    optional_end = pe + 24 + optional_size
+    certificate = pe + 24 + directories + 4 * 8
+    strings = symbols + count * 18
+    section_end = optional_end + sections * 40
+    if not sections or not count or symbols < section_end or strings + 4 > len(data):
+        return data
+    # Keep Authenticode and images whose loader can require a nonzero PE checksum.
+    checksum = pe + 24 + 64
+    if any(data[certificate:certificate + 8]) or any(data[checksum:checksum + 4]):
+        return data
+    for section in range(optional_end, section_end, 40):
+        raw_size, raw_offset, _, _, relocations, lines = struct.unpack_from('<IIIIHH', data, section + 16)
+        # Long section names use the COFF string table.
+        if (data[section:section + 1] == b'/' or raw_offset + raw_size > symbols
+                or relocations or lines):
+            return data
+    length = struct.unpack_from('<I', data, strings)[0]
+    if length < 4 or strings + length > len(data) or any(data[strings + length:]):
+        return data
+
+    result = subprocess.run([objcopy, '--strip-all', '-', '-'], input=data, capture_output=True)
+    stripped = result.stdout
+    # Keep every original byte before the tables except the two COFF symbol fields.
+    if (result.returncode or not symbols <= len(stripped) < len(data)
+            or stripped[:fields] != data[:fields] or stripped[fields:fields + 8] != bytes(8)
+            or stripped[fields + 8:symbols] != data[fields + 8:symbols] or any(stripped[symbols:])):
+        return data
+    return stripped
+
+
+def trim_windows_symbols(upstream, paths):
+    objcopy = upstream / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/llvm-objcopy'
+    saved = 0
+    for path in paths:
+        if path.is_symlink() or path.suffix.lower() not in ('.dll', '.exe', '.drv'):
+            continue
+        original = path.read_bytes()
+        stripped = strip_pe_symbols(original, objcopy)
+        if stripped is original:
+            continue
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+        try:
+            temporary.write_bytes(stripped)
+            shutil.copymode(path, temporary)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        saved += len(original) - len(stripped)
+    print(f'Removed {saved:,} bytes of Windows symbol tables.')
+
+
+def windows_symbol_recipe():
+    return ''.join(inspect.getsource(fn) for fn in (strip_pe_symbols, trim_windows_symbols)).encode()
 
 
 def contract(upstream):
@@ -19,6 +90,15 @@ def contract(upstream):
     spec.loader.exec_module(module)
     if 'windows' in module.CONTRACT:
         module.CONTRACT['windows']['inputs'].append('build/gog-galaxy-service/**')
+        upstream_key = module.input_key
+
+        def input_key(name, sdk):
+            key = upstream_key(name, sdk)
+            if name == 'windows':
+                return hashlib.sha256(key.encode() + windows_symbol_recipe()).hexdigest()
+            return key
+
+        module.input_key = input_key
     if not (upstream / '.git').exists():
         inventory = json.loads((upstream / 'iridium-runtime-sources.json').read_text())
         if inventory.get('schema') != 1 or not isinstance(inventory.get('files'), list) or not isinstance(inventory.get('pins'), dict):
@@ -134,8 +214,12 @@ def build(upstream, sdk):
         env = dict(os.environ, JOBS=os.environ.get('JOBS', '6'), MADEIRA_RUNTIME_SDK=sdk)
         build_recipe(upstream, name, env)
         bundle = upstream / 'app/Madeira'
-        files = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                 for p in bundle.rglob('*') if p.is_file() and module.owns(name, p.relative_to(bundle).as_posix())}
+        owned = [p for p in bundle.rglob('*') if p.is_file() and module.owns(name, p.relative_to(bundle).as_posix())]
+        if name == 'windows':
+            # The ARM64EC translator also belongs to the native build checkpoint.
+            unchanged = set(module.CONTRACT[name]['prebuilt']) | {'arm64ec-windows/xtajit64.dll'}
+            trim_windows_symbols(upstream, (p for p in owned if p.relative_to(bundle).as_posix() not in unchanged))
+        files = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in owned}
         saved = {'schema': 1, 'key': module.input_key(name, sdk), 'files': files}
         module.validate_manifest(name, saved, lambda p: module.read_regular(bundle, p), sdk)
         receipt.parent.mkdir(parents=True, exist_ok=True)

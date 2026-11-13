@@ -1,26 +1,10 @@
-# Artwork
+# Change game artwork
 
-Windows metadata uses the public Steam catalog; SteamGridDB is optional and its
-key stays in Keychain. Console matching uses per-platform Libretro catalogs.
-Search sends a cleaned title, not executable contents or parent paths.
-Ambiguous matches need a choice. Catalog failures do not block launch.
+Open **Game Options → Rename & Artwork**. Choose a different match, change the
+name or crop, or import your own cover and background. Local images can be up to
+25 MB. Your choices take priority over automatic matches and are stored
+separately from saves.
 
-Use **Game Options → Rename & Artwork** to change a match, name, cover,
-background, or crop. Local imports are limited to 25 MB and downsampled to
-2048 pixels. Overrides are stored by game UUID under
-`Application Support/LibraryArtwork`, separate from saves and launch records.
-Manual choices take priority over pending automatic results.
-
-The library retains its current backdrop while the next image loads. Fast cover
-changes replace the pending transition rather than clearing to black. The selected
-cover grows as it approaches the left Play position. Text and the selection border
-follow the current title. Check fast swipes, rotation, and reduced motion on the
-device; source and simulator tests do not establish phone frame times.
-
-Artwork belongs to its rights holders. Custom images stay local; the app links
-to the selected source. No commercial game artwork is bundled as sample content.
-
-The retained isolated UI checks run with
-`apps/ios/Scripts/check_library_ui.sh` and Xcode/XcodeGen. They do not validate the
-complete current app. Use [device testing](manual-validation-runbook.md) for
-current touch/controller, accessibility, persistence, and rotation checks.
+Iridium looks up Windows games in the public Steam catalog and console games in
+platform catalogs. The optional SteamGridDB key stays on the device. Lookups
+send the game title. You can play while artwork is unavailable.

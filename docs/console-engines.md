@@ -102,7 +102,7 @@ upstream configuration fields. Graphics backends and required JIT settings stay
 under the engine adapters' control. Settings which the core reads only at startup
 take effect after the game closes and opens again.
 
-SameBoy, Azahar, Play!, and Flycast now have five state slots in the shared menu.
+SameBoy, Azahar, Play!, and Flycast have five save state slots in the shared menu.
 PSP and Dolphin keep their existing state interfaces. State files are separate
 from ordinary in-game saves. Loading captures a rollback state first; a failed
 rollback retains the runtime lease and requires an app restart. State files are
@@ -125,7 +125,7 @@ Code sets are bounded and validated before replacing Iridium's active set.
 Invalid edits keep the previous set. PPSSPP's existing cheat INI files and
 Dolphin/Azahar's existing codes are preserved. Iridium stores its own named,
 enabled/disabled entries per game and reapplies them on launch. Codes must match
-the game version; compilation is not evidence that a particular code works.
+the game version.
 
 ### Content, discs, and peripherals
 
@@ -163,8 +163,7 @@ Microphone**. For microphone input, also select the core's Frontend input mode.
 Both inputs default to off. iOS asks for access only after the option is enabled
 and the game requests capture. Pause and close stop capture. One selected phone
 camera supplies the virtual camera views; stereo depth is not supplied. Motion
-uses the existing sensor interface. Capture timing, orientation and game behavior
-still need device tests.
+uses the existing sensor interface.
 
 PSP multiplayer settings include networking, the local ad hoc server, server
 address, UPnP, channel, port offset, timeout and first-connect policy. Use matching
@@ -172,8 +171,7 @@ settings and game versions on peers, reopen the game and enter its multiplayer
 mode. A local host enables its ad hoc server and uses 127.0.0.1; peers use the
 host's local IP address. Flycast builds its pinned UPnP dependency and exposes
 network/Broadband Adapter options. Supported games still need their own network
-configuration and, where required, an external server. No peer match has been
-verified in this change.
+configuration and, where required, an external server.
 
 Flycast exposes supported controller types per port and upstream VMU/rumble slot
 options. Emulator Files exports and imports VMU/arcade save files with their
@@ -181,10 +179,8 @@ original names. Keyboard, light-gun and motion-only peripherals are not exposed
 without a matching host input implementation. Real Wii Remotes remain unsupported
 by iOS; ordinary supported game controllers use the existing emulated controls.
 
-The shared OpenGL display copy now restores the core's framebuffer, renderbuffer,
-scissor and clear-color state, including failed presentation. This fixes a host
-state leak that can affect Play! rendering. GTA's PS2 shading fault has not been
-retested; the source fix does not establish its cause or visual result.
+The shared OpenGL display copy restores the core's framebuffer, renderbuffer,
+scissor and clear-color state even if presentation fails.
 
 ## Lifecycle and JIT
 
@@ -249,11 +245,8 @@ Windows uses Madeira's arena; console JIT uses the shared console arena. Startin
 Windows does not prepare console memory. A later console launch prepares it on
 demand, then later games reuse it. The owned helper uses checked batches of up to
 128 pages with full 64-bit addresses. Older external helpers retain safe per-page
-preparation. This reduces debugger requests; new phone startup timings remain
-unverified. The Windows host remains resident while console games
-run. This retains its memory and services, so a passing build alone does not establish
-phone memory use, power use, performance, or graphics compatibility. Windows
-configuration read only during host initialization still applies to the host lifetime.
+preparation. The Windows host keeps its memory and services while console games
+run. Windows settings read during host initialization apply until Iridium restarts.
 The launcher and its source receipt belong to the Madeira adapter. Updating a runtime
 pin rebuilds the matching adapter without moving Wine lifecycle details into the
 shared library or the other emulator adapters.
@@ -331,5 +324,6 @@ and compare the output with the tracked file.
 
 Use the [device checklist](../iridium/docs/manual-validation-runbook.md). For each
 engine, verify frames, input, audio, saves, background/resume, close, and a second
-launch. An allocator probe or successful build does not establish gameplay.
+launch. Test multiplayer, camera, microphone, and motion on a device where
+supported. An allocator probe or successful build does not establish gameplay.
 [LICENSING.md](../LICENSING.md) records distribution limits.

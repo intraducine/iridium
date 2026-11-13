@@ -17,6 +17,7 @@ class JITSettingsActionTests(unittest.TestCase):
         enable = capabilities[start:capabilities.rindex('\n}')].replace(
             'private func enableJIT()', 'func enableJIT()', 1)
         setup = (ROOT / 'iridium/apps/ios/App/JIT/JITSetup.swift').read_text()
+        methods = setup[setup.index('enum JITMethod:'):setup.index('enum JITPairingSource:')]
         helper = setup.index('@MainActor func jitConnectionActions(')
         start = setup.index('                dismiss()', helper)
         end = setup.index('\n            }\n        }', start)
@@ -25,24 +26,22 @@ class JITSettingsActionTests(unittest.TestCase):
         # production button action and recovery closure, with real branch bodies.
         fixture = r'''
 import Foundation
-enum JITMethod: CaseIterable { case automatic, stikDebug, builtIn }
-enum StikJITHelper {
-    static var ready = false
-    static var isAvailable = false
-}
+METHODS
 enum JITPairingFileStore { static var isImported = false }
+enum MadeiraBuiltInJIT { static var isAvailable = true }
 final class JITCoordinator {
     static let shared = JITCoordinator()
     var method = JITMethod.automatic
     var busy = false
     var showSetup = false
     var enables = 0
+    var builtInAvailable = true
     // Deliberately stale cache: admission must read the real pairing endpoint.
     var pairingImported = false
     var resolvedMethod: JITMethod {
-        method == .automatic ? (StikJITHelper.isAvailable ? .stikDebug : .builtIn) : method
+        method.resolved(builtInAvailable: builtInAvailable)
     }
-    var offlineMemoryReady: Bool { StikJITHelper.ready }
+    let offlineMemoryReady = false
     func prepareOfflineMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
 }
 final class OnDevicePairing {
@@ -62,26 +61,30 @@ RECOVERY
 }
 
 var cases = 0
+for supported in [false, true] {
+    precondition(JITMethod.automatic.resolved(builtInAvailable: supported) == (supported ? .builtIn : .stikDebug))
+    precondition(JITMethod.builtIn.selectable(builtInAvailable: supported) == (supported ? .builtIn : .stikDebug))
+    precondition(JITMethod.builtIn.resolved(builtInAvailable: supported) == (supported ? .builtIn : .stikDebug))
+    precondition(JITMethod.stikDebug.resolved(builtInAvailable: supported) == .stikDebug)
+}
 for method in JITMethod.allCases {
-    for available in [false, true] {
+    for supported in [false, true] {
         for imported in [false, true] {
-            for ready in [false, true] {
-                for busy in [false, true] {
-                    let settings = SettingsFixture()
-                    settings.coordinator.method = method
-                    settings.coordinator.busy = busy
-                    settings.coordinator.pairingImported = !imported
-                    StikJITHelper.isAvailable = available
-                    StikJITHelper.ready = ready
-                    JITPairingFileStore.isImported = imported
-                    settings.enableJIT()
-                    let needsSetup = !ready && !imported
-                    precondition(settings.showingJITSetup == (!busy && needsSetup))
-                    precondition(settings.coordinator.enables == (!busy && !needsSetup ? 1 : 0))
-                    precondition(!settings.coordinator.showSetup)
-                    precondition(settings.coordinator.method == method && settings.coordinator.busy == busy)
-                    cases += 1
-                }
+            for busy in [false, true] {
+                let settings = SettingsFixture()
+                settings.coordinator.method = method
+                settings.coordinator.builtInAvailable = supported
+                MadeiraBuiltInJIT.isAvailable = supported
+                settings.coordinator.busy = busy
+                settings.coordinator.pairingImported = !imported
+                JITPairingFileStore.isImported = imported
+                settings.enableJIT()
+                let needsSetup = !supported || !imported
+                precondition(settings.showingJITSetup == (!busy && needsSetup))
+                precondition(settings.coordinator.enables == (!busy && !needsSetup ? 1 : 0))
+                precondition(!settings.coordinator.showSetup)
+                precondition(settings.coordinator.method == method && settings.coordinator.busy == busy)
+                cases += 1
             }
         }
     }
@@ -109,8 +112,8 @@ for supported in [false, true] {
         precondition(pairing.methodAtStart == (supported ? .builtIn : nil))
     }
 }
-print("PASS production Settings actions: \(cases) enable preflights, live pairing/detection, ready bypass, busy admission, local/default setup and visible Pair Again panel")
-'''.replace('ENABLE', enable).replace('RECOVERY', recovery)
+print("PASS production Settings actions: \(cases) preparation preflights, live pairing, busy admission, local/default setup and visible Pair Again panel")
+'''.replace('METHODS', methods).replace('ENABLE', enable).replace('RECOVERY', recovery)
         with tempfile.TemporaryDirectory(prefix='iridium-jit-settings-') as directory:
             folder = Path(directory)
             main = folder / 'main.swift'

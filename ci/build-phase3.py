@@ -222,7 +222,11 @@ def build(engine, sdk, jobs):
     if engine == 'azahar':
         azahar_module().check_compile_commands(build_dir, embedding)
     run('cmake', '--build', build_dir, '--target', target, '-j', jobs)
-    shutil.copy2(build_dir / relative, binary)
+    original = build_dir / relative
+    shutil.copy2(original, binary)
+    if sdk == 'iphoneos':
+        run('xcrun', 'dsymutil', '-o', binary.with_suffix('.dylib.dSYM'), original)
+        run('xcrun', '--sdk', sdk, 'strip', '-x', binary)
     record = audit(binary, sdk, native=engine == 'dolphin')
     if fixed_inputs(engine) != inputs:
         raise ValueError('Phase 3 build inputs changed during compilation: ' + engine)

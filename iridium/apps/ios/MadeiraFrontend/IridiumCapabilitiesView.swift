@@ -14,7 +14,7 @@ struct IridiumCapabilitiesView: View {
                 LabeledContent("Offline JIT", value: coordinator.offlineMemoryReady ? "Ready" : "Needs setup")
                 Button("JIT Setup", systemImage: "bolt") { showingJITSetup = true }
                     .disabled(coordinator.busy)
-                if !coordinator.offlineMemoryReady {
+                if MadeiraBuiltInJIT.isAvailable && !coordinator.offlineMemoryReady {
                     Button("Enable JIT", action: enableJIT).disabled(coordinator.busy)
                 }
                 if coordinator.busy && coordinator.error == nil { IridiumJITProgress(status: coordinator.status) }
@@ -25,7 +25,8 @@ struct IridiumCapabilitiesView: View {
                     }
                 }
             } header: { Text("JIT") } footer: {
-                Text("Enable JIT before going offline. Prepared memory lasts until the app closes.")
+                Text(MadeiraBuiltInJIT.unavailableReason ??
+                     "Enable JIT before going offline. Prepared memory lasts until the app closes.")
             }
             #if !targetEnvironment(simulator)
             Section {
@@ -47,7 +48,8 @@ struct IridiumCapabilitiesView: View {
 
     private func enableJIT() {
         guard !coordinator.busy else { return }
-        if !coordinator.offlineMemoryReady, !JITPairingFileStore.isImported {
+        if !coordinator.offlineMemoryReady,
+           !MadeiraBuiltInJIT.isAvailable || !JITPairingFileStore.isImported {
             showingJITSetup = true
             return
         }

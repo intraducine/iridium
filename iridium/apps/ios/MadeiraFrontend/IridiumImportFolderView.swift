@@ -23,8 +23,7 @@ struct IridiumImportFolderView: View {
                 Section {
                     Button("Choose Files") { choosingFiles = true }.disabled(!automaticallyScan)
                         .listRowBackground(highlight(":files"))
-                    Text("Add files here or put them in Iridium’s Import folder.")
-                    Text("Import games, pairing files, Switch keys, and firmware ZIPs.")
+                    Text("Use Iridium’s Import folder in Files for games, pairing files, Switch keys, and firmware ZIPs.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }.iridiumRowSurface()
                 Section {

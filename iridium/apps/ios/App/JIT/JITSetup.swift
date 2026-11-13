@@ -19,6 +19,15 @@ enum JITMethod: String, CaseIterable, Identifiable {
         case .builtIn: return "Built-in StikJIT"
         }
     }
+
+    func selectable(builtInAvailable: Bool) -> Self {
+        self == .builtIn && !builtInAvailable ? .stikDebug : self
+    }
+
+    func resolved(builtInAvailable: Bool) -> Self {
+        if self == .automatic { return builtInAvailable ? .builtIn : .stikDebug }
+        return selectable(builtInAvailable: builtInAvailable)
+    }
 }
 
 /// Where Built-in StikJIT's pairing file came from.
@@ -213,15 +222,22 @@ final class JITCoordinator: ObservableObject {
             .flatMap(JITMethod.init(rawValue:)) ?? .automatic
     }
 
+    var selectableMethod: JITMethod {
+        get { method.selectable(builtInAvailable: MadeiraBuiltInJIT.isAvailable) }
+        set { method = newValue.selectable(builtInAvailable: MadeiraBuiltInJIT.isAvailable) }
+    }
+
+    var availableMethods: [JITMethod] {
+        MadeiraBuiltInJIT.isAvailable ? JITMethod.allCases : [.automatic, .stikDebug]
+    }
+
     var resolvedMethod: JITMethod {
-        guard method == .automatic else { return method }
-        return StikJITHelper.isAvailable ? .stikDebug : .builtIn
+        method.resolved(builtInAvailable: MadeiraBuiltInJIT.isAvailable)
     }
 
     var automaticDescription: String {
-        StikJITHelper.isAvailable
-            ? "The selected StikDebug route is detected."
-            : "The selected StikDebug route was not detected. Automatic will use the built-in helper."
+        if resolvedMethod == .builtIn { return "Automatic uses Built-in StikJIT." }
+        return StikJITHelper.isAvailable ? "Automatic uses StikDebug." : "Install StikDebug to enable JIT."
     }
 
     func refreshPairingStatus() {
@@ -303,6 +319,11 @@ final class JITCoordinator: ObservableObject {
         guard needWindows || needConsole else {
             if case .offline = target { status = readyMessage; error = nil; connectionProblem = nil }
             completion(.success(())); return
+        }
+
+        guard MadeiraBuiltInJIT.isAvailable else {
+            fail(MadeiraBuiltInJIT.unavailableReason ?? "Built-in JIT is unavailable.")
+            return
         }
 
         let prepareWindows = needWindows && (!IridiumMadeiraRuntime.jitMemoryPrepared || !consolePrepared)
@@ -1088,28 +1109,21 @@ struct JITSetupContent: View {
     }
 
     private var connectionMethod: some View {
-        JITSetupGroup("Connection method", footer: inline ? nil :
-                        "Automatic opens the selected StikDebug route when detected. Otherwise, it uses the built-in helper.",
-                      inline: inline) {
-            Picker("Method", selection: $coordinator.method) {
-                ForEach(JITMethod.allCases) { method in Text(method.title).tag(method) }
-            }.setupControllerValue("jit.method", order: 20, selection: $coordinator.method, values: JITMethod.allCases)
+        JITSetupGroup("Connection method", inline: inline) {
+            Picker("Method", selection: $coordinator.selectableMethod) {
+                ForEach(coordinator.availableMethods) { method in Text(method.title).tag(method) }
+            }.setupControllerValue("jit.method", order: 20, selection: $coordinator.selectableMethod, values: coordinator.availableMethods)
                 .disabled(coordinator.busy || pairing.active)
-            if coordinator.method == .automatic {
-                Text(inline
-                     ? (coordinator.resolvedMethod == .stikDebug ? "Automatic uses StikDebug." : "Automatic uses Built-in StikJIT.")
-                     : coordinator.automaticDescription)
+            if coordinator.selectableMethod == .automatic {
+                Text(coordinator.automaticDescription)
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if inline {
-                if coordinator.resolvedMethod == .builtIn, !MadeiraBuiltInJIT.isAvailable {
-                    Text(MadeiraBuiltInJIT.unavailableReason ?? "Built-in StikJIT is unavailable.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-            } else {
+            if let reason = MadeiraBuiltInJIT.unavailableReason {
+                Text(reason).font(.subheadline).foregroundStyle(.secondary)
+            }
+            if !inline {
                 LabeledContent(IridiumStikDebugRoute.current == .standalone ? "StikDebug" : "Container",
                                value: StikJITHelper.isAvailable ? "Detected" : "Not detected")
-                LabeledContent("Built-in helper", value: MadeiraBuiltInJIT.isAvailable ? "Available" : "Unavailable")
             }
         }
     }

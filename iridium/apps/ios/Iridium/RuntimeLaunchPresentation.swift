@@ -81,10 +81,11 @@ struct RuntimeMemorySnapshot {
     let usedBytes: UInt64
     let availableBytes: UInt64?
 
-    func shouldStopGame(memoryWarning: Bool) -> Bool {
+    func shouldStopGame(warningHeadroom: UInt64? = nil) -> Bool {
         guard let availableBytes else { return false }
-        let reserveMiB: UInt64 = memoryWarning ? 1536 : 1024
-        return availableBytes <= reserveMiB << 20
+        if availableBytes <= 1024 << 20 { return true }
+        guard let warningHeadroom else { return false }
+        return availableBytes <= 1536 << 20 && warningHeadroom >= availableBytes + (128 << 20)
     }
 
     static func sample() -> Self? {
@@ -160,13 +161,15 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
 
     func memoryWarning() {
         queue.async { [self] in
-            sample("memory-warning")
+            let memory = RuntimeMemorySnapshot.sample()
+            sample("memory-warning", memory: memory)
             guard onGameMemoryPressure != nil, let watch = memoryWarningWatch.begin() else { return }
+            let headroom = memory?.availableBytes
             DispatchQueue.main.async { [warning = onGameMemoryWarning] in
                 warning?()
-                self.queue.asyncAfter(deadline: .now() + .seconds(1)) { [self] in
+                self.queue.asyncAfter(deadline: .now() + .seconds(3)) { [self] in
                     guard memoryWarningWatch.finish(watch) else { return }
-                    sample("memory-warning-recheck", afterMemoryWarning: true)
+                    sample("memory-warning-recheck", warningHeadroom: headroom)
                 }
             }
         }
@@ -219,12 +222,12 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
     }
 
     private func sample(_ phase: String, sparse: Bool = false, mainDelay: TimeInterval? = nil,
-                        afterMemoryWarning: Bool = false) {
+                        warningHeadroom: UInt64? = nil, memory snapshot: RuntimeMemorySnapshot? = nil) {
         let process = ProcessInfo.processInfo
         let now = process.systemUptime
         let thermal = process.thermalState.rawValue
-        let memory = RuntimeMemorySnapshot.sample()
-        if let stop = onGameMemoryPressure, memory?.shouldStopGame(memoryWarning: afterMemoryWarning) == true {
+        let memory = snapshot ?? RuntimeMemorySnapshot.sample()
+        if let stop = onGameMemoryPressure, memory?.shouldStopGame(warningHeadroom: warningHeadroom) == true {
             onGameMemoryPressure = nil
             DispatchQueue.main.async { stop() }
         }

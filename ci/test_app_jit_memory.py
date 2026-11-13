@@ -297,6 +297,7 @@ func ir_jit_verify_console_memory() -> Bool {
     return Memory.shared.isReady() && Memory.shared.consoleCheckPasses
 }
 enum IridiumConsoleSession { static let shared = Idle(); struct Idle { let isActive = false } }
+enum MadeiraBuiltInJIT { static let isAvailable = true; static let unavailableReason: String? = nil }
 @MainActor enum LogStore { static let shared = Logger(); struct Logger { func log(_ text: String) {} } }
 @MainActor final class RuntimePerformanceDiagnostics {
     static let shared = RuntimePerformanceDiagnostics()

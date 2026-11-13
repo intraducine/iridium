@@ -71,7 +71,7 @@ struct IridiumFloatingActionStyle: ViewModifier {
         if enabled {
             Group {
                 if #available(iOS 26, *), !opaque {
-                    if primary { content.buttonStyle(.glass).foregroundStyle(.white).fontWeight(.bold) }
+                    if primary { content.buttonStyle(.glassProminent).tint(.white).foregroundStyle(.black).fontWeight(.bold) }
                     else { content.buttonStyle(.glass) }
                 } else {
                     if primary { content.buttonStyle(.borderedProminent).foregroundStyle(.black).fontWeight(.bold) }

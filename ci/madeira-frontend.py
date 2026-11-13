@@ -120,6 +120,7 @@ def windows():
     key = hashlib.sha256(REVISION.encode() + inspect.getsource(windows).encode()
                          + inspect.getsource(run_checked_recipe).encode() + recipe.read_bytes()
                          + compiler_identity().encode()
+                         + madeira_components.windows_symbol_recipe()
                          + subprocess.check_output([str(UPSTREAM / 'toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin/i686-w64-mingw32-clang'), '--version'])).hexdigest()
     def digest(path):
         with path.open('rb') as stream: return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -139,6 +140,7 @@ def windows():
     outputs = sorted(path for path in (UPSTREAM / 'app/Madeira/i386-windows').glob('*')
                      if path.is_file() and not path.name.startswith('.'))
     if not outputs: raise ValueError('Madeira built no i386 runtime files')
+    madeira_components.trim_windows_symbols(UPSTREAM, outputs)
     stamp.parent.mkdir(parents=True, exist_ok=True)
     stamp.write_text(json.dumps(dict(key=key, completed=time.time(),
                                     outputs={str(path.relative_to(UPSTREAM)): digest(path) for path in outputs}), indent=2) + '\n')

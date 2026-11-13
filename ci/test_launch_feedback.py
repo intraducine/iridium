@@ -26,14 +26,16 @@ class LaunchFeedbackTests(unittest.TestCase):
         presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
         self.run_swift(presentation + """
 @main struct Check { static func main() {
-    func stop(_ availableMiB: UInt64?, warning: Bool = false) -> Bool {
+    func stop(_ availableMiB: UInt64?, warning: UInt64? = nil) -> Bool {
         RuntimeMemorySnapshot(usedBytes: 0, availableBytes: availableMiB.map { $0 << 20 })
-            .shouldStopGame(memoryWarning: warning)
+            .shouldStopGame(warningHeadroom: warning.map { $0 << 20 })
     }
-    precondition(!stop(nil, warning: true))
-    precondition(!stop(2048, warning: true))
+    precondition(!stop(nil, warning: 1400))
+    precondition(!stop(2048, warning: 2500))
     precondition(!stop(1153))
-    precondition(stop(1153, warning: true))
+    precondition(!stop(1228, warning: 1228))
+    precondition(!stop(1400, warning: 1500))
+    precondition(stop(1153, warning: 1300))
     precondition(stop(1024) && stop(72) && stop(0))
 }}""")
 
@@ -55,7 +57,7 @@ class LaunchFeedbackTests(unittest.TestCase):
     def test_embedded_switch_trims_graphics_before_the_app_memory_stop(self):
         patch = (ROOT / 'ci/engine-integrations/melonx-storage.patch').read_text()
         presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
-        stop = int(re.search(r'reserveMiB: UInt64 = memoryWarning \? (\d+)', presentation)[1])
+        stop = int(re.search(r'availableBytes <= (\d+) << 20 &&', presentation)[1])
         trim = int(re.search(r'EmbeddedGpuTrimReserveBytes = (\d+)UL', patch)[1])
         critical = int(re.search(r'ReportPressure\(headroom <= (\d+)UL', patch)[1])
         self.assertGreater(trim, critical)

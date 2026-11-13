@@ -1,56 +1,63 @@
 # Using Iridium
 
-## Add and play
+## Install
 
-Choose **Add Game → Files and Folders** for local games, ZIP/7z archives, and
-pairing files. Select complete Windows folders or console files with their tracks.
-**Stores** opens Steam, GOG, Epic Games, EA, and itch.io. Sign in to the chosen
-store with your own account. Supply your own games and firmware.
+Choose Stable or Nightly from the [download links](../../README.md#install).
+Copy its AltStore source URL and add it under **Sources** in AltStore Classic
+or LiveContainer. For manual installation, sign the IPA with a tool that supports
+app extensions or import it into LiveContainer.
 
-`Documents/Import` accepts files and folders in bulk, in standalone Iridium or
-LiveContainer. **Import Folder** shows progress, choices, and retry errors. Inputs
-leave that folder only after a game record or validated pairing record is saved.
-Failed inputs remain there. Managed games use `Documents/Games/<title> - <UUID>`.
-Existing managed installs move there without changing game IDs or save paths.
-See [storage and recovery](../../docs/console-engines.md#import-and-storage).
+When updating, back up your saves and install over the existing app or
+LiveContainer entry to keep your library and settings.
 
-Select a cover, then **Play**. Game Options contains title/artwork, controls,
-files/saves, launch arguments, and engine settings. Removing a library entry
-keeps its files. Deleting game files can also delete saves stored in that folder.
+### Nightly AltStore source
 
-Store games also have **Uninstall** in their options, including missing installs.
-Deleting a whole managed game folder in Files clears its install record on
-refresh. Partial damage remains available for repair where the store supports it.
-A disconnected external drive does not remove its games from the library.
+Use this URL when a [Nightly build](https://github.com/intraducine/iridium/releases?q=nightly-)
+is available.
 
-The loading screen shows the current stage, elapsed time, and live app memory
-use. It stays until the game is ready or launch fails. A middle dot followed by
-**JIT** beside the system name marks games which need JIT, including PSP when its
-JIT mode is selected. Menu sound effects are absent from this integration.
+```text
+https://raw.githubusercontent.com/intraducine/iridium/altstore-nightly/altstore/nightly.json
+```
 
-For Windows prerequisites, use **Run Installer** with the required EXE or MSI.
-Successful groups are remembered. Closing requests cancellation; follow any
-restart message before another session.
+## Add games
 
-## Controls
+Open **Add Game** and choose a source:
 
-Use touch, a controller, or a keyboard. The player menu provides Resume,
-Controls, Performance, Close Game, and logs. See its Help page for key mappings.
-Closing can lose unsaved progress. Backgrounding pauses; resume explicitly.
+- **Files and Folders** imports games and ZIP or 7z archives. Select the full
+  folder for Windows games and disc images with separate track files.
+- **Import Folder** processes files you place in Iridium’s `Documents/Import`
+  folder. If an import fails, the file stays there so you can retry.
+- **Stores** opens Steam, GOG, Epic Games, EA, and itch.io. Use your own account
+  to download games you own.
 
-Edit artwork under **Game Options → Rename & Artwork**. Custom images and names
-are stored separately from game paths and saves. Missing artwork does not block play.
+See [supported formats and save locations](../../docs/console-engines.md#import-and-storage).
+Supply any firmware your games require.
 
-## Settings
+## Play
 
-**Settings → Iridium** sets touch haptics and default game volume. Games with a
-saved volume keep that value. **Stores** and **Import Folder** open separate sheets.
-Getting Started opens the same Stores page. Setup completion is saved separately
-from app preferences.
+Select a game and press **Play**. A **JIT** label beside the system name means
+you need to [set up JIT](builtin-stikjit-ios27.md). The loading screen shows the
+current step, elapsed time, and memory use. To stop, select **Cancel Launch**
+when it appears.
 
-[JIT & Memory](builtin-stikjit-ios27.md) configures shared JIT. Windows sync
-mode changes require a full app restart. Display & Memory settings apply to the
-next launch. Compatibility and performance vary by game and device.
+Use the in-game menu to pause, change controls or performance settings, and
+close the game. Save your progress before closing. The Help page lists input
+mappings. See [mouse setup for Windows games](mouse-input.md). To run a required
+EXE or MSI installer, use **Game Options → Run Installer**.
 
-Back up saves before updates or repairs. Keep old game copies until saves work
-in the new copy. Export redacted logs from Diagnostics when reporting a problem.
+## Manage games and saves
+
+Use **Game Options** to change controls, launch settings, or
+[artwork](library-artwork.md). **Remove from Library** keeps the files.
+**Uninstall** removes a store game’s files. Saves stored inside the game folder
+are removed with it, so back those up first. A missing file may offer **Repair**
+if the store supports it. Keep older game copies until your saves work in the
+new copy.
+
+Use **Settings → Iridium** to change touch haptics and the default game volume.
+Per-game volume settings take priority. Restart Iridium after changing Windows
+settings that apply when the runtime starts.
+
+If a game fails to start, check its files and JIT setup. If the problem
+continues, export a log from Diagnostics and remove private information before
+sharing it.

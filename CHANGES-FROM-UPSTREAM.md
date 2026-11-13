@@ -544,11 +544,7 @@ and checks every response. It drains queued responses after a rejected page and
 stops issuing commands after a transport error. Older external helpers retain
 the checked per-page fallback; Iridium never calls their unchecked batch bridge.
 
-Enable JIT prepares the Windows and console arenas in one built-in helper
-connection. Iridium checks that both can execute code after the helper detaches.
-The verified arenas stay available until the app closes. A game launched before
-setup prepares only the arena it needs. App preparation checks a separate helper
-source and binary receipt.
+Enable JIT prepares and verifies shared Windows and console executable memory in one built-in helper session. The verified memory stays available until Iridium closes. The build checks a separate helper source and binary receipt.
 
 ## Iridium 0.3.0 review version
 
@@ -586,8 +582,10 @@ only the fault handler's executable pages. The iOS
 integration uses Darwin's signal structure and flags for handler registration.
 Iridium clears cached artwork on iOS memory warnings. An active console can
 release runtime caches before Iridium rechecks its memory. MeloNX uses its
-existing GPU trim hook. SameBoy clears rewind history. The immediate console
-stop at critically low headroom still applies.
+existing GPU trim hook. SameBoy clears rewind history. A warning allows up to
+three seconds for reclamation. Critical headroom still stops the game immediately.
+The warning recheck also stops the game when headroom remains low and has fallen
+by at least 128 MiB.
 A slow stop keeps the launch slot until it finishes. An unverified stop needs a
 restart. When Wine starts after a console game, it reserves its V8 address range
 only if the range is free.
