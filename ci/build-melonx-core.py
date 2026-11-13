@@ -81,7 +81,8 @@ def component_record():
             raise ValueError('Unexpected MeloNX install name or dependency: ' + name)
         files[name] = digest(binary)
     symbols = set(output('xcrun', 'nm', '-gUj', ADAPTER).splitlines())
-    required = {'_ir_native_engine_' + name for name in ('abi', 'create', 'pause', 'stop', 'frames', 'set_volume')}
+    required = {'_ir_native_engine_' + name for name in (
+        'abi', 'create', 'pause', 'stop', 'frames', 'set_volume', 'trim_memory')}
     if not required | {'_ir_phase3_core_prepare_memory', '_ir_melonx_install_firmware'} <= symbols:
         raise ValueError('The MeloNX adapter does not export the complete console player interface')
     return {'revision': REVISION, 'sdk': SDK_VERSION, 'inputs': adapter_inputs(), 'files': files,
@@ -107,7 +108,7 @@ def inspect(binary):
                 'iridium_melonx_install_firmware', 'main_ryujinx_sdl', 'set_native_window', 'stop_emulation',
                 'toggle_pause_emulation', 'attach_gamepad', 'detach_gamepad',
                 'set_gamepad_button_state', 'set_gamepad_stick_axis', 'load_keyset',
-                'install_firmware', 'installed_firmware_version', 'init_dualmapping'}
+                'install_firmware', 'installed_firmware_version', 'init_dualmapping', 'report_memory_pressure'}
     missing = {'_' + name for name in required} - symbols
     if missing:
         raise ValueError('Missing MeloNX exports: ' + ', '.join(sorted(missing)))

@@ -10,6 +10,7 @@ typedef void *(*Create)(const char *, const char *, const char *, const char *, 
 static Create create;
 static void (*pause_player)(bool), (*stop_player)(void);
 static uint64_t (*frames)(void);
+static void (*trim_memory)(void);
 static const IRDolphinAPI *dolphin;
 static bool (*prepare_jit)(IRPhase3JITPrepare);
 static bool (*prepare_memory)(const IRJITMemoryAPI *);
@@ -57,6 +58,7 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
         event(generation, 3, "The bundled engine player has an incompatible interface."); return NULL;
     }
     create = next; pause_player = p; stop_player = s; frames = f;
+    trim_memory = (void (*)(void))dlsym(image, "ir_native_engine_trim_memory");
     controls_command = (bool (*)(const char *))dlsym(image, "ir_native_engine_command");
     controls_input = (void (*)(IRPhase3PollPlayer, IRPhase3Rumble))dlsym(image, "ir_native_engine_input");
     dolphin = NULL;
@@ -87,6 +89,7 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
 }
 void ir_phase3_pause(bool paused) { if (pause_player) pause_player(paused); }
 void ir_phase3_stop(void) { if (stop_player) stop_player(); }
+void ir_phase3_trim_memory(void) { if (trim_memory) trim_memory(); }
 uint64_t ir_phase3_frames(void) { return frames ? frames() : 0; }
 bool ir_phase3_configure_jit(IRPhase3JITPrepare prepare) {
     return prepare && prepare_jit && prepare_jit(prepare);

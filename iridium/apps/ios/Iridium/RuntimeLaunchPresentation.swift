@@ -114,6 +114,25 @@ struct RuntimeMemorySnapshot {
     }
 }
 
+struct RuntimeMemoryWarningWatch {
+    private var pending: UUID?
+
+    mutating func begin() -> UUID? {
+        guard pending == nil else { return nil }
+        let id = UUID()
+        pending = id
+        return id
+    }
+
+    mutating func finish(_ id: UUID) -> Bool {
+        guard pending == id else { return false }
+        reset()
+        return true
+    }
+
+    mutating func reset() { pending = nil }
+}
+
 #if os(iOS)
 /// Samples on a utility queue even when the main thread is stalled.
 final class RuntimePerformanceDiagnostics: @unchecked Sendable {
@@ -125,11 +144,32 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
     private var pendingPing: TimeInterval?
     private var reportedStall = false
     private var onGameMemoryPressure: (@MainActor @Sendable () -> Void)?
+    private var onGameMemoryWarning: (@MainActor @Sendable () -> Void)?
+    private var memoryWarningWatch = RuntimeMemoryWarningWatch()
 
     private init() {}
 
-    func watchGameMemory(_ onPressure: (@MainActor @Sendable () -> Void)?) {
-        queue.async { [self] in onGameMemoryPressure = onPressure }
+    func watchGameMemory(_ onPressure: (@MainActor @Sendable () -> Void)?,
+                         onWarning: (@MainActor @Sendable () -> Void)? = nil) {
+        queue.async { [self] in
+            onGameMemoryPressure = onPressure
+            onGameMemoryWarning = onWarning
+            memoryWarningWatch.reset()
+        }
+    }
+
+    func memoryWarning() {
+        queue.async { [self] in
+            sample("memory-warning")
+            guard onGameMemoryPressure != nil, let watch = memoryWarningWatch.begin() else { return }
+            DispatchQueue.main.async { [warning = onGameMemoryWarning] in
+                warning?()
+                self.queue.asyncAfter(deadline: .now() + .seconds(1)) { [self] in
+                    guard memoryWarningWatch.finish(watch) else { return }
+                    sample("memory-warning-recheck", afterMemoryWarning: true)
+                }
+            }
+        }
     }
 
     func setForeground(_ active: Bool) {
@@ -178,12 +218,13 @@ final class RuntimePerformanceDiagnostics: @unchecked Sendable {
         }
     }
 
-    private func sample(_ phase: String, sparse: Bool = false, mainDelay: TimeInterval? = nil) {
+    private func sample(_ phase: String, sparse: Bool = false, mainDelay: TimeInterval? = nil,
+                        afterMemoryWarning: Bool = false) {
         let process = ProcessInfo.processInfo
         let now = process.systemUptime
         let thermal = process.thermalState.rawValue
         let memory = RuntimeMemorySnapshot.sample()
-        if let stop = onGameMemoryPressure, memory?.shouldStopGame(memoryWarning: phase == "memory-warning") == true {
+        if let stop = onGameMemoryPressure, memory?.shouldStopGame(memoryWarning: afterMemoryWarning) == true {
             onGameMemoryPressure = nil
             DispatchQueue.main.async { stop() }
         }

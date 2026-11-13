@@ -155,9 +155,11 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
             self.lease = owner; self.game = game; image = nil; error = nil; phase = .starting; presented = true
             dismissalError = nil; launchRecovery = nil
             memoryPressureStop = false
-            RuntimePerformanceDiagnostics.shared.watchGameMemory { [weak self] in
+            RuntimePerformanceDiagnostics.shared.watchGameMemory({ [weak self] in
                 self?.stopForMemoryPressure(owner)
-            }
+            }, onWarning: { [weak self] in
+                self?.trimForMemoryPressure(owner)
+            })
             finalizing = false
             diagnostics = IridiumRuntimeProgress()
             phase3Ready = false; phase3JITVerified = false; phase3Status = "Waiting for the engine"; phase3Generation &+= 1
@@ -1177,6 +1179,17 @@ final class IridiumConsoleSession: ObservableObject, @unchecked Sendable {
                 else { startTimer(owner: owner) }
             } catch {
                 self.pauseAfterAudioFailure(owner)
+            }
+        }
+    }
+
+    @MainActor private func trimForMemoryPressure(_ owner: IridiumRuntimeLease) {
+        guard lease == owner, phase == .starting || phase == .running || phase == .paused else { return }
+        if phase3Controller != nil { ir_phase3_trim_memory() }
+        if game?.runtimeID == "sameboy" {
+            queue.async { [self] in
+                guard queueOwner == owner else { return }
+                rewindHistory.clear()
             }
         }
     }

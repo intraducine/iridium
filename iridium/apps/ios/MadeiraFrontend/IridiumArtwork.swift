@@ -250,6 +250,10 @@ import ImageIO
         legacyBackgrounds = values; legacyBackgroundRequest = nil
         return values[id]
     }
+    func trimImageCache() {
+        images.removeAllObjects()
+    }
+
     private func load(_ url: URL) async -> UIImage? {
         let key = url.absoluteString as NSString
         if let image = images.object(forKey: key) { return image }

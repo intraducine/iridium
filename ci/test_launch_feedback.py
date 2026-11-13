@@ -37,6 +37,21 @@ class LaunchFeedbackTests(unittest.TestCase):
     precondition(stop(1024) && stop(72) && stop(0))
 }}""")
 
+    def test_delayed_memory_warning_cannot_finish_a_new_session_watch(self):
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        self.run_swift(presentation + """
+@main struct Check { static func main() {
+    var watch = RuntimeMemoryWarningWatch()
+    let first = watch.begin()!
+    precondition(watch.begin() == nil)
+    watch.reset()
+    let second = watch.begin()!
+    precondition(!watch.finish(first))
+    precondition(watch.begin() == nil)
+    precondition(watch.finish(second))
+    precondition(watch.begin() != nil)
+}}""")
+
     def test_embedded_switch_trims_graphics_before_the_app_memory_stop(self):
         patch = (ROOT / 'ci/engine-integrations/melonx-storage.patch').read_text()
         presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()

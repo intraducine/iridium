@@ -21,6 +21,7 @@ int iridium_melonx_run(const char *game, void *layer,
 uint8_t iridium_melonx_reset_session();
 uint8_t iridium_melonx_session_closed();
 void iridium_melonx_set_state(uint8_t stop, uint8_t pause, float volume);
+void report_memory_pressure(uint8_t critical);
 void *attach_gamepad(const char *, void *, int, int);
 void set_gamepad_button_state(void *, int, uint8_t);
 void set_gamepad_stick_axis(void *, int, float, float);
@@ -291,6 +292,10 @@ static void input() {
                 status = -5;
             }
         }
+        {
+            std::lock_guard<std::mutex> lock(self->controlLock);
+            self->stateReady = false;
+        }
         dispatch_async(dispatch_get_main_queue(), ^{ [self finish:status enteredRuntime:entered]; });
     });
 }
@@ -373,6 +378,11 @@ extern "C" void ir_native_engine_set_volume(float volume) {
     if (player->stateReady) iridium_melonx_set_state(player->stopping, player->paused, volume);
 }
 extern "C" uint64_t ir_native_engine_frames() { return player ? player->frames.load() : 0; }
+extern "C" void ir_native_engine_trim_memory() {
+    if (!player || player->ended) return;
+    std::lock_guard<std::mutex> lock(player->controlLock);
+    if (player->stateReady && !player->stopping) report_memory_pressure(1);
+}
 
 extern "C" bool ir_native_engine_command(const char *json) {
     if (!player || player->started || !json || strlen(json) > 16384) return false;

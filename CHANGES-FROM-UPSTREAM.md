@@ -584,8 +584,10 @@ library. It preserves the current fault handlers, including those of an idle
 Windows host. A clean stop returns the game's translation cache and retains
 only the fault handler's executable pages. The iOS
 integration uses Darwin's signal structure and flags for handler registration.
-The embedded player asks the renderer to trim GPU caches before Iridium's
-memory guard has to close the game. Standalone MeloNX keeps its own threshold.
+Iridium clears cached artwork on iOS memory warnings. An active console can
+release runtime caches before Iridium rechecks its memory. MeloNX uses its
+existing GPU trim hook. SameBoy clears rewind history. The immediate console
+stop at critically low headroom still applies.
 A slow stop keeps the launch slot until it finishes. An unverified stop needs a
 restart. When Wine starts after a console game, it reserves its V8 address range
 only if the range is free.

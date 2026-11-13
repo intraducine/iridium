@@ -1396,7 +1396,8 @@ struct ContentView: View {
                 RuntimePerformanceDiagnostics.shared.setForeground(false)
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                RuntimePerformanceDiagnostics.shared.record("memory-warning")
+                IridiumArtworkModel.shared.trimImageCache()
+                RuntimePerformanceDiagnostics.shared.memoryWarning()
             }
             .onAppear {
                 RuntimePerformanceDiagnostics.shared.record("app-root-appeared")
