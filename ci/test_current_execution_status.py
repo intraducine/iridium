@@ -27,6 +27,7 @@ class CurrentExecutionStatusTests(unittest.TestCase):
         harness = r'''import Foundation
 import Dispatch
 struct Game { var platform: IridiumPlatform = .psp; var runtimeID = "ppsspp"; var pspJITEnabled = false; var id = UUID() }
+struct Runtime { let id = "ppsspp" }
 enum IridiumCoreContent { static func saveFolders(_ folders: [String: String], game: UUID) {} }
 struct Progress { var phase = "" }
 struct FixtureQueue { func async(_ work: @escaping () -> Void) {} }
@@ -36,6 +37,7 @@ final class IridiumConsoleSession {
     enum Phase { case idle, starting, running, paused, stopping, restartRequired }
     var game: Game? = Game(), lease: Int? = 1
     var phase = Phase.starting
+    var shutdownPending = false
     var pspReady = false, pspJITVerifiedForLaunch = false
     var coreControls = IridiumCoreControls(), coreStateStatus: String?
     var coreOperationPending=false, fastForward=false, rewindEnabled=false
@@ -47,13 +49,18 @@ final class IridiumConsoleSession {
     var phase3CommandIntent: UInt64?
     var pspResolution = 2, pspCPUMode = "Not reported", pspJITStatus = ""
     var pspJITFallbackReason: String?, pspStateStatus: String?, error: String?
+    var dismissalError: String?
     var nativePSPController: Int? = 1, terminalFailure = false, diagnostics = Progress()
     let queue = FixtureQueue()
     func complete(_ owner: Int) {}
     func stop() { phase = .stopping }
     func pause() { phase = .paused }
     func receive(_ kind: UInt32, _ text: String = "") { nativePSPEvent(kind, text: text) }
-    func begin() { phase = .starting; lease = 1; game = Game(); nativePSPController = 1; RESET }
+    func begin() {
+        let game = Game(), runtime = Runtime()
+        phase = .starting; lease = 1; self.game = game; nativePSPController = 1; dismissalError = nil
+        RESET
+    }
     func ended() { CLEANUP; phase = .idle; lease = nil; game = nil }
     func fallback(_ reason: String) { FALLBACK }
 HANDLER
@@ -90,12 +97,15 @@ case "interpreter":
 case "failure":
     session.receive(8, "JIT"); session.receive(4)
     session.receive(2, "Launch failed")
+    precondition(session.error == nil && session.dismissalError == "Launch failed")
     precondition(session.executionStatus.mode == "Unknown")
     session.begin(); session.receive(8, "JIT"); session.receive(4); session.receive(1)
     precondition(session.executionStatus.mode == "Not running") // Native close precedes queue cleanup.
     session.ended()
     precondition(session.executionStatus == .notRunning)
-    session.begin(); session.receive(8, "JIT"); session.receive(9, "Cleanup incomplete")
+    session.begin(); session.receive(8, "JIT"); session.shutdownPending = true
+    session.receive(9, "Cleanup incomplete")
+    precondition(!session.shutdownPending && session.phase == .restartRequired)
     precondition(session.executionStatus.mode == "Unknown")
 case "phase3":
     for (platform, runtime) in [(IridiumPlatform.gameCube, "dolphin"), (.nintendo3DS, "azahar"), (.playStation2, "play"), (.dreamcast, "flycast")] {

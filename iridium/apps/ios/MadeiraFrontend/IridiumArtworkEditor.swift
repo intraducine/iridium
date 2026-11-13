@@ -111,7 +111,8 @@ struct IridiumArtworkEditor: View {
                     })).id("automatic")
                     if let match = item.match {
                         LabeledContent("Matched game", value: match.title)
-                        Text(match.source == "steam" ? "Source: Steam public catalog" : "Source: Libretro thumbnails")
+                        Text("Source: " + (match.source == "steam" ? "Steam public catalog" :
+                            match.source == "nlib" ? "Nlib" : "Libretro thumbnails"))
                             .font(.caption).foregroundStyle(.secondary)
                         row("removeMatch", "Remove Match", icon: "xmark.circle") { perform { try artwork.removeMatch(game.id) } }
                     }

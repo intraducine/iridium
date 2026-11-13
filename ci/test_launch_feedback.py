@@ -1,6 +1,7 @@
 """Execute launch admission and setup storage without a runtime or real Keychain."""
 from host_tests import module_cache
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,50 @@ class LaunchFeedbackTests(unittest.TestCase):
             subprocess.run(['swiftc', '-parse-as-library', '-module-cache-path', module_cache('macosx'),
                             str(source), '-o', str(binary)], check=True, timeout=60)
             subprocess.run([str(binary)], check=True, timeout=15)
+
+    def test_game_memory_reserve_stops_before_process_limit(self):
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        self.run_swift(presentation + """
+@main struct Check { static func main() {
+    func stop(_ availableMiB: UInt64?, warning: UInt64? = nil) -> Bool {
+        RuntimeMemorySnapshot(usedBytes: 0, availableBytes: availableMiB.map { $0 << 20 })
+            .shouldStopGame(warningHeadroom: warning.map { $0 << 20 })
+    }
+    precondition(!stop(nil, warning: 1400))
+    precondition(!stop(2048, warning: 2500))
+    precondition(!stop(1153))
+    precondition(!stop(1228, warning: 1228))
+    precondition(!stop(1400, warning: 1500))
+    precondition(stop(1153, warning: 1300))
+    precondition(stop(1024) && stop(72) && stop(0))
+}}""")
+
+    def test_delayed_memory_warning_cannot_finish_a_new_session_watch(self):
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        self.run_swift(presentation + """
+@main struct Check { static func main() {
+    var watch = RuntimeMemoryWarningWatch()
+    let first = watch.begin()!
+    precondition(watch.begin() == nil)
+    watch.reset()
+    let second = watch.begin()!
+    precondition(!watch.finish(first))
+    precondition(watch.begin() == nil)
+    precondition(watch.finish(second))
+    precondition(watch.begin() != nil)
+}}""")
+
+    def test_embedded_switch_trims_graphics_before_the_app_memory_stop(self):
+        patch = (ROOT / 'ci/engine-integrations/melonx-storage.patch').read_text()
+        presentation = (IOS / 'Iridium/RuntimeLaunchPresentation.swift').read_text()
+        stop = int(re.search(r'availableBytes <= (\d+) << 20 &&', presentation)[1])
+        trim = int(re.search(r'EmbeddedGpuTrimReserveBytes = (\d+)UL', patch)[1])
+        critical = int(re.search(r'ReportPressure\(headroom <= (\d+)UL', patch)[1])
+        self.assertGreater(trim, critical)
+        self.assertGreater(critical, stop)
+        self.assertIn('Device.Gpu.HostMemoryTrimThresholdBytes = Library.EmbeddedGpuTrimReserveBytes;', patch)
+        self.assertIn('if (available >= HostMemoryTrimThresholdBytes)', patch)
+        self.assertIn('= ComfortableHeadroomBytes;', patch)
 
     def test_controls_overlay_disappears_between_library_sessions(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
@@ -57,6 +102,11 @@ class LaunchFeedbackTests(unittest.TestCase):
         prepare = model[model.index('    func prepare(_ entry:'):model.index('    /// A Steam game\'s saves')]
         self.run_swift('''import Foundation
 struct LibraryEntry { let id = UUID() }
+@MainActor final class RuntimePerformanceDiagnostics {
+ static let shared = RuntimePerformanceDiagnostics()
+ var phases: [String] = []
+ func record(_ phase: String) { phases.append(phase) }
+}
 @MainActor enum TouchControlsHost { static var attachments = 0; static func attach() { attachments += 1 } }
 @MainActor final class LibraryModel {
  var preparationID = UUID()
@@ -80,6 +130,7 @@ struct LibraryEntry { let id = UUID() }
  @MainActor static func main() async throws {
   let host = Host(), entry = LibraryEntry()
   host.play(entry); host.play(entry)
+  precondition(RuntimePerformanceDiagnostics.shared.phases == ["windows-play"])
   precondition(host.library.preparing?.id == entry.id && host.launches == 0 && TouchControlsHost.attachments == 1)
   let deadline = Date().addingTimeInterval(3)
   while host.launches == 0 && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
@@ -107,6 +158,28 @@ struct LibraryEntry { let id = UUID() }
  }
 }
 ''')
+
+    def test_jit_preparation_uses_the_pending_library_launch(self):
+        source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()
+        tail = source.split('jitCoordinator.prepareOfflineMemory(completion: completion)', 1)
+        start = tail[0].rindex('        if ')
+        selection = source[start:source.index('    /// Start a waiting game', start)]
+        self.run_swift('''import Foundation
+struct Library { var launchAfterJIT: (() -> Void)? }
+final class Coordinator {
+    var prepared = [String]()
+    func prepareOfflineMemory(completion: () -> Void) { prepared.append("both") }
+    func prepareWindowsMemory(completion: () -> Void) { prepared.append("windows") }
+}
+func prepare(library: Library, jitCoordinator: Coordinator) {
+    let completion = {}
+''' + selection + '''
+@main struct Check { static func main() {
+    let coordinator = Coordinator()
+    prepare(library: Library(), jitCoordinator: coordinator)
+    prepare(library: Library(launchAfterJIT: {}), jitCoordinator: coordinator)
+    precondition(coordinator.prepared == ["both", "windows"])
+}}''')
 
     def test_failed_jit_closes_only_its_own_loading_screen(self):
         source = (IOS / 'App/Adapters/Madeira/ContentView.swift').read_text()

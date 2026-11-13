@@ -106,49 +106,12 @@ enum StikJITHelper {
         return timer
     }
 
-    /// Allocate a JIT memory pool via BRK #0xf00d, then detach the debugger.
-    /// Call this after CS_DEBUGGED is confirmed.
-    /// Returns the allocated RX base address and RW mapping, or nil on failure.
-    static func allocateAndDetach(poolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
-        guard let result = allocatePool(poolSize: poolSize) else { return nil }
-        // Don't detach yet — Wine needs the debugger to prepare PE DLL code pages.
-        // Detach will happen later via detachDebugger().
-        return result
-    }
-
     /// Why the last allocatePool() returned nil, in words for the person playing
     /// (the library shows it); nil after a success.
     private(set) static var poolFailure: String?
     static let noDebuggerMessage = "JIT is switched on, but StikDebug is not attached to Madeira, so the JIT memory cannot "
         + "be set up. This happens when JIT is enabled from StikDebug's own app list. Tap Enable JIT: StikDebug then "
         + "reopens Madeira with Madeira's script, ready to play."
-
-    /// This app run's pool exists. The debugger detaches right after the pool is
-    /// made, by design, so from then on "no debugger attached" is the normal state.
-    private(set) static var poolTaken = false
-
-    /// madeira-bcd split pool (`pool-split = 1`): the pool offsets [off, end) that
-    /// lie between its two debugger regions (the main thread's stack and our
-    /// PROT_NONE placeholders). ContentView exports it as WINE_IOS_JIT_HOLE; ntdll
-    /// never hands it out. nil for a pool of one region.
-    private(set) static var poolHole: (off: Int, end: Int)?
-
-    /// madeira-bcd pool-mid (`pool-mid = 1` with pool-split; off by default, so GTA's
-    /// pool is untouched): a free run of 64MB or more between the split pool's two regions, taken
-    /// as a third debugger region M in the same span. RDR2 on build 470: a 71MB
-    /// mapping sat in the band at image load, the pool came out as 285 + 319MB around
-    /// a 291MB hole holding 213MB of free space, and the image copies ran it dry
-    /// (d3dcompiler_47.dll, ERR_GFX_INIT). With M, poolHole is the part below M and
-    /// poolHole2 the part above it (the stack); ContentView exports it as
-    /// WINE_IOS_JIT_HOLE2. nil without M.
-    private(set) static var poolHole2: (off: Int, end: Int)?
-    private static var poolMid: (base: vm_address_t, size: vm_address_t)?
-
-    /// madeira-bcd pool-low (`pool-low = 1`): region C, a third debugger region below
-    /// the executable window whose RW alias sits at the pool's RX->RW distance. It is
-    /// not part of the pool span; ntdll carves FEX's code buffers from it first.
-    /// ContentView exports it as WINE_IOS_JIT_TAIL_REGION. nil without it.
-    private(set) static var poolLow: (rx: Int, size: Int)?
 
     /// madeira-bcd Social Club layout 2 (`env.MADEIRA_SC_PA_POOLS = 2` in the game's
     /// file or madeira.cfg; virtual_ios.c, ios_sc2_boot_holds): the RW alias goes to
@@ -225,7 +188,7 @@ enum StikJITHelper {
     /// polls this every 2 s for the whole app run (and waitForDebugger every 0.5 s).
     static var ready: Bool {
         guard SigningStatus.current.debugged else { return false }
-        return !attachCheck || poolTaken || isDebuggerAttached()
+        return !attachCheck || poolReady || isDebuggerAttached()
     }
 
     /// CS_DEBUGGED is set but nothing can answer a pool request: JIT has to be
@@ -288,12 +251,34 @@ enum StikJITHelper {
         return (mb: mb, exe: found.exe)
     }
 
-    /// Allocate a JIT memory pool via BRK #0xf00d WITHOUT detaching the debugger.
-    /// The debugger stays attached so Wine can use BRK to prepare PE code pages.
+    struct PreparedPool {
+        let rx: UnsafeMutableRawPointer
+        let rw: UnsafeMutableRawPointer
+        let firstRegionBytes: Int
+        let additionalRegions: [Range<Int>]
+        let low: (rx: Int, size: Int)?
+
+        var size: Int { additionalRegions.last?.upperBound ?? firstRegionBytes }
+
+        var holes: [Range<Int>] {
+            let precedingEnds = [firstRegionBytes] + additionalRegions.map(\.upperBound)
+            return zip(precedingEnds, additionalRegions).compactMap { end, next in
+                end < next.lowerBound ? end..<next.lowerBound : nil
+            }
+        }
+
+        var executableOffsets: [Int] {
+            var offsets = [0] + additionalRegions.map(\.lowerBound)
+            if let low { offsets.append(low.rx - Int(bitPattern: rx)) }
+            return offsets
+        }
+    }
+
     private static let poolLock = NSLock()
-    private static var cachedPool: (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)?
+    private static var cachedPool: PreparedPool?
+    private static var poolVerified = false
     private static var poolPreparing = false
-    static func allocatePool(poolSize requestedPoolSize: Int = 128 * 1024 * 1024) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+    static func allocatePool(poolSize requestedPoolSize: Int = 128 * 1024 * 1024) -> PreparedPool? {
         poolLock.lock()
         if let cachedPool { poolLock.unlock(); return cachedPool }
         guard !poolPreparing else { poolLock.unlock(); return nil }
@@ -306,7 +291,21 @@ enum StikJITHelper {
         poolLock.lock(); defer { poolLock.unlock() }
         return cachedPool != nil
     }
-    private static func createPool(poolSize requestedPoolSize: Int) -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+    static var poolExecutionVerified: Bool {
+        poolLock.lock(); defer { poolLock.unlock() }
+        return poolVerified
+    }
+    /// Called before the Windows host can take ownership of the prepared pool.
+    static func verifyPreparedPool() -> Bool {
+        poolLock.lock(); defer { poolLock.unlock() }
+        guard let cachedPool else { return false }
+        if poolVerified { return true }
+        poolVerified = cachedPool.executableOffsets.allSatisfy {
+            ir_jit_verify_aliases(cachedPool.rx + $0, cachedPool.rw + $0)
+        }
+        return poolVerified
+    }
+    private static func createPool(poolSize requestedPoolSize: Int) -> PreparedPool? {
         var poolSize = requestedPoolSize      // ml1036: may shrink to fit, see the hole census below
         poolFailure = nil
         LogStore.shared.log("Allocating \(poolSize / 1024 / 1024)MB JIT pool via debugger...")
@@ -790,13 +789,13 @@ enum StikJITHelper {
         // madeira-bcd pool-pair: region A must sit at the run chosen by the census and
         // region B must be taken now. Otherwise fall back to the single-region pool the
         // census would have made (pairSingle), as if pool-pair were off.
-        poolMid = nil   // pool-mid: set only by takeSecondRegion (here for pool-pair, or below)
+        var poolMid: (base: vm_address_t, size: vm_address_t)?
         var pairSecond: (base: vm_address_t, size: vm_address_t)? = nil
         if let pa = pairA, let p = rxPtrOpt {
             let got = vm_address_t(bitPattern: p)
             if got == pa.base {
                 pairSecond = takeSecondRegion(above: got + vm_address_t(poolSize), want: requestedPoolSize - poolSize, pageFit: pageFit,
-                                              exeWindow: (exeWinBase, exeWinSize))
+                                              exeWindow: (exeWinBase, exeWinSize), middle: &poolMid)
             }
             if let second = pairSecond {
                 let midNote = poolMid.map { String(format: ", region M 0x%lx+%luMB (pool-mid)", Int($0.base), Int($0.size >> 20)) } ?? ""
@@ -999,7 +998,6 @@ enum StikJITHelper {
         // (WINE_IOS_JIT_TAIL_REGION) and the whole pool span is left to the PE image
         // copies. `pool-low-margin` MB (128 by default) of the run stay free for the
         // children's relocatable main exes. Costs C's size in footprint, like region B.
-        poolLow = nil
         let lowValue = (MadeiraConfig.gameValue("pool-low") ?? MadeiraConfig.get("pool-low") ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var lowRegion: (base: vm_address_t, size: vm_address_t)? = nil
@@ -1014,7 +1012,6 @@ enum StikJITHelper {
                                 level: .error)
             lowRegion = nil
         }
-        // The pool and C are mapped: say so and keep C for ContentView.
         func lowReady(_ rwBase: vm_address_t, _ low: (base: vm_address_t, size: vm_address_t), _ rw: vm_address_t) {
             let exemptC = jit_make_region_no_footprint(UnsafeMutableRawPointer(bitPattern: rwBase)!, Int(low.size),
                                                        "pool-RW-alias-low")
@@ -1024,7 +1021,6 @@ enum StikJITHelper {
                 Int(low.base), Int(low.base + low.size), Int(low.size >> 20), Int(rwBase), Int(rwBase + low.size),
                 Int(rw) - Int(rxAddrV), Int(rwBase), exemptC ? "applied" : "REFUSED"),
                 level: exemptC ? .success : .error)
-            StikJITHelper.poolLow = (rx: Int(low.base), size: Int(low.size))
         }
 
         // madeira-bcd SPLIT POOL: `pool-split = 1` in the game's own file or in
@@ -1046,13 +1042,11 @@ enum StikJITHelper {
         // Costs the second region's size in footprint (debugger-blessed pages are
         // dirty from birth) -- the total stays within the requested pool size.
         // (splitValue is read before the hole census, which uses it for pool-pair.)
-        poolHole = nil
-        poolHole2 = nil
         if ["1", "on", "true", "yes"].contains(splitValue) {
             if poolSize >= requestedPoolSize {
                 LogStore.shared.log("[pool-split] the pool got its full \(poolSize >> 20)MB in one region — no split needed")
             } else if let second = pairSecond ?? takeSecondRegion(above: rxAddrV + vm_address_t(poolSize), want: requestedPoolSize - poolSize, pageFit: pageFit,
-                                                                  exeWindow: (exeWinBase, exeWinSize)) {
+                                                                  exeWindow: (exeWinBase, exeWinSize), middle: &poolMid) {
                 if pageFit {
                     LogStore.shared.log("[pool-split] page-fit A=\(poolSize >> 10)KB B=\(second.size >> 10)KB usable=\((vm_address_t(poolSize) + second.size + (poolMid?.size ?? 0)) >> 10)KB budget=\(requestedPoolSize >> 10)KB; native mappings retained")
                 }
@@ -1075,7 +1069,9 @@ enum StikJITHelper {
                         let exemptB = jit_make_region_no_footprint(rwPtr + holeEnd, Int(second.size), "pool-RW-alias-2")
                         let exemptM = poolMid.map { jit_make_region_no_footprint(rwPtr + Int($0.base - rxAddrV), Int($0.size), "pool-RW-alias-mid") } ?? true
                         LogStore.shared.log("[no-footprint] pool applied=\(exemptA && exemptB && exemptM)", level: exemptA && exemptB && exemptM ? .success : .error)
-                        splitHoles(aSize: poolSize, bOff: holeEnd, rxBase: rxAddrV)
+                        let pool = PreparedPool(rx: rxPtr, rw: rwPtr, firstRegionBytes: poolSize,
+                                                additionalRegions: splitRegions(rxBase: rxAddrV, middle: poolMid, second: second),
+                                                low: (Int(low.base), Int(low.size)))
                         if poolMid == nil {
                         LogStore.shared.log(String(format: "[pool-split] JIT pool = RX [0x%lx,0x%lx) %luMB + [0x%lx,0x%lx) %luMB as one "
                             + "%luMB span; pool offsets [0x%lx,0x%lx) (%luMB, the main thread's stack) are never handed out",
@@ -1084,12 +1080,11 @@ enum StikJITHelper {
                             (poolSize + Int(second.size)) >> 20, poolSize, holeEnd, (holeEnd - poolSize) >> 20),
                             level: .success)
                         } else {
-                            LogStore.shared.log(midLayoutText(rxA: rxAddrV, sizeA: poolSize, second: second), level: .success)
+                            LogStore.shared.log(midLayoutText(rxA: rxAddrV, sizeA: poolSize, second: second, middle: poolMid, holes: pool.holes), level: .success)
                         }
                         lowReady(rwLow, low, rw)
                         LogStore.shared.log("JIT pool ready (debugger still attached).", level: .success)
-                        poolTaken = true
-                        return (rx: rxPtr, rw: rwPtr, size: span)
+                        return pool
                     }
                     dropLowRegion("no RW alias for the split pool with region C")
                 }
@@ -1122,7 +1117,9 @@ enum StikJITHelper {
                     let exemptB = jit_make_region_no_footprint(rwPtr + holeEnd, Int(second.size), "pool-RW-alias-2")
                     let exemptM = poolMid.map { jit_make_region_no_footprint(rwPtr + Int($0.base - rxAddrV), Int($0.size), "pool-RW-alias-mid") } ?? true
                     LogStore.shared.log("[no-footprint] pool applied=\(exemptA && exemptB && exemptM)", level: exemptA && exemptB && exemptM ? .success : .error)
-                    splitHoles(aSize: poolSize, bOff: holeEnd, rxBase: rxAddrV)
+                    let pool = PreparedPool(rx: rxPtr, rw: rwPtr, firstRegionBytes: poolSize,
+                                            additionalRegions: splitRegions(rxBase: rxAddrV, middle: poolMid, second: second),
+                                            low: nil)
                     if poolMid == nil {
                     LogStore.shared.log(String(format: "[pool-split] JIT pool = RX [0x%lx,0x%lx) %luMB + [0x%lx,0x%lx) %luMB as one "
                         + "%luMB span; pool offsets [0x%lx,0x%lx) (%luMB, the main thread's stack) are never handed out",
@@ -1131,11 +1128,10 @@ enum StikJITHelper {
                         (poolSize + Int(second.size)) >> 20, poolSize, holeEnd, (holeEnd - poolSize) >> 20),
                         level: .success)
                     } else {
-                        LogStore.shared.log(midLayoutText(rxA: rxAddrV, sizeA: poolSize, second: second), level: .success)
+                        LogStore.shared.log(midLayoutText(rxA: rxAddrV, sizeA: poolSize, second: second, middle: poolMid, holes: pool.holes), level: .success)
                     }
                     LogStore.shared.log("JIT pool ready (debugger still attached).", level: .success)
-                    poolTaken = true
-                    return (rx: rxPtr, rw: rwPtr, size: span)
+                    return pool
                 }
                 let dkr = vm_deallocate(mach_task_self_, second.base, vm_size_t(second.size))
                 LogStore.shared.log("[pool-split] no RW alias for the split pool — second region released (kr=\(dkr)); "
@@ -1160,8 +1156,7 @@ enum StikJITHelper {
                 LogStore.shared.log("[no-footprint] pool applied=\(exempt)", level: exempt ? .success : .error)
                 lowReady(rwLow, low, rw)
                 LogStore.shared.log("JIT pool ready (debugger still attached).", level: .success)
-                poolTaken = true
-                return (rx: rxPtr, rw: rwPtr, size: poolSize)
+                return PreparedPool(rx: rxPtr, rw: rwPtr, firstRegionBytes: poolSize, additionalRegions: [], low: (Int(low.base), Int(low.size)))
             }
             dropLowRegion("no RW alias for the pool with region C")
         }
@@ -1284,9 +1279,8 @@ enum StikJITHelper {
         LogStore.shared.log("[no-footprint] pool applied=\(exempt)", level: exempt ? .success : .error)
 
         LogStore.shared.log("JIT pool ready (debugger still attached).", level: .success)
-        poolTaken = true
 
-        return (rx: rxPtr, rw: rwPtr, size: poolSize)
+        return PreparedPool(rx: rxPtr, rw: rwPtr, firstRegionBytes: poolSize, additionalRegions: [], low: nil)
     }
 
     /// Default requests retain the 16MB rounding. The page-fit opt-in never
@@ -1328,40 +1322,33 @@ enum StikJITHelper {
         return runs
     }
 
-    /// madeira-bcd split pool: the pool offsets ntdll never hands out, from region A's
-    /// size and region B's offset. One hole [A's end, B); with pool-mid's region M the
-    /// part below M becomes poolHole and the part above it poolHole2 (an empty part is
-    /// no hole: then the other one is poolHole alone).
-    private static func splitHoles(aSize: Int, bOff: Int, rxBase: vm_address_t) {
-        poolHole2 = nil
-        guard let mid = poolMid else {
-            poolHole = bOff > aSize ? (off: aSize, end: bOff) : nil
-            return
+    private static func splitRegions(rxBase: vm_address_t, middle: (base: vm_address_t, size: vm_address_t)?,
+                                     second: (base: vm_address_t, size: vm_address_t)) -> [Range<Int>] {
+        [middle, second].compactMap { region in
+            guard let region else { return nil }
+            let start = Int(region.base - rxBase)
+            return start..<(start + Int(region.size))
         }
-        let mOff = Int(mid.base - rxBase)
-        let mEnd = mOff + Int(mid.size)
-        let below: (off: Int, end: Int)? = mOff > aSize ? (off: aSize, end: mOff) : nil
-        let above: (off: Int, end: Int)? = bOff > mEnd ? (off: mEnd, end: bOff) : nil
-        poolHole = below ?? above
-        poolHole2 = below == nil ? nil : above
     }
 
     /// madeira-bcd pool-mid: the "[pool-split] JIT pool = ..." line for three regions.
     private static func midLayoutText(rxA: vm_address_t, sizeA: Int,
-                                      second: (base: vm_address_t, size: vm_address_t)) -> String {
+                                      second: (base: vm_address_t, size: vm_address_t),
+                                      middle: (base: vm_address_t, size: vm_address_t)?,
+                                      holes: [Range<Int>]) -> String {
         var text = String(format: "[pool-split] JIT pool = RX [0x%lx,0x%lx) %luMB", Int(rxA), Int(rxA) + sizeA, sizeA >> 20)
         var total = sizeA + Int(second.size)
-        if let mid = poolMid {
+        if let mid = middle {
             text += String(format: " + [0x%lx,0x%lx) %luMB (pool-mid)", Int(mid.base), Int(mid.base + mid.size), Int(mid.size >> 20))
             total += Int(mid.size)
         }
         text += String(format: " + [0x%lx,0x%lx) %luMB as one %luMB span; pool offsets", Int(second.base),
                        Int(second.base + second.size), Int(second.size >> 20), total >> 20)
-        if let h = poolHole {
-            text += String(format: " [0x%lx,0x%lx) (%luMB, the mapping below the third region)", h.off, h.end, (h.end - h.off) >> 20)
+        if let h = holes.first {
+            text += String(format: " [0x%lx,0x%lx) (%luMB, the mapping below the third region)", h.lowerBound, h.upperBound, (h.upperBound - h.lowerBound) >> 20)
         }
-        if let h = poolHole2 {
-            text += String(format: " and [0x%lx,0x%lx) (%luMB, the main thread's stack)", h.off, h.end, (h.end - h.off) >> 20)
+        if let h = holes.dropFirst().first {
+            text += String(format: " and [0x%lx,0x%lx) (%luMB, the main thread's stack)", h.lowerBound, h.upperBound, (h.upperBound - h.lowerBound) >> 20)
         }
         return text + " are never handed out"
     }
@@ -1376,7 +1363,8 @@ enum StikJITHelper {
     /// nothing else lands inside the pool's span. Returns nil, holding nothing,
     /// when no run qualifies or the region landed anywhere else.
     private static func takeSecondRegion(above aEnd: vm_address_t, want: Int, pageFit: Bool,
-                                         exeWindow: (base: vm_address_t, size: vm_address_t))
+                                         exeWindow: (base: vm_address_t, size: vm_address_t),
+                                         middle: inout (base: vm_address_t, size: vm_address_t)?)
         -> (base: vm_address_t, size: vm_address_t)? {
         guard want > 0 else { return nil }
         let ceiling: vm_address_t = 0x180000000           // SHARED_REGION_BASE_ARM64
@@ -1419,9 +1407,8 @@ enum StikJITHelper {
             return nil
         }
         // madeira-bcd pool-mid: the largest free run between the regions, when the
-        // budget leaves 64MB for it, as a third debugger region M (see poolHole2).
+        // budget leaves 64MB for it, as a third debugger region M.
         // Placed first-fit like B, every lower run that could take it plugged.
-        poolMid = nil
         let midText = (MadeiraConfig.gameValue("pool-mid") ?? MadeiraConfig.get("pool-mid") ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let midBudget = want - Int(size)
@@ -1441,7 +1428,7 @@ enum StikJITHelper {
                 if let mp = mgot, mp != UnsafeMutableRawPointer(bitPattern: 0) {
                     let m = vm_address_t(bitPattern: mp)
                     if m >= run.base && m + msize <= run.base + run.size {
-                        poolMid = (base: m, size: msize)
+                        middle = (base: m, size: msize)
                         LogStore.shared.log(String(format: "[pool-split] pool-mid: third debugger region 0x%lx+%luMB in the free run "
                             + "0x%lx+%luMB between the regions (pool-mid = 1)",
                             Int(m), Int(msize >> 20), Int(run.base), Int(run.size >> 20)), level: .success)

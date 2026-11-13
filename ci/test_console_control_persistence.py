@@ -16,7 +16,7 @@ SOURCE = ROOT / 'ci/fixtures/madeira-build43/app/Madeira/ContentView.swift'
 
 
 def production_fragment():
-    spec = importlib.util.spec_from_file_location('console_persistence_frontend', ROOT / 'ci/madeira-frontend.py')
+    spec = importlib.util.spec_from_file_location('console_persistence_frontend', ROOT / 'ci/madeira_app.py')
     frontend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(frontend)
     generated = frontend.overlay('ContentView.swift', SOURCE.read_text())

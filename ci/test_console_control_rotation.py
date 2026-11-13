@@ -13,7 +13,7 @@ CONTROLS = ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleControls.swift
 
 
 def production_geometry():
-    spec = importlib.util.spec_from_file_location('opacity_rotation_frontend', ROOT / 'ci/madeira-frontend.py')
+    spec = importlib.util.spec_from_file_location('opacity_rotation_frontend', ROOT / 'ci/madeira_app.py')
     frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
     upstream = frontend.overlay('ContentView.swift', UPSTREAM.read_text())
     # Use the actual normalized model and action-specific dimensions rather
@@ -56,6 +56,13 @@ for platform in [IridiumPlatform.dreamcast, .arcade] {
 }
 precondition(!actions(.gameCube).contains("View") && actions(.gameCube).contains("RS"))
 precondition(actions(.psp).contains("LS") && !actions(.psp).contains("RS"))
+precondition(actions(.nintendoSwitch) == ["A", "B", "X", "Y", "DPad", "LS", "RS",
+                                       "L3", "R3", "LB", "RB", "LT", "RT", "Menu", "View"])
+let switchProfile = IridiumPlayerProfile.consoleProfile("nintendoSwitch")
+precondition(switchProfile.aspectRatio == 16.0 / 9.0)
+precondition(IridiumConsoleControlMapping.label("LT", profile: switchProfile) == "ZL")
+precondition(IridiumConsoleControlMapping.label("View", profile: switchProfile) == "−")
+
 func frame(_ control: TouchControl, screen: CGSize, scale: Double) -> CGRect {
     let size = control.action.controlSize(diameter: 64 * CGFloat(control.scale * scale))
     return CGRect(x: CGFloat(control.nx) * screen.width - size.width / 2,
@@ -140,7 +147,7 @@ class ConsoleControlRotationTests(unittest.TestCase):
         self.assertIn('TouchControlsOverlay(iridiumEmbedded: true).id(inputGeneration)', source)
 
     def test_projection_and_editor_hit_surface_use_shipping_canvas(self):
-        spec = importlib.util.spec_from_file_location('rotation_frontend', ROOT / 'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('rotation_frontend', ROOT / 'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(frontend)
         generated = frontend.overlay('ContentView.swift', UPSTREAM.read_text())

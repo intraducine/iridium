@@ -28,6 +28,7 @@ class JITSettingsActionTests(unittest.TestCase):
 import Foundation
 METHODS
 enum JITPairingFileStore { static var isImported = false }
+enum MadeiraBuiltInJIT { static var isAvailable = true }
 final class JITCoordinator {
     static let shared = JITCoordinator()
     var method = JITMethod.automatic
@@ -40,7 +41,8 @@ final class JITCoordinator {
     var resolvedMethod: JITMethod {
         method.resolved(builtInAvailable: builtInAvailable)
     }
-    func prepareConsoleMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
+    let offlineMemoryReady = false
+    func prepareOfflineMemory(completion: (Result<Void, Error>) -> Void) { enables += 1; completion(.success(())) }
 }
 final class OnDevicePairing {
     static let shared = OnDevicePairing()
@@ -72,11 +74,12 @@ for method in JITMethod.allCases {
                 let settings = SettingsFixture()
                 settings.coordinator.method = method
                 settings.coordinator.builtInAvailable = supported
+                MadeiraBuiltInJIT.isAvailable = supported
                 settings.coordinator.busy = busy
                 settings.coordinator.pairingImported = !imported
                 JITPairingFileStore.isImported = imported
                 settings.enableJIT()
-                let needsSetup = !supported || method == .stikDebug || !imported
+                let needsSetup = !supported || !imported
                 precondition(settings.showingJITSetup == (!busy && needsSetup))
                 precondition(settings.coordinator.enables == (!busy && !needsSetup ? 1 : 0))
                 precondition(!settings.coordinator.showSetup)

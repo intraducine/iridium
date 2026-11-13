@@ -284,9 +284,6 @@ overlap; quit uploads can still run while a game is open.
 
 ## Shared JIT and controls
 
-JIT setup uses StikDebug when the built-in helper is unavailable. In-app pairing
-and the LocalDevVPN Shortcut appear on iOS 27 and later.
-
 The app owns a prepared executable-memory pool through `IRJITMemoryAPI` version 1.
 Shared allocations use the process address limits, not the older PSP helper
 protocol's 64 GiB wire limit. Legacy helper validation remains unchanged.
@@ -547,8 +544,62 @@ and checks every response. It drains queued responses after a rejected page and
 stops issuing commands after a transport error. Older external helpers retain
 the checked per-page fallback; Iridium never calls their unchecked batch bridge.
 
-Windows launches prepare only Madeira's adapter-owned arena. Console JIT launches
-prepare only the shared console arena. Both arenas remain reusable for the app's
-lifetime under the existing owned-helper and cleanup rules. Runtime pins and the
-version 1 runtime memory interface are unchanged. App preparation checks a separate
-helper source/binary receipt, so a runtime update cannot reuse a stale transport.
+Enable JIT prepares and verifies shared Windows and console executable memory in one built-in helper session. The verified memory stays available until Iridium closes. The build checks a separate helper source and binary receipt.
+
+## Iridium 0.3.0 review version
+
+The owned app project, maintained project generator, and retained XcodeGen
+configuration use 0.3.0 for the app and helpers. CI still supplies a unique build
+number. This changes Iridium's app version, not Madeira's 0.2.0 engine pin or the
+other modular runtime pins. The current user, storage, JIT, build, runtime, and
+validation guides describe the integrated implementation. Historical release
+evidence retains its original versions. Menu sound effects are not packaged in
+this integration; adding them remains a separate draft PR.
+
+Visible help uses shorter instructions for controls, imports, INI files, store
+sign-in, achievements, memory, and Wine Mono. The shared JIT page and its button
+both use JIT Setup. Save replacement, file retention, and restart warnings remain.
+
+## Shared executable memory
+
+Iridium prepares a single budget for Windows and console JIT code. Madeira's
+address layout stays in place. Console views map the same pages and the helper
+prepares only the difference between the Windows layout and the shared budget.
+Wine claims pages before using them and returns translation buffers after its
+thread checks. Image pages and runtime code that can still run stay reserved.
+
+## MeloNX core bring-up
+
+The local [core builder](ci/build-melonx-core.py) pins
+[MeloNX 2.7](https://starforgejo.dev/projects/MeloNX/releases/tag/2.7) at
+`13700519f3abc4e6d7ed8a065b118b2cc59bcd67`. It uses the upstream registry that
+still serves LibHac 0.21.0-alpha.129. MeloNX uses Iridium's shared JIT arena,
+its threaded renderer, and an aspect-fit Metal surface capped at 720p.
+The adapter drains GPU work and releases per-game input before returning to the
+library. It preserves the current fault handlers, including those of an idle
+Windows host. A clean stop returns the game's translation cache and retains
+only the fault handler's executable pages. The iOS
+integration uses Darwin's signal structure and flags for handler registration.
+Iridium clears cached artwork on iOS memory warnings. An active console can
+release runtime caches before Iridium rechecks its memory. MeloNX uses its
+existing GPU trim hook. SameBoy clears rewind history. A warning allows up to
+three seconds for reclamation. Critical headroom still stops the game immediately.
+The warning recheck also stops the game when headroom remains low and has fallen
+by at least 128 MiB.
+A slow stop keeps the launch slot until it finishes. An unverified stop needs a
+restart. When Wine starts after a console game, it reserves its V8 address range
+only if the range is free.
+The library imports NSP, XCI, NCA, NRO, NSO and PFS0 files. MeloNX keeps its
+system data and saves in `IridiumRuntimes/System/melonx`.
+
+The local device build requires `IRIDIUM_PHASE3=1 IRIDIUM_MELONX=1` and the
+audited component from the core builder. For a downloadable hosted review IPA,
+dispatch `python3 ci/dispatch-build.py --melonx`. The default build omits MeloNX.
+
+Switch keys and firmware live in Settings → MeloNX → Keys & Firmware. The
+shared Import folder accepts prod.keys, title.keys and firmware ZIPs. Failed
+imports keep their input. Switch artwork looks up the title ID with Nlib and
+uses the Atlas Switch catalog for exact-name matching when no ID is available.
+Only artwork metadata and images are fetched.
+Review builds carry MeloNX's upstream notices. See [Licensing](LICENSING.md)
+for the source and notice requirements for distribution.

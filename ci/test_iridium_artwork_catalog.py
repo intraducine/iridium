@@ -101,6 +101,20 @@ CHECKS = r'''
         }
         precondition(IridiumArtworkCatalog.linkedImage(Data("target.png".utf8),
             source: URL(string: "https://api.github.com/fixture.png")!) == nil)
+        let switchID = "0100000000010000"
+        let switchFile = "Super Mario Odyssey [0100000000010000][v0].nsp"
+        precondition(IridiumArtworkMatcher.switchTitleID(switchFile) == switchID)
+        precondition(IridiumArtworkMatcher.switchTitleID("bad 0100000000010800.nsp") == nil)
+        precondition(IridiumArtworkMatcher.switchTitleID("ambiguous 0100000000010000 0100000011D90000.nsp") == nil)
+        let switchNames = Data(#"{"schema":1,"platform":"switch","games":{"0100000000010000":"Super Mario Odyssey™","../escape":"Invalid"}}"#.utf8)
+        let names = try IridiumArtworkCatalog.decodeSwitchIndex(switchNames)
+        precondition(names.count == 1 && names[0].id == switchID)
+        precondition(IridiumArtworkMatcher.exactMatch(switchFile, platform: .nintendoSwitch, candidates: names)?.id == switchID)
+        let switchGame = Data(#"{"id":"0100000000010000","name":"Super Mario Odyssey","icon":"http://invalid.example/path"}"#.utf8)
+        let safeSwitch = try IridiumArtworkCatalog.decodeSwitchGame(switchGame, expectedID: switchID)
+        precondition(safeSwitch?.coverURL?.absoluteString == "https://api.nlib.cc/nx/0100000000010000/icon" && safeSwitch?.backgroundURL == nil)
+        let mismatch = try IridiumArtworkCatalog.decodeSwitchGame(switchGame, expectedID: "0100000011D90000")
+        precondition(mismatch == nil)
         precondition(URLProtocol.registerClass(ArtworkProtocol.self))
         let image = try await IridiumArtworkCatalog.data(source, limit: 100)
         precondition(image == Data("image fixture".utf8))

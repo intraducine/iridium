@@ -38,7 +38,7 @@ class EnginePinsTests(unittest.TestCase):
                 (Path(entry['path']).name, entry['revision'], entry['releaseTag']))
         for file in ('ppsspp_sources.py', 'ppsspp_native_overlay.py', 'ppsspp_atlas_resources.py', 'build-ppsspp-native.py'):
             self.assertEqual(load('pin_' + file, file).REVISION, engine_pins.get('ppsspp')['revision'])
-        frontend = load('pin_frontend', 'madeira-frontend.py')
+        frontend = load('pin_frontend', 'madeira_app.py')
         self.assertEqual(frontend.REVISION, engine_pins.get('madeira')['revision'])
         self.assertEqual(frontend.PSP_REVISION, engine_pins.get('ppsspp')['revision'])
         boots = load('pin_bootroms', 'sameboy_bootroms.py')

@@ -32,6 +32,14 @@ enum LibraryError: LocalizedError {
     static let shared = IridiumConsoleSession()
     var isActive = false, dolphinMaintenance = false
     var failCIA = true, ciaCalls = 0
+    var dolphinSystemStatus: String?
+    func beginContentMaintenance(importOwner: UUID?) -> Bool {
+        precondition(importOwner.map { IridiumImportCoordinator.shared.ownsContentImport($0) } == true)
+        precondition(IridiumImportCoordinator.shared.blocksLaunch && !dolphinMaintenance)
+        dolphinMaintenance = true
+        return true
+    }
+    func endContentMaintenance() { dolphinMaintenance = false }
     var ciaOwners: [UUID] = [], ciaTargets: [UUID?] = []
     func install3DSCIA(_ source: URL, game: IridiumConsoleGame?, importOwner: UUID?,
                        completion: @escaping @MainActor (Result<Void, Error>) -> Void) {
@@ -39,6 +47,18 @@ enum LibraryError: LocalizedError {
         precondition(IridiumImportCoordinator.shared.blocksLaunch)
         ciaCalls += 1; ciaOwners.append(importOwner!); ciaTargets.append(game?.id)
         completion(failCIA ? .failure(CocoaError(.fileWriteUnknown)) : .success(()))
+    }
+}
+enum IridiumMeloNXSystemFiles {
+    static func importFile(_ file: URL, firmware: Bool, store: IridiumConsoleStore, frameworks: URL?) throws {
+        let system = try store.systemDirectory(runtimeID: "melonx")
+        let keys = system.appendingPathComponent("prod.keys")
+        if firmware, !FileManager.default.fileExists(atPath: keys.path) {
+            throw IridiumRuntimeError.missingSwitchKeys
+        }
+        if firmware && file.lastPathComponent == "Failed.zip" { throw CocoaError(.fileWriteUnknown) }
+        let output = firmware ? system.appendingPathComponent("installed-firmware") : keys
+        try Data(contentsOf: file).write(to: output, options: .atomic)
     }
 }
 @MainActor final class IridiumConsoleLibrary: ObservableObject {
@@ -217,6 +237,17 @@ enum JITPairingSource { case imported }
             try fm.createSymbolicLink(at: storage.drive.appendingPathComponent("escape.exe"), withDestinationURL: privateFile)
             rejects { _ = try LibraryModel.executable("escape.exe") }
             require(IridiumGameStorage.windowsRelative(storage.drive.appendingPathComponent("iridium-games"), drive: storage.drive) == "iridium-games", "Managed root is browsable")
+            let executable = try LibraryModel.executable(path)
+            try fm.removeItem(at: executable)
+            do {
+                _ = try LibraryModel.executable(path)
+                preconditionFailure("Expected a missing game file")
+            } catch IridiumRuntimeError.missingGameFile {}
+            try fm.removeItem(at: executable.deletingLastPathComponent())
+            do {
+                _ = try LibraryModel.executable(path)
+                preconditionFailure("Expected a missing game folder")
+            } catch IridiumRuntimeError.missingGameFolder {}
         case "loose":
             let id = UUID()
             let source = try put("wine/drive_c/standalone.exe", pe())
@@ -489,6 +520,23 @@ enum JITPairingSource { case imported }
             require(c.migrationError != nil, "A conflicting source blocks migration")
             do { try await c.beginCloudTransfer(); preconditionFailure("Cloud ignored a failed migration") } catch { }
             require(!c.syncingCloud, "A failed migration cannot grant Cloud file access")
+        case "switch-system":
+            let key = try put("Import/Z Keys/prod.keys", Data("key fixture".utf8))
+            let success = docs.appendingPathComponent("Import/A Firmware.zip")
+            let failed = docs.appendingPathComponent("Import/Failed.zip")
+            let c = IridiumImportCoordinator.shared
+            c.scan()
+            for _ in 0..<250 {
+                if !c.isWorking { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            require(!c.isWorking && c.imported == 2 && c.lastImportedGameID == nil, "System files use the shared queue")
+            require(!fm.fileExists(atPath: key.path) && !fm.fileExists(atPath: success.path), "Consume successful system files")
+            require(fm.fileExists(atPath: failed.path) && c.failures["Failed.zip"] != nil, "Retain failed firmware")
+            require(!IridiumConsoleSession.shared.dolphinMaintenance, "Release the maintenance lease")
+            require(IridiumRuntimeError.missingSwitchKeys.launchRecovery == .switchSetup &&
+                    IridiumRuntimeError.missingSwitchFirmware.launchRecovery == .switchSetup &&
+                    IridiumRuntimeError.jitRequired.launchRecovery == .jit, "Recovery routes match failures")
         case "bulk", "archive", "pairing", "registration", "idle", "arcade", "picker":
             let model = LibraryModel.shared, c = IridiumImportCoordinator.shared
             if CommandLine.arguments[1] == "picker" {

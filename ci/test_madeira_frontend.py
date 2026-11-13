@@ -5,22 +5,46 @@ import hashlib
 import json
 import importlib.util
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
+import iridium_app_sources
 from unittest.mock import patch
 import madeira_presentation
 import madeira_jit_lifecycle
 import build_source_identity as provenance
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('madeira_frontend', ROOT / 'ci/madeira-frontend.py')
+SPEC = importlib.util.spec_from_file_location('madeira_frontend', ROOT / 'ci/madeira_app.py')
 BUILD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD)
 
 
 class FrontendImportTests(unittest.TestCase):
+    def test_melonx_bundle_requires_matching_license_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = pathlib.Path(directory)
+            app = source / 'Iridium.app'
+            (app / 'licenses').mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'IridiumMeloNXRevision': 'fixture'}))
+            receipt = source / 'component.json'
+            receipt.write_text('{}')
+            component = SimpleNamespace(SOURCE=source, REVISION='fixture', RECEIPT=receipt,
+                                        component_record=dict, packaged_files=tuple)
+            with patch.object(iridium_app_sources, 'melonx_component', return_value=component):
+                for name, path in iridium_app_sources.MELONX_LICENSES.items():
+                    fixture = source / path
+                    fixture.parent.mkdir(parents=True, exist_ok=True)
+                    fixture.write_text(name)
+                    with self.assertRaisesRegex(ValueError, re.escape(name)):
+                        BUILD.check_bundle(app)
+                    (app / 'licenses' / name).write_text(name)
+                with self.assertRaisesRegex(ValueError, 'permission descriptions'):
+                    BUILD.check_bundle(app)
+
     def test_converter_signing_obeys_unsigned_build_setting(self):
         project = plistlib.loads((ROOT / 'iridium/apps/ios/AppProject/Madeira.xcodeproj/project.pbxproj').read_bytes())
         script = next(value['shellScript'] for value in project['objects'].values()
@@ -162,11 +186,11 @@ class FrontendImportTests(unittest.TestCase):
             revisions = {'vendor/Madeira': BUILD.REVISION, **{'vendor/Madeira/' + k: v for k, v in dependencies.items()}}
             record = root / 'SOURCE-REVISIONS.json'
             record.write_text(json.dumps(revisions))
-            with patch.object(BUILD, 'ROOT', root), patch.object(BUILD, 'UPSTREAM', upstream):
-                BUILD.verify_pin()
+            with patch.object(BUILD.compiler, 'ROOT', root), patch.object(BUILD.compiler, 'UPSTREAM', upstream):
+                BUILD.compiler.verify_pin()
                 revisions['vendor/Madeira/FEX'] = 'wrong-pin'
                 record.write_text(json.dumps(revisions))
-                with self.assertRaisesRegex(ValueError, 'FEX'): BUILD.verify_pin()
+                with self.assertRaisesRegex(ValueError, 'FEX'): BUILD.compiler.verify_pin()
 
     def test_packaging_requires_mapped_source_with_matching_checksum(self):
         import hashlib
@@ -448,6 +472,7 @@ class FrontendImportTests(unittest.TestCase):
             self.assertEqual(ordinary_file.read_bytes(), b'preserve file')
 
     def test_i386_reuse_requires_matching_outputs_and_unexpired_inputs(self):
+        compiler = BUILD.compiler
         with tempfile.TemporaryDirectory() as folder:
             upstream = pathlib.Path(folder)
             recipe = upstream / 'build/wine-i386/build.sh'
@@ -458,23 +483,23 @@ class FrontendImportTests(unittest.TestCase):
                 dll = upstream / 'app/Madeira/i386-windows/ntdll.dll'
                 dll.parent.mkdir(parents=True, exist_ok=True)
                 dll.write_bytes(b'built')
-            with patch.object(BUILD, 'UPSTREAM', upstream), patch.object(BUILD, 'verify_pin'), patch.object(BUILD.madeira_components, 'build'), \
-                 patch.object(BUILD, 'compiler_tools', return_value={
+            with patch.object(compiler, 'UPSTREAM', upstream), patch.object(compiler, 'verify_pin'), patch.object(compiler.madeira_components, 'build'), \
+                 patch.object(compiler, 'compiler_tools', return_value={
                      'fixture compiler': {'executable': '/fixture/compiler', 'version': 'fixed version'}}), \
-                 patch.object(BUILD.subprocess, 'check_output', side_effect=lambda args, **kw: '/tool/Metal.xctoolchain/usr/bin/metal\n' if kw.get('text') else b'tool version'), \
-                 patch.object(BUILD.subprocess, 'run', side_effect=build) as run, \
-                 patch.object(BUILD.time, 'time', return_value=100) as now:
-                BUILD.windows()
-                BUILD.windows()
+                 patch.object(compiler.subprocess, 'check_output', side_effect=lambda args, **kw: '/tool/Metal.xctoolchain/usr/bin/metal\n' if kw.get('text') else b'tool version'), \
+                 patch.object(compiler.subprocess, 'run', side_effect=build) as run, \
+                 patch.object(compiler.time, 'time', return_value=100) as now:
+                compiler.windows()
+                compiler.windows()
                 self.assertEqual(run.call_count, 1)
                 (upstream / 'app/Madeira/i386-windows/ntdll.dll').unlink()
-                BUILD.windows()
+                compiler.windows()
                 self.assertEqual(run.call_count, 2)
                 now.return_value = 100 + 15 * 86400
-                BUILD.windows()
+                compiler.windows()
                 self.assertEqual(run.call_count, 3)
                 recipe.write_text(text + '\n# changed recipe\n')
-                BUILD.windows()
+                compiler.windows()
                 self.assertEqual(run.call_count, 4)
 
     def test_presentation_keeps_upstream_runtime_and_save_actions(self):

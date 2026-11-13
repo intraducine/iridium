@@ -24,6 +24,13 @@ packager = load("unsigned_packager", "package-unsigned-ipa.py")
 prerequisites = load("ipa_prerequisites", "check-ipa-prerequisites.py")
 
 class ManualBuildTests(unittest.TestCase):
+    def test_melonx_opt_in_is_local_to_the_app_build_step(self):
+        workflow = (ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
+        steps = dict(re.findall(r'^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)', workflow, re.M | re.S))
+        self.assertEqual([name for name, step in steps.items() if 'IRIDIUM_MELONX' in step],
+                         ['Build without signing'])
+        self.assertIn("IRIDIUM_MELONX: ${{ inputs.melonx && '1' || '0' }}", steps['Build without signing'])
+
     def test_native_and_windows_compile_do_not_nest_fex_compiler_caches(self):
         import os
         import subprocess
@@ -165,7 +172,7 @@ class ManualBuildTests(unittest.TestCase):
         self.assertEqual(re.findall(r'^  ([a-z_]+):', trigger, re.M), ['workflow_dispatch'])
         self.assertNotIn("secrets.", text)
         self.assertNotIn("allowProvisioningUpdates", text)
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira-frontend.py').read_text())
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", (ROOT / 'ci/madeira_app.py').read_text())
         self.assertLess(text.index("ci/check-ipa-prerequisites.py"), text.index("ci/madeira-frontend.py app"))
 
     def test_workflow_always_initializes_builds_and_bundles_console_engines(self):
@@ -200,6 +207,7 @@ class ManualBuildTests(unittest.TestCase):
         gate = steps['Check final binary audit before packaging']
         self.assertIn('if [ "$RELEASE_BUILD" = true ]', gate)
         self.assertIn('--package --test-build', gate)
+        self.assertNotIn('\n        if:', '\n' + steps['Upload sideloading IPA'])
 
     def test_source_checks_and_ipa_select_the_same_xcode_before_tools(self):
         selected = []

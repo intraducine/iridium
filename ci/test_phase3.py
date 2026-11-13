@@ -25,6 +25,95 @@ collector = load('phase3_test_collector', 'collect-madeira-source.py')
 
 class Phase3Tests(unittest.TestCase):
 
+    @unittest.skipUnless(shutil.which('clang++'), 'Clang required for fault-handler ownership checks')
+    def test_melonx_restores_fault_handlers_and_refuses_leaked_allocations(self):
+        source = (ROOT / 'iridium/apps/ios/RuntimeBridge/IRMeloNX.mm').read_text()
+        state = source[source.index('static std::mutex allocationLock;'):source.index('enum : unsigned')]
+        operations = source[source.index('static bool readFaults('):source.index('static bool probe(')]
+        fixture = r'''
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <signal.h>
+#include <thread>
+STATE
+OPERATIONS
+static volatile sig_atomic_t oldSegv, newSegv, newBus;
+static void oldHandler(int, siginfo_t *, void *) { oldSegv = 1; }
+static void windowsHandler(int signal, siginfo_t *, void *) {
+    if (signal == SIGSEGV) newSegv = 1;
+    else newBus = 1;
+}
+static void testHandler(int signal, siginfo_t *info, void *context) { forwardFault(signal, info, context); }
+int main() {
+    struct sigaction baseline[2]{}, current[2]{}, installed[2]{}, idleWindows[2]{};
+    assert(readFaults(baseline));
+    assert(beginFaultScope());
+    // A stop before core initialization has nothing to restore.
+    assert(endFaultScope());
+    for (auto &action : idleWindows) {
+        action.sa_sigaction = oldHandler;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+    }
+    assert(setFaults(idleWindows));
+    assert(beginFaultScope());
+    assert(readFaults(current) && current[0].sa_sigaction == forwardFault);
+    for (auto &action : installed) {
+        action.sa_sigaction = testHandler;
+        action.sa_flags = SA_SIGINFO;
+        sigemptyset(&action.sa_mask);
+    }
+    assert(setFaults(installed));
+    assert(!checkpointJIT());
+    liveAllocations.emplace(reinterpret_cast<uintptr_t>(testHandler), 1);
+    assert(checkpointJIT());
+    assert(raise(SIGSEGV) == 0 && oldSegv);
+    assert(endFaultScope());
+    assert(readFaults(current) && sameFaults(current, idleWindows));
+    for (auto &action : idleWindows) {
+        action.sa_sigaction = windowsHandler;
+        action.sa_flags |= SA_ONSTACK;
+    }
+    sigaddset(&idleWindows[0].sa_mask, SIGUSR1);
+    assert(setFaults(idleWindows));
+    assert(beginFaultScope());
+    assert(checkpointJIT());
+    assert(readFaults(current) && current[0].sa_mask == idleWindows[0].sa_mask &&
+           (current[0].sa_flags & SA_ONSTACK));
+    assert(raise(SIGSEGV) == 0 && newSegv);
+    assert(raise(SIGBUS) == 0 && newBus);
+    liveAllocations.emplace(1, 1);
+    std::thread deferred([] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        std::lock_guard<std::mutex> lock(allocationLock);
+        liveAllocations.erase(1);
+        allocationReleased.notify_one();
+    });
+    assert(endFaultScope());
+    deferred.join();
+    assert(readFaults(current) && sameFaults(current, idleWindows));
+    assert(beginFaultScope() && checkpointJIT());
+    liveAllocations.emplace(1, 1);
+    assert(!endFaultScope());
+    assert(readFaults(current) && sameFaults(current, idleWindows));
+    liveAllocations.erase(1);
+    assert(setFaults(installed));
+    assert(!beginFaultScope());
+    assert(setFaults(baseline));
+}
+'''.replace('STATE', state).replace('OPERATIONS', operations)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / 'faults.cpp').write_text(fixture)
+            subprocess.run(['clang++', '-std=c++17', str(path / 'faults.cpp'), '-o', str(path / 'check')],
+                           check=True, timeout=30)
+            subprocess.run([str(path / 'check')], check=True, timeout=5)
+
     @unittest.skipUnless(shutil.which('swiftc'), 'Swift compiler required for player ownership checks')
     def test_failed_jit_configuration_releases_retained_player(self):
         source = (ROOT / 'iridium/apps/ios/MadeiraFrontend/IridiumConsoleSession.swift').read_text()
@@ -47,7 +136,7 @@ func ir_jit_memory_api() -> Int { 1 }
 @MainActor func ir_phase3_stop() { stops += 1 }
 @MainActor final class Host {
     let queue = Queue(), owner = 1
-    var error: String?, terminalFailure = false, completions = 0
+    var dismissalError: String?, terminalFailure = false, completions = 0
     var phase3Controller: UIViewController?
     func complete(_ owner: Int) { completions += 1 }
     func open(_ controller: UnsafeMutableRawPointer?, game: Game) {
@@ -59,13 +148,13 @@ MainActor.assumeIsolated {
     for runtime in ["azahar", "play", "flycast"] {
         let failed = Host()
         failed.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: runtime))
-        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.error != nil && failed.terminalFailure)
+        precondition(UIViewController.live == 0 && failed.phase3Controller == nil && failed.dismissalError != nil && failed.terminalFailure)
     }
     precondition(stops == 3)
     configurationAccepted = true
     let ready = Host()
     ready.open(Unmanaged.passRetained(UIViewController()).toOpaque(), game: Game(runtimeID: "play"))
-    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.error == nil)
+    precondition(UIViewController.live == 1 && ready.phase3Controller != nil && ready.dismissalError == nil)
     ready.phase3Controller = nil
     precondition(UIViewController.live == 0)
     let unavailable = Host()
@@ -147,13 +236,18 @@ struct IRDolphinOptions { var resolution: Int32, aspect: Int32, remote: Int32, p
 SETTINGS
 typealias IridiumRuntimeLease = Int
 struct IridiumConsoleGame { var runtimeID = "dolphin"; var id = UUID() }
+enum IridiumRuntimeRegistry {
+    struct Runtime { let id: String; let sharedJITBytes: Int }
+    static let all = [Runtime(id: "melonx", sharedJITBytes: 544 * 1024 * 1024)]
+}
 enum IridiumRuntimeError: Error { case jitRequired; var localizedDescription: String { "JIT required" } }
 @MainActor final class JITCoordinator {
     static let shared = JITCoordinator()
     var consoleMemoryRequiresRestart = false
+    var requestedBytes = 0
     var callback: ((Result<Void, Error>) -> Void)?
-    func prepareConsoleMemory(completion: @escaping (Result<Void, Error>) -> Void) {
-        callback = completion
+    func prepareConsoleMemory(minimumBytes: Int, completion: @escaping (Result<Void, Error>) -> Void) {
+        requestedBytes = minimumBytes; callback = completion
     }
     func finish(_ result: Result<Void, Error>) { let saved = callback; callback = nil; saved?(result) }
 }
@@ -165,7 +259,8 @@ final class Queue { func async(execute: () -> Void) { execute() } }
     var nativeStarts = 0, completions = 0, error: String?
     let queue = Queue()
     func complete(_ owner: Int) { precondition(owner == lease); completions += 1 }
-    func fail(_ message: String, owner: Int) { error = message; complete(owner) }
+    enum Recovery { case jit }
+    func fail(_ message: String, owner: Int, recovery: Recovery? = nil) { error = message; complete(owner) }
     func requireRestart(_ owner: Int) { error = "restart" }
 LAUNCH
         nativeStarts += 1
@@ -183,8 +278,9 @@ MainActor.assumeIsolated {
     defer { UserDefaults.standard.removeObject(forKey: "Dolphin.\(id)") }
     let restored = IridiumDolphinSettings.load(id)
     precondition(restored.resolution == 2 && restored.players == 3 && restored.muted == true && !restored.dualCore)
-    for runtimeID in ["dolphin", "azahar", "play", "flycast"] {
+    for runtimeID in ["dolphin", "azahar", "play", "flycast", "melonx"] {
     let failed = Host(); failed.start(runtimeID: runtimeID)
+    precondition(JITCoordinator.shared.requestedBytes == (runtimeID == "melonx" ? 544 * 1024 * 1024 : 0))
     precondition(failed.nativeStarts == 0 && failed.phase3PreparingJIT && failed.phase3JITRequested)
     JITCoordinator.shared.finish(.failure(IridiumRuntimeError.jitRequired))
     precondition(failed.nativeStarts == 0 && failed.completions == 1 && failed.error!.contains("JIT could not start"))

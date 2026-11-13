@@ -258,7 +258,7 @@ check('T0', null); check('Tgg', null); check(null, null);
                        capture_output=True, text=True, check=True, timeout=10)
 
     def test_generated_verifier_detects_script_and_helper_drift(self):
-        spec = importlib.util.spec_from_file_location('observability_frontend', ROOT / 'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('observability_frontend', ROOT / 'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         with tempfile.TemporaryDirectory() as directory:
             upstream = Path(directory) / 'upstream'; output = Path(directory) / 'output'

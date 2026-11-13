@@ -10,6 +10,7 @@ typedef void *(*Create)(const char *, const char *, const char *, const char *, 
 static Create create;
 static void (*pause_player)(bool), (*stop_player)(void);
 static uint64_t (*frames)(void);
+static void (*trim_memory)(void);
 static const IRDolphinAPI *dolphin;
 static bool (*prepare_jit)(IRPhase3JITPrepare);
 static bool (*prepare_memory)(const IRJITMemoryAPI *);
@@ -22,6 +23,7 @@ static const char *binary(const char *engine) {
     if (!strcmp(engine, "play")) return "play_libretro_ios.dylib";
     if (!strcmp(engine, "flycast")) return "flycast_libretro.dylib";
     if (!strcmp(engine, "dolphin")) return "libIridiumDolphin.dylib";
+    if (!strcmp(engine, "melonx")) return "libIridiumMeloNX.dylib";
     return NULL;
 }
 static bool path(char *out, size_t size, const char *root, const char *name) {
@@ -41,9 +43,10 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
     const char *save, const char *assets, bool jit, uint64_t generation, IRPhase3Event event, IRPhase3Poll input) {
     const char *name = engine ? binary(engine) : NULL;
     char host[4096], core[4096];
+    bool native = engine && (!strcmp(engine, "dolphin") || !strcmp(engine, "melonx"));
     if (!name || !root || !game || !save || !assets || !event || !input ||
         !path(core, sizeof core, root, name) ||
-        !path(host, sizeof host, root, !strcmp(engine, "dolphin") ? name : "libIridiumRetroPlayer.dylib")) return NULL;
+        !path(host, sizeof host, root, native ? name : "libIridiumRetroPlayer.dylib")) return NULL;
     void *image = dlopen(host, RTLD_NOW | RTLD_LOCAL);
     if (!image) { event(generation, 3, "The bundled engine player could not be loaded."); return NULL; }
     unsigned (*abi)(void) = (unsigned (*)(void))dlsym(image, "ir_native_engine_abi");
@@ -55,11 +58,12 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
         event(generation, 3, "The bundled engine player has an incompatible interface."); return NULL;
     }
     create = next; pause_player = p; stop_player = s; frames = f;
+    trim_memory = (void (*)(void))dlsym(image, "ir_native_engine_trim_memory");
     controls_command = (bool (*)(const char *))dlsym(image, "ir_native_engine_command");
     controls_input = (void (*)(IRPhase3PollPlayer, IRPhase3Rumble))dlsym(image, "ir_native_engine_input");
     dolphin = NULL;
     prepare_jit = NULL; prepare_memory = NULL;
-    if (strcmp(engine, "dolphin")) {
+    if (!native) {
         void *core_image = dlopen(core, RTLD_NOW | RTLD_LOCAL);
         if (core_image) prepare_jit = (bool (*)(IRPhase3JITPrepare))dlsym(core_image, "ir_phase3_core_prepare_jit");
         if (core_image) prepare_memory = (bool (*)(const IRJITMemoryAPI *))dlsym(core_image, "ir_phase3_core_prepare_memory");
@@ -67,9 +71,11 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
             event(generation, 3, "The bundled core does not support shared JIT. Reinstall Iridium."); return NULL;
         }
     }
-    if (!strcmp(engine, "dolphin")) {
+    if (native) {
         prepare_memory = (bool (*)(const IRJITMemoryAPI *))dlsym(image, "ir_phase3_core_prepare_memory");
-        if (!prepare_memory) { event(generation, 3, "Dolphin does not support shared JIT memory."); return NULL; }
+        if (!prepare_memory) { event(generation, 3, "The bundled player does not support shared JIT memory."); return NULL; }
+    }
+    if (!strcmp(engine, "dolphin")) {
         const IRDolphinAPI *(*api)(void) = (const IRDolphinAPI *(*)(void))dlsym(image, "ir_dolphin_api");
         if (api) dolphin = api();
         if (!dolphin || dolphin->version != 2) {
@@ -83,6 +89,7 @@ void *ir_phase3_open(const char *engine, const char *root, const char *game,
 }
 void ir_phase3_pause(bool paused) { if (pause_player) pause_player(paused); }
 void ir_phase3_stop(void) { if (stop_player) stop_player(); }
+void ir_phase3_trim_memory(void) { if (trim_memory) trim_memory(); }
 uint64_t ir_phase3_frames(void) { return frames ? frames() : 0; }
 bool ir_phase3_configure_jit(IRPhase3JITPrepare prepare) {
     return prepare && prepare_jit && prepare_jit(prepare);
@@ -119,4 +126,14 @@ int ir_phase3_azahar_install_cia(const char *frameworks, const char *user, const
     void *image=dlopen(core,RTLD_NOW|RTLD_LOCAL);
     int (*install)(const char *,const char *)=image?(int(*)(const char *,const char *))dlsym(image,"ir_phase3_core_install_cia"):NULL;
     return install?install(user,file):100;
+}
+
+int ir_phase3_melonx_install_firmware(const char *frameworks, const char *system, const char *file) {
+    char player[4096];
+    if (!frameworks || !system || !file ||
+        !path(player, sizeof player, frameworks, "libIridiumMeloNX.dylib")) return 1;
+    void *image = dlopen(player, RTLD_NOW | RTLD_LOCAL);
+    int (*install)(const char *, const char *, const char *) =
+        image ? (int (*)(const char *, const char *, const char *))dlsym(image, "ir_melonx_install_firmware") : NULL;
+    return install ? install(system, frameworks, file) : 1;
 }

@@ -149,6 +149,15 @@ class NightlyTests(unittest.TestCase):
                         workflow.index("python3 ci/publish-nightly.py publish"))
         self.assertIn("needs: build", workflow)
 
+    def test_nightly_cannot_package_review_only_melonx(self):
+        with patch.object(DISPATCH, "gh") as gh:
+            with self.assertRaisesRegex(ValueError, "review builds"):
+                DISPATCH.dispatch("main", self.revision, melonx=True, nightly=True)
+        gh.assert_not_called()
+        workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
+        step = workflow.split("- name: Build the pinned MeloNX review component", 1)[1].split("- name:", 1)[0]
+        self.assertIn("inputs.release_build || inputs.nightly", step)
+
     def test_dispatch_rejects_a_non_main_nightly(self):
         with patch.object(DISPATCH, "gh") as gh:
             with self.assertRaisesRegex(ValueError, "require main"):

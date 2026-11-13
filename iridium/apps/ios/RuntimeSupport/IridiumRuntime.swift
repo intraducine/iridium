@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 enum IridiumPlatform: String, Codable, CaseIterable, Sendable {
-    case windows, gameBoy, gameBoyColor, psp, gameCube, wii, nintendo3DS, playStation2, dreamcast, arcade
+    case windows, gameBoy, gameBoyColor, psp, gameCube, wii, nintendo3DS, nintendoSwitch, playStation2, dreamcast, arcade
+    static let switchFormats = ["nsp", "xci", "nca", "nro", "nso", "pfs0"]
     var isPhase3: Bool { ![Self.windows, .gameBoy, .gameBoyColor, .psp].contains(self) }
     var title: String {
         switch self {
@@ -13,6 +19,7 @@ enum IridiumPlatform: String, Codable, CaseIterable, Sendable {
         case .gameCube: return "GameCube"
         case .wii: return "Wii"
         case .nintendo3DS: return "Nintendo 3DS"
+        case .nintendoSwitch: return "Nintendo Switch"
         case .playStation2: return "PlayStation 2"
         case .dreamcast: return "Dreamcast"
         case .arcade: return "Arcade (Flycast)"
@@ -30,6 +37,7 @@ struct IridiumRuntimeDescriptor: Identifiable, Equatable, Sendable {
     let jit: IridiumJITRequirement
     let supportsPause: Bool
     let restartAfterStop: Bool
+    private(set) var sharedJITBytes = 0
     var jitSuffix: String { jit == .required ? " · JIT" : "" }
 
     func executionMode(jitAvailable: Bool) throws -> IridiumExecutionMode {
@@ -60,8 +68,15 @@ enum IridiumRuntimeRegistry {
         jit: .required, supportsPause: true, restartAfterStop: false)
     static let flycast = IridiumRuntimeDescriptor(id: "flycast", name: "Flycast", platforms: [.dreamcast, .arcade],
         jit: .required, supportsPause: true, restartAfterStop: false)
+    // MeloNX uses a 512 MiB code cache. Leave room for small executable allocations.
+    static let melonx = IridiumRuntimeDescriptor(id: "melonx", name: "MeloNX", platforms: [.nintendoSwitch],
+        jit: .required, supportsPause: true, restartAfterStop: false, sharedJITBytes: 544 * 1024 * 1024)
     #if IRIDIUM_PHASE3 && IRIDIUM_PPSSPP
+    #if IRIDIUM_MELONX
+    static let all = [madeira, sameBoy, ppsspp, dolphin, azahar, play, flycast, melonx]
+    #else
     static let all = [madeira, sameBoy, ppsspp, dolphin, azahar, play, flycast]
+    #endif
     #elseif IRIDIUM_PPSSPP
     static let all = [madeira, sameBoy, ppsspp]
     #else
@@ -85,8 +100,19 @@ extension IridiumPlatform {
     var libraryTitle: String { title + (IridiumRuntimeRegistry.compatible(with: self).first?.jitSuffix ?? "") }
 }
 
-enum IridiumRuntimeError: LocalizedError {
+enum IridiumConsoleLaunchRecovery { case jit, switchSetup }
+
+enum IridiumRuntimeError: LocalizedError, Equatable {
     case unavailable, unsupportedOperation, jitRequired, busy, restartRequired, invalidGame, unsafePath, newerLibrary, unreadableLibrary
+    case missingGameFolder, missingGameFile, missingSwitchKeys, missingSwitchFirmware
+    var launchRecovery: IridiumConsoleLaunchRecovery? {
+        switch self {
+        case .missingSwitchKeys, .missingSwitchFirmware: return .switchSetup
+        case .jitRequired: return .jit
+        default: return nil
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .unavailable: return "The selected runtime is not available for this game. Choose an installed compatible runtime."
@@ -95,6 +121,10 @@ enum IridiumRuntimeError: LocalizedError {
         case .busy: return "Another runtime is starting or running. Stop it before launching another game."
         case .restartRequired: return "A runtime is still loaded. Fully close and reopen Iridium before changing runtimes."
         case .invalidGame: return "This game file could not be read. Choose the original game file or its complete game folder."
+        case .missingGameFolder: return "Game folder not found. Restore the folder or import the game again."
+        case .missingGameFile: return "Game file not found. Restore the file or import the game again."
+        case .missingSwitchKeys: return "Import prod.keys from your Switch."
+        case .missingSwitchFirmware: return "Install a firmware ZIP from your Switch."
         case .unsafePath: return "The game or save path is outside its runtime folder or uses a symbolic link."
         case .newerLibrary: return "This runtime library uses a newer format. Its original file has been preserved."
         case .unreadableLibrary: return "The runtime library could not be read. Its original file has been preserved."
@@ -119,6 +149,7 @@ struct IridiumConsoleSystem: Identifiable {
         let root = "Files → Iridium → IridiumRuntimes. "
         switch id {
         case "azahar": return root + "Each game's Saves/azahar folder contains its Azahar user tree. Supply any required NAND/system data in that per-game Azahar tree."
+        case "melonx": return root + "System/melonx contains Switch saves and system data."
         case "flycast": return root + "Per-game saves are in Saves/flycast. User-supplied BIOS and supporting system files go in System/flycast/dc, with their required upstream filenames."
         default: return root + "Saves/\(id) contains each game's saves and configuration. Removing a library entry keeps these files."
         }
@@ -141,6 +172,8 @@ struct IridiumConsoleSystem: Identifiable {
                 extensions: ["dol", "gcm", "iso", "rvz", "wad"], guidance: "GameCube and Wii games use Dolphin and the shared JIT system.")
             case "azahar": return Self(runtime: runtime, title: "Azahar · Nintendo 3DS", primaryPlatform: .nintendo3DS,
                 extensions: ["3dsx", "3ds", "cci", "cxi", "app"], guidance: "Nintendo 3DS games use Azahar. Use an unencrypted game file.")
+            case "melonx": return Self(runtime: runtime, title: "MeloNX · Nintendo Switch", primaryPlatform: .nintendoSwitch,
+                extensions: IridiumPlatform.switchFormats, guidance: "Use keys from your Switch for encrypted games. Reopen Iridium after each session.")
             case "play": return Self(runtime: runtime, title: "Play! · PlayStation 2", primaryPlatform: .playStation2,
                 extensions: ["elf", "iso", "chd", "cue"], guidance: "PlayStation 2 games use Play!. Open the game menu for core settings, save states, and disc changes.")
             case "flycast": return Self(runtime: runtime, title: "Flycast · Dreamcast / Arcade", primaryPlatform: .dreamcast,
@@ -237,6 +270,8 @@ struct IridiumConsoleGame: Codable, Identifiable, Equatable, Sendable {
                   fileExtension != "wad" || platform == .wii else { throw IridiumRuntimeError.invalidGame }
         case .nintendo3DS:
             guard runtimeID == "azahar", ["3dsx", "3ds", "cci", "cxi", "app"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
+        case .nintendoSwitch:
+            guard runtimeID == "melonx", IridiumPlatform.switchFormats.contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .playStation2:
             guard runtimeID == "play", ["elf", "iso", "chd", "cue"].contains(fileExtension) else { throw IridiumRuntimeError.invalidGame }
         case .dreamcast:
@@ -348,11 +383,44 @@ struct IridiumConsoleStore: Sendable {
 
     /// Recheck the private copy at each launch. This is bounded structural
     /// validation, not a claim that a game is compatible or safe to execute.
-    func validateROM(_ game: IridiumConsoleGame) throws -> URL {
+    func validateROM(_ game: IridiumConsoleGame, forLaunch: Bool = false) throws -> URL {
         let url = try rom(game)
+        var isDirectory = ObjCBool(false)
+        guard manager.fileExists(atPath: url.deletingLastPathComponent().path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { throw IridiumRuntimeError.missingGameFolder }
+        guard manager.fileExists(atPath: url.path) else { throw IridiumRuntimeError.missingGameFile }
         let inspected = try IridiumROMInspection.inspect(url, fileExtension: game.fileExtension, preferredPlatform: game.platform)
         guard inspected.platform == game.platform else { throw IridiumRuntimeError.invalidGame }
+        if forLaunch, inspected.requiresSwitchSystemFiles { try validateSwitchSystemFiles() }
         return url
+    }
+
+    func validateSwitchSystemFiles() throws {
+        let status = try switchSystemFiles()
+        guard status.keys else { throw IridiumRuntimeError.missingSwitchKeys }
+        guard status.firmware else { throw IridiumRuntimeError.missingSwitchFirmware }
+    }
+
+    func switchSystemFiles() throws -> (keys: Bool, firmware: Bool) {
+        func presentFile(_ path: URL) -> Bool {
+            guard let values = try? path.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) else { return false }
+            return values.isRegularFile == true && values.isSymbolicLink != true && (values.fileSize ?? 0) > 0
+        }
+        let system = ["System", "melonx"]
+        let hasKeys = presentFile(try checked(system + ["system", "prod.keys"]))
+        let contents = system + ["bis", "system", "Contents"]
+        let registered = try checked(contents + ["registered"])
+        let direct = try checked(contents)
+        let installed = (try? manager.contentsOfDirectory(atPath: registered.path)) ?? []
+        let loose = (try? manager.contentsOfDirectory(atPath: direct.path)) ?? []
+        let hasFirmware = installed.contains { name in
+            guard name.hasSuffix(".nca"), let path = try? checked(contents + ["registered", name, "00"]) else { return false }
+            return presentFile(path)
+        } || loose.contains { name in
+            guard name.hasSuffix(".nca"), let path = try? checked(contents + [name]) else { return false }
+            return presentFile(path)
+        }
+        return (hasKeys, hasFirmware)
     }
 
     func saveDirectory(_ game: IridiumConsoleGame) throws -> URL {
@@ -380,7 +448,11 @@ struct IridiumConsoleStore: Sendable {
 
     func systemDirectory(_ game: IridiumConsoleGame) throws -> URL {
         try game.validate()
-        let directory = try checked(["System", game.runtimeID], createDirectory: true)
+        return try systemDirectory(runtimeID: game.runtimeID)
+    }
+
+    func systemDirectory(runtimeID: String) throws -> URL {
+        let directory = try checked(["System", runtimeID], createDirectory: true)
         let keys: Set<URLResourceKey> = [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey]
         var failure: Error?
         guard let contents = manager.enumerator(at: directory, includingPropertiesForKeys: Array(keys),
@@ -396,12 +468,98 @@ struct IridiumConsoleStore: Sendable {
         return directory
     }
 
+    // Keep saved library records intact. Hide only a byte-identical later
+    // copy with no per-game files of its own.
+    func redundantGameCopies(in games: [IridiumConsoleGame]) -> Set<UUID> {
+        var originals: [String: [IridiumConsoleGame]] = [:]
+        var redundant = Set<UUID>()
+        for game in games.sorted(by: { $0.importedAt < $1.importedAt }) where game.installedPath == nil {
+            let key = "\(game.platform.rawValue)/\(game.runtimeID)/\(game.fileExtension)/\(game.title.lowercased())"
+            let candidates = originals[key, default: []]
+            if !candidates.isEmpty, !hasPerGameFiles(game), let file = try? rom(game),
+               candidates.contains(where: { matchesROM(file, game: $0) }), !hasPerGameFiles(game) {
+                redundant.insert(game.id)
+            } else {
+                originals[key, default: []].append(game)
+            }
+        }
+        return redundant
+    }
+
+    private func hasPerGameFiles(_ game: IridiumConsoleGame) -> Bool {
+        do {
+            let folder = try checked(["Saves", game.runtimeID, (game.storageOwnerID ?? game.id).uuidString])
+            guard manager.fileExists(atPath: folder.path) else { return false }
+            return try !manager.contentsOfDirectory(atPath: folder.path).isEmpty
+        } catch { return true }
+    }
+
+    private func equalFiles(_ input: URL, _ saved: URL) throws -> Bool {
+        let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK
+        let left = input.path.withCString { open($0, flags) }
+        guard left >= 0 else { throw CocoaError(.fileReadNoPermission) }
+        defer { close(left) }
+        let right = saved.path.withCString { open($0, flags) }
+        guard right >= 0 else { throw CocoaError(.fileReadNoPermission) }
+        defer { close(right) }
+
+        var leftInfo = stat(), rightInfo = stat()
+        guard fstat(left, &leftInfo) == 0, fstat(right, &rightInfo) == 0,
+              leftInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              rightInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              leftInfo.st_size == rightInfo.st_size else { return false }
+        if leftInfo.st_dev == rightInfo.st_dev && leftInfo.st_ino == rightInfo.st_ino { return true }
+
+        // Reuse two buffers so Foundation's per-read temporaries cannot accumulate for multi-GB games.
+        let capacity = 1024 * 1024
+        let a = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 16)
+        let b = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 16)
+        defer { a.deallocate(); b.deallocate() }
+
+        func fill(_ fd: Int32, _ buffer: UnsafeMutableRawPointer, _ count: Int) -> Bool {
+            var offset = 0
+            while offset < count {
+                let n = read(fd, buffer.advanced(by: offset), count - offset)
+                if n < 0 && errno == EINTR { continue }
+                guard n > 0 else { return false }
+                offset += n
+            }
+            return true
+        }
+
+        var remaining = leftInfo.st_size
+        while remaining > 0 {
+            let count = Int(min(remaining, off_t(capacity)))
+            guard fill(left, a, count), fill(right, b, count),
+                  memcmp(a, b, count) == 0 else { return false }
+            remaining -= off_t(count)
+        }
+        return true
+    }
+
+    private func matchesROM(_ source: URL, game: IridiumConsoleGame, disc: IridiumDiscSet? = nil) -> Bool {
+        do {
+            let input = try IridiumROMInspection.checkedFile(source)
+            let saved = try IridiumROMInspection.checkedFile(rom(game))
+            guard try equalFiles(input, saved) else { return false }
+            if ["gdi", "cue"].contains(game.fileExtension) {
+                let paths = try disc ?? IridiumDiscSet(input, selectedFiles: [input.deletingLastPathComponent()])
+                for name in paths.filenames {
+                    let companion = try IridiumROMInspection.checkedFile(input.deletingLastPathComponent().appendingPathComponent(name))
+                    let stored = try IridiumROMInspection.checkedFile(gamePath(game, name.split(separator: "/").map(String.init)))
+                    guard try equalFiles(companion, stored) else { return false }
+                }
+            }
+            return true
+        } catch { return false }
+    }
+
     func importROM(_ source: URL, into games: [IridiumConsoleGame], preferredPlatform: IridiumPlatform? = nil,
-                   selectedFiles: [URL] = [], gameID: UUID = UUID()) throws -> IridiumConsoleGame {
+                   selectedFiles: [URL] = [], gameID: UUID = UUID(), reuseIdentical: Bool = false) throws -> IridiumConsoleGame {
         _ = try load()
         if let existing = games.first(where: { $0.id == gameID }) {
             let saved = try validateROM(existing)
-            guard manager.contentsEqual(atPath: try IridiumROMInspection.checkedFile(source).path, andPath: saved.path) else {
+            guard try equalFiles(IridiumROMInspection.checkedFile(source), saved) else {
                 throw IridiumRuntimeError.invalidGame
             }
             if ["gdi", "cue"].contains(existing.fileExtension) {
@@ -409,7 +567,7 @@ struct IridiumConsoleStore: Sendable {
                 for name in disc.filenames {
                     let input = try IridiumROMInspection.checkedFile(source.deletingLastPathComponent().appendingPathComponent(name))
                     let output = try gamePath(existing, name.split(separator: "/").map(String.init))
-                    guard manager.contentsEqual(atPath: input.path, andPath: output.path) else { throw IridiumRuntimeError.invalidGame }
+                    guard try equalFiles(input, output) else { throw IridiumRuntimeError.invalidGame }
                 }
             }
             return existing
@@ -424,7 +582,14 @@ struct IridiumConsoleStore: Sendable {
             else { throw IridiumRuntimeError.invalidGame }
         }
         let runtime = try IridiumRuntimeRegistry.resolve(platform: platform, preferred: nil)
-        var game = IridiumConsoleGame(id: gameID, title: String(source.deletingPathExtension().lastPathComponent.prefix(128)),
+        let title = String(source.deletingPathExtension().lastPathComponent.prefix(128))
+        if reuseIdentical, let existing = games.sorted(by: { $0.importedAt < $1.importedAt }).first(where: {
+            $0.platform == platform && $0.runtimeID == runtime.id && $0.fileExtension == ext && $0.installedPath == nil &&
+                ($0.title.caseInsensitiveCompare(title) == .orderedSame ||
+                 $0.originalFilename?.caseInsensitiveCompare(source.lastPathComponent) == .orderedSame) &&
+                matchesROM(source, game: $0, disc: disc)
+        }) { return existing }
+        var game = IridiumConsoleGame(id: gameID, title: title,
             platform: platform, runtimeID: runtime.id, fileExtension: ext, importedAt: Date())
         game.originalFilename = source.lastPathComponent
         let destination = try gamePath(game)
@@ -478,7 +643,14 @@ struct IridiumROMInspection: Equatable {
     let platform: IridiumPlatform
     let size: UInt64
     let headers: Data
+    let requiresSwitchSystemFiles: Bool
+    let switchTitleID: String?
     private static let maximumDiscSize: UInt64 = 2 * 1024 * 1024 * 1024
+
+    static func isSwitchBaseTitleID(_ value: String) -> Bool {
+        value.utf8.count == 16 && value.hasPrefix("01") && value.hasSuffix("000") &&
+            value.utf8.allSatisfy { (48...57).contains($0) || (65...70).contains($0) }
+    }
 
     static func checkedFile(_ source: URL) throws -> URL {
         guard source.isFileURL else { throw IridiumRuntimeError.unsafePath }
@@ -491,20 +663,115 @@ struct IridiumROMInspection: Equatable {
     }
 
     static func inspect(_ source: URL, fileExtension ext: String, preferredPlatform: IridiumPlatform? = nil) throws -> Self {
-        guard ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "wad", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip", "gdi", "cue"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
+        let switchFile = IridiumPlatform.switchFormats.contains(ext)
+        guard switchFile || ["gb", "gbc", "elf", "iso", "cso", "pbp", "dol", "gcm", "rvz", "wad", "3dsx", "3ds", "cci", "cxi", "app", "cdi", "chd", "zip", "gdi", "cue"].contains(ext) else { throw IridiumRuntimeError.invalidGame }
         let url = try checkedFile(source)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let size = try handle.seekToEnd()
         let limit: UInt64 = ["gb", "gbc"].contains(ext) ? 8 * 1024 * 1024 : (ext == "elf" || ext == "dol" || ext == "3dsx" ? 128 * 1024 * 1024 : 16 * 1024 * 1024 * 1024)
-        guard size > 0, size <= limit else { throw IridiumRuntimeError.invalidGame }
+        guard size > 0, size <= (switchFile ? 64 * 1024 * 1024 * 1024 : limit) else { throw IridiumRuntimeError.invalidGame }
         var reader = HeaderReader(handle: handle, size: size)
         let platform: IridiumPlatform
+        var requiresSwitchSystemFiles = false
+        var switchTitleID: String?
         switch ext {
         case "gb", "gbc":
             // Preserve the existing Game Boy acceptance and color detection.
             let header = try reader.read(0, 0x150)
             platform = [0x80, 0xc0].contains(header[0x143]) ? .gameBoyColor : .gameBoy
+        case "nsp", "pfs0":
+            let header = try reader.read(0, 16)
+            let count = little(header, 4, 4), namesSize = little(header, 8, 4)
+            let namesStart = 16 + 24 * count
+            let payload = namesStart + namesSize
+            guard header.prefix(4).elementsEqual("PFS0".utf8), (1...1024).contains(count),
+                  (1...1024 * 1024).contains(namesSize), payload <= size else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            var filenames = Set<String>()
+            var hasExeFS = false
+            var ticketIDs = Set<String>()
+            for index in 0..<count {
+                let entry = try reader.read(16 + index * 24, 24)
+                let offset = little(entry, 0, 8), length = little(entry, 8, 8)
+                let nameOffset = little(entry, 16, 4)
+                guard offset <= size - payload, length <= size - payload - offset,
+                      nameOffset < namesSize else { throw IridiumRuntimeError.invalidGame }
+                let nameBytes = try reader.read(namesStart + nameOffset, Int(min(256, namesSize - nameOffset)))
+                guard let end = nameBytes.firstIndex(of: 0), end > 0,
+                      let name = String(bytes: nameBytes[..<end], encoding: .utf8),
+                      !name.hasPrefix("."), !name.contains("/"), !name.contains("\\"),
+                      filenames.insert(name.lowercased()).inserted else { throw IridiumRuntimeError.invalidGame }
+                if name == "main" { hasExeFS = true }
+                if name.utf8.count == 36, name.lowercased().hasSuffix(".tik") {
+                    let rightsID = name.dropLast(4)
+                    let titleID = String(rightsID.prefix(16)).uppercased()
+                    if rightsID.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }),
+                       isSwitchBaseTitleID(titleID) { ticketIDs.insert(titleID) }
+                }
+            }
+            switchTitleID = ticketIDs.count == 1 ? ticketIDs.first : nil
+            requiresSwitchSystemFiles = !hasExeFS || filenames.contains { $0.hasSuffix(".nca") }
+            platform = .nintendoSwitch
+        case "xci":
+            let header = try reader.read(0x100, 0x40)
+            let root = little(header, 0x30, 8), length = little(header, 0x38, 8)
+            guard header.prefix(4).elementsEqual("HEAD".utf8), root >= 0x200,
+                  root <= size, length >= 0x10, length <= size - root,
+                  try reader.read(root, 4).elementsEqual("HFS0".utf8) else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            requiresSwitchSystemFiles = true
+            platform = .nintendoSwitch
+        case "nca":
+            // Encrypted NCA headers can only be checked with the user's keyset.
+            guard size >= 0xc00, size % 0x200 == 0,
+                  try reader.read(0, 0xc00).contains(where: { $0 != 0 }) else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            requiresSwitchSystemFiles = true
+            platform = .nintendoSwitch
+        case "nso":
+            let header = try reader.read(0, 0x100)
+            let limit: UInt64 = 256 * 1024 * 1024
+            guard header.prefix(4).elementsEqual("NSO0".utf8), size > 0x100,
+                  size <= limit else { throw IridiumRuntimeError.invalidGame }
+            let flags = little(header, 0x0c, 4)
+            var memoryEnd: UInt64 = 0
+            for segment in 0..<3 {
+                let field = 0x10 + segment * 0x10
+                let fileOffset = little(header, field, 4), memoryOffset = little(header, field + 4, 4)
+                let length = little(header, field + 8, 4)
+                let stored = flags & (1 << segment) != 0 ? little(header, 0x60 + segment * 4, 4) : length
+                guard fileOffset >= 0x100, fileOffset <= size, stored <= size - fileOffset,
+                      (length == 0) == (stored == 0), memoryOffset >= memoryEnd,
+                      memoryOffset <= limit, length <= limit - memoryOffset else { throw IridiumRuntimeError.invalidGame }
+                memoryEnd = memoryOffset + length
+            }
+            guard little(header, 0x18, 4) > 0, little(header, 0x28, 4) >= 8,
+                  little(header, 0x3c, 4) <= limit - memoryEnd else { throw IridiumRuntimeError.invalidGame }
+            platform = .nintendoSwitch
+        case "nro":
+            let header = try reader.read(0, 0x80)
+            let imageSize = little(header, 0x18, 4)
+            guard header[0x10..<0x14].elementsEqual("NRO0".utf8),
+                  little(header, 0x14, 4) == 0, imageSize >= 0x80,
+                  imageSize <= size, size <= 256 * 1024 * 1024 else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            var previousEnd: UInt64 = 0
+            for field in [0x20, 0x28, 0x30] {
+                let start = little(header, field, 4), length = little(header, field + 4, 4)
+                guard start >= previousEnd, start <= imageSize, length <= imageSize - start else {
+                    throw IridiumRuntimeError.invalidGame
+                }
+                previousEnd = start + length
+            }
+            guard little(header, 0x24, 4) >= 0x80, little(header, 0x38, 4) <= 256 * 1024 * 1024 else {
+                throw IridiumRuntimeError.invalidGame
+            }
+            platform = .nintendoSwitch
         case "elf":
             let header = try reader.read(0, 52)
             if little(header, 18, 2) == 42 {
@@ -678,7 +945,7 @@ struct IridiumROMInspection: Equatable {
         _ = try checkedFile(url)
         let finalSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
         guard let finalSize, finalSize >= 0, UInt64(finalSize) == size else { throw IridiumRuntimeError.invalidGame }
-        return Self(platform: platform, size: size, headers: reader.headers)
+        return Self(platform: platform, size: size, headers: reader.headers, requiresSwitchSystemFiles: requiresSwitchSystemFiles, switchTitleID: switchTitleID)
     }
 
     private static func little(_ data: Data, _ offset: Int, _ count: Int) -> UInt64 {

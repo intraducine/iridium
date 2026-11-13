@@ -189,8 +189,10 @@ enum MadeiraDock {
         }
         var isFolder: ObjCBool = false
         let install = drive.appendingPathComponent(game.library + "/common/" + game.installDir)
-        guard FileManager.default.fileExists(atPath: install.path, isDirectory: &isFolder), isFolder.boolValue,
-              (try? FileManager.default.contentsOfDirectory(atPath: install.path).isEmpty) == false else {
+        guard FileManager.default.fileExists(atPath: install.path, isDirectory: &isFolder), isFolder.boolValue else {
+            throw DockError.message("Game folder not found. Repair the Steam installation before playing.")
+        }
+        guard (try? FileManager.default.contentsOfDirectory(atPath: install.path).isEmpty) == false else {
             throw DockError.message("The game's files are missing. Repair the installation before playing.")
         }
         guard game.installed, !FileManager.default.fileExists(atPath: drive.appendingPathComponent(game.library + "/downloading/\(game.id)").path) else {

@@ -286,11 +286,8 @@ def check_payload(app):
     if info.get("CFBundleIdentifier") != "software.iridium":
         raise ValueError("Expected the Iridium application bundle")
     if info.get("IridiumMadeiraRevision"):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("madeira_frontend", Path(__file__).with_name("madeira-frontend.py"))
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        module.check_bundle(app)
+        import madeira_app
+        madeira_app.check_bundle(app)
     elif not (app / "fonts/tahoma.ttf").is_file():
         raise ValueError("The bundled Windows fonts are missing")
     if info.get("IridiumRuntimeProfile") == "madeira":

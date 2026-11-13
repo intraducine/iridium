@@ -81,6 +81,13 @@ struct RuntimeMemorySnapshot {
     let usedBytes: UInt64
     let availableBytes: UInt64?
 
+    func shouldStopGame(warningHeadroom: UInt64? = nil) -> Bool {
+        guard let availableBytes else { return false }
+        if availableBytes <= 1024 << 20 { return true }
+        guard let warningHeadroom else { return false }
+        return availableBytes <= 1536 << 20 && warningHeadroom >= availableBytes + (128 << 20)
+    }
+
     static func sample() -> Self? {
         #if INTERFACE_PREVIEW
         // Include the expanding RAM meter in the existing simulator layout test.
@@ -107,3 +114,137 @@ struct RuntimeMemorySnapshot {
         #endif
     }
 }
+
+struct RuntimeMemoryWarningWatch {
+    private var pending: UUID?
+
+    mutating func begin() -> UUID? {
+        guard pending == nil else { return nil }
+        let id = UUID()
+        pending = id
+        return id
+    }
+
+    mutating func finish(_ id: UUID) -> Bool {
+        guard pending == id else { return false }
+        reset()
+        return true
+    }
+
+    mutating func reset() { pending = nil }
+}
+
+#if os(iOS)
+/// Samples on a utility queue even when the main thread is stalled.
+final class RuntimePerformanceDiagnostics: @unchecked Sendable {
+    static let shared = RuntimePerformanceDiagnostics()
+
+    private let queue = DispatchQueue(label: "software.iridium.performance", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    private var lastSample: (time: TimeInterval, usedMiB: UInt64, thermal: Int)?
+    private var pendingPing: TimeInterval?
+    private var reportedStall = false
+    private var onGameMemoryPressure: (@MainActor @Sendable () -> Void)?
+    private var onGameMemoryWarning: (@MainActor @Sendable () -> Void)?
+    private var memoryWarningWatch = RuntimeMemoryWarningWatch()
+
+    private init() {}
+
+    func watchGameMemory(_ onPressure: (@MainActor @Sendable () -> Void)?,
+                         onWarning: (@MainActor @Sendable () -> Void)? = nil) {
+        queue.async { [self] in
+            onGameMemoryPressure = onPressure
+            onGameMemoryWarning = onWarning
+            memoryWarningWatch.reset()
+        }
+    }
+
+    func memoryWarning() {
+        queue.async { [self] in
+            let memory = RuntimeMemorySnapshot.sample()
+            sample("memory-warning", memory: memory)
+            guard onGameMemoryPressure != nil, let watch = memoryWarningWatch.begin() else { return }
+            let headroom = memory?.availableBytes
+            DispatchQueue.main.async { [warning = onGameMemoryWarning] in
+                warning?()
+                self.queue.asyncAfter(deadline: .now() + .seconds(3)) { [self] in
+                    guard memoryWarningWatch.finish(watch) else { return }
+                    sample("memory-warning-recheck", warningHeadroom: headroom)
+                }
+            }
+        }
+    }
+
+    func setForeground(_ active: Bool) {
+        queue.async { [self] in
+            if active {
+                guard timer == nil else { return }
+                sample("foreground")
+                let source = DispatchSource.makeTimerSource(queue: queue)
+                source.schedule(deadline: .now() + 1, repeating: .seconds(1), leeway: .milliseconds(100))
+                source.setEventHandler { [self] in tick() }
+                timer = source
+                source.resume()
+            } else {
+                timer?.cancel()
+                timer = nil
+                pendingPing = nil
+                reportedStall = false
+            }
+        }
+    }
+
+    func record(_ phase: String) {
+        queue.async { [self] in sample(phase) }
+    }
+
+    private func tick() {
+        sample("periodic", sparse: true)
+        let now = ProcessInfo.processInfo.systemUptime
+        if let sent = pendingPing {
+            if !reportedStall && now - sent >= 1 {
+                reportedStall = true
+                sample("main-stalled", mainDelay: now - sent)
+            }
+            return
+        }
+        pendingPing = now
+        // Keep at most one ping queued while the main thread is stalled.
+        DispatchQueue.main.async { [self] in
+            let delay = ProcessInfo.processInfo.systemUptime - now
+            queue.async { [self] in
+                guard pendingPing == now else { return }
+                if reportedStall || delay >= 1 { sample("main-resumed", mainDelay: delay) }
+                pendingPing = nil
+                reportedStall = false
+            }
+        }
+    }
+
+    private func sample(_ phase: String, sparse: Bool = false, mainDelay: TimeInterval? = nil,
+                        warningHeadroom: UInt64? = nil, memory snapshot: RuntimeMemorySnapshot? = nil) {
+        let process = ProcessInfo.processInfo
+        let now = process.systemUptime
+        let thermal = process.thermalState.rawValue
+        let memory = snapshot ?? RuntimeMemorySnapshot.sample()
+        if let stop = onGameMemoryPressure, memory?.shouldStopGame(warningHeadroom: warningHeadroom) == true {
+            onGameMemoryPressure = nil
+            DispatchQueue.main.async { stop() }
+        }
+        let usedMiB = memory.map { $0.usedBytes >> 20 }
+        if sparse, let previous = lastSample, let usedMiB,
+           now - previous.time < 30, abs(Int64(usedMiB) - Int64(previous.usedMiB)) < 128,
+           thermal == previous.thermal { return }
+        if let usedMiB { lastSample = (now, usedMiB, thermal) }
+        else if sparse { return }
+
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let used = usedMiB.map { String($0) } ?? "unknown"
+        let remaining = memory?.availableBytes.map { String($0 >> 20) } ?? "unknown"
+        let delay = mainDelay.map { " main_delay_ms=\(Int($0 * 1000))" } ?? ""
+        RuntimeDiagnosticLogFiles.writeConsoleLine(
+            "[Perf] build=\(build) phase=\(phase) uptime_ms=\(Int(now * 1000)) footprint_mib=\(used) headroom_mib=\(remaining) thermal=\(thermal)\(delay)"
+        )
+    }
+}
+#endif

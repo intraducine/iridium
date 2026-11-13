@@ -1388,10 +1388,20 @@ struct ContentView: View {
                 }
             } message: { Text(library.cloudNotice?.message ?? "") }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                RuntimePerformanceDiagnostics.shared.setForeground(true)
                 library.refreshFlag()
                 if library.enabled && library.current == nil { MetalHostView.shared.isHidden = true }
             }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+                RuntimePerformanceDiagnostics.shared.setForeground(false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                IridiumArtworkModel.shared.trimImageCache()
+                RuntimePerformanceDiagnostics.shared.memoryWarning()
+            }
             .onAppear {
+                RuntimePerformanceDiagnostics.shared.record("app-root-appeared")
+                RuntimePerformanceDiagnostics.shared.setForeground(UIApplication.shared.applicationState == .active)
                 jit_install_trap_handler()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
@@ -2439,14 +2449,15 @@ struct ContentView: View {
         jitStatus = .testing
         logStore.log("Requesting JIT with \(jitCoordinator.resolvedMethod.title)...")
 
-        jitCoordinator.prepareWindowsMemory { result in
+        let completion: (Result<Void, Error>) -> Void = { result in
             switch result {
             case .success:
                 jitStatus = .available
-                logStore.log("Shared JIT memory is ready.", level: .success)
+                logStore.log(jitCoordinator.status ?? "JIT memory is ready.", level: .success)
                 launchAfterJITEnded(started: true)
             case .failure(let failure):
                 launchAfterJITEnded(started: false)
+                if library.enabled { library.error = failure.localizedDescription }
                 if let coordinatorError = failure as? JITCoordinator.CoordinatorError,
                    case .setupRequired = coordinatorError {
                     jitStatus = .unknown
@@ -2454,14 +2465,17 @@ struct ContentView: View {
                 }
                 jitStatus = .unavailable
                 logStore.log("Failed to enable JIT: \(failure.localizedDescription)", level: .error)
-                if library.enabled { library.error = failure.localizedDescription }
             }
+        }
+        if library.launchAfterJIT == nil {
+            jitCoordinator.prepareOfflineMemory(completion: completion)
+        } else {
+            jitCoordinator.prepareWindowsMemory(completion: completion)
         }
     }
 
-    /// Enable JIT finished: a Play that waited for it starts its game, only when the
-    /// debugger is attached (so the start cannot ask for JIT again) and nothing else
-    /// started meanwhile. A failure drops it: a later Enable JIT starts no game.
+    /// Start a waiting game after Windows memory is verified and the helper has closed.
+    /// A failure drops the pending launch.
     private func launchAfterJITEnded(started: Bool) {
         guard let launch = library.launchAfterJIT else { return }
         library.launchAfterJIT = nil
@@ -2587,6 +2601,7 @@ struct ContentView: View {
     /// developer interface's buttons.
     private func launchLibraryEntry(_ entry: LibraryEntry) {
         guard library.current == nil, !library.launching, library.preparing == nil else { return }
+        RuntimePerformanceDiagnostics.shared.record("windows-play")
         library.prepare(entry)
         let preparation = library.preparationID
         // Draw the launch status before profile checks or native setup can block.
@@ -2603,7 +2618,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         // madeira-bcd: a game seen for the first time starts with Madeira's recommended
         // settings (GameRecommendationsApply.swift).
         var entry = entry
@@ -2614,7 +2629,11 @@ struct ContentView: View {
         // any library game (SteamDirectStart).
         if let appID = entry.steamAppID, !entry.startsSteamGameDirectly {
             guard let game = MadeiraDock.games(drive: MadeiraDock.drive).first(where: { $0.id == appID }) else {
-                library.error = "Steam no longer lists this game as installed. Refresh the library and try again."; return
+                let folder = LibraryModel.drive.appendingPathComponent(entry.relativePath)
+                library.error = FileManager.default.fileExists(atPath: folder.path)
+                    ? "Steam no longer lists this game as installed. Refresh the library and try again."
+                    : IridiumRuntimeError.missingGameFolder.localizedDescription
+                return
             }
             LogStore.shared.log("[steam-games] play app=\(appID)")
             // madeira-bcd: the game's own options (AVX, NVIDIA, Wine's C++ runtime, its
@@ -2633,6 +2652,12 @@ struct ContentView: View {
         }
         guard !IridiumMadeiraRuntime.shared.isBusy, library.current == nil else {
             library.error = "A session is already running."; return
+        }
+        do { if entry.desktop != true { _ = try LibraryModel.executable(entry.launchRelativePath) } }
+        catch {
+            library.error = error.localizedDescription
+            logStore.log("[launch-preflight] \(error.localizedDescription)", level: .error)
+            return
         }
         // The same precondition runWineFullSequence checks: the JIT pool is
         // taken at launch, through the debugger. Without it, Play enables JIT and
@@ -2700,7 +2725,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         // A GOG game's install-script registry values (The Witcher's launcher needs its
         // InstallFolder), for its own entry or a program added from its folder.
         guard GOGLibrary.shared.writeInstallScriptRegistry(for: entry) else {
@@ -2789,20 +2814,22 @@ struct ContentView: View {
     }
 
     /// Full sequence: allocate JIT pool, start wineserver, start Wine.
-    /// Debugger stays attached during PE loading so mprotect_exec can use BRK
-    /// to prepare code pages. Detach happens after Wine finishes + recovery.
-    /// `profile` is a library entry whose launch profile applies to this run.
+    /// Start Wine with the verified Windows arena prepared before launch.
     private func runWineFullSequence(profile: LibraryEntry? = nil) {
         guard TouchControlsModel.shared.iridiumSettingsContext == nil else {
             LibraryModel.shared.error = "Finish editing controls before starting a game."
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         let nativeLaunch = library.current == nil ? nil : library.nativeLaunchID
         guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {
-            logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
+            let message = jitCoordinator.consoleMemoryRequiresRestart
+                ? "JIT cleanup did not finish. Close and reopen Iridium, then enable JIT while connected."
+                : "Windows JIT is not ready. Use Enable JIT while connected, then try Play again."
+            logStore.log(message, level: .error)
             if let nativeLaunch { LibraryModel.shared.launchFailedBeforeNative(nativeLaunch) }
+            library.error = message
             return
         }
         // Steam downloads wait for the session, and the app's own Steam connection closes
@@ -2861,6 +2888,7 @@ struct ContentView: View {
         ws_log_quiet = 1
 
         DispatchQueue.global(qos: .userInitiated).async {
+            RuntimePerformanceDiagnostics.shared.record("wine-start")
             DeviceDiagnostics.logLaunch()
             // A library entry's launch profile (executable, arguments, x87
             // precision, frame limit).
@@ -3381,24 +3409,16 @@ struct ContentView: View {
                 setenv("WINE_IOS_JIT_RX", String(format: "%lx", Int(bitPattern: pool.rx)), 1)
                 setenv("WINE_IOS_JIT_RW", String(format: "%lx", Int(bitPattern: pool.rw)), 1)
                 setenv("WINE_IOS_JIT_SIZE", String(format: "%lx", pool.size), 1)
-                // madeira-bcd split pool (pool-split = 1): the pool offsets between its two
-                // debugger regions, which ntdll never hands out (StikJITHelper.poolHole).
-                if let hole = StikJITHelper.poolHole {
-                    setenv("WINE_IOS_JIT_HOLE", String(format: "%lx:%lx", hole.off, hole.end), 1)
-                } else {
-                    unsetenv("WINE_IOS_JIT_HOLE")
+                let holes = pool.holes
+                for (index, key) in ["WINE_IOS_JIT_HOLE", "WINE_IOS_JIT_HOLE2"].enumerated() {
+                    if holes.indices.contains(index) {
+                        let hole = holes[index]
+                        setenv(key, String(format: "%lx:%lx", hole.lowerBound, hole.upperBound), 1)
+                    } else {
+                        unsetenv(key)
+                    }
                 }
-                // madeira-bcd pool-mid (pool-mid = 1): the second hole, when a free run
-                // between the split regions became a third region (StikJITHelper.poolHole2).
-                if let hole2 = StikJITHelper.poolHole2 {
-                    setenv("WINE_IOS_JIT_HOLE2", String(format: "%lx:%lx", hole2.off, hole2.end), 1)
-                } else {
-                    unsetenv("WINE_IOS_JIT_HOLE2")
-                }
-                // madeira-bcd pool-low (pool-low = 1): region C below the executable window,
-                // RW alias at the pool's distance; ntdll carves FEX's code buffers from it
-                // first (StikJITHelper.poolLow).
-                if let low = StikJITHelper.poolLow {
+                if let low = pool.low {
                     setenv("WINE_IOS_JIT_TAIL_REGION", String(format: "%lx:%lx", low.rx, low.size), 1)
                     logStore.log(String(format: "[pool-low] WINE_IOS_JIT_TAIL_REGION=%lx:%lx (%ldMB for FEX code buffers)",
                                         low.rx, low.size, low.size >> 20), level: .success)
@@ -3486,7 +3506,7 @@ struct ContentView: View {
             return
         }
         guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }
-        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }
+        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }
         let inLibrary = library.enabled
         guard jitReadyForLaunch(inLibrary: inLibrary, entry: profile?.id,
                                 then: { startDock(game, compactPool: compactPool, profile: profile) }) else { return }

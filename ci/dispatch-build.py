@@ -22,10 +22,14 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], cwd=ROOT, text=True)
 
 
-def dispatch(ref, expected, release_build=False, nightly=False):
+def dispatch(ref, expected, release_build=False, melonx=False, nightly=False):
     check_commit(expected, expected)
     token = uuid.uuid4().hex
+    if melonx and (release_build or nightly):
+        raise ValueError("MeloNX is available for review builds.")
     fields = ["-f", "release_build=true"] if release_build else []
+    if melonx:
+        fields += ["-f", "melonx=true"]
     if nightly:
         if ref != "main":
             raise ValueError("Nightly builds require main")
@@ -56,16 +60,17 @@ def main():
     parser.add_argument("--release", action="store_true", help="Include the full source archive and release audit artifacts")
     parser.add_argument("--nightly", action="store_true", help="Publish a Nightly build from main")
     parser.add_argument("--phase3", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--melonx", action="store_true", help="Include MeloNX in a review IPA")
     args = parser.parse_args()
     if args.check:
         check_commit(os.environ.get("EXPECTED_SHA", ""), os.environ.get("GITHUB_SHA", ""))
         return
     expected = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     ref = subprocess.check_output(["git", "symbolic-ref", "--short", "HEAD"], cwd=ROOT, text=True).strip()
+    fields = {"melonx": True} if args.melonx else {}
     if args.nightly:
-        print(dispatch(ref, expected, release_build=args.release, nightly=True))
-    else:
-        print(dispatch(ref, expected, release_build=args.release))
+        fields["nightly"] = True
+    print(dispatch(ref, expected, release_build=args.release, **fields))
 
 
 if __name__ == "__main__":

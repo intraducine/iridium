@@ -16,7 +16,8 @@ struct IridiumSystemGameSettings: View {
     }
     static func routes(for platform: IridiumPlatform) -> [String] {
         let setup = IridiumConsoleSystem.system(for: platform)?.runtime.jit == .required ? ["JIT & Memory"] : []
-        return setup + games(for: platform).map { "console:" + $0.id.uuidString }
+        let systemFiles = platform == .nintendoSwitch ? [IridiumMeloNXSystemFiles.route] : []
+        return systemFiles + setup + games(for: platform).map { "console:" + $0.id.uuidString }
     }
     static func game(for route: String) -> IridiumConsoleGame? {
         guard route.hasPrefix("console:"), let id = UUID(uuidString: String(route.dropFirst(8))) else { return nil }
@@ -26,6 +27,13 @@ struct IridiumSystemGameSettings: View {
       Group {
         if let system = IridiumConsoleSystem.system(for: platform) {
             IridiumSystemSetupSections(system: system)
+            if system.id == "melonx" {
+                let route = IridiumMeloNXSystemFiles.route
+                Section("System Files") {
+                    NavigationLink(route, value: route)
+                        .id(route).listRowBackground(focus == route ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
+                }
+            }
         }
         Section {
             if games.isEmpty { Text("No games added.").foregroundStyle(.secondary) }

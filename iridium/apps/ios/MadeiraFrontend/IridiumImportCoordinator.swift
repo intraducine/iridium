@@ -75,7 +75,12 @@ import SwiftUI
                 let allFiles = try await files.files(LibraryModel.documents.resolvingSymlinksInPath().appendingPathComponent("Import"), validate: false)
                 let pairing = allFiles.filter { ["plist", "mobiledevicepairing"].contains($0.pathExtension.lowercased()) }
                 automaticPairingNeedsChoice = try await files.pairingNeedsChoice(count: pairing.count)
-                for source in roots {
+                // A batch can contain keys and firmware in different folders.
+                for source in allFiles where source.pathExtension.lowercased() == "keys" {
+                    guard mayWork, !Task.isCancelled else { break }
+                    await process(source, depth: source.pathComponents.count - files.storage.inbox.pathComponents.count - 1)
+                }
+                for source in roots where source.pathExtension.lowercased() != "keys" {
                     guard mayWork, !Task.isCancelled else { break }
                     await process(source, depth: 0, batch: source.lastPathComponent.hasPrefix("From Files-"))
                 }
@@ -186,11 +191,12 @@ import SwiftUI
         var record: IridiumImportFiles.Receipt?
         do {
             let directory = try await files.isDirectory(source)
-            let extensions = Set(IridiumConsoleLibrary.importExtensions + ["exe", "cia", "plist", "mobiledevicepairing", "zip", "7z"])
+            let extensions = Set(IridiumConsoleLibrary.importExtensions + ["exe", "cia", "plist", "mobiledevicepairing", "keys", "zip", "7z"])
             guard directory || extensions.contains(source.pathExtension.lowercased()) else { return }
             let receipt = try await files.receipt(source); record = receipt
             let key = receipt.path + "#" + receipt.fingerprint
             guard !attempted.contains(key) else { return }
+            let switchFirmware = directory ? false : try await files.isSwitchFirmware(source)
             if directory {
                 let executables = try await files.executables(source)
                 let consoleBatch = try await files.hasConsoleGame(source)
@@ -228,10 +234,15 @@ import SwiftUI
                 try JITPairingFileStore.store(data, source: .imported)
                 try await files.consume(source, receipt: receipt)
                 imported += 1
+            } else if source.pathExtension.lowercased() == "keys" || switchFirmware {
+                try await installSwitchSystemFile(source, receipt: receipt)
             } else if ["zip", "7z"].contains(source.pathExtension.lowercased()), receipt.choice != IridiumPlatform.arcade.rawValue {
                 isWorking = true
                 let folder = try await files.expand(source, receipt: receipt)
                 let before = imported
+                for keyFile in try await files.files(folder, validate: false) where keyFile.pathExtension.lowercased() == "keys" {
+                    await process(keyFile, depth: depth + keyFile.pathComponents.count - folder.pathComponents.count + 1)
+                }
                 await process(folder, depth: depth + 1, batch: true)
                 let refreshed = try await files.receipt(source)
                 let paths = await files.existing(Array(Set(choices.keys).union(failures.keys)))
@@ -242,7 +253,7 @@ import SwiftUI
                         options: [(value: IridiumPlatform.arcade.rawValue, title: "Import as arcade set")])
                 }
                 else if imported == before && refreshed.importedPayload != true && !pending {
-                    failures[receipt.path] = "No supported game or pairing files were found. The archive stays in Import."
+                    failures[receipt.path] = "No supported games or setup files were found. The archive stays in Import."
                     attempted.insert(key)
                 }
                 return
@@ -265,11 +276,11 @@ import SwiftUI
                 let tracks = try await files.discFiles(source, siblings: siblings)
                 var trackReceipts: [(URL, IridiumImportFiles.Receipt)] = []
                 for track in tracks { trackReceipts.append((track, try await files.receipt(track))) }
-                _ = try await files.importConsole(source, receipt: receipt, platform: platform, siblings: siblings, store: IridiumConsoleLibrary.shared.store)
+                let game = try await files.importConsole(source, receipt: receipt, platform: platform, siblings: siblings, store: IridiumConsoleLibrary.shared.store)
                 if platform == .arcade { try await files.discardUnchangedExpansion(receipt) }
                 try await files.consume(source, receipt: receipt)
                 for (track, ticket) in trackReceipts { try await files.consumeTrack(track, receipt: ticket) }
-                imported += 1; lastImportedGameID = receipt.id
+                imported += 1; lastImportedGameID = game.id
             } else { return } // Sidecars and unknown files remain in the inbox.
             attempted.insert(key); choices[receipt.path] = nil; failures[receipt.path] = nil
         } catch is CancellationError { }
@@ -278,6 +289,21 @@ import SwiftUI
             failures[path] = error.localizedDescription
             if let record { attempted.insert(record.path + "#" + record.fingerprint) }
         }
+    }
+
+    private func installSwitchSystemFile(_ source: URL, receipt: IridiumImportFiles.Receipt) async throws {
+        guard IridiumConsoleSystem.system(for: .nintendoSwitch) != nil else { throw IridiumRuntimeError.unavailable }
+        let session = IridiumConsoleSession.shared
+        contentImportOwner = receipt.id
+        defer { contentImportOwner = nil }
+        guard session.beginContentMaintenance(importOwner: receipt.id) else {
+            throw IridiumImportFailure.message(session.dolphinSystemStatus ?? "Close the current game first.")
+        }
+        defer { session.endContentMaintenance() }
+        try await files.importSwitchSystemFile(source, receipt: receipt, firmware: source.pathExtension.lowercased() == "zip",
+            store: IridiumConsoleLibrary.shared.store, frameworks: Bundle.main.privateFrameworksURL)
+        try await files.consume(source, receipt: receipt)
+        imported += 1
     }
 
     private func installCIA(_ source: URL, receipt: IridiumImportFiles.Receipt) async throws -> Bool {

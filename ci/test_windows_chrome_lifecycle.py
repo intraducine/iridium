@@ -23,7 +23,7 @@ BASE = 'db860fd0555488b497ca84a6bb3a1e629d960d22'
 
 class WindowsChromeSourceTests(unittest.TestCase):
     def test_controller_producers_and_launch_admission_match_pinned_upstream(self):
-        spec = importlib.util.spec_from_file_location('chrome_input_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_input_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, relative in [('GamepadInput.swift', 'GamepadInput.swift'),
                                ('TouchGamepad.swift', 'TouchGamepad.swift'),
@@ -35,7 +35,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
         actual = frontend.overlay('ContentView.swift', original)
         start = '    private func runWineFullSequence('
         end = "            // A library entry's launch profile"
-        guard = '        guard !IridiumConsoleSession.shared.isActive else { library.error = "Stop the console runtime first."; return }\n'
+        guard = '        if let error = IridiumConsoleSession.shared.windowsAdmissionError { library.error = error; return }\n'
         settings_guard = '        guard TouchControlsModel.shared.iridiumSettingsContext == nil else {\n            LibraryModel.shared.error = "Finish editing controls before starting a game."\n            return\n        }\n'
         self.assertIn(settings_guard, actual[actual.index(start):actual.index(end)])
         storage_guard = '        guard !IridiumImportCoordinator.shared.blocksLaunch else { library.error = IridiumImportCoordinator.shared.launchMessage; return }\n'
@@ -52,10 +52,24 @@ class WindowsChromeSourceTests(unittest.TestCase):
         admission = admission.replace(resident, '')
         ready_guard = 'guard jit_check_debugged(), IridiumMadeiraRuntime.jitMemoryReady, !jitCoordinator.consoleMemoryRequiresRestart else {'
         self.assertIn(ready_guard, admission)
-        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {')
+        recovery = """            let message = jitCoordinator.consoleMemoryRequiresRestart
+                ? "JIT cleanup did not finish. Close and reopen Iridium, then enable JIT while connected."
+                : "Windows JIT is not ready. Use Enable JIT while connected, then try Play again."
+            logStore.log(message, level: .error)
+            if profile != nil { LibraryModel.shared.launchFailed() }
+            library.error = message
+"""
+        self.assertIn(recovery, admission)
+        admission = admission.replace(ready_guard, 'guard jit_check_debugged() else {').replace(
+            recovery, '''            logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
+            if profile != nil { LibraryModel.shared.launchFailed() }
+''')
         diagnostic = '            DeviceDiagnostics.logLaunch()\n'
         worker = admission.index('        DispatchQueue.global(qos: .userInitiated).async {')
         self.assertGreater(admission.index(diagnostic), worker)
+        performance = '            RuntimePerformanceDiagnostics.shared.record("wine-start")\n'
+        self.assertGreater(admission.index(performance), worker)
+        admission = admission.replace(performance, '')
         self.assertIn('        GOGGalaxy.shared.registerService()\n', admission)
         admission = admission.replace('        GOGGalaxy.shared.registerService()\n', '')
         self.assertEqual(admission.replace(guard, '').replace(settings_guard, '').replace(storage_guard, '').replace(diagnostic, ''),
@@ -63,7 +77,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
                              '        MadeiraExtensionProbe.runIfRequested()   /* ml1310: env.MADEIRA_EXT_PROBE = 1 only */\n', '').replace('        DeviceDiagnostics.logLaunch()\n', ''))
 
     def test_host_attachment_and_game_view_dismissal_match_pinned_upstream(self):
-        spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_source_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         for name, start, end in [('ContentView.swift', 'enum TouchControlsHost {', 'struct TouchControlsOverlay: View {'),
                                  ('Library.swift', '    func showGameView(reason:', '    /// The hotkey')]:
@@ -88,7 +102,7 @@ class WindowsChromeSourceTests(unittest.TestCase):
 class WindowsChromeLifecycleTests(unittest.TestCase):
     def test_generated_launch_order_and_real_host_menu_on_handoff(self):
         device = os.environ['IRIDIUM_CHROME_SIMULATOR']
-        spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira-frontend.py')
+        spec = importlib.util.spec_from_file_location('chrome_frontend', ROOT/'ci/madeira_app.py')
         frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
         upstream = (frontend.UPSTREAM / 'app/Madeira/ContentView.swift').read_text()
         current = frontend.overlay('ContentView.swift', upstream)

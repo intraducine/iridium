@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+void ir_phase3_trim_memory(void);
+int ir_phase3_melonx_install_firmware(const char *frameworks, const char *system, const char *file);
 #include "IRCoreOptions.h"
 #include "IRCheats.h"
 

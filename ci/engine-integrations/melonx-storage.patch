@@ -1,0 +1,1318 @@
+diff --git a/src/Ryujinx.Common/Configuration/AppDataManager.cs b/src/Ryujinx.Common/Configuration/AppDataManager.cs
+index bc12ba6..09e7f4d 100644
+--- a/src/Ryujinx.Common/Configuration/AppDataManager.cs
++++ b/src/Ryujinx.Common/Configuration/AppDataManager.cs
+@@ -29,7 +29,7 @@ namespace Ryujinx.Common.Configuration
+         public static string GamesDirPath { get; private set; }
+         public static string ProfilesDirPath { get; private set; }
+         public static string KeysDirPath { get; private set; }
+-        public static string KeysDirPathUser { get; }
++        public static string KeysDirPathUser { get; private set; }
+ 
+         public static string LogsDirPath { get; private set; }
+ 
+@@ -47,6 +47,14 @@ namespace Ryujinx.Common.Configuration
+             KeysDirPathUser = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".switch");
+         }
+ 
++        public static void InitializeEmbedded(string dataRoot)
++        {
++            BaseDirPath = dataRoot;
++            Mode = LaunchMode.Custom;
++            KeysDirPathUser = Path.Combine(dataRoot, KeysDir);
++            SetupBasePaths();
++        }
++
+         public static void Initialize(string baseDirPath)
+         {
+             if (OperatingSystem.IsIOS()) 
+diff --git a/src/Ryujinx.Cpu/LightningJit/Cache/DualMappedNoWxCache.cs b/src/Ryujinx.Cpu/LightningJit/Cache/DualMappedNoWxCache.cs
+index 050ef99..476b122 100644
+--- a/src/Ryujinx.Cpu/LightningJit/Cache/DualMappedNoWxCache.cs
++++ b/src/Ryujinx.Cpu/LightningJit/Cache/DualMappedNoWxCache.cs
+@@ -12,7 +12,7 @@ namespace Ryujinx.Cpu.LightningJit.Cache
+     class DualMappedNoWxCache : IDisposable
+     {
+         private const int CodeAlignment = 4; // Bytes.
+-        private static readonly ulong SharedCacheSize = DualMappedJitAllocator.hasTXM ? (ulong)512 * 1024 * 1024 : 1024 * 1024 * 1024;
++        private static readonly ulong SharedCacheSize = (DualMappedJitAllocator.UsesHostMemory || DualMappedJitAllocator.hasTXM) ? (ulong)512 * 1024 * 1024 : 1024 * 1024 * 1024;
+ 
+         private class MemoryCache : IDisposable
+         {
+@@ -91,20 +91,40 @@
+         private readonly Translator _translator;
+         private MemoryCache _sharedCache;
+         private static DualMappedJitAllocator _sharedCacheAlloc;
++        private static readonly Lock _sharedCacheLock = new();
++        private static int _embeddedUsers;
++        private bool _embeddedLease;
+         private readonly Lock _lock = new();
+ 
+         public DualMappedNoWxCache(Translator translator)
+         {
+             _translator = translator;
+-            _sharedCache = new(_sharedCacheAlloc, SharedCacheSize);
++            lock (_sharedCacheLock)
++            {
++                _sharedCache = new(_sharedCacheAlloc, SharedCacheSize);
++                if (DualMappedJitAllocator.UsesHostMemory)
++                {
++                    _embeddedLease = true;
++                    _embeddedUsers++;
++                }
++            }
+         }
+ 
+         public static void InitMemoryCache() 
+         {
+-            if (_sharedCacheAlloc != null)
+-                return;
+-
+-            _sharedCacheAlloc = new(SharedCacheSize);
++            lock (_sharedCacheLock)
++                _sharedCacheAlloc ??= new(SharedCacheSize);
++        }
++
++        internal static void ReleaseEmbeddedCache()
++        {
++            lock (_sharedCacheLock)
++            {
++                if (_embeddedUsers != 0)
++                    throw new InvalidOperationException("MeloNX still has live translation caches.");
++                _sharedCacheAlloc?.Dispose();
++                _sharedCacheAlloc = null;
++            }
+         }
+ 
+         public unsafe nint Map(ReadOnlySpan<byte> code, ulong guestAddress, ulong guestSize)
+@@ -183,6 +203,17 @@
+ 
+         protected virtual void Dispose(bool disposing)
+         {
++            if (!disposing)
++                return;
++
++            lock (_sharedCacheLock)
++            {
++                if (_embeddedLease)
++                {
++                    _embeddedLease = false;
++                    _embeddedUsers--;
++                }
++            }
+         }
+ 
+         public void Dispose()
+diff --git a/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs b/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs
+index 0d2490a..f5da191 100644
+--- a/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs
++++ b/src/Ryujinx.Graphics.Nvdec.FFmpeg/Native/FFmpegApi.cs
+@@ -1,5 +1,6 @@
+ using System;
+ using System.Collections.Generic;
++using System.IO;
+ using System.Reflection;
+ using System.Runtime.InteropServices;
+ 
+@@ -42,6 +43,12 @@ namespace Ryujinx.Graphics.Nvdec.FFmpeg.Native
+ 
+             if (_librariesWhitelist.TryGetValue(libraryName, out (int, int) value))
+             {
++                if (AppContext.GetData("Iridium.Frameworks") is string frameworks)
++                {
++                    string framework = "lib" + libraryName;
++                    return NativeLibrary.TryLoad(Path.Combine(frameworks, framework + ".framework", framework), out handle);
++                }
++
+                 (int minVersion, int maxVersion) = value;
+ 
+                 for (int version = maxVersion; version >= minVersion; version--)
+diff --git a/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs b/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs
+index 59a1494..24b34a6 100644
+--- a/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs
++++ b/src/Ryujinx.Graphics.Vulkan/MoltenVK/MVKInitialization.cs
+@@ -1,6 +1,7 @@
+ using Silk.NET.Core.Loader;
+ using Silk.NET.Vulkan;
+ using System;
++using System.IO;
+ using System.Runtime.InteropServices;
+ using System.Runtime.Versioning;
+ 
+@@ -19,7 +20,7 @@ namespace Ryujinx.Graphics.Vulkan.MoltenVK
+         [LibraryImport("libMoltenVK.dylib")]
+         private static partial Result vkSetMoltenVKConfigurationMVK(nint unusedInstance, in MVKConfiguration config, in nint configSize);
+ 
+-        public static void Initialize()
++        public static void Initialize(bool resumeLostDevice = true)
+         {
+             nint configSize = (nint)Marshal.SizeOf<MVKConfiguration>();
+ 
+@@ -34,7 +35,7 @@ namespace Ryujinx.Graphics.Vulkan.MoltenVK
+             config.PresentWithCommandBuffer = true;
+             config.MaxActiveMetalCommandBuffersPerQueue = MaxActiveMetalCommandBuffersPerQueue;
+ 
+-            config.ResumeLostDevice = true;
++            config.ResumeLostDevice = resumeLostDevice;
+ 
+             vkSetMoltenVKConfigurationMVK(nint.Zero, config, configSize);
+         }
+@@ -50,6 +51,16 @@ namespace Ryujinx.Graphics.Vulkan.MoltenVK
+             return [];
+         }
+ 
++        public static void InitializeEmbedded(string frameworks)
++        {
++            string moltenVK = Path.Combine(frameworks, "libMoltenVK.dylib");
++            ((DefaultPathResolver)PathResolver.Default).Resolvers.Insert(0, path =>
++                Path.GetFileName(path).StartsWith("libvulkan", StringComparison.Ordinal) ? [moltenVK] : []);
++            nint library = NativeLibrary.Load(moltenVK);
++            NativeLibrary.SetDllImportResolver(typeof(MVKInitialization).Assembly, (name, _, _) =>
++                name == "libMoltenVK.dylib" ? library : nint.Zero);
++        }
++
+         public static void InitializeResolver()
+         {
+             ((DefaultPathResolver)PathResolver.Default).Resolvers.Insert(0, Resolver);
+diff --git a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
+index 7ac8f78..09ad8a2 100644
+--- a/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
++++ b/src/Ryujinx.Graphics.Vulkan/VulkanRenderer.cs
+@@ -154,8 +154,11 @@ namespace Ryujinx.Graphics.Vulkan
+ 
+         public event EventHandler<ScreenCaptureImageInfo> ScreenCaptured;
+ 
+-        public VulkanRenderer(Vk api, Func<Instance, Vk, SurfaceKHR> getSurface, Func<string[]> requiredExtensionsFunc, string preferredGpuId)
++        private readonly bool _embeddedSession;
++
++        public VulkanRenderer(Vk api, Func<Instance, Vk, SurfaceKHR> getSurface, Func<string[]> requiredExtensionsFunc, string preferredGpuId, bool embeddedSession = false)
+         {
++            _embeddedSession = embeddedSession;
+             _getSurface = getSurface;
+             _getRequiredExtensions = requiredExtensionsFunc;
+             _preferredGpuId = preferredGpuId;
+@@ -168,7 +171,7 @@ namespace Ryujinx.Graphics.Vulkan
+ 
+             // Any device running on macOS (even Intel and AMD vendors) & iOS is using MoltenVK.
+             if (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS())
+-                MVKInitialization.Initialize();
++                MVKInitialization.Initialize(resumeLostDevice: !embeddedSession);
+         }
+ 
+         public static VulkanRenderer Create(
+@@ -463,7 +466,10 @@ namespace Ryujinx.Graphics.Vulkan
+                 properties.Limits.FramebufferDepthSampleCounts &
+                 properties.Limits.FramebufferStencilSampleCounts;
+ 
+-            bool supportsExtendedDynamicState = Environment.GetEnvironmentVariable("MVK_SUPPORTS_EXT_DYN_STATE") != "0" && _physicalDevice.IsDeviceExtensionPresent(ExtExtendedDynamicState.ExtensionName);
++            // Use the static vertex layout for the embedded iOS Metal pipeline.
++            bool supportsExtendedDynamicState = !_embeddedSession &&
++                Environment.GetEnvironmentVariable("MVK_SUPPORTS_EXT_DYN_STATE") != "0" &&
++                _physicalDevice.IsDeviceExtensionPresent(ExtExtendedDynamicState.ExtensionName);
+ 
+             Capabilities = new HardwareCapabilities(
+                 _physicalDevice.IsDeviceExtensionPresent("VK_EXT_index_type_uint8") && !IsMoltenVk,
+diff --git a/src/Ryujinx.Graphics.Vulkan/Window.cs b/src/Ryujinx.Graphics.Vulkan/Window.cs
+index 20ad9b7..98e713b 100644
+--- a/src/Ryujinx.Graphics.Vulkan/Window.cs
++++ b/src/Ryujinx.Graphics.Vulkan/Window.cs
+@@ -318,31 +318,31 @@ namespace Ryujinx.Graphics.Vulkan
+             _gd.RegisterPresentationTexture(view);
+             _gd.PipelineInternal.AutoFlush.Present();
+ 
++            if (_swapchainIsDirty)
++            {
++                RecreateSwapchain();
++            }
++
+             uint nextImage = 0;
+             int semaphoreIndex = _frameIndex++ % _imageAvailableSemaphores.Length;
++            Result acquireResult = _gd.SwapchainApi.AcquireNextImage(
++                _device,
++                _swapchain,
++                ulong.MaxValue,
++                _imageAvailableSemaphores[semaphoreIndex],
++                new Fence(),
++                ref nextImage);
+ 
+-            while (true)
++            if (acquireResult == Result.ErrorOutOfDateKhr)
+             {
+-                Result acquireResult = _gd.SwapchainApi.AcquireNextImage(
+-                    _device,
+-                    _swapchain,
+-                    ulong.MaxValue,
+-                    _imageAvailableSemaphores[semaphoreIndex],
+-                    new Fence(),
+-                    ref nextImage);
++                _swapchainIsDirty = true;
++                return;
++            }
+ 
+-                if (acquireResult == Result.ErrorOutOfDateKhr ||
+-                    acquireResult == Result.SuboptimalKhr ||
+-                    _swapchainIsDirty)
+-                {
+-                    RecreateSwapchain();
+-                    semaphoreIndex = (_frameIndex - 1) % _imageAvailableSemaphores.Length;
+-                }
+-                else
+-                {
+-                    acquireResult.ThrowOnError();
+-                    break;
+-                }
++            // A suboptimal acquisition still owns an image and has signaled its semaphore.
++            if (acquireResult != Result.SuboptimalKhr)
++            {
++                acquireResult.ThrowOnError();
+             }
+ 
+             Image swapchainImage = _swapchainImages[nextImage];
+@@ -528,7 +528,21 @@ namespace Ryujinx.Graphics.Vulkan
+                     _metalFxScalingFilter.Encode();
+                 }
+ 
+-                _gd.SwapchainApi.QueuePresent(_gd.Queue, in presentInfo);
++                result = _gd.SwapchainApi.QueuePresent(_gd.Queue, in presentInfo);
++            }
++
++            if (result == Result.Success || result == Result.SuboptimalKhr)
++            {
++                swapBuffersCallback?.Invoke();
++            }
++            else if (result != Result.ErrorOutOfDateKhr)
++            {
++                result.ThrowOnError();
++            }
++
++            if (acquireResult == Result.SuboptimalKhr || result is Result.SuboptimalKhr or Result.ErrorOutOfDateKhr)
++            {
++                _swapchainIsDirty = true;
+             }
+         }
+ 
+diff --git a/src/Ryujinx.HLE/FileSystem/ContentManager.cs b/src/Ryujinx.HLE/FileSystem/ContentManager.cs
+index 1046441..1e909bd 100644
+--- a/src/Ryujinx.HLE/FileSystem/ContentManager.cs
++++ b/src/Ryujinx.HLE/FileSystem/ContentManager.cs
+@@ -19,6 +19,7 @@ using System;
+ using System.Collections.Generic;
+ using System.IO;
+ using System.IO.Compression;
++using System.Runtime.InteropServices;
+ using System.Linq;
+ using System.Text;
+ using System.Text.RegularExpressions;
+@@ -433,7 +434,7 @@ namespace Ryujinx.HLE.FileSystem
+             return locationList.ToList().FirstOrDefault(x => x.TitleId == titleId && x.ContentType == contentType);
+         }
+ 
+-        public void InstallFirmware(string firmwareSource)
++        public void InstallFirmware(string firmwareSource, bool atomic = false)
+         {
+             ContentPath.TryGetContentPath(StorageId.BuiltInSystem, out string contentPathString);
+             ContentPath.TryGetRealPath(contentPathString, out string contentDirectory);
+@@ -448,7 +449,7 @@ namespace Ryujinx.HLE.FileSystem
+             if (Directory.Exists(firmwareSource))
+             {
+                 InstallFromDirectory(firmwareSource, temporaryDirectory);
+-                FinishInstallation(temporaryDirectory, registeredDirectory);
++                FinishInstallation(temporaryDirectory, registeredDirectory, atomic);
+ 
+                 return;
+             }
+@@ -479,7 +480,7 @@ namespace Ryujinx.HLE.FileSystem
+                     throw new InvalidFirmwarePackageException("Input file is not a valid firmware package");
+             }
+ 
+-            FinishInstallation(temporaryDirectory, registeredDirectory);
++            FinishInstallation(temporaryDirectory, registeredDirectory, atomic);
+         }
+ 
+         public static void InstallKeys(string keysSource, string installDirectory)
+@@ -543,8 +544,44 @@ namespace Ryujinx.HLE.FileSystem
+             File.Copy(keysSource, dest, true);
+         }
+ 
+-        private void FinishInstallation(string temporaryDirectory, string registeredDirectory)
++        [DllImport("libc", EntryPoint = "renamex_np")]
++        private static extern int SwapFirmwareDirectories(
++            [MarshalAs(UnmanagedType.LPUTF8Str)] string source,
++            [MarshalAs(UnmanagedType.LPUTF8Str)] string destination, uint flags);
++
++        private void FinishInstallation(string temporaryDirectory, string registeredDirectory, bool atomic)
+         {
++            if (atomic)
++            {
++                const uint renameSwap = 2;
++                bool replacing = Directory.Exists(registeredDirectory);
++                if (replacing)
++                {
++                    if (SwapFirmwareDirectories(temporaryDirectory, registeredDirectory, renameSwap) != 0)
++                        throw new IOException("Could not replace installed firmware.");
++                }
++                else
++                {
++                    Directory.Move(temporaryDirectory, registeredDirectory);
++                }
++                try { LoadEntries(); }
++                catch
++                {
++                    if (replacing)
++                        SwapFirmwareDirectories(temporaryDirectory, registeredDirectory, renameSwap);
++                    else
++                        Directory.Move(registeredDirectory, temporaryDirectory);
++                    throw;
++                }
++                if (replacing)
++                {
++                    try { Directory.Delete(temporaryDirectory, true); }
++                    catch (IOException) { }
++                    catch (UnauthorizedAccessException) { }
++                }
++                return;
++            }
++
+             if (Directory.Exists(registeredDirectory))
+             {
+                 new DirectoryInfo(registeredDirectory).Delete(true);
+diff --git a/src/Ryujinx.HLE/Loaders/Processes/Extensions/PartitionFileSystemExtensions.cs b/src/Ryujinx.HLE/Loaders/Processes/Extensions/PartitionFileSystemExtensions.cs
+index 636d977..6756ca9 100644
+--- a/src/Ryujinx.HLE/Loaders/Processes/Extensions/PartitionFileSystemExtensions.cs
++++ b/src/Ryujinx.HLE/Loaders/Processes/Extensions/PartitionFileSystemExtensions.cs
+@@ -89,7 +89,9 @@ namespace Ryujinx.HLE.Loaders.Processes.Extensions
+             }
+             catch (Exception ex)
+             {
+-                errorMessage = $"Unable to load: {ex.Message}";
++                errorMessage = ex is MissingKeyException
++                    ? "Missing Switch decryption keys."
++                    : $"Unable to load: {ex.Message}";
+ 
+                 return (false, ProcessResult.Failed);
+             }
+diff --git a/src/Ryujinx.HLE/Loaders/Processes/ProcessLoader.cs b/src/Ryujinx.HLE/Loaders/Processes/ProcessLoader.cs
+index 57aa9c6..149c9b5 100644
+--- a/src/Ryujinx.HLE/Loaders/Processes/ProcessLoader.cs
++++ b/src/Ryujinx.HLE/Loaders/Processes/ProcessLoader.cs
+@@ -89,9 +89,9 @@ namespace Ryujinx.HLE.Loaders.Processes
+ 
+             (bool success, ProcessResult processResult) = partitionFileSystem.TryLoad(_device, path, applicationId, out string errorMessage);
+ 
+-            if (processResult.ProcessId == 0)
++            if (processResult.ProcessId == 0 && partitionFileSystem.FileExists("/main"))
+             {
+-                // This is not a normal NSP, it's actually a ExeFS as a NSP
++                // Only an actual ExeFS may use the fallback after a package load fails.
+                 processResult = partitionFileSystem.Load(_device, new BlitStruct<ApplicationControlProperty>(1), partitionFileSystem.GetNpdm(), 0, true);
+             }
+ 
+diff --git a/src/Ryujinx.Library/Library.cs b/src/Ryujinx.Library/Library.cs
+index b95d4ec..2205ef7 100644
+--- a/src/Ryujinx.Library/Library.cs
++++ b/src/Ryujinx.Library/Library.cs
+@@ -70,7 +70,7 @@ using Ryujinx.HLE.Utilities;
+ 
+ namespace Ryujinx.Library 
+ {
+-    class Library
++    partial class Library
+     {
+         private static VirtualFileSystem _virtualFileSystem;
+         private static ContentManager _contentManager;
+@@ -88,6 +88,8 @@ namespace Ryujinx.Library
+         private static readonly Lock metalLayerLock = new();
+         private static readonly Lock inputConfigurationLock = new();
+         private static KeyboardConfigNative? _keyboardConfig = null;
++        private static readonly Lock embeddedInitializationLock = new();
++        private static bool embeddedInitializationAttempted, embeddedInitialized;
+ 
+         [UnmanagedCallersOnly(EntryPoint = "main_ryujinx_sdl")]
+         public static unsafe int MainExternal(OptionsNative* nativeOptions)
+@@ -112,7 +114,85 @@ namespace Ryujinx.Library
+         public static unsafe void Initialize()
+         {
+             AppDataManager.Initialize(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
++            string stage = "";
++            InitializeCore(false, ref stage);
++        }
++
++        // The host supplies an existing, private directory it has validated.
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_initialize")]
++        public static unsafe int InitializeEmbedded(nint dataRootUtf8, nint frameworksUtf8,
++            delegate* unmanaged[Cdecl]<nint, void> diagnostic)
++        {
++            int result = InitializeHost(dataRootUtf8, frameworksUtf8, diagnostic);
++            if (result != 0)
++                return result;
++            try
++            {
++                // Each embedded launch owns a fresh input driver and button state.
++                _inputManager = new InputManager(null, new NativeGamepadDriver());
++                _inputConfiguration = new List<InputConfig>();
++                return 0;
++            }
++            catch (Exception e)
++            {
++                EmbeddedReport($"MeloNX input initialization failed: {e.GetType().Name}.");
++                return -3;
++            }
++        }
++
++        private static unsafe int InitializeHost(nint dataRootUtf8, nint frameworksUtf8,
++            delegate* unmanaged[Cdecl]<nint, void> diagnostic)
++        {
++            string stage = "paths";
++            try
++            {
++                string dataRoot = Marshal.PtrToStringUTF8(dataRootUtf8);
++                if (!OperatingSystem.IsIOS() || string.IsNullOrEmpty(dataRoot) ||
++                    !Path.IsPathFullyQualified(dataRoot))
++                {
++                    return -1;
++                }
++
++                var directory = new DirectoryInfo(dataRoot);
++                if (!directory.Exists || directory.LinkTarget != null)
++                {
++                    return -1;
++                }
+ 
++                string frameworks = Marshal.PtrToStringUTF8(frameworksUtf8);
++                if (string.IsNullOrEmpty(frameworks) || !Path.IsPathFullyQualified(frameworks))
++                    return -1;
++
++                lock (embeddedInitializationLock)
++                {
++                    _embeddedDiagnostic = diagnostic;
++                    if (embeddedInitialized && _embeddedStarted == 0 && AppDataManager.BaseDirPath == directory.FullName &&
++                        (string)AppContext.GetData("Iridium.Frameworks") == frameworks)
++                        return 0;
++                    if (embeddedInitializationAttempted || _virtualFileSystem != null)
++                        return -2;
++
++                    embeddedInitializationAttempted = true;
++                    stage = "data folders";
++                    AppDataManager.InitializeEmbedded(directory.FullName);
++                    AppContext.SetData("Iridium.Frameworks", frameworks);
++                    stage = "graphics libraries";
++                    MVKInitialization.InitializeEmbedded(frameworks);
++                    InitializeCore(true, ref stage);
++                    embeddedInitialized = true;
++                    return 0;
++                }
++            }
++            catch (Exception e)
++            {
++                EmbeddedReport($"MeloNX initialization failed at {stage}: {e.GetType().Name}.");
++                return -3;
++            }
++        }
++
++        private static void InitializeCore(bool embedded, ref string stage)
++        {
++            stage = "virtual file system";
+             Silk.NET.Core.Loader.SearchPathContainer.Platform = Silk.NET.Core.Loader.UnderlyingPlatform.MacOS;
+ 
+             if (_virtualFileSystem == null)
+@@ -120,6 +200,7 @@ namespace Ryujinx.Library
+                 _virtualFileSystem = VirtualFileSystem.CreateInstance();
+             }
+ 
++            stage = "Switch file services";
+             if (_libHacHorizonManager == null)
+             {
+                 _libHacHorizonManager = new LibHacHorizonManager();
+@@ -134,13 +215,18 @@ namespace Ryujinx.Library
+                 _contentManager = new ContentManager(_virtualFileSystem);
+             }
+             
++            stage = "Switch account";
+             if (_accountManager == null)
+             {
+                 _accountManager = new AccountManager(_libHacHorizonManager.RyujinxClient);
+             }
+ 
+-            // :3
+-            NativeLibrary.SetDllImportResolver(typeof(SDL3Type).Assembly, (_, assembly, path) => NativeLibrary.Load("@rpath/SDL3.framework/SDL3", assembly, path));
++            if (embedded)
++                return;
++
++            stage = "controller input";
++            NativeLibrary.SetDllImportResolver(typeof(SDL3Type).Assembly, (_, assembly, path) =>
++                NativeLibrary.Load("@rpath/SDL3.framework/SDL3", assembly, path));
+ 
+             _inputManager = new InputManager(new SDL3KeyboardDriver(), new NativeGamepadDriver());
+             _inputConfiguration = new List<InputConfig>();
+@@ -759,7 +845,7 @@ namespace Ryujinx.Library
+ 
+         private static void EnsureKeyboardFallback()
+         {
+-            if (_inputConfiguration != null && _inputConfiguration.Count > 0)
++            if (_inputManager.KeyboardDriver == null || (_inputConfiguration != null && _inputConfiguration.Count > 0))
+                 return;
+ 
+             _inputConfiguration ??= new List<InputConfig>();
+@@ -781,7 +867,7 @@ namespace Ryujinx.Library
+                 return null;
+             }
+ 
+-            IGamepad gamepad = _inputManager.KeyboardDriver.GetGamepad(inputId);
++            IGamepad gamepad = _inputManager.KeyboardDriver?.GetGamepad(inputId);
+             bool isKeyboard = true;
+ 
+             if (gamepad == null)
+@@ -794,7 +880,9 @@ namespace Ryujinx.Library
+                     Logger.Error?.Print(LogClass.Application, $"{index} gamepad not found (\"{inputId}\")");
+ 
+                     inputId = "0";
+-                    gamepad = _inputManager.KeyboardDriver.GetGamepad(inputId);
++                    gamepad = _inputManager.KeyboardDriver?.GetGamepad(inputId);
++                    if (gamepad == null)
++                        return null;
+                     isKeyboard = true;
+                 }
+             }
+@@ -898,15 +986,18 @@ namespace Ryujinx.Library
+             return config;
+         }
+         
+-        static void Load(Options option)
++        static bool Load(Options option)
+         {
+-            _libHacHorizonManager = new LibHacHorizonManager();
+-            _libHacHorizonManager.InitializeFsServer(_virtualFileSystem);
+-            _libHacHorizonManager.InitializeArpServer();
+-            _libHacHorizonManager.InitializeBcatServer();
+-            _libHacHorizonManager.InitializeSystemClients();
++            if (!EmbeddedRun)
++            {
++                _libHacHorizonManager = new LibHacHorizonManager();
++                _libHacHorizonManager.InitializeFsServer(_virtualFileSystem);
++                _libHacHorizonManager.InitializeArpServer();
++                _libHacHorizonManager.InitializeBcatServer();
++                _libHacHorizonManager.InitializeSystemClients();
+ 
+-            _accountManager = new AccountManager(_libHacHorizonManager.RyujinxClient, option.UserProfile);
++                _accountManager = new AccountManager(_libHacHorizonManager.RyujinxClient, option.UserProfile);
++            }
+             _userChannelPersistence = new UserChannelPersistence();
+ 
+             GraphicsConfig.EnableMacroJit = false;
+@@ -932,18 +1023,21 @@ namespace Ryujinx.Library
+             Logger.SetEnable(LogLevel.AccessLog, option.LoggingEnableFsAccessLog);
+ 
+ 
+-            AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
++            if (!EmbeddedRun)
+             {
+-                var ex = e.ExceptionObject as Exception;
+-                var trace = new System.Diagnostics.StackTrace(ex, true);
+-                var frame = trace.GetFrame(0);
+-                var file = frame?.GetFileName();
+-                var line = frame?.GetFileLineNumber();
++                AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
++                {
++                    var ex = e.ExceptionObject as Exception;
++                    var trace = new System.Diagnostics.StackTrace(ex, true);
++                    var frame = trace.GetFrame(0);
++                    var file = frame?.GetFileName();
++                    var line = frame?.GetFileLineNumber();
+ 
+-                Logger.Info?.Print(LogClass.Application,
+-                    $"Unhandled exception: {ex}\nFile: {file}\nLine: {line}");
++                    Logger.Info?.Print(LogClass.Application,
++                        $"Unhandled exception: {ex}\nFile: {file}\nLine: {line}");
+ 
+-            };
++                };
++            }
+ 
+             if (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS())
+             {
+@@ -954,26 +1048,33 @@ namespace Ryujinx.Library
+                 }
+             }
+ 
+-            DriverUtilities.InitDriverConfig(option.BackendThreading == BackendThreading.Off);
++            if (!EmbeddedRun)
++                DriverUtilities.InitDriverConfig(option.BackendThreading == BackendThreading.Off);
+             _virtualFileSystem.ReloadKeySet();
++            if (EmbeddedRun && _virtualFileSystem.KeySet.HeaderKey.IsZeros() &&
++                Path.GetExtension(option.InputPath).ToLowerInvariant() is ".nca" or ".xci")
++                throw new MissingKeyException("Missing Switch decryption keys.");
+ 
+-            while (true)
++            bool loaded;
++            do
+             {
+-                LoadApplication(option);
++                loaded = LoadApplication(option);
+ 
+                 if (_userChannelPersistence.PreviousIndex == -1 || !_userChannelPersistence.ShouldRestart)
+                     break;
+ 
+                 _userChannelPersistence.ShouldRestart = false;
+-            }
++            } while (!EmbeddedRun);
+ 
+-            _inputManager.Dispose();
++            if (!EmbeddedRun)
++                _inputManager.Dispose();
+ 
+             GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+ 
+             GC.WaitForPendingFinalizers();
+             
+             GC.Collect();
++            return loaded;
+         }
+         
+         private static WindowBase CreateWindow(Options options)
+@@ -1005,7 +1106,7 @@ namespace Ryujinx.Library
+                 if (window is MoltenVKWindow mvulkanWindow)
+                     return new VulkanRenderer(api,
+                         (instance, vk) => new SurfaceKHR((ulong)(mvulkanWindow.CreateWindowSurface(instance.Handle))),
+-                        mvulkanWindow.GetRequiredInstanceExtensions, preferredGpuId);
++                        mvulkanWindow.GetRequiredInstanceExtensions, preferredGpuId, embeddedSession: EmbeddedRun);
+             }
+ 
+             return new OpenGLRenderer();
+@@ -1108,13 +1209,26 @@ namespace Ryujinx.Library
+             if (OperatingSystem.IsWindows())
+                 _windowsMultimediaTimerResolution = new WindowsMultimediaTimerResolution(1);
+ 
+-            DisplaySleep.Prevent();
++            if (!EmbeddedRun)
++                DisplaySleep.Prevent();
+ 
+             _window.Initialize(_emulationContext, _inputConfiguration, _enableKeyboard, _enableMouse);
+-            _window.Execute();
++            if (EmbeddedRun)
++            {
++                bool rendered = _window.ExecuteEmbedded();
++                _window.Dispose();
++                if (!rendered)
++                    throw new InvalidOperationException("MeloNX render loop failed.");
++                _window = null;
++                _emulationContext = null;
++            }
++            else
++            {
++                _window.Execute();
+ 
+-            _emulationContext.Dispose();
+-            _window.Dispose();
++                _emulationContext.Dispose();
++                _window.Dispose();
++            }
+ 
+             if (OperatingSystem.IsWindows())
+             {
+diff --git a/src/Ryujinx.Library/Window/MoltenVKWindow.cs b/src/Ryujinx.Library/Window/MoltenVKWindow.cs
+index cf25273..8242a76 100644
+--- a/src/Ryujinx.Library/Window/MoltenVKWindow.cs
++++ b/src/Ryujinx.Library/Window/MoltenVKWindow.cs
+@@ -165,6 +165,10 @@ namespace Ryujinx.Library
+         }
+ 
+ 
+-        protected override void SwapBuffers() {}
++        protected override void SwapBuffers()
++        {
++            if (Library.EmbeddedRun)
++                Library.EmbeddedFrame();
++        }
+     }
+ }
+diff --git a/src/Ryujinx.Library/Window/WindowBase.cs b/src/Ryujinx.Library/Window/WindowBase.cs
+index a64b53e..0c008e0 100644
+--- a/src/Ryujinx.Library/Window/WindowBase.cs
++++ b/src/Ryujinx.Library/Window/WindowBase.cs
+@@ -84,7 +84,7 @@ namespace Ryujinx.Library
+ 
+ 
+         private long _ticks;
+-        public bool _isActive;
++        public volatile bool _isActive;
+         private bool _isStopped;
+ 
+         public bool _ranFirstFrame;
+@@ -107,7 +107,7 @@ namespace Ryujinx.Library
+             _inputManager.SetMouseDriver(MouseDriver);
+             NpadManager = _inputManager.CreateNpadManager();
+             TouchScreenManager = _inputManager.CreateTouchScreenManager();
+-            _keyboardInterface = (IKeyboard)_inputManager.KeyboardDriver.GetGamepad("0");
++            _keyboardInterface = (IKeyboard)_inputManager.KeyboardDriver?.GetGamepad("0");
+             _glLogLevel = glLogLevel;
+             _chrono = new Stopwatch();
+             _ticksPerFrame = Stopwatch.Frequency / TargetFps;
+@@ -235,7 +235,8 @@ namespace Ryujinx.Library
+                         if (!_ranFirstFrame)
+                         { 
+                             _ranFirstFrame = true;
+-                            SendStatistics(false);
++                            if (!Library.EmbeddedRun)
++                                SendStatistics(false);
+                          }
+                         
+                     }
+@@ -250,7 +251,8 @@ namespace Ryujinx.Library
+                         }
+ 
+                         
+-                        SendStatistics();
++                        if (!Library.EmbeddedRun)
++                            SendStatistics();
+ 
+                         /*
+                             Device.EnableDeviceVsync,
+@@ -353,6 +355,61 @@ namespace Ryujinx.Library
+             return true;
+         }
+ 
++        public bool ExecuteEmbedded()
++        {
++            if (Library.EmbeddedStop)
++            {
++                Device.Dispose();
++                Device.DisposeGpu();
++                return true;
++            }
++
++            Device.Gpu.HostMemoryTrimThresholdBytes = Library.EmbeddedGpuTrimReserveBytes;
++            _isActive = true;
++            _chrono.Restart();
++            InitializeWindow();
++            Exception renderError = null;
++            Thread renderThread = new(() =>
++            {
++                try { Render(); }
++                catch (Exception error) { renderError = error; }
++                finally
++                {
++                    _isActive = false;
++                    _gpuDoneEvent.Set();
++                }
++            }) { Name = "MeloNX.Render" };
++            renderThread.Start();
++            try
++            {
++                while (_isActive && !Library.EmbeddedStop)
++                {
++                    Library.UpdateEmbedded(this);
++                    if (!Library.EmbeddedPaused)
++                        UpdateFrame();
++                    ProcessMainThreadQueue();
++                    _inputUpdatedEvent.WaitOne(8);
++                }
++            }
++            finally
++            {
++                _isActive = false;
++                _gpuCancellationTokenSource.Cancel();
++                _pauseEvent.Set();
++                // The threaded backend keeps running until DisposeGpu drains and stops it.
++                _gpuDoneEvent.WaitOne();
++                if (renderError == null)
++                {
++                    Device.Dispose();
++                    Device.DisposeGpu();
++                }
++                renderThread.Join();
++            }
++            if (renderError != null)
++                Library.EmbeddedReport($"MeloNX rendering failed: {renderError.GetType().Name}.");
++            return renderError == null;
++        }
++
+         public void Execute()
+         {
+             _chrono.Restart();
+@@ -377,6 +434,8 @@ namespace Ryujinx.Library
+         public bool DisplayInputDialog(SoftwareKeyboardUIArgs args, out string userText)
+         {
+             userText = null;
++            if (Library.EmbeddedRun)
++                return false;
+ 
+             if (OperatingSystem.IsIOS())
+             {
+@@ -450,6 +509,8 @@ namespace Ryujinx.Library
+         public bool DisplayCabinetDialog(out string userText)
+         {
+             userText = null;
++            if (Library.EmbeddedRun)
++                return false;
+ 
+             if (OperatingSystem.IsIOS())
+             {
+diff --git a/src/Ryujinx.Memory/DualMappedJitAllocator.cs b/src/Ryujinx.Memory/DualMappedJitAllocator.cs
+index c72a15c..52b167f 100644
+--- a/src/Ryujinx.Memory/DualMappedJitAllocator.cs
++++ b/src/Ryujinx.Memory/DualMappedJitAllocator.cs
+@@ -36,7 +36,11 @@ namespace Ryujinx.Memory
+ 
+         static public bool hasTXM => Environment.GetEnvironmentVariable("HAS_TXM") == "1"; 
+ 
+-        static public bool dualMappingEnabled => Environment.GetEnvironmentVariable("DUAL_MAPPED_JIT") == "1"; 
++        public static unsafe delegate* unmanaged[Cdecl]<nuint, nint*, nint*, byte> HostAllocate;
++        public static unsafe delegate* unmanaged[Cdecl]<nint, nuint, byte> HostRelease;
++        public static unsafe bool UsesHostMemory => HostAllocate != null;
++
++        static public bool dualMappingEnabled => UsesHostMemory || Environment.GetEnvironmentVariable("DUAL_MAPPED_JIT") == "1";
+ 
+         static private bool usingNewMapping = true;
+ 
+@@ -48,7 +52,21 @@ namespace Ryujinx.Memory
+             Logger.Info?.Print(LogClass.Cpu,
+                 $"Allocating dual-mapped JIT memory of size {size} bytes, called by {callingMethod?.DeclaringType?.FullName}.{callingMethod?.Name} with {hasTXM}, {dualMappingEnabled}");
+             Size = size;
+-            AllocateDualMapping(mapping);
++            if (UsesHostMemory)
++            {
++                unsafe
++                {
++                    nint rx = 0, rw = 0;
++                    if (mapping != null || HostAllocate((nuint)size, &rx, &rw) == 0)
++                        throw new InvalidOperationException("The shared executable arena has no suitable range.");
++                    RxPtr = rx;
++                    RwPtr = rw;
++                }
++            }
++            else
++            {
++                AllocateDualMapping(mapping);
++            }
+         }
+ 
+         nint? BreakGetJITMapping(nuint bytes)
+@@ -121,10 +139,16 @@ namespace Ryujinx.Memory
+         {
+             if (RxPtr != IntPtr.Zero)
+             {
+-                munmap(RxPtr, Size);
++                if (UsesHostMemory)
++                {
++                    unsafe { HostRelease(RxPtr, (nuint)Size); }
++                }
++                else
++                {
++                    munmap(RxPtr, Size);
++                    munmap(RwPtr, Size);
++                }
+                 RxPtr = IntPtr.Zero;
+-
+-                munmap(RwPtr, Size);
+                 RwPtr = IntPtr.Zero;
+             }
+         }
+diff --git a/src/Ryujinx.Memory/MemoryBlock.cs b/src/Ryujinx.Memory/MemoryBlock.cs
+index 161408e..9699848 100644
+--- a/src/Ryujinx.Memory/MemoryBlock.cs
++++ b/src/Ryujinx.Memory/MemoryBlock.cs
+@@ -119,7 +119,7 @@ namespace Ryujinx.Memory
+         {
+             if (!OperatingSystem.IsIOS()) { return; }
+ 
+-            if (_dualMappedAllocator != null && DualMappedJitAllocator.hasTXM)
++            if (_dualMappedAllocator != null && !DualMappedJitAllocator.UsesHostMemory && DualMappedJitAllocator.hasTXM)
+             {
+                 DualMappedJitAllocator.BreakJITDetach();
+             }
+diff --git a/src/Ryujinx.Library/IridiumHost.cs b/src/Ryujinx.Library/IridiumHost.cs
+new file mode 100644
+index 0000000..ce368f3
+--- /dev/null
++++ b/src/Ryujinx.Library/IridiumHost.cs
+@@ -0,0 +1,282 @@
++using Ryujinx.Common.Configuration;
++using Ryujinx.Common.Configuration.Hid;
++using Ryujinx.Common.Logging;
++using Ryujinx.Cpu.LightningJit;
++using Ryujinx.HLE.HOS.SystemState;
++using Ryujinx.Input.Native;
++using Ryujinx.Memory;
++using System;
++using System.IO;
++using System.IO.Compression;
++using LibHac.Common.Keys;
++using System.Collections.Generic;
++using System.Runtime.InteropServices;
++using System.Threading;
++
++namespace Ryujinx.Library
++{
++    partial class Library
++    {
++        internal static bool EmbeddedRun { get; private set; }
++        internal static volatile bool EmbeddedStop;
++        internal static volatile bool EmbeddedPaused;
++        private static volatile float _embeddedVolume = 1f;
++        private static unsafe delegate* unmanaged[Cdecl]<void> _embeddedFrame;
++        private static unsafe delegate* unmanaged[Cdecl]<void> _embeddedInput;
++        private static unsafe delegate* unmanaged[Cdecl]<nint, void> _embeddedDiagnostic;
++        private static int _embeddedStarted, _embeddedBootError;
++        private static long _nextHeadroomCheck;
++        internal const ulong EmbeddedGpuTrimReserveBytes = 2560UL * 1024 * 1024;
++
++        private static int EmbeddedBootError(string message)
++        {
++            if (message.Contains("Missing Switch decryption keys", StringComparison.OrdinalIgnoreCase))
++                return -6;
++            if (message.Contains("Could not find Main NCA", StringComparison.OrdinalIgnoreCase) ||
++                message.Contains("Selected NCA file is not a", StringComparison.OrdinalIgnoreCase))
++                return -7;
++            if (message.Contains("decrypt", StringComparison.OrdinalIgnoreCase))
++                return -8;
++            if (message.Contains("missing firmware", StringComparison.OrdinalIgnoreCase))
++                return -9;
++            return 0;
++        }
++
++        private static void ObserveEmbeddedBootError(object sender, LogEventArgs args)
++        {
++            if (args.Level != LogLevel.Error)
++                return;
++            int error = EmbeddedBootError(args.Message);
++            if (error != 0)
++                Interlocked.CompareExchange(ref _embeddedBootError, error, 0);
++        }
++
++        internal static unsafe void EmbeddedReport(string message)
++        {
++            if (_embeddedDiagnostic == null)
++                return;
++            nint text = Marshal.StringToCoTaskMemUTF8(message);
++            try { _embeddedDiagnostic(text); }
++            finally { Marshal.FreeCoTaskMem(text); }
++        }
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_install_firmware")]
++        public static unsafe int InstallEmbeddedFirmware(nint dataRoot, nint frameworks, nint file)
++        {
++            try
++            {
++                string path = Marshal.PtrToStringUTF8(file);
++                FileInfo source = new(path);
++                const long limit = 1024L * 1024 * 1024;
++                if (!source.Exists || source.Extension != ".zip" || source.Length > limit)
++                    return 2;
++                using (ZipArchive zip = ZipFile.OpenRead(path))
++                {
++                    long total = 0;
++                    HashSet<string> ids = new(StringComparer.OrdinalIgnoreCase);
++                    if (zip.Entries.Count == 0 || zip.Entries.Count > 1024)
++                        return 2;
++                    foreach (ZipArchiveEntry entry in zip.Entries)
++                    {
++                        string name = entry.FullName;
++                        string id = name.EndsWith(".cnmt.nca", StringComparison.Ordinal) ? name[..^9] :
++                            name.EndsWith(".nca", StringComparison.Ordinal) ? name[..^4] : "";
++                        if (id.Length != 32 || !IsHex(id) || !ids.Add(id) ||
++                            entry.Length <= 0 || entry.Length > limit / 4 || entry.Length > limit - total)
++                            return 2;
++                        total += entry.Length;
++                    }
++                }
++                if (InitializeHost(dataRoot, frameworks, null) != 0)
++                    return 1;
++                if (_contentManager.VerifyFirmwarePackage(path) == null)
++                    return 2;
++                _contentManager.InstallFirmware(path, atomic: true);
++                return 0;
++            }
++            catch (MissingKeyException) { return 3; }
++            catch (InvalidDataException) { return 2; }
++            catch (Exception) { return 4; }
++
++            static bool IsHex(string value)
++            {
++                foreach (char c in value)
++                    if (!Uri.IsHexDigit(c))
++                        return false;
++                return true;
++            }
++        }
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_run")]
++        public static unsafe int RunEmbedded(nint file, nint layer,
++            delegate* unmanaged[Cdecl]<nuint, nint*, nint*, byte> allocate,
++            delegate* unmanaged[Cdecl]<nint, nuint, byte> release,
++            delegate* unmanaged[Cdecl]<byte> jitReady, delegate* unmanaged[Cdecl]<void> frame,
++            delegate* unmanaged[Cdecl]<void> input, int resolution, uint flags)
++        {
++            if (!embeddedInitialized || layer == 0 || allocate == null ||
++                release == null || jitReady == null || frame == null || input == null ||
++                Interlocked.Exchange(ref _embeddedStarted, 1) != 0)
++                return -1;
++
++            bool clean = false;
++            try
++            {
++                EmbeddedRun = true;
++                if (EmbeddedStop)
++                {
++                    clean = true;
++                    return 0;
++                }
++                string path = Marshal.PtrToStringUTF8(file);
++                if (!File.Exists(path))
++                    return -1;
++
++                DualMappedJitAllocator.HostAllocate = allocate;
++                DualMappedJitAllocator.HostRelease = release;
++                DualMappedMemory.PrepareEmbeddedFaultHandler();
++                if (jitReady() == 0)
++                    return -4;
++
++                if (!DualMappedMemory.InitMemoryCache())
++                {
++                    EmbeddedReport("MeloNX could not initialize its executable cache.");
++                    return -2;
++                }
++
++                nativeMetalLayer = layer;
++                _embeddedFrame = frame;
++                _embeddedInput = input;
++                Logger.Updated += ObserveEmbeddedBootError;
++                bool loaded = Load(new Options
++                {
++                    InputPath = path,
++                    GraphicsBackend = GraphicsBackend.Vulkan,
++                    BackendThreading = BackendThreading.On,
++                    MemoryManagerMode = MemoryManagerMode.HostMappedUnsafe,
++                    AspectRatio = AspectRatio.Fixed16x9,
++                    ScalingFilter = ScalingFilter.Bilinear,
++                    ResScale = Math.Clamp(resolution, 1, 3),
++                    MaxAnisotropy = -1f,
++                    SystemRegion = RegionCode.USA,
++                    SystemLanguage = SystemLanguage.AmericanEnglish,
++                    SystemTimeZone = TimeZoneInfo.Local.Id,
++                    VSyncMode = VSyncMode.Switch,
++                    CustomVSyncInterval = 120,
++                    DisableDockedMode = (flags & 1) == 0,
++                    DisableVSync = (flags & 2) != 0,
++                    DisableShaderCache = (flags & 4) == 0,
++                    EnableTextureRecompression = (flags & 8) == 0,
++                    EnableHostMemoryBudgetTracking = true,
++                    ExclusiveFullscreenWidth = 1280,
++                    ExclusiveFullscreenHeight = 720,
++                    AudioVolume = _embeddedVolume,
++                    LoggingEnableError = true
++                });
++                if (loaded)
++                {
++                    clean = true;
++                    return 0;
++                }
++                int error = Volatile.Read(ref _embeddedBootError);
++                return error != 0 ? error : -3;
++            }
++            catch (MissingKeyException) { return -6; }
++            catch (Exception e)
++            {
++                int error = EmbeddedBootError(e.Message);
++                if (error != 0)
++                    return error;
++                EmbeddedReport($"MeloNX launch or shutdown failed: {e.GetType().Name}.");
++                return -4;
++            }
++            finally
++            {
++                Logger.Updated -= ObserveEmbeddedBootError;
++                nativeMetalLayer = 0;
++                _embeddedFrame = null;
++                _embeddedInput = null;
++                if (clean)
++                {
++                    try
++                    {
++                        DualMappedMemory.ReleaseEmbeddedCache();
++                        _inputManager.Dispose();
++                        _inputManager = null;
++                        _inputConfiguration = null;
++                        _embeddedDiagnostic = null;
++                        EmbeddedRun = false;
++                        Volatile.Write(ref _embeddedStarted, 0);
++                    }
++                    catch (Exception e)
++                    {
++                        EmbeddedReport($"MeloNX input cleanup failed: {e.GetType().Name}.");
++                    }
++                }
++            }
++        }
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_session_closed")]
++        public static byte IsEmbeddedSessionClosed() => Volatile.Read(ref _embeddedStarted) == 0 ? (byte)1 : (byte)0;
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_reset_session")]
++        public static byte ResetEmbeddedSession()
++        {
++            if (Volatile.Read(ref _embeddedStarted) != 0)
++                return 0;
++            EmbeddedStop = false;
++            EmbeddedPaused = false;
++            _embeddedVolume = 1f;
++            _embeddedBootError = 0;
++            _nextHeadroomCheck = 0;
++            return 1;
++        }
++
++        [UnmanagedCallersOnly(EntryPoint = "iridium_melonx_set_state")]
++        public static void SetEmbeddedState(byte stop, byte pause, float volume)
++        {
++            if (stop != 0)
++                EmbeddedStop = true;
++            EmbeddedPaused = pause != 0;
++            _embeddedVolume = volume;
++        }
++
++        internal static unsafe void EmbeddedFrame()
++        {
++            var frame = _embeddedFrame;
++            if (frame != null)
++                frame();
++        }
++
++        internal static unsafe void UpdateEmbedded(WindowBase window)
++        {
++            long now = Environment.TickCount64;
++            if (now >= _nextHeadroomCheck)
++            {
++                _nextHeadroomCheck = now + 500;
++                ulong headroom = HostMemoryBudget.AvailableBytes;
++                // Allow the renderer to trim before Iridium has to stop the game.
++                if (headroom > 0 && headroom < EmbeddedGpuTrimReserveBytes)
++                    MemoryPressureMonitor.ReportPressure(headroom <= 2048UL * 1024 * 1024
++                        ? MemoryPressureLevel.Critical : MemoryPressureLevel.Warning);
++            }
++
++            bool paused = EmbeddedPaused;
++            if (window._isPaused != paused)
++            {
++                window.Device.System.TogglePauseEmulation(paused);
++                window._isPaused = paused;
++                if (paused)
++                    window._pauseEvent.Reset();
++                else
++                    window._pauseEvent.Set();
++            }
++            float volume = _embeddedVolume;
++            if (window.Device.GetVolume() != volume)
++                window.Device.SetVolume(volume);
++            var input = _embeddedInput;
++            if (!paused && input != null)
++                input();
++        }
++    }
++}
+diff --git a/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs b/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
+--- a/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
++++ b/src/Ryujinx.Cpu/Signal/UnixSignalHandlerRegistration.cs
+@@ -18,6 +18,37 @@
+             public SigSet sa_mask;
+             public int sa_flags;
+             public nint sa_restorer;
++        }
++
++        // The iOS host uses Darwin's 16-byte sigaction, not the Linux layout above.
++        [StructLayout(LayoutKind.Sequential)]
++        private struct DarwinSigAction
++        {
++            public nint Handler;
++            public uint Mask;
++            public int Flags;
++        }
++
++        private const int DarwinSigInfo = 0x0040;
++
++        [LibraryImport("libc", EntryPoint = "sigaction", SetLastError = true)]
++        private static partial int DarwinSigaction(int signum, in DarwinSigAction action, out DarwinSigAction oldAction);
++
++        private static SigAction RegisterDarwinExceptionHandler(nint action)
++        {
++            DarwinSigAction signal = new() { Handler = action, Flags = DarwinSigInfo };
++            int result = DarwinSigaction(SIGSEGV, in signal, out DarwinSigAction old);
++            if (result != 0)
++                throw new InvalidOperationException($"Could not register Darwin SIGSEGV sigaction. Error: {result}");
++            result = DarwinSigaction(SIGBUS, in signal, out _);
++            if (result != 0)
++            {
++                DarwinSigaction(SIGSEGV, in old, out _);
++                throw new InvalidOperationException($"Could not register Darwin SIGBUS sigaction. Error: {result}");
++            }
++
++            // The generated handler uses the legacy flag to select the predecessor's call signature.
++            return new SigAction { sa_handler = old.Handler, sa_flags = (old.Flags & DarwinSigInfo) != 0 ? SA_SIGINFO : 0 };
+         }
+ 
+         private const int SIGSEGV = 11;
+@@ -47,6 +78,9 @@
+ 
+         public static SigAction RegisterExceptionHandler(nint action)
+         {
++            if (OperatingSystem.IsIOS())
++                return RegisterDarwinExceptionHandler(action);
++
+             SigAction sig = new()
+             {
+                 sa_handler = action,
+diff --git a/src/Ryujinx.Graphics.Gpu/GpuContext.cs b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
+--- a/src/Ryujinx.Graphics.Gpu/GpuContext.cs
++++ b/src/Ryujinx.Graphics.Gpu/GpuContext.cs
+@@ -344,6 +344,8 @@
+ 
+         private long _lastTrimTimestamp;
+ 
++        public ulong HostMemoryTrimThresholdBytes { get; set; } = ComfortableHeadroomBytes;
++
+         /// <summary>
+         /// Evicts GPU resource caches in response to host memory pressure, in proportion to what
+         /// they are actually holding and only when this process looks like the one under pressure.
+@@ -360,7 +362,7 @@
+ 
+             if (available != 0)
+             {
+-                if (available >= ComfortableHeadroomBytes)
++                if (available >= HostMemoryTrimThresholdBytes)
+                 {
+                     Logger.Debug?.Print(LogClass.Gpu,
+                         $"Ignoring {level} host memory pressure with {available / TrimMiB} MiB still available to this process");
+diff --git a/src/Ryujinx.Cpu/LightningJit/Translator.cs b/src/Ryujinx.Cpu/LightningJit/Translator.cs
+--- a/src/Ryujinx.Cpu/LightningJit/Translator.cs
++++ b/src/Ryujinx.Cpu/LightningJit/Translator.cs
+@@ -18,12 +18,23 @@
+     {
+         private static bool initialized = false;
+ 
++        public static void PrepareEmbeddedFaultHandler()
++        {
++            NativeSignalHandler.InitializeSignalHandler();
++        }
++
++        public static void ReleaseEmbeddedCache()
++        {
++            if (DualMappedJitAllocator.UsesHostMemory)
++                DualMappedNoWxCache.ReleaseEmbeddedCache();
++        }
++
+         public static bool InitMemoryCache()
+         {
+             if (!MemoryBlock.DualMappedEnabled()) 
+                 return true;
+ 
+-            if (initialized)
++            if (initialized && !DualMappedJitAllocator.UsesHostMemory)
+                 return true;
+ 
+             try 
+@@ -33,6 +44,6 @@
+                 
+                 initialized = true;
+                 return true;
+-            } catch { return initialized; } 
++            } catch { return initialized && !DualMappedJitAllocator.UsesHostMemory; }
+         }
+     }

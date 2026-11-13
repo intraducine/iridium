@@ -223,10 +223,10 @@ class PublicSigningFixtureTests(unittest.TestCase):
         with patch.object(COLLECT, 'ROOT', self.root), \
                 patch('stikjit_frontend.collect_source'), \
                 patch.object(COLLECT.build, 'UPSTREAM', self.root / 'vendor/Madeira'), \
-                patch.object(COLLECT.build, 'PSP_OUTPUT', psp), \
+                patch.object(COLLECT.madeira_app, 'PSP_OUTPUT', psp), \
                 patch.object(COLLECT.build, 'verify_pin'), \
                 patch.object(COLLECT.build, 'native_source_inventory', return_value=native_inventory), \
-                patch.object(COLLECT.build, 'check_bundle', return_value=runtime_receipts), \
+                patch.object(COLLECT.madeira_app, 'check_bundle', return_value=runtime_receipts), \
                 patch.object(COLLECT.build.madeira_components, 'source_inventory', return_value={'schema': 1, 'files': [], 'pins': {}}), \
                 patch.object(COLLECT.audit, 'inventory', return_value=[{'path': 'Iridium'}]), \
                 patch.object(COLLECT.audit, 'static_inputs', return_value=[

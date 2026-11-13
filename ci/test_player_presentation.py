@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('player_frontend', ROOT / 'ci/madeira-frontend.py')
+SPEC = importlib.util.spec_from_file_location('player_frontend', ROOT / 'ci/madeira_app.py')
 FRONTEND = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FRONTEND)
 UPSTREAM = Path(os.environ.get('IRIDIUM_MADEIRA_SOURCE', ROOT / 'ci/fixtures/madeira-build43/app/Madeira'))

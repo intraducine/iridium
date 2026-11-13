@@ -20,10 +20,16 @@ class SettingsNavigationTests(unittest.TestCase):
 }
 struct IridiumConsoleSystem {
     let title: String; let primaryPlatform = "fixture"
-    static let all: [Self] = []
-    static func system(titled: String) -> Self? { nil }
+    static let all: [Self] = [.init(title: "MeloNX · Nintendo Switch · JIT")]
+    static func system(titled: String) -> Self? { all.first { $0.title == titled } }
 }
-enum IridiumSystemGameSettings { static func routes(for platform: String) -> [String] { [] } }
+enum IridiumMeloNXSystemFiles {
+    static let route = "Keys & Firmware"
+    static let importAction = "Import System Files"
+}
+enum IridiumSystemGameSettings {
+    static func routes(for platform: String) -> [String] { [IridiumMeloNXSystemFiles.route] }
+}
 @MainActor final class Settings {
     var iridiumPages: [String] = [], iridiumFocus = "JIT & Memory", iridiumGuided = false
     var dismissed = 0
@@ -44,6 +50,14 @@ METHODS
         iridiumNavigate("up"); precondition(iridiumFocus == "Import Folder")
         iridiumNavigate("accept"); precondition(settingsSheet == .importFolder && iridiumPages.isEmpty)
         iridiumNavigate("up"); iridiumNavigate("accept"); precondition(settingsSheet == .stores && iridiumPages.isEmpty)
+        settingsSheet = nil
+        iridiumFocus = "Madeira · Windows"
+        iridiumNavigate("down"); iridiumNavigate("accept")
+        precondition(iridiumPages == [IridiumConsoleSystem.all[0].title])
+        iridiumNavigate("down"); iridiumNavigate("accept")
+        precondition(iridiumPages.last == IridiumMeloNXSystemFiles.route)
+        iridiumNavigate("down"); iridiumNavigate("accept")
+        precondition(settingsSheet == .importFolder)
         iridiumFocus = "Getting Started"
         TouchControlsModel.shared.iridiumSettingsContext = 1
         iridiumNavigate("down"); precondition(iridiumFocus == "Getting Started")
