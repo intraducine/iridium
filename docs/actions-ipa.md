@@ -207,3 +207,5 @@ A signature change is allowed only when the underlying dynamic library bytes
 still match after signature removal. Each renderer remains an optional route;
 DXMT remains the default. Source collection includes the renderer source trees,
 patches, pinned archives, notices and `MADEIRA-RUNTIME-RECEIPTS.json`.
+
+This temporary guide edit exercises the pull-request classifier.
