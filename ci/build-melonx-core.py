@@ -132,7 +132,7 @@ def select_cache():
     from importlib import import_module
 
     reuse = import_module('reuse-build-assets')
-    paths = (Path(__file__), PATCH, *(BRIDGE / name for name in BRIDGE_INPUTS))
+    paths = (Path(__file__).resolve(), PATCH, *(BRIDGE / name for name in BRIDGE_INPUTS))
     reuse.COMPONENT_INPUTS['melonx'] = tuple(path.relative_to(ROOT).as_posix() for path in paths)
     tools = [platform.machine(), os.environ.get('ImageVersion', ''),
              output('xcodebuild', '-version'),
@@ -161,6 +161,8 @@ def restore_cache():
     for target in targets:
         if target.is_symlink() or any(path.is_symlink() for path in target.parents if path.is_relative_to(WORK)):
             raise ValueError('MeloNX output path contains a symbolic link')
+    # Actions artifact ZIPs drop the executable bit set by the adapter linker.
+    files[1].chmod(0o755)
     for source, target in zip(files, targets, strict=True):
         target.parent.mkdir(parents=True, exist_ok=True)
         source.replace(target)

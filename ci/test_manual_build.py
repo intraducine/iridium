@@ -54,6 +54,7 @@ class ManualBuildTests(unittest.TestCase):
                 verify.assert_called_with(core_file, adapter_file)
                 self.assertEqual(binary.read_bytes(), b'core')
                 self.assertEqual(adapter.read_bytes(), b'adapter')
+                self.assertEqual(adapter.stat().st_mode & 0o777, 0o755)
                 self.assertEqual(receipt.read_text(), '{"digest": "expected"}')
 
     def test_native_and_windows_compile_do_not_nest_fex_compiler_caches(self):
