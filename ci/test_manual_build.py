@@ -31,6 +31,31 @@ class ManualBuildTests(unittest.TestCase):
                          ['Build without signing'])
         self.assertIn("IRIDIUM_MELONX: ${{ inputs.melonx && '1' || '0' }}", steps['Build without signing'])
 
+    def test_melonx_restore_checks_receipt_before_installing_outputs(self):
+        builder = load('build_melonx', 'build-melonx-core.py')
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            binary, adapter, receipt = (work / name for name in ('native/core.dylib', 'adapter.dylib', 'component.json'))
+            transfer = work / 'transfer'
+            core_file, adapter_file, record_file = (transfer / target.relative_to(work) for target in (binary, adapter, receipt))
+            core_file.parent.mkdir(parents=True)
+            core_file.write_bytes(b'core')
+            adapter_file.write_bytes(b'adapter')
+            record_file.write_text('{"digest": "other"}')
+            with patch.multiple(builder, WORK=work, BINARY=binary, ADAPTER=adapter, RECEIPT=receipt, TRANSFER=transfer), \
+                 patch.object(builder, 'component_record', return_value={'digest': 'expected'}) as verify:
+                with self.assertRaisesRegex(ValueError, 'does not match'):
+                    builder.restore_cache()
+                self.assertFalse(binary.exists())
+                self.assertFalse(adapter.exists())
+                self.assertFalse(receipt.exists())
+                record_file.write_text('{"digest": "expected"}')
+                builder.restore_cache()
+                verify.assert_called_with(core_file, adapter_file)
+                self.assertEqual(binary.read_bytes(), b'core')
+                self.assertEqual(adapter.read_bytes(), b'adapter')
+                self.assertEqual(receipt.read_text(), '{"digest": "expected"}')
+
     def test_native_and_windows_compile_do_not_nest_fex_compiler_caches(self):
         import os
         import subprocess

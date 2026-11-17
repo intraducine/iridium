@@ -30,9 +30,11 @@ git diff --check
 ```
 
 Add a focused regression test for changed logic. Do not weaken checks to pass CI.
-Source checks use pinned Xcode 27. A manual build can reuse their result only
-for the same commit and host environment. Compilation and release builds remain
-manual.
+Source checks use pinned Xcode 27. Edits to listed guides can skip the host
+suite on pull requests. Privacy and standards checks still run. Main, manual
+source checks, and unclear changes run the full suite. A manual build can reuse
+a successful full-suite result for the same source revision, Git tree, and host
+environment. Compilation and release builds remain manual.
 
 Report source, build, simulator, and device results separately. For device tests,
 record the commit, build, model, OS, game/version, input, steps, and limits.

@@ -12,27 +12,29 @@ import host_tests as host
 
 class HostTestReuseTests(unittest.TestCase):
     revision = 'a' * 40
-    artifact = 'source-checks-' + revision + '-' + 'b' * 64
+    tree = 'c' * 40
+    artifact = f"host-tests-v2-{revision}-{tree}-" + 'b' * 64
+    first_attempt = artifact + '-1'
     repo = 'owner/repo'
 
     def producer(self):
         return dict(id=42, head_sha=self.revision, path=host.WORKFLOW, event='push',
-                    status='completed', conclusion='success',
+                    status='completed', conclusion='success', run_attempt=1,
                     head_repository={'full_name': self.repo})
 
     def check(self, run, artifacts):
         with patch.object(host, 'api', side_effect=[{'workflow_runs': [run]}, {'artifacts': artifacts}]):
             return host.verified_run(self.repo, self.revision, self.artifact)
 
-    def test_matching_successful_manual_or_push_run_reuses(self):
-        for event in ('push', 'workflow_dispatch'):
+    def test_successful_same_repository_run_with_exact_receipt_reuses(self):
+        for event in ('push', 'workflow_dispatch', 'pull_request'):
             run = self.producer(); run['event'] = event
-            self.assertEqual(self.check(run, [{'name': self.artifact, 'expired': False}]), (42, False))
+            self.assertEqual(self.check(run, [{'name': self.first_attempt, 'expired': False}]), (42, False))
 
-    def test_foreign_revision_repository_workflow_and_pr_events_cannot_supply_receipt(self):
+    def test_foreign_revision_repository_workflow_and_event_cannot_supply_receipt(self):
         for change in ({'head_sha': 'c' * 40}, {'head_repository': {'full_name': 'foreign/repo'}},
                        {'head_repository': None},
-                       {'path': '.github/workflows/other.yml'}, {'event': 'pull_request'},
+                       {'path': '.github/workflows/other.yml'},
                        {'event': 'pull_request_target'}, {'conclusion': 'failure'}, {'id': '../42'}):
             run = self.producer(); run.update(change)
             with self.subTest(change=change), patch.object(host, 'api', return_value={'workflow_runs': [run]}) as api:
@@ -40,16 +42,27 @@ class HostTestReuseTests(unittest.TestCase):
                 api.assert_called_once()
 
     def test_missing_expired_duplicate_or_other_toolchain_receipts_require_tests(self):
-        for artifacts in ([], [{'name': self.artifact, 'expired': True}],
-                          [{'name': self.artifact, 'expired': False}] * 2,
+        for artifacts in ([], [{'name': self.first_attempt, 'expired': True}],
+                          [{'name': self.first_attempt, 'expired': False}] * 2,
                           [{'name': self.artifact + 'other-tools', 'expired': False}]):
             with self.subTest(artifacts=artifacts):
                 self.assertEqual(self.check(self.producer(), artifacts), (None, False))
+
+    def test_pr_requires_exact_tree_and_current_attempt(self):
+        run = self.producer()
+        run.update(event='pull_request', run_attempt=2)
+        for name in (self.first_attempt, self.artifact.replace(self.tree, 'd' * 40) + '-2'):
+            with self.subTest(name=name):
+                self.assertEqual(self.check(run, [{'name': name, 'expired': False}]), (None, False))
+        self.assertEqual(self.check(run, [{'name': self.artifact + '-2', 'expired': False}]), (42, False))
 
     def test_running_check_waits_and_failed_check_does_not_pass(self):
         run = self.producer(); run.update(status='in_progress', conclusion=None)
         with patch.object(host, 'api', return_value={'workflow_runs': [run]}):
             self.assertEqual(host.verified_run(self.repo, self.revision, self.artifact), (None, True))
+        run['event'] = 'pull_request'
+        with patch.object(host, 'api', return_value={'workflow_runs': [run]}):
+            self.assertEqual(host.verified_run(self.repo, self.revision, self.artifact), (None, False))
 
     def test_environment_key_changes_with_tools_sdk_python_and_image(self):
         with patch.object(host.shutil, 'which', return_value=sys.executable), \
@@ -81,7 +94,7 @@ class HostTestReuseTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['host_tests.py', '--reuse']), \
                 patch.dict(os.environ, {'GITHUB_SHA': self.revision, 'GITHUB_REPOSITORY': self.repo}), \
                 patch.object(host, 'environment_key', return_value='b' * 64), \
-                patch.object(host.subprocess, 'check_output', return_value=self.revision), \
+                patch.object(host, 'git', side_effect=[self.revision.encode(), self.tree.encode()]), \
                 patch.object(host, 'verified_run', side_effect=[(None, True), (42, False)]), \
                 patch.object(host.time, 'sleep') as sleep, \
                 patch.object(host.subprocess, 'run') as suite, patch('sys.stdout', new_callable=io.StringIO):
@@ -94,7 +107,7 @@ class HostTestReuseTests(unittest.TestCase):
             with self.subTest(outcome=outcome), patch.object(sys, 'argv', ['host_tests.py', '--reuse']), \
                     patch.dict(os.environ, {'GITHUB_SHA': self.revision, 'GITHUB_REPOSITORY': self.repo}), \
                     patch.object(host, 'environment_key', return_value='b' * 64), \
-                    patch.object(host.subprocess, 'check_output', return_value=self.revision), \
+                    patch.object(host, 'git', side_effect=[self.revision.encode(), self.tree.encode()]), \
                     patch.object(host, 'verified_run', side_effect=[outcome]), \
                     patch.object(host.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'unittest')) as suite, \
                     patch('sys.stdout', new_callable=io.StringIO):
@@ -106,7 +119,7 @@ class HostTestReuseTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['host_tests.py', '--reuse']), \
                 patch.dict(os.environ, {'GITHUB_SHA': self.revision, 'GITHUB_REPOSITORY': self.repo}), \
                 patch.object(host, 'environment_key', return_value='b' * 64), \
-                patch.object(host.subprocess, 'check_output', return_value=self.revision), \
+                patch.object(host, 'git', side_effect=[self.revision.encode(), self.tree.encode()]), \
                 patch.object(host, 'verified_run', return_value=(None, True)), \
                 patch.object(host.time, 'monotonic', side_effect=[0, 1200]), \
                 patch.object(host.time, 'sleep') as sleep, \
@@ -115,16 +128,60 @@ class HostTestReuseTests(unittest.TestCase):
             sleep.assert_not_called()
             suite.assert_called_once()
 
-    def test_record_requires_exact_checked_out_commit(self):
+    def test_record_binds_pr_head_and_tested_merge_tree(self):
+        merge, base = 'd' * 40, 'e' * 40
         with tempfile.TemporaryDirectory() as folder, patch.object(host, 'ROOT', Path(folder)), \
                 patch.object(sys, 'argv', ['host_tests.py', '--record']), \
-                patch.dict(os.environ, {'GITHUB_SHA': self.revision, 'GITHUB_OUTPUT': str(Path(folder) / 'output')}), \
+                patch.dict(os.environ, {'GITHUB_SHA': merge, 'GITHUB_EVENT_NAME': 'pull_request',
+                                        'PR_BASE': base, 'PR_HEAD': self.revision, 'GITHUB_RUN_ATTEMPT': '1',
+                                        'GITHUB_OUTPUT': str(Path(folder) / 'output')}), \
                 patch.object(host, 'environment_key', return_value='b' * 64), \
-                patch.object(host.subprocess, 'check_output', return_value=self.revision) as git:
+                patch.object(host, 'git', side_effect=[merge.encode(), self.tree.encode(),
+                                                     f'{merge} {base} {self.revision}'.encode()]) as git:
             host.main()
-            self.assertIn(self.artifact, (Path(folder) / 'output').read_text())
-            git.return_value = 'c' * 40
-            with self.assertRaisesRegex(ValueError, 'exact checked-out'): host.main()
+            self.assertIn(self.first_attempt, (Path(folder) / 'output').read_text())
+            git.side_effect = [merge.encode(), self.tree.encode(), f'{merge} {self.revision}'.encode()]
+            host.main()
+            self.assertEqual((Path(folder) / 'output').read_text().splitlines(), ['artifact=' + self.first_attempt])
+            git.side_effect = [self.revision.encode()]
+            with self.assertRaisesRegex(ValueError, 'exact checked-out'):
+                host.main()
+
+    def test_docs_only_accepts_guide_edits_and_fails_closed(self):
+        merge, base = 'd' * 40, 'e' * 40
+        env = {'GITHUB_EVENT_NAME': 'pull_request', 'PR_HEAD': self.revision, 'PR_BASE': base}
+        with tempfile.TemporaryDirectory() as folder, patch.object(host, 'ROOT', Path(folder)):
+            def git(*args):
+                return host.git(*args).decode().strip()
+
+            git('init', '-q', '-b', 'main')
+            git('config', 'user.name', 'Test')
+            git('config', 'user.email', 'test@example.invalid')
+            root = Path(folder)
+            (root / 'README.md').write_text('original guide')
+            (root / 'runtime.c').write_text('original source')
+            git('add', '.')
+            git('commit', '-qm', 'base')
+            base = git('rev-parse', 'HEAD')
+            git('checkout', '-qb', 'topic')
+            for name, change in (
+                ('edited guide', lambda: (root / 'README.md').write_text('edited guide')),
+                ('mixed edit', lambda: (root / 'runtime.c').write_text('changed source')),
+                ('deleted guide', lambda: (root / 'README.md').unlink()),
+                ('no changes', lambda: None),
+            ):
+                with self.subTest(name=name):
+                    git('reset', '--hard', base)
+                    change()
+                    git('add', '-A')
+                    git('commit', '--allow-empty', '-qm', name)
+                    head = git('rev-parse', 'HEAD')
+                    merge = git('commit-tree', 'HEAD^{tree}', '-p', base, '-p', head, '-m', 'Test merge')
+                    pr = dict(env, PR_BASE=base, PR_HEAD=head)
+                    self.assertEqual(host.docs_only(merge, pr), name == 'edited guide')
+                    self.assertFalse(host.docs_only(merge, dict(pr, PR_BASE=self.tree)))
+                    for event in ('push', 'workflow_dispatch'):
+                        self.assertFalse(host.docs_only(merge, dict(pr, GITHUB_EVENT_NAME=event)))
 
     def test_workflows_run_once_for_pr_and_retain_receipt_only_after_success(self):
         source = (host.ROOT / host.WORKFLOW).read_text()
@@ -133,6 +190,8 @@ class HostTestReuseTests(unittest.TestCase):
         self.assertIn('cancel-in-progress: true', source)
         self.assertLess(source.index('unittest discover'), source.index('- name: Retain passed host test identity'))
         self.assertNotIn('always()', source)
+        self.assertIn("if: github.event_name == 'pull_request'", source)
+        self.assertIn("if: steps.host_tests.outputs.artifact != ''", source)
         self.assertNotIn('MadeiraSupportTests/', source)
         self.assertNotIn('testrepos/Madeira/build/host-tests', source)
         build = (host.ROOT / '.github/workflows/build-unsigned-ipa.yml').read_text()
