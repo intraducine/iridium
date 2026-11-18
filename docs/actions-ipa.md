@@ -63,6 +63,17 @@ retained for 14 days before app packaging. Reuse checks source pins, recipes,
 toolchain, platform, workspace paths, receipts, and output hashes. App-only edits
 can reuse matching engine builds. Set `reuse_assets=false` for a fresh hosted run.
 Compiler caches can reuse unchanged units after a component cache miss.
+MeloNX review builds reuse the checked core and adapter when the recipe, pinned
+source, and Xcode tools match. The pinned checkout provides the dependencies
+and notices. A missing or rejected artifact triggers a build from source.
+The JIT transport also retains its checked framework, Swift modules, and notices.
+Reuse requires matching source, recipe, host tools, workspace, and file hashes.
+App build logs include Xcode's build timing summary.
+
+Manual builds can reuse passed full host checks from a same-repository pull
+request when the PR head matches the build revision and the tested merge tree
+matches the build tree. The host tools must also match. Guide-only PRs do not
+produce full-suite receipts.
 
 Madeira compiler inputs are in `ci/madeira-frontend.py`. App staging, linking,
 and bundle checks live in `ci/madeira_app.py`, outside the compiler cache key.

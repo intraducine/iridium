@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -24,11 +25,12 @@ BRIDGE = ROOT / 'iridium/apps/ios/RuntimeBridge'
 ADAPTER = WORK / 'libIridiumMeloNX.dylib'
 RECEIPT = WORK / 'component.json'
 DEPENDENCIES = SOURCE / 'src/MeloNX/MeloNX/Dependencies'
+TRANSFER = WORK / 'transfer'
 
 
-def packaged_files():
-    yield BINARY, BINARY.name
-    yield ADAPTER, ADAPTER.name
+def packaged_files(core=None, adapter=None):
+    yield core or BINARY, BINARY.name
+    yield adapter or ADAPTER, ADAPTER.name
     yield DEPENDENCIES / 'libMoltenVK.dylib', 'libMoltenVK.dylib'
     for name in ('SDL3', 'libavcodec', 'libavutil', 'libswresample'):
         framework = name + '.framework'
@@ -41,11 +43,12 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+BRIDGE_INPUTS = ('IRMeloNX.mm', 'IRPhase3.h', 'IRJITMemory.h',
+                 'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h')
+
+
 def adapter_inputs():
-    paths = [PATCH] + [BRIDGE / name for name in (
-        'IRMeloNX.mm', 'IRPhase3.h', 'IRJITMemory.h',
-        'IRJITExecutionProbe.c', 'IRJITExecutionProbe.h', 'IRJITDiagnostic.h')]
-    return {path.name: digest(path) for path in paths}
+    return {path.name: digest(path) for path in (PATCH, *(BRIDGE / name for name in BRIDGE_INPUTS))}
 
 
 def build_adapter():
@@ -63,10 +66,11 @@ def build_adapter():
         result.replace(ADAPTER)
 
 
-def component_record():
+def component_record(core=None, adapter=None):
+    core, adapter = core or BINARY, adapter or ADAPTER
     files = {}
     names = {'@rpath/' + name for _, name in packaged_files()}
-    for binary, name in packaged_files():
+    for binary, name in packaged_files(core, adapter):
         build = output('xcrun', 'vtool', '-show-build', binary)
         platforms = re.findall(r'platform\s+(\w+)', build)
         legacy_ios = name == 'SDL3.framework/SDL3' and not platforms and 'LC_VERSION_MIN_IPHONEOS' in build
@@ -80,13 +84,13 @@ def component_record():
                 for library in libraries):
             raise ValueError('Unexpected MeloNX install name or dependency: ' + name)
         files[name] = digest(binary)
-    symbols = set(output('xcrun', 'nm', '-gUj', ADAPTER).splitlines())
+    symbols = set(output('xcrun', 'nm', '-gUj', adapter).splitlines())
     required = {'_ir_native_engine_' + name for name in (
         'abi', 'create', 'pause', 'stop', 'frames', 'set_volume', 'trim_memory')}
     if not required | {'_ir_phase3_core_prepare_memory', '_ir_melonx_install_firmware'} <= symbols:
         raise ValueError('The MeloNX adapter does not export the complete console player interface')
     return {'revision': REVISION, 'sdk': SDK_VERSION, 'inputs': adapter_inputs(), 'files': files,
-            'core': inspect(BINARY)}
+            'core': inspect(core)}
 
 
 
@@ -124,16 +128,68 @@ def inspect(binary):
             'dynamicLibraries': libraries}
 
 
+def select_cache():
+    from importlib import import_module
+
+    reuse = import_module('reuse-build-assets')
+    paths = (Path(__file__).resolve(), PATCH, *(BRIDGE / name for name in BRIDGE_INPUTS))
+    reuse.COMPONENT_INPUTS['melonx'] = tuple(path.relative_to(ROOT).as_posix() for path in paths)
+    tools = [platform.machine(), os.environ.get('ImageVersion', ''),
+             output('xcodebuild', '-version'),
+             output('xcrun', '--sdk', 'iphoneos', '--show-sdk-build-version'),
+             output('xcrun', '--sdk', 'iphoneos', 'clang', '--version')]
+    os.environ['NATIVE_TOOLCHAIN'] = hashlib.sha256(json.dumps(tools).encode()).hexdigest()
+    run = ''
+    if os.environ.get('REUSE_ASSETS') == 'true':
+        try:
+            run = reuse.select(ROOT, 'melonx', os.environ['GITHUB_REF_NAME'])
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+            print('No verified MeloNX artifact could be selected.')
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+        out.write(f"run_id={run}\nartifact={reuse.artifact_name('melonx')}\n")
+
+
+def restore_cache():
+    targets = (BINARY, ADAPTER, RECEIPT)
+    files = tuple(TRANSFER / path.relative_to(WORK) for path in targets)
+    if any(p.is_symlink() for path in files for p in (path, *path.parents) if p.is_relative_to(WORK)):
+        raise ValueError('MeloNX artifact contains a symbolic link')
+    if not all(path.is_file() for path in files):
+        raise ValueError('MeloNX artifact is incomplete')
+    if json.loads(files[2].read_text()) != component_record(*files[:2]):
+        raise ValueError('MeloNX artifact receipt does not match the checked inputs and binaries')
+    for target in targets:
+        if target.is_symlink() or any(path.is_symlink() for path in target.parents if path.is_relative_to(WORK)):
+            raise ValueError('MeloNX output path contains a symbolic link')
+    # Actions artifact ZIPs drop the executable bit set by the adapter linker.
+    files[1].chmod(0o755)
+    for source, target in zip(files, targets, strict=True):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(target)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--inspect', action='store_true', help='Check an existing core without rebuilding')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--inspect', action='store_true', help='Check an existing core without rebuilding')
+    mode.add_argument('--select-cache', action='store_true', help='Find verified hosted output')
+    mode.add_argument('--restore-cache', action='store_true', help='Validate and restore hosted output')
     args = parser.parse_args()
+    if args.select_cache:
+        select_cache()
+        return
     if not (SOURCE / '.git').exists():
         parser.error('Clone tag 2.7 from https://starforgejo.dev/projects/MeloNX.git into .build/melonx/source')
     if output('git', '-C', SOURCE, 'rev-parse', 'HEAD') != REVISION or output(
             'git', '-C', SOURCE, 'status', '--porcelain'):
         parser.error('Use a clean MeloNX 2.7 checkout at ' + REVISION)
-    if not args.inspect:
+    if args.restore_cache:
+        try:
+            restore_cache()
+        except (subprocess.SubprocessError, OSError, ValueError) as error:
+            parser.error(str(error))
+        print('Restored verified MeloNX compilation.')
+    elif not args.inspect:
         if shutil.disk_usage(WORK).free < 25 * 1024**3:
             parser.error('Keep 20 GiB free plus 5 GiB for NativeAOT build files')
         sdk = WORK / ('dotnet-' + SDK_VERSION) / 'dotnet'

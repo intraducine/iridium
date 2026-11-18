@@ -155,8 +155,12 @@ class NightlyTests(unittest.TestCase):
                 DISPATCH.dispatch("main", self.revision, melonx=True, nightly=True)
         gh.assert_not_called()
         workflow = (ROOT / ".github/workflows/build-unsigned-ipa.yml").read_text()
-        step = workflow.split("- name: Build the pinned MeloNX review component", 1)[1].split("- name:", 1)[0]
+        guard = "- name: Verify MeloNX review mode"
+        step = workflow.split(guard, 1)[1].split("- name:", 1)[0]
         self.assertIn("inputs.release_build || inputs.nightly", step)
+        self.assertIn('if [ "$RELEASE_BUILD" = true ]', step)
+        self.assertIn("exit 1", step)
+        self.assertLess(workflow.index(guard), workflow.index("- name: Select completed MeloNX compilation"))
 
     def test_dispatch_rejects_a_non_main_nightly(self):
         with patch.object(DISPATCH, "gh") as gh:

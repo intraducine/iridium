@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Source-built checked JIT transport, separate from runtime compiler inputs."""
+import argparse
 import hashlib
+import importlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import plistlib
+import platform
 import shutil
 import subprocess
 import tarfile
@@ -44,16 +47,30 @@ def verify_source(entry):
 
 
 def identity():
-    return {'schema': 1, 'sources': {x['name']: x['sha256'] for x in inputs()},
+    return {'schema': 2, 'sources': {x['name']: x['sha256'] for x in inputs()},
             'runner': digest(RUNNER), 'recipe': digest(__file__), 'features': FEATURES,
+            'environment': {name: os.environ.get(name) for name in (
+                'DEVELOPER_DIR', 'SDKROOT', 'CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS',
+                'RUSTUP_TOOLCHAIN', 'RUSTC', 'RUSTC_WRAPPER', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS')},
             'tools': {tool: subprocess.check_output(command, text=True).strip()
                       for tool, command in [('swift', ['xcrun', 'swiftc', '--version']),
                           ('sdk', ['xcrun', '--sdk', 'iphoneos', '--show-sdk-build-version']),
+                          ('clang', ['xcrun', '--sdk', 'iphoneos', 'clang', '--version']),
                           ('rust', ['rustc', '-vV'])]}}
+
+
+def framework_files(framework):
+    paths = sorted(framework.rglob('*'))
+    if framework.is_symlink() or any(path.is_symlink() for path in paths):
+        raise ValueError('The checked JIT framework contains a symbolic link')
+    return {path.relative_to(framework).as_posix(): digest(path) for path in paths
+            if path.is_file() and path != framework / 'IridiumJITTransport.json'}
 
 
 def verify(framework=FRAMEWORK):
     record = json.loads((OUTPUT / 'component.json').read_text())
+    if not isinstance(record, dict) or not isinstance(record.get('files'), dict):
+        raise ValueError('Invalid checked JIT helper receipt')
     for entry in inputs(): verify_source(entry)
     if record['inputs'] != identity():
         raise ValueError('The checked JIT helper inputs changed; rebuild it')
@@ -62,10 +79,11 @@ def verify(framework=FRAMEWORK):
     metadata = plistlib.loads((framework / 'Info.plist').read_bytes())
     if metadata.get('MinimumOSVersion') != MINIMUM_IOS:
         raise ValueError('The checked JIT framework has the wrong iOS deployment target')
-    for name, expected in record['files'].items():
-        path = framework / name
-        if path.is_symlink() or not path.is_file() or digest(path) != expected:
-            raise ValueError('The checked JIT helper differs: ' + name)
+    required = {'StikJIT', 'universal.js', 'legacy.js', 'LICENSES-idevice.txt', 'Info.plist',
+                'Modules/StikJIT.swiftmodule/arm64-apple-ios.swiftmodule',
+                'Modules/StikJIT.swiftmodule/arm64-apple-ios.swiftinterface'}
+    if not required <= record['files'].keys() or framework_files(framework) != record['files']:
+        raise ValueError('The checked JIT helper differs in files or Swift modules')
     return record
 
 
@@ -108,14 +126,7 @@ def collect_source(stage):
     shutil.copy2(OUTPUT / 'component.json', stage / 'STIKJIT-BUILD-RECEIPT.json')
 
 
-def build():
-    expected = identity()
-    try:
-        verify()
-        print('Reusing input-matched checked StikJIT transport.', flush=True)
-        return
-    except (OSError, KeyError, ValueError):
-        pass
+def prepare_sources():
     spec = importlib.util.spec_from_file_location('jit_fetch', ROOT / 'ci/fetch-runtime-inputs.py')
     fetch = importlib.util.module_from_spec(spec); spec.loader.exec_module(fetch)
     source, ffi = inputs()
@@ -123,7 +134,18 @@ def build():
         target = ROOT / entry['destination']
         if not target.exists(): fetch.fetch(ROOT, entry)
         verify_source(entry)
-    source, ffi = ROOT / source['destination'], ROOT / ffi['destination']
+    return ROOT / source['destination'], ROOT / ffi['destination']
+
+
+def build():
+    source, ffi = prepare_sources()
+    expected = identity()
+    try:
+        verify()
+        print('Reusing input-matched checked StikJIT transport.', flush=True)
+        return
+    except (OSError, KeyError, ValueError):
+        pass
     # Pinned archives stay immutable. Build outputs never overwrite an upstream checkout.
     OUTPUT.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, CARGO_TARGET_DIR=str(OUTPUT / 'cargo-target'),
@@ -170,8 +192,7 @@ def build():
         'CFBundleShortVersionString': '1.9.0', 'CFBundleVersion': '10',
         'CFBundleSupportedPlatforms': ['iPhoneOS'], 'MinimumOSVersion': MINIMUM_IOS}))
     write_notices(ffi, FRAMEWORK / 'LICENSES-idevice.txt')
-    record = {'inputs': expected, 'files': {name: digest(FRAMEWORK / name)
-               for name in ('StikJIT', 'universal.js', 'legacy.js', 'LICENSES-idevice.txt')}}
+    record = {'inputs': expected, 'files': framework_files(FRAMEWORK)}
     if identity() != expected: raise ValueError('JIT helper inputs changed during compilation')
     for path in (OUTPUT / 'component.json', FRAMEWORK / 'IridiumJITTransport.json'):
         path.write_text(json.dumps(record, indent=2) + '\n')
@@ -179,12 +200,55 @@ def build():
     print('Built checked StikJIT from pinned Swift and idevice source.', flush=True)
 
 
+def ensure():
+    components = importlib.import_module('compiled-components')
+    stage = 'stikjit-frontend'
+    components.PATHS[stage] = tuple((OUTPUT / name).relative_to(ROOT).as_posix()
+                                  for name in ('StikJIT.framework', 'component.json'))
+    components.reuse.COMPONENT_INPUTS[stage] = (
+        'ci/stikjit_frontend.py', 'ci/runtime-inputs.json', 'ci/fetch-runtime-inputs.py',
+        RUNNER.relative_to(ROOT).as_posix())
+    tools = [identity(), platform.machine(), os.environ.get('ImageVersion', ''), str(ROOT.resolve())]
+    os.environ['NATIVE_TOOLCHAIN'] = hashlib.sha256(json.dumps(tools, sort_keys=True).encode()).hexdigest()
+    run_id = ''
+    if os.environ.get('REUSE_ASSETS') == 'true':
+        try:
+            run_id = components.reuse.select(ROOT, stage, os.environ['GITHUB_REF_NAME'])
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+            print('No verified JIT transport artifact could be selected.', flush=True)
+    if run_id:
+        try:
+            transfer = ROOT / '.build' / (stage + '-compiled-transfer')
+            subprocess.run(['gh', 'run', 'download', run_id, '--repo', components.reuse.REPO,
+                            '--name', components.reuse.artifact_name(stage), '--dir', str(transfer)], check=True)
+            components.restore(ROOT, stage, run_id)
+            prepare_sources()
+            verify()
+            shutil.rmtree(transfer)
+            print('Restored verified JIT transport from run ' + run_id, flush=True)
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError):
+            if transfer.exists(): shutil.rmtree(transfer)
+            run_id = ''
+            print('JIT transport artifact rejected. Build from pinned source.', flush=True)
+    if not run_id:
+        build()
+        components.package(ROOT, stage)
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+        out.write(f'rebuilt={str(not bool(run_id)).lower()}\nartifact={components.reuse.artifact_name(stage)}\n')
+
+
 def stage(app):
     verify()
     destination = app / 'Frameworks/StikJIT.xcframework/ios-arm64/StikJIT.framework'
-    if destination.is_symlink(): raise ValueError('Unexpected JIT staging link')
-    shutil.copytree(FRAMEWORK, destination, dirs_exist_ok=True)
+    if any(path.is_symlink() for path in (destination, *destination.parents)
+           if path == app or path.is_relative_to(app)):
+        raise ValueError('Unexpected JIT staging link')
+    if destination.exists(): shutil.rmtree(destination)
+    shutil.copytree(FRAMEWORK, destination)
 
 
 if __name__ == '__main__':
-    build()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--ci', action='store_true', help='Reuse or retain a verified hosted framework')
+    args = parser.parse_args()
+    ensure() if args.ci else build()

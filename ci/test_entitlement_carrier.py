@@ -169,6 +169,14 @@ class DarwinCarrierTests(unittest.TestCase):
         path.write_bytes(data)
         return path
 
+    def test_payload_keeps_device_identifier_boundaries(self):
+        marker = b"00008" + b"ABC-" + b"0123abcd" * 2
+        resource = self.write("example.bin", b"prefix" + marker)
+        packager.check_payload(self.app)
+        resource.write_bytes(b"prefix\x00" + marker + b"\x00suffix")
+        with self.assertRaisesRegex(ValueError, "physical device identifier"):
+            packager.check_payload(self.app)
+
     def test_bundle_seal_exact_entitlement_and_unsigned_helper(self):
         packager.sign_entitlement_carrier(self.app)
         audit = packager.audit_package_signatures(self.app)

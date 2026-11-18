@@ -13,13 +13,21 @@ jobs:
   privacy:
     # Host fixtures need Apple frameworks and the app build's Swift toolchain.
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
           submodules: false
           lfs: false
+      - name: Classify pull request changes
+        id: scope
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 ci/host_tests.py --classify
       - name: Select pinned Xcode
         run: |
           test -x /Applications/Xcode_27.app/Contents/Developer/usr/bin/xcodebuild
@@ -30,21 +38,28 @@ jobs:
           git -C vendor/Madeira submodule update --init --depth 1 wine FEX dxmt
           git -C vendor/Play submodule update --init --depth 1 deps/CodeGen deps/Framework
       - name: Verify host test tools
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           xcrun --find swiftc
           xcrun swiftc --version
           xcrun --find clang++
           command -v zstd || HOMEBREW_NO_AUTO_UPDATE=1 brew install zstd
-      - name: Identify host test tools
-        id: host_tests
-        run: python3 ci/host_tests.py --record
       - name: Reject private material and oversized files
         run: python3 check-public-source.py
       - name: Check repository standards
         run: python3 ci/check-standards.py
       - name: Check manual build safeguards
+        if: steps.scope.outputs.docs_only != 'true'
         run: python3 -B -m unittest discover -s ci -p 'test_*.py'
+      - name: Record passed host test identity
+        id: host_tests
+        if: steps.scope.outputs.docs_only != 'true'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 ci/host_tests.py --record
       - name: Retain passed host test identity
+        if: steps.host_tests.outputs.artifact != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.host_tests.outputs.artifact }}
