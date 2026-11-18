@@ -64,6 +64,28 @@ class JITCacheTests(unittest.TestCase):
                 extra.symlink_to(module)
                 with self.assertRaises(ValueError): jit.verify(framework)
 
+    def test_staging_removes_old_framework_headers_and_modules(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _, framework = self.framework(root)
+            app = root / 'generated-app'
+            destination = app / 'Frameworks/StikJIT.xcframework/ios-arm64/StikJIT.framework'
+            for name in ('Headers/StikJIT-Swift.h', 'Modules/module.modulemap'):
+                path = destination / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('stale upstream declaration')
+            with patch.object(jit, 'FRAMEWORK', framework), patch.object(jit, 'verify'):
+                jit.stage(app)
+            self.assertEqual(jit.framework_files(framework), jit.framework_files(destination))
+            self.assertFalse((destination / 'Headers/StikJIT-Swift.h').exists())
+            shutil.rmtree(app / 'Frameworks')
+            external = root / 'outside-app'; external.mkdir()
+            (app / 'Frameworks').symlink_to(external, target_is_directory=True)
+            with patch.object(jit, 'FRAMEWORK', framework), patch.object(jit, 'verify'), \
+                    self.assertRaises(ValueError):
+                jit.stage(app)
+            self.assertEqual(list(external.iterdir()), [])
+
     def test_hosted_round_trip_and_corrupt_archive_fallback(self):
         verify_framework = jit.verify
         for corrupt in (False, True):

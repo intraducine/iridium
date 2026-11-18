@@ -240,8 +240,11 @@ def ensure():
 def stage(app):
     verify()
     destination = app / 'Frameworks/StikJIT.xcframework/ios-arm64/StikJIT.framework'
-    if destination.is_symlink(): raise ValueError('Unexpected JIT staging link')
-    shutil.copytree(FRAMEWORK, destination, dirs_exist_ok=True)
+    if any(path.is_symlink() for path in (destination, *destination.parents)
+           if path == app or path.is_relative_to(app)):
+        raise ValueError('Unexpected JIT staging link')
+    if destination.exists(): shutil.rmtree(destination)
+    shutil.copytree(FRAMEWORK, destination)
 
 
 if __name__ == '__main__':
