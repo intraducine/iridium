@@ -280,7 +280,7 @@ def check_payload(app):
         if has_private_key_material(data):
             if hashlib.sha256(data).hexdigest() not in public_fixtures:
                 raise ValueError(f"App contains unreviewed private key material: {path.relative_to(app)}")
-        if re.search(rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b", data):
+        if b"00008" in data and re.search(rb"\b00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16}\b", data):
             raise ValueError("App contains a physical device identifier")
     info = plistlib.loads((app / "Info.plist").read_bytes())
     if info.get("CFBundleIdentifier") != "software.iridium":
@@ -564,7 +564,8 @@ def package(app, output):
         check_payload(staged)
         audit = audit_package_signatures(staged)
         temporary_ipa = Path(tmp) / "Iridium-unsigned.ipa"
-        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--keepParent", "--norsrc", "--noextattr", "--noqtn", str(payload), str(temporary_ipa)], check=True)
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", "--zlibCompressionLevel", "4", "--keepParent",
+                        "--norsrc", "--noextattr", "--noqtn", str(payload), str(temporary_ipa)], check=True)
         report = check_windows_runtime_archive(temporary_ipa, links)
         # Verify the extracted delivery as well as the staging directory. ditto
         # must preserve signed resource bytes and every sealed symlink target.

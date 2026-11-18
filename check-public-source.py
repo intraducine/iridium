@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check common private-data patterns; prints paths and categories, never values."""
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import os
 import re
 import sys
 import subprocess
@@ -23,7 +25,6 @@ MARKERS = {
 # Pass private identifiers as arguments for a targeted local scan. Do not commit them.
 for index, value in enumerate(sys.argv[1:]):
     PATTERNS[f"private identifier {index + 1}"] = re.escape(value.encode())
-findings = []
 # This published archive includes GnuTLS's RSA self-test fixture. The key matches
 # gnutls-3.8.9/lib/crypto-selftests-pk.c in the supplied source tarball. Any changed
 # archive still fails this check; no maintainer key or other pattern is exempt.
@@ -64,35 +65,45 @@ def source_files(root):
     else:
         yield from root.rglob('*')
 
-for path in source_files(ROOT):
-    if not path.is_file() or ".git" in path.relative_to(ROOT).parts or path == Path(__file__).resolve():
-        continue
+def scan(path):
+    relative = path.relative_to(ROOT)
+    name = relative.as_posix()
+    findings = []
     data = path.read_bytes()
     folded = data.lower()
-    unused = PUBLIC_UNUSED_ARCHIVES.get(path.relative_to(ROOT).as_posix(), {})
-    reviewed_unused = not path.is_symlink() and unused.get('sha256') == hashlib.sha256(data).hexdigest()
-    if path.stat().st_size >= 50 * 1024 * 1024 and not reviewed_unused:
-        findings.append((path.relative_to(ROOT), "large file; use release assets"))
-    if any(part.endswith((".app", ".xcarchive")) or part in {"_CodeSignature", "xcuserdata"} for part in path.relative_to(ROOT).parts):
-        findings.append((path.relative_to(ROOT), "generated app or personal metadata"))
+    if path.stat().st_size >= 50 * 1024 * 1024:
+        unused = PUBLIC_UNUSED_ARCHIVES.get(name)
+        if not unused or path.is_symlink() or unused.get('sha256') != hashlib.sha256(data).hexdigest():
+            findings.append("large file; use release assets")
+    if any(part.endswith((".app", ".xcarchive")) or part in {"_CodeSignature", "xcuserdata"} for part in relative.parts):
+        findings.append("generated app or personal metadata")
     if data.startswith(b"version https://git-lfs.github.com/spec/v1"):
-        findings.append((path.relative_to(ROOT), "LFS pointer"))
+        findings.append("LFS pointer")
     for category, pattern in PATTERNS.items():
         # Most upstream files have no candidate. Avoid four full regex scans.
         if category in MARKERS and not any(marker in folded for marker in MARKERS[category]):
             continue
         if re.search(pattern, data, re.IGNORECASE):
-            if category == 'private key' and hashlib.sha256(data).hexdigest() in PUBLIC_SELF_TEST.get(str(path.relative_to(ROOT)), set()):
+            if category == 'private key' and hashlib.sha256(data).hexdigest() in PUBLIC_SELF_TEST.get(str(relative), set()):
                 continue
             if (category == 'private key' and not path.is_symlink()
-                    and PUBLIC_KEY_SOURCES.get(path.relative_to(ROOT).as_posix(), {}).get('sha256') == hashlib.sha256(data).hexdigest()):
+                    and PUBLIC_KEY_SOURCES.get(name, {}).get('sha256') == hashlib.sha256(data).hexdigest()):
                 continue
-            findings.append((path.relative_to(ROOT), category))
+            findings.append(category)
     if path.suffix.lower() in {".p12", ".pfx", ".mobileprovision", ".provisionprofile"}:
-        fixture = PUBLIC_SIGNING_FIXTURES.get(path.relative_to(ROOT).as_posix(), {})
+        fixture = PUBLIC_SIGNING_FIXTURES.get(name, {})
         if path.is_symlink() or fixture.get('sha256') != hashlib.sha256(data).hexdigest():
-            findings.append((path.relative_to(ROOT), "signing material"))
-for path, category in findings:
-    print(f"{path}: {category}")
-print(f"Privacy scan: {len(findings)} finding(s)")
-sys.exit(bool(findings))
+            findings.append("signing material")
+    return [(relative, category) for category in findings]
+
+
+if __name__ == '__main__':
+    script = Path(__file__).resolve()
+    paths = (path for path in source_files(ROOT)
+             if path != script and ".git" not in path.relative_to(ROOT).parts and path.is_file())
+    with ProcessPoolExecutor(max_workers=min(os.cpu_count() or 1, 8)) as workers:
+        findings = sorted(finding for batch in workers.map(scan, paths, chunksize=128) for finding in batch)
+    for path, category in findings:
+        print(f"{path}: {category}")
+    print(f"Privacy scan: {len(findings)} finding(s)")
+    sys.exit(bool(findings))
