@@ -96,9 +96,15 @@ print("checked native batch: high addresses, checksums, bounds, all replies and 
             root = Path(directory); framework = root / 'StikJIT.framework'; framework.mkdir()
             binary = framework / 'StikJIT'; binary.write_bytes(b'compiled')
             expected = {'runner': 'reviewed'}
-            record = {'inputs': expected, 'files': {'StikJIT': build.digest(binary)}}
+            for name in ('universal.js', 'legacy.js', 'LICENSES-idevice.txt',
+                         'Modules/StikJIT.swiftmodule/arm64-apple-ios.swiftmodule',
+                         'Modules/StikJIT.swiftmodule/arm64-apple-ios.swiftinterface'):
+                path = framework / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('checked fixture')
             metadata = framework / 'Info.plist'
             metadata.write_bytes(plistlib.dumps({'MinimumOSVersion': '18.0'}))
+            record = {'inputs': expected, 'files': build.framework_files(framework)}
             (root / 'component.json').write_text(json.dumps(record))
             (framework / 'IridiumJITTransport.json').write_text(json.dumps(record))
             with patch.object(build, 'verify_source'), patch.object(build, 'OUTPUT', root), patch.object(build, 'identity', return_value=expected):

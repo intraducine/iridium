@@ -403,7 +403,7 @@ def app(reuse_psp):
         subprocess.run([sys.executable, str(ROOT / 'ci/build-ppsspp-native.py'),
                         '--output', str(PSP_OUTPUT), '--sdk', 'iphoneos'], check=True)
     prepare()
-    command = ['xcodebuild', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),
+    command = ['xcodebuild', '-showBuildTimingSummary', '-project', str(OUTPUT / 'app/Madeira.xcodeproj'),
                '-scheme', 'Iridium', '-configuration', 'Debug', '-destination', 'generic/platform=iOS',
                '-derivedDataPath', str(ROOT / '.build/madeira-frontend-derived'),
                'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO', 'DEVELOPMENT_TEAM=',

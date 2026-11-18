@@ -370,6 +370,20 @@ jobs:
           path: .build/flycast-compiled-transfer/
           if-no-files-found: error
           retention-days: 14
+      - name: Compile stikjit-frontend
+        id: compiled_stikjit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_ASSETS: ${{ inputs.reuse_assets }}
+        run: python3 ci/stikjit_frontend.py --ci
+      - name: Retain stikjit-frontend compilation
+        if: steps.compiled_stikjit.outputs.rebuilt == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.compiled_stikjit.outputs.artifact }}
+          path: .build/stikjit-frontend-compiled-transfer/
+          if-no-files-found: error
+          retention-days: 14
       - name: Build without signing
         id: app_build
         env:
